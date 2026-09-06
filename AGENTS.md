@@ -74,6 +74,18 @@ guidance does not drift from the router.
 - Commits should be atomic: include only one coherent change or fix, and do not mix unrelated work.
 - Commit messages should be succinct and describe the change being made.
 
+# Pull Requests
+
+Write for a maintainer skimming on a phone, not for another agent. Agents are verbose by default, and this repo's pull requests have drifted into walls of text that cost more to read than the diff does.
+
+**Descriptions.** Two or three sentences: what changed and why. Link the issue. No file-by-file breakdown, and no transcript of every command run — state the outcome ("full suite passes, 458 commands"), not the log. A short test-plan checklist is welcome.
+
+**Reviews.** Open with the verdict in one line: approve, or the single thing blocking. Then at most a handful of findings, one or two sentences each, marked `bug` (blocks), `suggestion`, or `nit`. Aim to stay under 200 words.
+
+Include evidence — a command, its output, a hardware detail — only for a claim the author is likely to dispute, and trim it to the lines that make the point. Never restate what the description already says.
+
+Going longer is fine when correcting your own earlier review, or supplying evidence someone asked for. Say which in the first line so the length is accounted for.
+
 # Helper Commands
 
 Use these instead of raw shell commands:
