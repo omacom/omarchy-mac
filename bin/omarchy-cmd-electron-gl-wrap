@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# omarchy:summary=Install a PATH wrapper that adds software GL flags when no render GPU is present
+# omarchy:args=<command-name> <real-binary>
+# omarchy:examples=omarchy-cmd-electron-gl-wrap 1password /opt/1Password/1password | omarchy-cmd-electron-gl-wrap chromium /usr/bin/chromium
+# omarchy:hidden=true
+# omarchy:requires-sudo=true
+
+set -euo pipefail
+
+if (($# != 2)); then
+  echo "Usage: omarchy-cmd-electron-gl-wrap <command-name> <real-binary>" >&2
+  exit 2
+fi
+
+name=$1
+real=$2
+bind_dir=${OMARCHY_ELECTRON_GL_BIND_DIR:-/usr/local/bin}
+dest=$bind_dir/$name
+
+if [[ ! -x $real ]]; then
+  echo "omarchy-cmd-electron-gl-wrap: not executable: $real" >&2
+  exit 1
+fi
+
+if [[ $dest -ef $real ]]; then
+  echo "omarchy-cmd-electron-gl-wrap: refusing to wrap a binary over itself: $dest" >&2
+  exit 1
+fi
+
+as_root() {
+  if ((EUID == 0)) || [[ -d $bind_dir && -w $bind_dir ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+quoted_real=$(printf '%q' "$real")
+wrapper=$(cat <<EOF
+#!/bin/bash
+# omarchy-electron-gl-wrapper
+real=$quoted_real
+extra=()
+if omarchy-cmd-present omarchy-cmd-electron-gl-args; then
+  while IFS= read -r flag; do
+    [[ -n \$flag ]] && extra+=("\$flag")
+  done < <(omarchy-cmd-electron-gl-args)
+fi
+exec "\$real" "\${extra[@]}" "\$@"
+EOF
+)
+
+if [[ -f $dest ]] && grep -q '^# omarchy-electron-gl-wrapper$' "$dest" &&
+  grep -Fq "real=$quoted_real" "$dest"; then
+  as_root chmod 755 "$dest"
+  exit 0
+fi
+
+as_root mkdir -p "$bind_dir"
+as_root tee "$dest" >/dev/null <<<"$wrapper"
+as_root chmod 755 "$dest"
