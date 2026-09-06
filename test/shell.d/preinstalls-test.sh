@@ -41,7 +41,7 @@ SH
 
 chmod +x "$mock_bin"/*
 
-export PATH="$mock_bin:$PATH"
+export PATH="$mock_bin:$ROOT/bin:$PATH"
 export HOME="$test_home"
 export OMARCHY_TEST_PKG_LOG="$pkg_log"
 

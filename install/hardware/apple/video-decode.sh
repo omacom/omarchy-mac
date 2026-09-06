@@ -29,13 +29,11 @@
 # follows setup is what brings it up. The migration that reuses this leaf on an
 # existing install asks for that reboot, which is what the changed flag is for.
 
-compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
 OMARCHY_AVD_PACKAGES_CHANGED=0
 
 # Every device-tree machine has a compatible file, so it has to name Apple --
 # otherwise a Raspberry Pi would install the Asahi video stack too.
-[[ $(uname -m) == "aarch64" ]] || return 0
-[[ -f $compatible ]] && grep -Faiq 'apple,' "$compatible" || return 0
+omarchy-hw-apple-silicon || return 0
 
 if omarchy-pkg-missing avd-fw libva-v4l2_request-avd; then
   echo "Installing Apple Silicon hardware video decode"

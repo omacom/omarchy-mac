@@ -3,9 +3,11 @@
 # omarchy:summary=Install one of the supported databases in a Docker container with the suitable development options.
 # omarchy:requires-sudo=true
 
+machine_arch=$(omarchy-hw-arch) || { echo "Cannot determine a supported machine architecture." >&2; exit 1; }
+
 options=("MySQL" "PostgreSQL" "Redis" "MongoDB" "MariaDB")
 
-if [[ $(uname -m) == "x86_64" ]]; then
+if [[ $machine_arch == "x86_64" ]]; then
   options+=("MSSQL")
 fi
 

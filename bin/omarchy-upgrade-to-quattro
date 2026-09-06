@@ -7,6 +7,16 @@
 
 set -euo pipefail
 
+# This entrypoint also runs before a checkout or new helpers exist.
+check_architecture() {
+  local detected_arch
+  detected_arch=$(uname -m) || fail "Could not determine the machine architecture."
+  case $detected_arch in
+    x86_64) ;;
+    *) fail "This is the x86 upgrade; use omarchy-upgrade-to-quattro-mac on Apple Silicon." ;;
+  esac
+}
+
 usage() {
   cat <<'USAGE'
 Usage: omarchy-upgrade-to-quattro [--yes] [--reboot] [--dev] [--channel stable|rc|edge] [--user USER]
@@ -118,7 +128,7 @@ esac
 # This is the upstream x86 upgrade: it repoints pacman at Omarchy's x86_64
 # mirrors and packages, which do not serve aarch64. On Apple Silicon the Mac
 # upgrade (omarchy-upgrade-to-quattro-mac) wires the source checkout instead.
-[[ $(uname -m) != "aarch64" ]] || fail "This is the upstream x86 upgrade. On Apple Silicon run omarchy-upgrade-to-quattro-mac."
+check_architecture
 
 # Land on the Quattro equivalent of wherever the machine already is, unless the
 # caller said otherwise. Stable machines get the production packages off the

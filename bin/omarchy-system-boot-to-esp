@@ -35,6 +35,16 @@ STAGE=/run/omarchy-boot-to-esp
 # fallback alone runs to tens of MiB.
 HEADROOM_MIB=128
 
+# This entrypoint also runs before a checkout or new helpers exist.
+check_architecture() {
+  local detected_arch
+  detected_arch=$(uname -m) || fail "Could not determine the machine architecture."
+  case $detected_arch in
+    aarch64 | arm64) ;;
+    *) fail "This tool requires aarch64; use the Omarchy ISO on x86." ;;
+  esac
+}
+
 log() {
   printf '\033[32m==>\033[0m %s\n' "$*"
 }
@@ -95,7 +105,7 @@ main() {
   done
 
   (( EUID == 0 )) || fail "run as root"
-  [[ $(uname -m) == "aarch64" ]] || fail "this tool is for Apple Silicon (aarch64) installs"
+  check_architecture
 
   if findmnt -no SOURCE /boot >/dev/null 2>&1; then
     log "/boot is already its own mount -- nothing to do."

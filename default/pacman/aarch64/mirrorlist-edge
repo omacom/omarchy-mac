@@ -1,0 +1,57 @@
+#
+# Arch Linux ARM repository mirrorlist
+# Generated on 2023-02-06
+#
+
+## Geo-IP based mirror selection and load balancing
+Server = http://mirror.archlinuxarm.org/$arch/$repo
+
+### Mirrors by country
+
+### Denmark
+## Aalborg
+# Server = http://dk.mirror.archlinuxarm.org/$arch/$repo
+
+### Germany
+## Aachen
+# Server = http://de3.mirror.archlinuxarm.org/$arch/$repo
+## Berlin
+# Server = http://de.mirror.archlinuxarm.org/$arch/$repo
+## Coburg
+# Server = http://de4.mirror.archlinuxarm.org/$arch/$repo
+## Falkenstein
+# Server = http://eu.mirror.archlinuxarm.org/$arch/$repo
+# Server = http://de5.mirror.archlinuxarm.org/$arch/$repo
+
+### Greece
+## Athens
+# Server = http://gr.mirror.archlinuxarm.org/$arch/$repo
+
+### Hungary
+## Budapest
+# Server = http://hu.mirror.archlinuxarm.org/$arch/$repo
+
+### Japan
+## Tokyo
+# Server = http://jp.mirror.archlinuxarm.org/$arch/$repo
+
+### Singapore
+# Server = http://sg.mirror.archlinuxarm.org/$arch/$repo
+
+### Taiwan
+## Hsinchu
+# Server = http://tw2.mirror.archlinuxarm.org/$arch/$repo
+## New Taipei City
+# Server = http://tw.mirror.archlinuxarm.org/$arch/$repo
+
+### United Kingdom
+## London
+# Server = http://uk.mirror.archlinuxarm.org/$arch/$repo
+
+### United States
+## California
+# Server = http://ca.us.mirror.archlinuxarm.org/$arch/$repo
+## Florida
+# Server = http://fl.us.mirror.archlinuxarm.org/$arch/$repo
+## New Jersey
+# Server = http://nj.us.mirror.archlinuxarm.org/$arch/$repo

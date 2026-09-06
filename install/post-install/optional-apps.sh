@@ -1,10 +1,12 @@
 #!/bin/bash
+machine_arch=$(omarchy-hw-arch) || { echo "Cannot determine a supported machine architecture." >&2; return 1; }
+
 # Install optional proprietary/AUR apps (1Password, etc.)
 
 # Only run on aarch64
-if [ "$(uname -m)" != "aarch64" ]; then
-    echo "Skipping optional apps: not aarch64 architecture"
-    return 0
+if [[ $machine_arch != "aarch64" ]]; then
+  echo "Skipping optional apps: not aarch64 architecture"
+  return 0
 fi
 
 # This leaf runs from omarchy-apply-system, which puts the checkout's bin/

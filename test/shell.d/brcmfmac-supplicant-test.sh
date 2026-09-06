@@ -91,7 +91,7 @@ run_leaf() {
       -e "s|/etc/modprobe.d|$test_tmp/etc/modprobe.d|g" \
       "$leaf" >"$script"
 
-  WIFI_ID="$wifi_id" T2_HARDWARE="$t2" ARCH="$arch" PATH="$stub_bin:$PATH" \
+  WIFI_ID="$wifi_id" T2_HARDWARE="$t2" ARCH="$arch" PATH="$stub_bin:$ROOT/bin:$PATH" \
     bash -eE -o pipefail -c 'source "$1"' bash "$script" </dev/null
 }
 
@@ -121,6 +121,19 @@ for wifi_id in 4425 4433; do
 done
 pass "an Apple Silicon Mac is left alone"
 
+run_leaf "Apple Inc." 4433 1 riscv64 >/dev/null
+[[ ! -f $conf ]] || fail "unknown architecture must not receive the Intel Wi-Fi quirk"
+pass "unknown architecture is left alone even with matching Intel hardware IDs"
+
+# Simulate the command-not-found status without allowing the host's installed
+# detector to leak into the test through PATH.
+omarchy-hw-arch() { return 127; }
+export -f omarchy-hw-arch
+run_leaf "Apple Inc." 4433 1 aarch64 >/dev/null
+unset -f omarchy-hw-arch
+[[ ! -f $conf ]] || fail "missing architecture detector must not receive the Intel Wi-Fi quirk"
+pass "missing architecture detection leaves Apple Silicon Wi-Fi alone"
+
 # Older Macs report the vendor differently.
 run_leaf "Apple Computer, Inc." 43ba 0 >/dev/null
 [[ -f $conf ]] || fail "the older Apple vendor string is recognized"
@@ -148,7 +161,7 @@ run_migration() {
   printf '%s' "$vendor" >"$test_tmp/dmi/sys_vendor"
   : >"$calls"
 
-  WIFI_ID="$wifi_id" T2_HARDWARE="$t2" ARCH="$arch" PATH="$stub_bin:$PATH" TEST_LOG="$calls" \
+  WIFI_ID="$wifi_id" T2_HARDWARE="$t2" ARCH="$arch" PATH="$stub_bin:$ROOT/bin:$PATH" TEST_LOG="$calls" \
     OMARCHY_BRCMFMAC_DMI_VENDOR="$test_tmp/dmi/sys_vendor" \
     OMARCHY_BRCMFMAC_CONF="$conf" \
     bash -euo pipefail "$migration" >/dev/null

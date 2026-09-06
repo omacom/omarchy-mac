@@ -5,6 +5,10 @@ system.
 
 ## Mental model
 
+Architecture and hardware detection use shared predicates; documented downloaded entrypoints retain narrow self-contained guards. See [Platform detection and bootstrap](platform-detection.md) for the supported architecture names, Apple vendor matching, chassis/lid capabilities and standalone-script exceptions.
+
+x86 uses the files at `default/pacman/` (upstream Omarchy). aarch64 uses `default/pacman/aarch64/`. `omarchy-refresh-pacman` selects the tree. `install.sh` runs `install/aarch64/install.sh` on aarch64 and points x86 users at the Omarchy ISO.
+
 Two Arch packages are built from this one repo (PKGBUILDs live in the
 separate `omarchy-pkgs` repository, under `pkgbuilds/`):
 

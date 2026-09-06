@@ -1,9 +1,6 @@
 # Btrfs on Omarchy Mac
 
-The x86 Omarchy Quattro ISO installs onto btrfs and gets snapshots, snapper
-retention, and `omarchy-system-factory-reset` for free.
-`omarchy-system-btrfs-migrate` gives an Asahi Alarm install the same root
-layout. What it has to do depends on which Asahi Alarm image you installed:
+The x86 Omarchy Quattro ISO installs onto btrfs and supports snapshots, snapper retention, and `omarchy-system-factory-reset` through its Limine boot chain. `omarchy-system-btrfs-migrate` gives an Asahi Alarm install the same root layout, but its GRUB boot chain does not support factory reset. What the migration has to do depends on which Asahi Alarm image you installed:
 
 - **an ext4 image** — the partition is rebuilt as btrfs with `@`, `@home` and
   `@log`, optionally inside a LUKS2 container.
@@ -125,8 +122,7 @@ being skipped.
 
 - **snapper** — pacman transactions get pre/post snapshots with Omarchy's
   retention config; `sudo snapper -c root list` to see them.
-- **`sudo omarchy-system-factory-reset`** — returns the machine to the
-  fully-installed, no-user state captured in `@factory`.
+- **`@factory`** — the installed-system snapshot. Its presence does not enable factory reset on GRUB/Asahi; the reset command refuses this boot chain before changing the system.
 - **`@fresh`** — the pre-Omarchy baseline. Rolling back to it and re-running
   the installer is the fast way to test install changes end to end (below).
 
@@ -170,10 +166,7 @@ you want the full fresh state.
   cared about, so treat a backup as mandatory.
 - Only the busybox `encrypt` hook is wired up. An initramfs built around the
   systemd hooks (`sd-encrypt`) is rejected rather than half-configured.
-- On encrypted installs, `omarchy-system-factory-reset`'s provisioning-window
-  auto-unlock injects its kernel argument via Limine's entry tool, which does
-  not exist on the Mac's GRUB boot chain. The reset still works; the first
-  boot after it asks for the disk passphrase instead of unlocking itself.
+- Factory reset is unsupported on GRUB/Asahi, with or without encryption. The reset stages Limine boot files and provisioning, and on encrypted installs also re-keys the disk for a temporary auto-unlock window. Having an `@factory` snapshot does not make those operations compatible with GRUB. The command exits before mounts, snapshot changes, key changes or reset staging; use a fresh installation when handing the machine to a new owner.
 
 ## Testing changes to the migration
 

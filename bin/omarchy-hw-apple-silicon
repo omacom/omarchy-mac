@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# omarchy:summary=Detect Apple Silicon (Asahi) hardware.
+
+# Hardware split: notch, Asahi HID, vulkan-asahi, wf-recorder, asahi-audio.
+# aarch64 is not enough — a Raspberry Pi must not take the Apple path.
+# OMARCHY_APPLE_COMPATIBLE stubs the device-tree file for tests.
+"$(dirname -- "${BASH_SOURCE[0]}")/omarchy-hw-aarch64" || exit 1
+compatible_file="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
+[[ -r $compatible_file ]] || exit 1
+# Device-tree compatible is a NUL-separated list of vendor,model strings.
+# A vendor substring (for example pineapple,board) is not Apple identity.
+while IFS= read -r -d '' compatible || [[ -n $compatible ]]; do
+  [[ $compatible == apple,* ]] && exit 0
+done <"$compatible_file"
+exit 1

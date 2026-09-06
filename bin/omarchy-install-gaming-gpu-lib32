@@ -7,6 +7,9 @@
 
 set -e
 
+machine_arch=$(omarchy-hw-arch) || exit 1
+[[ $machine_arch == "x86_64" ]] || { echo "Skipping x86 lib32 graphics packages on $machine_arch."; exit 0; }
+
 echo "Installing lib32 graphics drivers..."
 
 PACKAGES=()

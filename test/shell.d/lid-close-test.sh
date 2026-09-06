@@ -5,6 +5,35 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 lid_close="$ROOT/bin/omarchy-system-lid-close"
+
+# Load the real binding module with a fake Hyprland API. Both switch names must
+# enter the lock-before-suspend handler on close and only reconcile on open.
+require_command lua
+lua - "$ROOT" <<'LUA'
+local root = arg[1]
+local bindings = {}
+o = {
+  bind = function(key, _, action, options)
+    bindings[key] = { action = action, options = options }
+  end,
+  bind_toggle = function() end,
+}
+hl = { on = function() end }
+dofile(root .. "/default/hypr/bindings/utilities.lua")
+
+for _, name in ipairs({ "Lid Switch", "Apple SMC power/lid events" }) do
+  for event, action in pairs({
+    on = "omarchy-system-lid-close",
+    off = "omarchy-hyprland-monitor-clamshell",
+  }) do
+    local binding = bindings["switch:" .. event .. ":" .. name]
+    assert(binding and binding.action == action, name .. " " .. event .. " dispatches " .. action)
+    assert(binding.options and binding.options.locked == true, name .. " works while locked")
+    print("ok - " .. name .. " " .. event .. " dispatches " .. action .. " while locked")
+  end
+end
+LUA
+
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 

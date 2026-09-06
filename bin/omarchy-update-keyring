@@ -3,9 +3,11 @@
 # omarchy:summary=Ensure the Omarchy and Arch keyring packages are installed and populated
 # omarchy:requires-sudo=true
 
+machine_arch=$(omarchy-hw-arch) || { echo "Cannot determine a supported machine architecture." >&2; exit 1; }
+
 set -e
 
-if [[ $(uname -m) == "aarch64" ]]; then
+if [[ $machine_arch == "aarch64" ]]; then
   source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
   omarchy_arm_prepare_package_sources
   # Refresh the distribution keyring before the immediately following full

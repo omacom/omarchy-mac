@@ -67,7 +67,7 @@ run_video_setup() {
   local script="$1" arch="$2" machine="$3" install_succeeds="${4:-1}"
   printf '%s\0' "$machine" >"$compatible"
 
-  PATH="$stub_bin:$PATH" \
+  PATH="$stub_bin:$ROOT/bin:$PATH" \
     TEST_ARCH="$arch" \
     TEST_LOG="$calls" \
     AVD_INSTALLED_MARKER="$installed_marker" \

@@ -1,0 +1,175 @@
+#!/bin/bash
+
+# Opt-in contract test: evaluates the actual pinned recipes into disposable
+# directories. No makepkg build, package installation, or live scriptlet runs.
+set -euo pipefail
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/shell.d/base-test.sh"
+source "$ROOT/install/helpers/package-recipes.sh"
+require_command makepkg
+require_command python3
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+pin=$(omarchy_package_recipe_commit "$ROOT")
+recipe_source=$(omarchy_package_recipe_source "$ROOT" "$pin")
+omarchy_package_recipe_export "$ROOT" "$recipe_source" "$work/recipes" "$pin"
+mkdir -p "$work/src"
+ln -s "$ROOT" "$work/src/omarchy"
+
+for package in omarchy omarchy-settings; do
+  (
+    cd "$work/recipes/pkgbuilds/$package"
+    OMARCHY_SRC="$ROOT" makepkg --printsrcinfo
+  ) >"$work/$package.srcinfo"
+done
+grep -q 'depends_aarch64 = snapper$' "$work/omarchy.srcinfo" || fail "ARM runtime depends on Snapper"
+grep -q 'depends_aarch64 = zram-generator$' "$work/omarchy.srcinfo" || fail "ARM runtime depends on its configured zram generator"
+! grep -q 'depends_aarch64 = limine' "$work/omarchy.srcinfo" || fail "ARM runtime excludes Limine dependencies"
+diff -u <(grep -E '^[[:space:]]+pkg(ver|rel) =' "$work/omarchy.srcinfo") \
+  <(grep -E '^[[:space:]]+pkg(ver|rel) =' "$work/omarchy-settings.srcinfo") || fail "runtime and settings versions match"
+pass "real recipe metadata pairs package versions and selects ARM dependencies"
+
+# The profile must not alter upstream x86 package metadata. This evaluates both
+# architecture branches even when the test host itself is aarch64.
+mkdir -p "$work/upstream"
+git -C "$recipe_source" archive "$pin" pkgbuilds/omarchy pkgbuilds/omarchy-settings | tar -xf - -C "$work/upstream"
+for package in omarchy omarchy-settings; do
+  for variant in upstream recipes; do
+    CARCH=x86_64 OMARCHY_SRC="$ROOT" bash -c 'source "$1"; declare -p pkgver pkgrel depends depends_x86_64 2>/dev/null || true; declare -p backup 2>/dev/null || true' _ \
+      "$work/$variant/pkgbuilds/$package/PKGBUILD" >"$work/$variant-$package-x86.metadata"
+  done
+  cmp "$work/upstream-$package-x86.metadata" "$work/recipes-$package-x86.metadata" || fail "the profile preserves upstream x86 $package metadata"
+done
+pass "the profile leaves upstream x86 runtime dependencies and backup metadata unchanged"
+
+for package in omarchy-settings omarchy; do
+  CARCH=aarch64 OMARCHY_SRC="$ROOT" bash -euo pipefail -c '
+    srcdir="$1"
+    pkgdir="$2"
+    source "$3"
+    package
+  ' _ "$work/src" "$work/$package" "$work/recipes/pkgbuilds/$package/PKGBUILD" >"$work/$package.log" 2>&1 || {
+    cat "$work/$package.log" >&2
+    fail "the actual $package recipe stages the fork source"
+  }
+done
+settings="$work/omarchy-settings"
+runtime="$work/omarchy"
+for mapping in \
+  'default/systemd/user/omarchy-brightness-keyboard-auto.service:usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service' \
+  'default/systemd/user/app.slice.d/10-oomd.conf:usr/lib/systemd/user/app.slice.d/10-oomd.conf' \
+  'default/systemd/zram-generator.conf.d/90-omarchy.conf:usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf' \
+  'etc/systemd/oomd.conf.d/10-omarchy.conf:etc/systemd/oomd.conf.d/10-omarchy.conf' \
+  'etc/sysctl.d/99-omarchy-sysctl.conf:etc/sysctl.d/99-omarchy-sysctl.conf' \
+  'etc/tmpfiles.d/omarchy-zswap.conf:etc/tmpfiles.d/omarchy-zswap.conf' \
+  'etc/mkinitcpio.conf.d/omarchy_hooks.conf:etc/mkinitcpio.conf.d/omarchy_hooks.conf' \
+  'etc/mkinitcpio.conf.d/thunderbolt_module.conf:etc/mkinitcpio.conf.d/thunderbolt_module.conf' \
+  'default/bashrc:usr/share/omarchy/etc-overrides/dot.bashrc'; do
+  cmp "$ROOT/${mapping%%:*}" "$settings/${mapping#*:}" || fail "the profile preserves source payload: $mapping"
+done
+[[ -x $runtime/usr/bin/omarchy-brightness-keyboard-auto ]] || fail "the ALS service executable ships with the runtime"
+cmp "$ROOT/version" "$runtime/usr/share/omarchy/version" || fail "the runtime version is the checkout version"
+for absent in etc/limine-entry-tool.d etc/systemd/zram-generator.conf etc/skel/.bashrc etc/skel/.config/autostart/limine-snapper-notify.desktop; do
+  [[ ! -e $settings/$absent ]] || fail "ARM package does not own $absent"
+done
+[[ $(find "$settings/etc/mkinitcpio.conf.d" -type f | wc -l) == 2 ]] || fail "only the reviewed boot hooks ship"
+arm_backup_paths=$(CARCH=aarch64 OMARCHY_SRC="$ROOT" bash -euo pipefail -c 'source "$1"; printf "%s\n" "${backup[@]}"' _ \
+  "$work/recipes/pkgbuilds/omarchy-settings/PKGBUILD")
+while IFS= read -r backed_up; do
+  [[ -f $settings/$backed_up ]] || fail "every ARM backup entry has a staged file: $backed_up"
+done <<<"$arm_backup_paths"
+pass "every ARM backup declaration names a file in the actual settings payload"
+for backed_up in etc/mkinitcpio.conf.d/omarchy_hooks.conf etc/mkinitcpio.conf.d/thunderbolt_module.conf etc/systemd/oomd.conf.d/10-omarchy.conf; do
+  # CARCH in makepkg metadata follows this host; explicitly evaluate backup on ARM too.
+  CARCH=aarch64 OMARCHY_SRC="$ROOT" bash -c 'source "$1"; printf "%s\n" "${backup[@]}"' _ \
+    "$work/recipes/pkgbuilds/omarchy-settings/PKGBUILD" | grep -qx "$backed_up" || fail "pacman protects edits to $backed_up"
+done
+pass "actual ARM payload preserves ALS, current memory policy and the two reviewed boot hooks"
+
+# Run the actual first-run list with systemctl replaced by an artifact checker.
+# External commands are supplied by the systemd base and declared install set;
+# Omarchy commands must exist in the staged packages, never the developer host.
+(
+  systemctl() {
+    [[ $* != "--user daemon-reload" ]] || return 0
+    [[ $1 == "--user" && $2 == "enable" && $3 == "--now" ]] || return 1
+    shift 3
+    local unit directive command executable arguments
+    for unit in "$@"; do
+      [[ -f $settings/usr/lib/systemd/user/$unit ]] || fail "first-run unit ships: $unit"
+      while IFS='=' read -r directive command; do
+        [[ $directive == ExecStart || $directive == ExecCondition || $directive == ExecStartPre ]] || continue
+        read -r executable arguments <<<"$command"
+        case "$executable" in
+          /usr/bin/omarchy-*)
+            [[ -x $runtime$executable || -x $settings$executable ]] || fail "$unit executable ships: $executable"
+            ;;
+          /usr/bin/systemctl) ;; # systemd is part of the base system.
+          /usr/bin/bt-agent) grep -qx bluez-tools "$ROOT/install/omarchy-base.packages" || fail "bt-agent provider is in the install set" ;;
+          /usr/bin/fcitx5) grep -qx fcitx5 "$ROOT/install/omarchy-base.packages" || fail "fcitx5 is in the install set" ;;
+          *) fail "unreviewed external first-run executable: $executable" ;;
+        esac
+      done <"$settings/usr/lib/systemd/user/$unit"
+    done
+  }
+  source "$runtime/usr/share/omarchy/install/user/first-run/enable-user-units.sh"
+) || fail "the staged first-run service enablement contract is complete"
+pass "the real first-run list resolves every unit and executable in the staged payload or declared base packages"
+
+# Exercise the shipped module guard against the target kernel, without building
+# an initramfs or assuming anything about the machine executing this test.
+for available in 0 1; do
+  (
+    MODULES=(existing)
+    KERNELVERSION=test-target-kernel
+    modinfo() { [[ $* == "-k test-target-kernel thunderbolt" ]] && (( available )); }
+    source "$settings/etc/mkinitcpio.conf.d/thunderbolt_module.conf"
+    if (( available )); then
+      [[ ${MODULES[*]} == "existing thunderbolt" ]]
+    else
+      [[ ${MODULES[*]} == "existing" ]]
+    fi
+  ) || fail "the boot hook handles thunderbolt availability=$available"
+done
+pass "the thunderbolt hook handles absent and present target-kernel modules"
+
+# Redirect only absolute paths in a disposable copy of the real scriptlet.
+# This exercises its Apple branch without chroot, root, systemd or host writes.
+python3 - "$work/recipes/pkgbuilds/omarchy-settings/omarchy-settings.install" "$work/scriptlet" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+source = source.replace('/proc/device-tree/compatible', '"${TEST_COMPATIBLE}"')
+source = source.replace('/etc/', '"${TEST_ROOT}"/etc/').replace('/usr/', '"${TEST_ROOT}"/usr/')
+# Keep the relative distribution symlink relative to the fixture's /etc.
+source = source.replace('.."${TEST_ROOT}"/usr/', '../usr/')
+Path(sys.argv[2]).write_text(source)
+PY
+for board in apple,t8103 apple,t8112; do
+  export TEST_ROOT="$work/$board" TEST_COMPATIBLE="$work/$board.compatible"
+  mkdir -p "$TEST_ROOT/etc/"{skel,security,plymouth} "$TEST_ROOT/usr/lib" "$TEST_ROOT/usr/share/omarchy/etc-overrides" "$TEST_ROOT/home/example"
+  printf '%s\0apple,arm-platform\0' "$board" >"$TEST_COMPATIBLE"
+  printf 'Arch Linux ARM\n' >"$TEST_ROOT/usr/lib/os-release"
+  cp "$settings/usr/share/omarchy/etc-overrides/dot.bashrc" "$TEST_ROOT/usr/share/omarchy/etc-overrides/dot.bashrc"
+  for sentinel in etc/security/faillock.conf etc/nsswitch.conf etc/plymouth/plymouthd.conf home/example/.bashrc; do
+    printf 'preserve\n' >"$TEST_ROOT/$sentinel"
+  done
+  for action in post_install post_upgrade; do
+    printf 'old skel\n' >"$TEST_ROOT/etc/skel/.bashrc"
+    bash -euo pipefail -c '
+      uname() { printf "aarch64\n"; }
+      systemd-sysusers() { return 99; }
+      source "$1"
+      "$2"
+    ' _ "$work/scriptlet" "$action" >/dev/null || fail "the Apple $action scriptlet succeeds for $board"
+    cmp "$TEST_ROOT/etc/skel/.bashrc" "$ROOT/default/bashrc" || fail "Apple $action delivers shell startup"
+    [[ $(readlink "$TEST_ROOT/etc/os-release") == "../usr/lib/os-release" ]] || fail "Apple keeps distribution identity"
+    for sentinel in etc/security/faillock.conf etc/nsswitch.conf etc/plymouth/plymouthd.conf home/example/.bashrc; do
+      [[ $(cat "$TEST_ROOT/$sentinel") == "preserve" ]] || fail "Apple $action preserves $sentinel"
+    done
+  done
+done
+pass "Apple install and upgrade scriptlets seed skel while preserving identity, PAM, NSS, Plymouth and user homes"
+
+printf 'Recipe commit: %s\nSource version: %s\n' "$pin" "$(cat "$ROOT/version")"
+grep -E '^[[:space:]]+pkg(ver|rel) =' "$work/omarchy.srcinfo"

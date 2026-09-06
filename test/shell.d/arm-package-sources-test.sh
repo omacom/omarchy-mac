@@ -28,7 +28,7 @@ cmp -s "$test_tmp/expected" "$test_tmp/pacman.conf" || fail 'preparation idempot
 pass 'source preparation preserves regular repositories and restricts edge idempotently'
 
 cp "$test_tmp/pacman.conf.bak" "$test_tmp/original-backup"
-cp "$ROOT/default/pacman/pacman-stable.conf" "$test_tmp/pacman.conf"
+cp "$ROOT/default/pacman/aarch64/pacman-stable.conf" "$test_tmp/pacman.conf"
 omarchy_arm_prepare_package_sources "$test_tmp/pacman.conf" preserve-backup
 cmp -s "$test_tmp/original-backup" "$test_tmp/pacman.conf.bak" || fail 'channel refresh original backup preserved'
 pass 'preparation after channel replacement preserves the original backup'
@@ -39,15 +39,23 @@ pass 'Aquamarine remains a regular-repository dependency'
 
 # Exercise the real default-package loop after the compatibility transaction.
 # The three selected packages must never reach yay as unqualified targets.
-eval "$(sed -n '/^install_default_package_set() {/,/^seed_user_defaults() {/p' "$ROOT/install.sh" | sed '$d')"
+eval "$(sed -n '/^install_default_package_set() {/,/^seed_user_defaults() {/p' "$ROOT/install/aarch64/install.sh" | sed '$d')"
 checkout=$ROOT
 log() { :; }
 warn() { :; }
 load_unavailable_packages() { :; }
 should_attempt_unavailable() { return 1; }
 package_is_unavailable_here() { return 1; }
-pacman() { [[ $1 == "-Q" ]] && printf '%s\n' "$2" >> "$test_tmp/checked"; }
-yay() { printf '%s\n' "$*" >> "$test_tmp/yay"; }
+mkdir "$test_tmp/installed"
+pacman() {
+  [[ $1 == "-Q" ]] || return 1
+  printf '%s\n' "$2" >> "$test_tmp/checked"
+  omarchy_arm_package_is_selected "$2" || [[ $2 == ttf-jetbrains-mono-nerd-basic || -f $test_tmp/installed/$2 ]]
+}
+yay() {
+  printf '%s\n' "$*" >> "$test_tmp/yay"
+  touch "$test_tmp/installed/${@: -1}"
+}
 install_default_package_set
 for package in hyprland hyprtoolkit hyprland-guiutils; do
   if grep -qxF "$package" "$ROOT/install/omarchy-base.packages"; then
@@ -56,9 +64,10 @@ for package in hyprland hyprtoolkit hyprland-guiutils; do
   ! grep -qE "(^| )$package( |$)" "$test_tmp/yay" || fail "$package must not be downgraded by yay"
 done
 grep -q 'wf-recorder' "$test_tmp/yay" || fail 'regular package path still runs'
-pass 'default package loop preserves the compatibility transaction selection'
+! grep -q 'ttf-jetbrains-mono-nerd-basic' "$test_tmp/yay" || fail 'the locally installed font does not need a sync/AUR entry'
+pass 'default package loop preserves compatibility selections and installed local archives'
 
-for config in "$ROOT"/default/pacman/pacman*.conf; do
+for config in "$ROOT"/default/pacman/aarch64/pacman*.conf; do
   section=$(sed -n '/^\[omarchy\]$/,/^$/p' "$config")
   [[ $section == *"Usage = Sync"* && $section == *"SigLevel = Required DatabaseOptional"* ]] || fail "restricted signed edge in $config"
 done

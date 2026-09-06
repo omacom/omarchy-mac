@@ -84,6 +84,7 @@ Use these instead of raw shell commands:
 - `omarchy-pkg-drop` - remove packages; use this instead of raw `pacman -R*`
 - `omarchy-notification-send` - send desktop notifications; do not call `notify-send` directly
 - `omarchy-hw-asus-rog` - detect ASUS ROG hardware (and similar `hw-*` commands)
+- `omarchy-hw-arch` / `omarchy-hw-aarch64` / `omarchy-hw-apple-silicon` - architecture and Apple Silicon detection; do not call `uname -m` or grep `/proc/device-tree/compatible` in install or runtime code. `omarchy-mac-setup`, both `omarchy-upgrade-to-quattro*` entrypoints, `omarchy-system-boot-to-esp`, `omarchy-system-btrfs-migrate`, and `omarchy-pkg-publish-aarch64` keep self-contained, status-checked architecture guards because they can run as downloaded scripts before a checkout or new helpers exist. The standalone Mac upgrade also keeps its device-tree warning. Historical migrations keep their original checks.
 
 Commands installed by Omarchy's default package set are runtime invariants. Invoke them directly; do not add defensive `omarchy-cmd-present` / `omarchy-cmd-missing` checks around them. Use command-presence helpers only for genuinely optional dependencies or code that can run before the default package set is installed.
 

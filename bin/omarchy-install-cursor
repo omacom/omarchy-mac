@@ -4,7 +4,7 @@
 set -euo pipefail
 
 VERSION="2.6.20"
-ARCH="$(uname -m)"
+ARCH="$(omarchy-hw-arch)"
 CURSOR_DIR="/opt/cursor"
 CURSOR_APPIMAGE="$CURSOR_DIR/cursor.AppImage"
 CURSOR_BIN="/usr/local/bin/cursor"

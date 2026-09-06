@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# omarchy:summary=Detect whether the machine is aarch64.
+
+# Codebase split: pacman tree, installer, package filter, aarch64-only tools.
+# Self-contained so bootstrap can invoke it by absolute path before PATH is set.
+arch=$("$(dirname -- "${BASH_SOURCE[0]}")/omarchy-hw-arch") || exit 1
+[[ $arch == "aarch64" ]]

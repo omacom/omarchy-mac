@@ -34,12 +34,29 @@ TOP_MNT=/run/omarchy-system-factory-reset/top
 NEXT_NAME=@omarchy-reset-next
 LOG_FILE=/var/log/omarchy-system-factory-reset.log
 
+unsupported_reset_backend() {
+  echo "Error: Factory reset currently supports Limine installations only." >&2
+  echo "GRUB/Asahi installations cannot be reset with this command, even with an @factory snapshot." >&2
+  exit 1
+}
+
+# The staged reset rebuilds Limine UKIs, including the provisioning unlock key.
+# Refuse unsupported installations before asking for sudo or changing anything.
+"$OMARCHY_PATH/bin/omarchy-cmd-present" limine limine-mkinitcpio || unsupported_reset_backend
+
 # Self-elevate so the menu entry (and a bare shell invocation) need no sudo
 # prefix. The caller's gum theme vars are forwarded as `env` arguments rather
 # than via `sudo -E`, so styling survives even under an env_reset sudoers.
 if (( EUID != 0 )); then
   mapfile -t gum_env < <(env | grep '^GUM_' || true)
   exec sudo env "${gum_env[@]}" "$0" "$@"
+fi
+
+# Inspect the ESP as root: its mount permissions may hide boot files from the
+# caller. Installed Limine tools alone do not make a GRUB installation safe.
+# This must stay before the cleanup trap, log creation, mounts and snapshots.
+if [[ -d /boot/grub ]] || [[ ! -f /boot/limine.conf && ! -f /efi/limine.conf && ! -f /boot/efi/limine.conf ]]; then
+  unsupported_reset_backend
 fi
 
 export PATH="$OMARCHY_PATH/bin:$PATH"

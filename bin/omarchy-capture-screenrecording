@@ -60,7 +60,7 @@ REC_PID=""
 # so use wf-recorder there. Elsewhere prefer gpu-screen-recorder, falling back to
 # wf-recorder only if gpu-screen-recorder isn't installed.
 select_recorder_backend() {
-  if grep -qa apple /proc/device-tree/compatible 2>/dev/null; then
+  if omarchy-hw-apple-silicon; then
     echo "wf-recorder"
   elif omarchy-cmd-present gpu-screen-recorder; then
     echo "gpu-screen-recorder"

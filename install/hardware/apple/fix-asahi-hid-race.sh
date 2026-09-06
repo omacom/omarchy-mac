@@ -9,7 +9,7 @@
 # session. Loading the drivers from the initramfs makes the devices bind
 # correctly on first registration, so the churn never happens.
 # See docs/apple-silicon-trackpad.md.
-if [[ $(uname -m) == "aarch64" ]] && grep -qi apple /proc/device-tree/compatible 2>/dev/null; then
+if omarchy-hw-apple-silicon; then
   echo "Detected Apple Silicon Mac: early-loading Apple HID modules"
   sudo mkdir -p /etc/mkinitcpio.conf.d
   sudo tee /etc/mkinitcpio.conf.d/apple_hid_modules.conf >/dev/null <<'EOF'

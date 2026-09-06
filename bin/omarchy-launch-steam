@@ -76,7 +76,7 @@ PY
 }
 
 prepare_asahi() {
-  [[ $(uname -m) == aarch64 ]] || return 0
+  omarchy-hw-aarch64 || return 0
   write_steam_desktop
   patch_steam_ui
 }
@@ -86,7 +86,7 @@ if [[ ${1:-} == --prepare ]]; then
   exit 0
 fi
 
-if [[ $(uname -m) == aarch64 ]] && omarchy-cmd-present muvm && omarchy-cmd-present FEXBash; then
+if omarchy-hw-aarch64 && omarchy-cmd-present muvm && omarchy-cmd-present FEXBash; then
   launcher="$HOME/.local/share/fex-steam/steam-launcher/bin_steam.sh"
 
   if [[ -f $launcher ]]; then

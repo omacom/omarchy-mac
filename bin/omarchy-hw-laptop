@@ -3,7 +3,7 @@
 # omarchy:summary=Returns true when running on a laptop (has a lid or laptop chassis).
 
 # A lid switch is the definitive signal for clamshell-capable hardware.
-for state in /proc/acpi/button/lid/*/state; do
+for state in "${OMARCHY_ACPI_LID_PATH:-/proc/acpi/button/lid}"/*/state; do
   [[ -e $state ]] && exit 0
 done
 
@@ -11,9 +11,29 @@ done
 # button. 8=Portable 9=Laptop 10=Notebook 14=Sub Notebook 30=Tablet
 # 31=Convertible 32=Detachable.
 chassis_type=""
-read -r chassis_type <"${OMARCHY_DMI_CHASSIS_TYPE_PATH:-/sys/class/dmi/id/chassis_type}" 2>/dev/null || true
+dmi_chassis="${OMARCHY_DMI_CHASSIS_TYPE_PATH:-/sys/class/dmi/id/chassis_type}"
+[[ -f $dmi_chassis ]] && read -r chassis_type <"$dmi_chassis" || true
 case "$chassis_type" in
 8 | 9 | 10 | 14 | 30 | 31 | 32) exit 0 ;;
 esac
+
+# Device-tree platforms need no DMI and include both laptops and desktops.
+# chassis-type is a standardized firmware property, not an Apple model list.
+dt_chassis="${OMARCHY_DT_CHASSIS_TYPE_PATH:-/proc/device-tree/chassis-type}"
+if [[ -r $dt_chassis ]]; then
+  chassis_type=$(tr -d '\0' <"$dt_chassis")
+  case "$chassis_type" in
+    laptop | convertible | tablet) exit 0 ;;
+  esac
+fi
+
+# If firmware has no portable chassis description, an actual SW_LID input
+# capability is sufficient. Sysfs prints a hexadecimal bitmap, low bits last;
+# bit zero means SW_LID. Do not infer a lid from LidClosed=false or Apple identity.
+for switches in "${OMARCHY_INPUT_CLASS_PATH:-/sys/class/input}"/input*/capabilities/sw; do
+  [[ -r $switches ]] || continue
+  capabilities=$(<"$switches")
+  [[ $capabilities =~ ^[[:xdigit:][:space:]]*[13579bBdDfF]$ ]] && exit 0
+done
 
 exit 1

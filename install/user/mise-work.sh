@@ -1,3 +1,5 @@
+machine_arch=$(omarchy-hw-arch) || { echo "Cannot determine a supported machine architecture." >&2; return 1; }
+
 # Setup default work directory (and tries)
 mkdir -p "$HOME/Work"
 mkdir -p "$HOME/Work/tries"
@@ -19,9 +21,9 @@ case ${OMARCHY_SETUP_CONTEXT:-runtime} in
 esac
 
 # Node ships per-architecture tarballs, and Apple Silicon needs the arm64 one.
-case $(uname -m) in
+case $machine_arch in
   aarch64) NODE_TARBALL_ARCH=arm64 ;;
-  *) NODE_TARBALL_ARCH=x64 ;;
+  x86_64) NODE_TARBALL_ARCH=x64 ;;
 esac
 
 NODE_TARBALL=""

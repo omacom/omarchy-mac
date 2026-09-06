@@ -1,0 +1,140 @@
+--- a/pkgbuilds/omarchy/PKGBUILD
++++ b/pkgbuilds/omarchy/PKGBUILD
+@@ -81,6 +81,9 @@
+ depends_aarch64=(
+   'iwd'
+   'networkmanager'
++  # Preserve the Mac profile's Btrfs snapshots and configured compressed swap.
++  'snapper'
++  'zram-generator'
+ )
+ 
+ makedepends=(
+--- a/pkgbuilds/omarchy-settings/PKGBUILD
++++ b/pkgbuilds/omarchy-settings/PKGBUILD
+@@ -15,11 +15,9 @@
+ pkgver=4.0.2
+ pkgrel=1
+ pkgdesc='Omarchy user defaults, /etc/skel content, fonts, plymouth theme, and support helpers'
+-# Arch-specific because the shipped /etc tree is not the same on every
+-# architecture: the Limine, mkinitcpio, zram and oomd drop-ins belong to the
+-# x86_64 boot and memory stack and are left out of the aarch64 package (see
+-# package()). makepkg only honours the arch-suffixed arrays below on
+-# arch-specific packages.
++# Architecture-specific dependency and payload selection. The reviewed Mac
++# profile keeps its existing memory policy and the two Asahi-aware boot
++# drop-ins; the Limine stack remains x86-only.
+ arch=('x86_64' 'aarch64')
+ url='https://github.com/basecamp/omarchy'
+ license=('MIT')
+@@ -74,13 +72,14 @@
+   'etc/systemd/user.conf.d/20-omarchy-nofile.conf'
+   'etc/sddm.conf.d/10-theme.conf'
+   'etc/sddm.conf.d/10-wayland.conf'
+-  'etc/udev/rules.d/99-omarchy-power-profile.rules'
+-  'etc/udev/rules.d/99-omarchy-wifi-powersave.rules'
+ )
+ # backup has no arch-suffixed form, so the x86_64-only drop-ins join it here.
+-# Each of these paths is removed from the aarch64 package in package().
++# The Mac profile selects its own backed-up paths immediately below.
+ if [[ $CARCH == x86_64 ]]; then
+   backup+=(
++    # These legacy rules are absent from the Mac source payload.
++    'etc/udev/rules.d/99-omarchy-power-profile.rules'
++    'etc/udev/rules.d/99-omarchy-wifi-powersave.rules'
+     'etc/mkinitcpio.conf.d/omarchy_hooks.conf'
+     'etc/mkinitcpio.conf.d/thunderbolt_module.conf'
+     'etc/limine-entry-tool.d/omarchy-defaults.conf'
+@@ -88,6 +87,14 @@
+     'etc/modprobe.d/omarchy-usb-autosuspend.conf'
+     'etc/systemd/oomd.conf.d/10-omarchy.conf'
+     'etc/systemd/zram-generator.conf'
++  )
++fi
++if [[ $CARCH == aarch64 ]]; then
++  # Preserve the existing Mac boot and memory settings as package-owned files.
++  backup+=(
++    'etc/mkinitcpio.conf.d/omarchy_hooks.conf'
++    'etc/mkinitcpio.conf.d/thunderbolt_module.conf'
++    'etc/systemd/oomd.conf.d/10-omarchy.conf'
+   )
+ fi
+ 
+@@ -188,15 +195,17 @@
+   install -Dm644 default/systemd/user/omarchy-tailscale-receive.service "$pkgdir/usr/lib/systemd/user/omarchy-tailscale-receive.service"
+   install -Dm644 default/systemd/user/omarchy-fcitx5.service "$pkgdir/usr/lib/systemd/user/omarchy-fcitx5.service"
+   install -Dm644 default/systemd/user/omarchy-crash-watch.service "$pkgdir/usr/lib/systemd/user/omarchy-crash-watch.service"
++  if [[ $CARCH == aarch64 ]]; then
++    install -Dm644 default/systemd/user/omarchy-brightness-keyboard-auto.service \
++      "$pkgdir/usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service"
++  fi
+   # Marks app.slice (and only app.slice) as a systemd-oomd kill candidate, so
+   # memory pressure costs one app scope instead of the compositor session.
+-  # Thresholds live in etc/systemd/oomd.conf.d/10-omarchy.conf. Both this and
+-  # the zram vendor drop-in belong to the x86_64 memory stack: the aarch64
+-  # install neither enables systemd-oomd nor configures zram swap.
+-  if [[ $CARCH == x86_64 ]]; then
+-    install -Dm644 default/systemd/user/app.slice.d/10-oomd.conf "$pkgdir/usr/lib/systemd/user/app.slice.d/10-oomd.conf"
+-    install -Dm644 default/systemd/zram-generator.conf.d/90-omarchy.conf "$pkgdir/usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf"
+-  fi
++  # Thresholds live in etc/systemd/oomd.conf.d/10-omarchy.conf. The Mac profile
++  # retains its existing zram and app.slice policy; changing that is separate
++  # from updating the package recipes. /etc zram overrides remain user-owned.
++  install -Dm644 default/systemd/user/app.slice.d/10-oomd.conf "$pkgdir/usr/lib/systemd/user/app.slice.d/10-oomd.conf"
++  install -Dm644 default/systemd/zram-generator.conf.d/90-omarchy.conf "$pkgdir/usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf"
+ 
+   # Same for applications/** — used by omarchy-refresh-applications,
+   # omarchy-install-gaming-*, etc. to copy .desktop files into ~/.local/share.
+@@ -211,20 +220,17 @@
+   install -d "$pkgdir/etc"
+   cp -a etc/. "$pkgdir/etc/"
+   if [[ $CARCH == aarch64 ]]; then
+-    # The x86_64 boot stack's drop-ins must not ship on aarch64: mkinitcpio
+-    # reads every file under /etc/mkinitcpio.conf.d/, so omarchy_hooks.conf
+-    # would inject the Limine hooks into the Asahi kernel's initramfs, and the
+-    # Limine entry-tool config has no consumer without Limine.
++    # Clear the upstream boot tree first; select the reviewed Mac hooks below.
++    # The Limine entry-tool config has no consumer without Limine.
+     rm -rf "$pkgdir/etc/limine-entry-tool.d" "$pkgdir/etc/mkinitcpio.conf.d"
+-    # Memory stack: no zram device or zswap on the aarch64 install, and
+-    # systemd-oomd is not enabled there, so the vm.* reclaim tuning written
+-    # for zram would be wrong for it. Keep only the network tuning.
+-    rm -rf "$pkgdir/etc/systemd/oomd.conf.d"
+-    rm -f "$pkgdir/etc/systemd/zram-generator.conf" "$pkgdir/etc/tmpfiles.d/omarchy-zswap.conf"
+-    cat >"$pkgdir/etc/sysctl.d/99-omarchy-sysctl.conf" <<'EOF'
+-# Solve common flakiness with SSH (MTU discovery on flaky links).
+-net.ipv4.tcp_mtu_probing=1
+-EOF
++    # An explicit allowlist, not the x86 boot tree: these fork files preserve
++    # Asahi firmware and only name thunderbolt when the target kernel has it.
++    for conf in omarchy_hooks.conf thunderbolt_module.conf; do
++      install -Dm644 "etc/mkinitcpio.conf.d/$conf" "$pkgdir/etc/mkinitcpio.conf.d/$conf"
++    done
++    # The old /etc zram file was replaced by the vendor drop-in. Do not bring
++    # it back or remove the Mac profile's existing oomd/sysctl/zswap policy.
++    rm -f "$pkgdir/etc/systemd/zram-generator.conf"
+     # USB autosuspend is left at the kernel default on Apple Silicon.
+     rm -f "$pkgdir/etc/modprobe.d/omarchy-usb-autosuspend.conf"
+     rmdir "$pkgdir/etc/modprobe.d" "$pkgdir/etc/tmpfiles.d" 2>/dev/null || true
+--- a/pkgbuilds/omarchy-settings/omarchy-settings.install
++++ b/pkgbuilds/omarchy-settings/omarchy-settings.install
+@@ -16,13 +16,18 @@
+   # Apple Silicon installs run on Arch Linux ARM's base with the Asahi
+   # packages, and keep that system identity: /etc/os-release stays the
+   # symlink to the distribution's /usr/lib/os-release, and the PAM, NSS,
+-  # plymouth and skel overrides below are not applied there.
++  # plymouth overrides below are not applied there. The Mac profile still
++  # publishes the skel shell startup used by its installer.
+   if _apple_silicon; then
+     echo "Preserving Arch Linux ARM system configuration on Apple Silicon..."
+     if [[ -f /usr/lib/os-release ]]; then
+       rm -f /etc/os-release
+       ln -s ../usr/lib/os-release /etc/os-release
+     fi
++    # /etc/skel/.bashrc belongs to bash, so publish our shipped startup file
++    # through the scriptlet. The installer later copies skel to the new owner.
++    # Keep the Apple PAM/NSS/Plymouth policy above and existing users untouched.
++    install -Dm644 /usr/share/omarchy/etc-overrides/dot.bashrc /etc/skel/.bashrc
+     return 0
+   fi
+ 

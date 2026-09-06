@@ -1290,7 +1290,12 @@ main() {
     exit 0
   fi
 
-  [[ $(uname -m) == "aarch64" ]] || fail "this tool is for Apple Silicon (aarch64) installs"
+  local detected_arch
+  detected_arch=$(uname -m) || fail "could not determine the machine architecture"
+  case $detected_arch in
+    aarch64 | arm64) ;;
+    *) fail "this tool is for Apple Silicon (aarch64) installs" ;;
+  esac
 
   mkdir -p "$(dirname "$LOG")"
 

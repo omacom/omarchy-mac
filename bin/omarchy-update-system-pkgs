@@ -3,10 +3,12 @@
 # omarchy:summary=Update system packages with pacman
 # omarchy:requires-sudo=true
 
+machine_arch=$(omarchy-hw-arch) || { echo "Cannot determine a supported machine architecture." >&2; exit 1; }
+
 set -e
 
 targets=()
-if [[ $(uname -m) == "aarch64" ]]; then
+if [[ $machine_arch == "aarch64" ]]; then
   source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
   omarchy_arm_prepare_package_sources
   mapfile -t targets < <(omarchy_arm_package_targets)
