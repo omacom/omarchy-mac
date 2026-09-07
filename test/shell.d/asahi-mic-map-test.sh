@@ -39,6 +39,7 @@ stub_bin="$test_tmp/bin"
 calls="$test_tmp/calls.log"
 compatible="$test_tmp/compatible"
 sink_created="$test_tmp/sink-created"
+default_sink="$test_tmp/default-sink"
 mkdir -p "$stub_bin"
 
 cat >"$stub_bin/uname" <<'SH'
@@ -71,7 +72,14 @@ list)
   ;;
 load-module)
   touch "$SINK_CREATED"
+  printf '%s\n' "omarchy_asahi_mic" >"$DEFAULT_SINK_FILE"
   echo 42
+  ;;
+get-default-sink)
+  cat "$DEFAULT_SINK_FILE"
+  ;;
+set-default-sink)
+  printf '%s\n' "$2" >"$DEFAULT_SINK_FILE"
   ;;
 esac
 SH
@@ -118,24 +126,25 @@ run_hw aarch64 ||
   fail "omarchy-hw-apple detects Apple Silicon"
 pass "omarchy-hw-apple detects Apple Silicon"
 
+run_map() {
+  PATH="$stub_bin:$ROOT/bin:$PATH" \
+    TEST_ARCH="${1:-aarch64}" \
+    OMARCHY_APPLE_COMPATIBLE="$compatible" \
+    TEST_LOG="$calls" \
+    SINK_CREATED="$sink_created" \
+    DEFAULT_SINK_FILE="$default_sink" \
+    "$map_cmd"
+}
+
 : >"$calls"
-PATH="$stub_bin:$ROOT/bin:$PATH" \
-  TEST_ARCH=x86_64 \
-  OMARCHY_APPLE_COMPATIBLE="$compatible" \
-  TEST_LOG="$calls" \
-  SINK_CREATED="$sink_created" \
-  "$map_cmd"
+run_map x86_64
 [[ ! -s $calls ]] || fail "omarchy-audio-asahi-mic-map is a no-op off Apple Silicon" "$(cat "$calls")"
 pass "omarchy-audio-asahi-mic-map is a no-op off Apple Silicon"
 
 : >"$calls"
 rm -f "$sink_created"
-PATH="$stub_bin:$ROOT/bin:$PATH" \
-  TEST_ARCH=aarch64 \
-  OMARCHY_APPLE_COMPATIBLE="$compatible" \
-  TEST_LOG="$calls" \
-  SINK_CREATED="$sink_created" \
-  "$map_cmd" || fail "the mapper succeeds on Apple Silicon with DSP present"
+printf '%s\n' "audio_effect.j313-convolver" >"$default_sink"
+run_map || fail "the mapper succeeds on Apple Silicon with DSP present"
 
 grep -Fq $'pactl\tload-module\tmodule-null-sink' "$calls" ||
   fail "the mapper creates a stereo null sink" "$(cat "$calls")"
@@ -144,7 +153,7 @@ grep -Fq $'pw-link\teffect_output.j313-mic:capture_AUX0\tomarchy_asahi_mic:playb
 grep -Fq $'pw-link\teffect_output.j313-mic:capture_AUX0\tomarchy_asahi_mic:playback_FR' "$calls" ||
   fail "the mapper copies AUX0 onto FR" "$(cat "$calls")"
 grep -Fq $'pactl\tset-default-sink\taudio_effect.j313-convolver' "$calls" ||
-  fail "the mapper restores the speaker convolver as the default sink" "$(cat "$calls")"
+  fail "the mapper restores the speaker convolver after the dummy sink steals it" "$(cat "$calls")"
 grep -Fq $'pactl\tset-default-source\tomarchy_asahi_mic.monitor' "$calls" ||
   fail "the mapper uses the stereo monitor as the default source" "$(cat "$calls")"
 ! grep -Fq 'move-source-output' "$calls" ||
@@ -152,15 +161,22 @@ grep -Fq $'pactl\tset-default-source\tomarchy_asahi_mic.monitor' "$calls" ||
 pass "the mapper duplicates AUX0 onto a stereo default source"
 
 : >"$calls"
-PATH="$stub_bin:$ROOT/bin:$PATH" \
-  TEST_ARCH=aarch64 \
-  OMARCHY_APPLE_COMPATIBLE="$compatible" \
-  TEST_LOG="$calls" \
-  SINK_CREATED="$sink_created" \
-  "$map_cmd" || fail "the mapper is idempotent"
+run_map || fail "the mapper is idempotent"
 ! grep -Fq $'pactl\tload-module\tmodule-null-sink' "$calls" ||
   fail "an existing stereo sink is reused" "$(cat "$calls")"
+! grep -Fq $'pactl\tset-default-sink' "$calls" ||
+  fail "a later run does not override an already-correct default sink" "$(cat "$calls")"
 pass "an existing stereo sink is reused"
+
+: >"$calls"
+rm -f "$sink_created"
+printf '%s\n' "bluez_output.headphones" >"$default_sink"
+run_map || fail "the mapper succeeds when headphones are the default sink"
+grep -Fq $'pactl\tset-default-sink\tbluez_output.headphones' "$calls" ||
+  fail "the mapper restores headphones after the dummy sink steals them" "$(cat "$calls")"
+! grep -Fq $'pactl\tset-default-sink\taudio_effect.j313-convolver' "$calls" ||
+  fail "the mapper does not force the speaker convolver over headphones" "$(cat "$calls")"
+pass "the mapper preserves headphones and Bluetooth as the default sink"
 
 fake_home="$test_tmp/home"
 mkdir -p "$fake_home"
@@ -172,6 +188,7 @@ PATH="$stub_bin:$ROOT/bin:$PATH" \
   OMARCHY_APPLE_COMPATIBLE="$compatible" \
   TEST_LOG="$calls" \
   SINK_CREATED="$sink_created" \
+  DEFAULT_SINK_FILE="$default_sink" \
   bash -euo pipefail -c 'source "$1"' bash "$mic_leaf"
 [[ -f $fake_home/.config/wireplumber/wireplumber.conf.d/asahi-headset-mic.conf ]] ||
   fail "user setup copies the headset-mic drop-in"

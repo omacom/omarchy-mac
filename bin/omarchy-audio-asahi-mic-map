@@ -34,6 +34,7 @@ dsp_source=$(pactl list short sources 2>/dev/null | awk '/effect_output\.j[0-9]+
 [[ -n $dsp_source ]] || exit 0
 
 convolver=$(pactl list short sinks 2>/dev/null | awk '/audio_effect\.j[0-9]+-convolver\t/ { print $2; exit }')
+previous_sink=$(pactl get-default-sink 2>/dev/null || true)
 
 if ! pactl list short sinks 2>/dev/null | grep -q $'\tomarchy_asahi_mic\t'; then
   pactl load-module module-null-sink \
@@ -56,8 +57,17 @@ pactl set-source-volume "$dsp_source" 100% 2>/dev/null || true
 pactl set-sink-volume "$SINK_NAME" 100% 2>/dev/null || true
 pactl set-source-volume "${SINK_NAME}.monitor" 100% 2>/dev/null || true
 
-# A new null sink otherwise becomes the default output and mutes the speakers.
-if [[ -n $convolver ]]; then
-  pactl set-default-sink "$convolver" 2>/dev/null || true
+# A new null sink otherwise becomes the default output. Put back whatever
+# was playing — headphones, Bluetooth, or the speaker convolver — and only
+# fall back to the convolver when the dummy sink is what is left.
+current_sink=$(pactl get-default-sink 2>/dev/null || true)
+if [[ $current_sink == "$SINK_NAME" || -z $current_sink ]]; then
+  restore=$previous_sink
+  if [[ -z $restore || $restore == "$SINK_NAME" ]]; then
+    restore=$convolver
+  fi
+  if [[ -n $restore && $restore != "$SINK_NAME" ]]; then
+    pactl set-default-sink "$restore" 2>/dev/null || true
+  fi
 fi
 pactl set-default-source "${SINK_NAME}.monitor" 2>/dev/null || true
