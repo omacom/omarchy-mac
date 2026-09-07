@@ -173,3 +173,54 @@ for failing_stage in none system repositories; do
     fail "system setup refreshes restored repositories before user setup ($failing_stage)" "$setup_output (status $setup_status)"
 done
 pass "system setup refreshes restored repositories before user setup and stops on failure"
+
+# 4.0.2 shipped omarchy-brightness-keyboard-auto.service and
+# omarchy-speaker-tuning.service as /usr/share/omarchy documentation while the
+# PKGBUILD's hand-maintained list never installed them to
+# /usr/lib/systemd/user/, wedging first-run into replaying every login. The
+# build patches in a glob install so the next new unit cannot repeat this.
+unit_dir=$(mktemp -d)
+mkdir -p "$unit_dir/default/systemd/user"
+cp "$ROOT"/default/systemd/user/*.service "$unit_dir/default/systemd/user/"
+cat >"$unit_dir/PKGBUILD" <<'EOF'
+package() {
+  cp -r . "$pkgdir/usr/share/omarchy"
+  install -Dm644 default/systemd/user/bt-agent.service              "$pkgdir/usr/lib/systemd/user/bt-agent.service"
+  install -Dm644 default/systemd/user/omarchy-sleep-lock.service    "$pkgdir/usr/lib/systemd/user/omarchy-sleep-lock.service"
+}
+EOF
+if ! (
+  source "$build_script"
+  install_all_user_units "$unit_dir/PKGBUILD"
+); then
+  rm -rf "$unit_dir"
+  fail "install_all_user_units patches a PKGBUILD that installs bt-agent.service"
+fi
+unit_loop=$(grep -F 'for omarchy_user_unit in default/systemd/user/*.service' "$unit_dir/PKGBUILD" || true)
+[[ -n $unit_loop ]] || { rm -rf "$unit_dir"; fail "the patched PKGBUILD gained the user unit glob install"; }
+# Prove the inserted line really stages every shipped unit, including the two
+# the explicit list missed, by executing it the way package() would.
+if ! ( cd "$unit_dir" && pkgdir="$unit_dir/pkg" eval "$unit_loop" ); then
+  rm -rf "$unit_dir"
+  fail "the inserted glob install runs cleanly inside package()"
+fi
+for unit_source in "$ROOT"/default/systemd/user/*.service; do
+  unit_name=${unit_source##*/}
+  if [[ ! -f "$unit_dir/pkg/usr/lib/systemd/user/$unit_name" ]]; then
+    rm -rf "$unit_dir"
+    fail "the glob install stages every shipped user unit" "missing: $unit_name"
+  fi
+done
+rm -rf "$unit_dir"
+# A PKGBUILD upstream restructured must fail the build loudly, not silently
+# ship a package with no user units.
+anchor_dir=$(mktemp -d)
+printf 'package() {\n  :\n}\n' >"$anchor_dir/PKGBUILD"
+if ( source "$build_script"; install_all_user_units "$anchor_dir/PKGBUILD" >/dev/null 2>&1 ); then
+  rm -rf "$anchor_dir"
+  fail "install_all_user_units refuses a PKGBUILD without the expected unit install anchor"
+fi
+rm -rf "$anchor_dir"
+grep -A4 'package == "omarchy-settings"' "$build_script" | grep -q install_all_user_units ||
+  fail "the package build installs every user unit when building omarchy-settings"
+pass "the package build installs every default/systemd/user unit into /usr/lib/systemd/user"

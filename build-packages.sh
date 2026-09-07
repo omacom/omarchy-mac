@@ -120,6 +120,30 @@ keep_apple_silicon_mkinitcpio_drop_ins() {
     fail "lost the limine-entry-tool.d cleanup in $pkgbuild"
 }
 
+# omarchy-settings installs runtime user units from a hand-maintained list in
+# package(), so a unit added under default/systemd/user/ looks shipped in
+# /usr/share/omarchy while never reaching /usr/lib/systemd/user/. That gap is
+# how 4.0.2 wedged first-run into replaying every login: enable-user-units.sh
+# asked for a unit the package never installed. Append a glob install after
+# the existing list rather than forking the PKGBUILD, so upstream keeps
+# tracking and every shipped unit — current and future — lands in the package.
+install_all_user_units() {
+  local pkgbuild="$1"
+  local anchor='install -Dm644 default/systemd/user/bt-agent.service'
+  local glob_loop='for omarchy_user_unit in default/systemd/user/*.service; do install -Dm644 "$omarchy_user_unit" "$pkgdir/usr/lib/systemd/user/${omarchy_user_unit##*/}"; done'
+
+  # Fail loudly if upstream restructures the unit installs. Silently not
+  # matching would ship a package missing every user unit.
+  grep -qF "$anchor" "$pkgbuild" ||
+    fail "omarchy-settings PKGBUILD no longer installs default/systemd/user units as expected; re-check it against $pkgbuild"
+
+  sed -i "\\%$anchor%a\\
+$glob_loop" "$pkgbuild"
+
+  grep -qF 'for omarchy_user_unit in default/systemd/user/*.service' "$pkgbuild" ||
+    fail "could not add the default/systemd/user glob install to $pkgbuild"
+}
+
 # makepkg runs with --nodeps because the runtime dependencies include packages
 # built here, so pacman cannot resolve them yet. That skips makedepends too,
 # leaving the build tools to be installed up front.
@@ -172,6 +196,7 @@ build_package() {
   fi
   if [[ $package == "omarchy-settings" ]]; then
     keep_apple_silicon_mkinitcpio_drop_ins "$build_dir/$package/PKGBUILD"
+    install_all_user_units "$build_dir/$package/PKGBUILD"
   fi
   if [[ $package == "omarchy" || $package == "omarchy-settings" ]]; then
     set_pkgrel "$build_dir/$package/PKGBUILD"
