@@ -38,3 +38,11 @@ grep -F 'omarchy-shell -q omarchy.clock refresh' "$timezone_menu" >/dev/null ||
   fail "timezone menu no longer refreshes the retired Clock IPC target"
 
 pass "timezone menu refreshes clock after timezone changes"
+
+first_run_tz="$ROOT/install/user/first-run/timezone.sh"
+grep -F -- '--exec omarchy-launch-floating-terminal-with-presentation omarchy-cmd-tzupdate-enhanced' \
+  "$first_run_tz" >/dev/null ||
+  fail "first-run timezone toast passes --exec as separate words"
+! grep -F -- '--exec "' "$first_run_tz" >/dev/null ||
+  fail "first-run timezone toast does not quote --exec as one string"
+pass "first-run timezone toast matches notification-send --exec argv"
