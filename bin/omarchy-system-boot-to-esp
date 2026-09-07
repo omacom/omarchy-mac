@@ -83,6 +83,29 @@ recovery_note() {
   warn "and restore the /boot/efi line in /etc/fstab before rebooting."
 }
 
+# ISO installs keep their boot files in a private UUID directory on the ESP.
+# Moving /boot and reinstalling GRUB would overwrite the shared boot owner.
+# The UUID check also protects installs made before the marker was introduced.
+refuse_iso_boot_layout() {
+  local system_root=${1:-/} root_uuid esp_directory
+
+  if [[ -e $system_root/etc/omarchy-mac-iso-shared-esp ]]; then
+    fail "this ISO installation shares its EFI partition; boot-to-esp would overwrite its bootloader. Keep the existing UUID-private boot layout."
+  fi
+
+  for esp_directory in "$system_root/boot/efi" "$system_root/boot"; do
+    if [[ -d $esp_directory/EFI/omarchy || -d $esp_directory/grub/omarchy-roots ]]; then
+      root_uuid=$(findmnt -nro UUID --target "$system_root") ||
+        fail "cannot identify the root filesystem UUID to check the ISO boot layout; refusing to move /boot"
+      [[ $root_uuid =~ ^[0-9A-Fa-f-]+$ ]] ||
+        fail "cannot identify the root filesystem UUID to check the ISO boot layout; refusing to move /boot"
+      if [[ -d $esp_directory/EFI/omarchy/$root_uuid || -f $esp_directory/grub/omarchy-roots/$root_uuid.cfg ]]; then
+        fail "this ISO installation uses UUID-private EFI boot files; boot-to-esp would overwrite its bootloader. Keep the existing boot layout."
+      fi
+    fi
+  done
+}
+
 main() {
   local esp esp_fstype boot_kb avail_kb typed assume_yes=0
 
@@ -93,6 +116,8 @@ main() {
     esac
     shift
   done
+
+  refuse_iso_boot_layout
 
   (( EUID == 0 )) || fail "run as root"
   [[ $(uname -m) == "aarch64" ]] || fail "this tool is for Apple Silicon (aarch64) installs"
