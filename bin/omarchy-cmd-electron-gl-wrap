@@ -53,7 +53,11 @@ EOF
 
 if [[ -f $dest ]] && grep -q '^# omarchy-electron-gl-wrapper$' "$dest" &&
   grep -Fq "real=$quoted_real" "$dest"; then
-  as_root chmod 755 "$dest"
+  # System setup may already have installed this wrapper before user finalization.
+  # Leave correct permissions alone so first login needs no root access.
+  if [[ $(stat -c %a "$dest") != "755" ]]; then
+    as_root chmod 755 "$dest"
+  fi
   exit 0
 fi
 

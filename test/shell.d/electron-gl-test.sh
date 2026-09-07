@@ -52,6 +52,45 @@ grep -q '^# omarchy-electron-gl-wrapper$' "$bind/demo" ||
   fail "wrapper is marked as an Omarchy Electron GL wrapper"
 pass "wrapper is marked as an Omarchy Electron GL wrapper"
 
+# A repeated user finalization must not chmod an already-correct system wrapper.
+stubs="$test_tmp/stubs"
+mkdir -p "$stubs"
+cat >"$stubs/chmod" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >>"$OMARCHY_TEST_PERMISSION_CALLS"
+[[ ${OMARCHY_TEST_ALLOW_CHMOD:-0} == "1" ]] || exit 91
+exec /usr/bin/chmod "$@"
+STUB
+cat >"$stubs/sudo" <<'STUB'
+#!/bin/bash
+printf 'sudo %s\n' "$*" >>"$OMARCHY_TEST_PERMISSION_CALLS"
+exit 92
+STUB
+chmod +x "$stubs/chmod" "$stubs/sudo"
+permission_calls="$test_tmp/permission-calls"
+run_wrap() {
+  PATH="$stubs:$ROOT/bin:$PATH" \
+    OMARCHY_TEST_PERMISSION_CALLS="$permission_calls" \
+    OMARCHY_ELECTRON_GL_BIND_DIR="$bind" \
+    "$ROOT/bin/omarchy-cmd-electron-gl-wrap" demo "$real"
+}
+
+chmod 555 "$bind"
+run_wrap || fail "correct wrapper needs no privilege or permission changes on repeat"
+chmod 755 "$bind"
+[[ ! -e $permission_calls ]] ||
+  fail "correct wrapper must not invoke chmod or sudo"
+pass "correct wrapper needs no privilege or permission changes on repeat"
+
+for mode in 644 775; do
+  chmod "$mode" "$bind/demo"
+  OMARCHY_TEST_ALLOW_CHMOD=1 run_wrap ||
+    fail "wrapper repairs incorrect mode $mode"
+  [[ $(stat -c %a "$bind/demo") == "755" ]] ||
+    fail "wrapper restores mode 755 from $mode"
+done
+pass "wrapper repairs missing execute and excessive write permissions"
+
 out=$(PATH="$ROOT/bin:$PATH" OMARCHY_DRI_PATH="$dri" "$bind/demo" hello)
 [[ $out == "real --ozone-platform=wayland --disable-gpu hello" ]] ||
   fail "wrapper injects software GL flags" "$out"
