@@ -5,12 +5,19 @@
 
 set -e
 
+targets=()
+if [[ $(uname -m) == "aarch64" ]]; then
+  source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
+  omarchy_arm_prepare_package_sources
+  mapfile -t targets < <(omarchy_arm_package_targets)
+fi
+
 # The conflict handler's last resort: pacman puts its questions to the person
 # running the update instead of answering them itself. Nothing here may capture
 # a stream, because an upgrade without --noconfirm prompts on stderr. The
 # handler has already said why, so no heading here either.
 if [[ ${OMARCHY_UPDATE_CONFLICT:-} == 1 && ${OMARCHY_UPDATE_INTERACTIVE:-} == 1 ]]; then
-  exec sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --overwrite '/usr/share/omarchy/*'
+  exec sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --overwrite '/usr/share/omarchy/*' "${targets[@]}"
 fi
 
 echo -e "\e[32m\nUpdate system packages\e[0m"
@@ -24,7 +31,7 @@ trap 'rm -f "$errors"' EXIT
 # Progress bars stay on stdout. Errors are on stderr, kept for the conflict
 # handler below; LC_ALL=C is what keeps them parseable in any locale.
 if sudo env LC_ALL=C OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm \
-  --overwrite '/usr/share/omarchy/*' 2>"$errors"; then
+  --overwrite '/usr/share/omarchy/*' "${targets[@]}" 2>"$errors"; then
   cat "$errors" >&2
   exit 0
 fi

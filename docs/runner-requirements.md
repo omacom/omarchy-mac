@@ -1,35 +1,23 @@
-# Self-hosted runner for Install VM
+# Install VM runner requirements
 
-The **Install VM** workflow (`.github/workflows/install-vm.yml`) runs only on a machine you register. It is `workflow_dispatch` plus a nightly schedule. It is not hooked to `pull_request`: this repo is public, and a desktop runner must not execute fork PRs.
+The **Install VM** workflow uses GitHub's disposable `ubuntu-24.04-arm` runners for every pull request, pushes to `quattro`, manual runs, and the nightly schedule. No self-hosted runner registration is needed. The workflow installs `systemd-container`, `curl`, `gnupg`, CA certificates, `tar`, and `gzip`; removes unused hosted-image toolchains; and fails early unless at least 20 GiB is free.
 
-## Labels
+The Arch Linux ARM guest runs under `systemd-nspawn`, sharing the host's kernel without nested KVM. A generic ARM64 kernel with Landlock support is sufficient for installer and userspace validation. The harness explicitly allows the three Landlock system calls through nspawn's default syscall filter, so current pacman can enforce its download sandbox even with an older host systemd. Host diagnostics report the kernel configuration and active security modules when readable; package sandboxing remains enabled. Apple boot, Asahi kernel behavior, and Apple GPU support still require hardware testing.
 
-`./test/vm/setup-github-runner` registers with `--labels self-hosted,linux,ARM64,kvm`. GitHub also stamps OS/arch as `Linux` and `ARM64`. Matching is case-insensitive.
+## Run locally on a disposable ARM64 host
 
-The job selects:
+The harness needs an aarch64 Linux host, `systemd-nspawn`, `curl`, `gpg`, `sha256sum`, tar/gzip, root or passwordless sudo, and outbound access to the Arch Linux ARM rootfs and keyserver, package mirrors, and AUR. Allow at least 20 GiB free for the rootfs, packages, build files, and prepared snapshot.
 
-```
-runs-on: [self-hosted, linux, ARM64]
-```
-
-The runner must show **Idle** with at least those three labels. Confirm at https://github.com/omarchy-mac/omarchy-mac/settings/actions/runners.
-
-## Capabilities
-
-- aarch64 Linux (Asahi / Omarchy). 16k host pages are expected.
-- `systemd-nspawn` (from `systemd`)
-- passwordless `sudo` for the runner user (the setup script grants this to `github-runner`)
-- outbound network (Arch Linux ARM tarball, pacman, AUR)
-- several GB free on `/` — a full `install.sh` is a second Omarchy userspace. 34G disks fill up.
-
-KVM is labeled but unused: a 4k Arch ARM QEMU guest cannot use KVM on a 16k host. The harness is nspawn sharing the host kernel.
-
-## Register
-
-From a terminal in this checkout:
+From the checkout to test:
 
 ```bash
-./test/vm/setup-github-runner
+export OMARCHY_INSTALL_VM_WORK="/var/tmp/omarchy-install-$(date +%s)"
+export OMARCHY_INSTALL_VM_CACHE="$(mktemp -d)"
+export OMARCHY_INSTALL_VM_PACKAGE_SOURCES=1
+export OMARCHY_INSTALL_VM_IDEMPOTENCY=1
+sudo --preserve-env=HOME,OMARCHY_INSTALL_VM_WORK,OMARCHY_INSTALL_VM_CACHE,OMARCHY_INSTALL_VM_PACKAGE_SOURCES,OMARCHY_INSTALL_VM_IDEMPOTENCY bash ./test/vm/run-selective-edge
 ```
 
-Then Actions → **Install VM** → Run workflow. Locally: `sudo ./test/vm/run-install`.
+The harness removes its guest root on exit and keeps logs under `$OMARCHY_INSTALL_VM_WORK/logs`. Local cache and logs remain for inspection; hosted jobs discard the machine after uploading logs. GitHub keeps each run's log artifact for seven days.
+
+`test/vm/setup-github-runner` remains a legacy helper for registering an Apple Silicon runner for trusted manual hardware workflows. Install VM no longer selects those runners. Never route untrusted fork PRs onto a persistent desktop runner.

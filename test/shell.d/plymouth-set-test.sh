@@ -67,9 +67,13 @@ if unshare --user --map-root-user true 2>/dev/null; then
   (( status != 0 )) || fail "omarchy-plymouth-set refuses to run as root"
   [[ $output == *"as your user"* && $output == *"not under sudo"* ]] ||
     fail "the root refusal explains how to invoke the publisher safely" "$output"
+
+  output=$(unshare --user --map-root-user env OMARCHY_PATH="$ROOT" /bin/bash "$ROOT/bin/omarchy-plymouth-set" --refresh-sddm-default 2>&1)
+  status=$?
+  (( status != 0 )) || fail "the root exception does not include the SDDM refresh"
 else
-  grep -A2 -Eq '^if \(\( EUID == 0 \)\); then$' "$ROOT/bin/omarchy-plymouth-set" ||
-    fail "omarchy-plymouth-set retains its root-invocation guard"
+  grep -A2 -Eq '^if \(\( EUID == 0 \)\) && \[\[ \$mode != "refresh-plymouth" \]\]; then$' "$ROOT/bin/omarchy-plymouth-set" ||
+    fail "omarchy-plymouth-set retains its root guard outside the fixed Plymouth refresh"
 fi
 pass "the logo descriptor can only be opened by an unprivileged caller"
 
@@ -431,6 +435,32 @@ assert_packaged_assets() {
       fail "$context publishes $asset as a regular mode-0644 file"
   done
 }
+
+# System setup already runs as root, including when provisioning is deferred
+# and no target user exists. The packaged-default refresh is the sole safe
+# root entry: it has no caller-selected file, still validates the packaged
+# tree, and remains idempotent when setup is resumed.
+if unshare --user --map-root-user true 2>/dev/null; then
+  setup_run
+  output=$(run_refresh_plymouth unshare --user --map-root-user env 2>&1)
+  status=$?
+  (( status == 0 )) || fail "root system setup can publish the fixed Plymouth default" "$output"
+
+  output=$(run_refresh_plymouth unshare --user --map-root-user env 2>&1)
+  status=$?
+  (( status == 0 )) || fail "root fixed-default publication is idempotent" "$output"
+
+  assert_packaged_assets \
+    "root fixed-default refresh" \
+    "$ROOT/default/plymouth" \
+    "$theme" \
+    "${plymouth_default_assets[@]}"
+  [[ $(grep -c '^root transaction$' "$sudo_log") == 2 ]] ||
+    fail "each root fixed-default refresh completes one validated transaction" "$(cat "$sudo_log")"
+  pass "root system setup can idempotently refresh only the packaged Plymouth default"
+else
+  pass "user namespaces unavailable; structurally verified the root-only fixed-default exception"
+fi
 
 for requested_umask in 022 027 077; do
   setup_fresh_run

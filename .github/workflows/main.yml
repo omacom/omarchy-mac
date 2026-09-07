@@ -92,7 +92,7 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq lua5.4 imagemagick libxkbcommon-tools ripgrep desktop-file-utils
+          sudo apt-get install -y python3-yaml jq lua5.4 imagemagick libxkbcommon-tools ripgrep desktop-file-utils
           sudo ln -sf /usr/bin/lua5.4 /usr/local/bin/lua
           if ! command -v magick >/dev/null; then
             sudo ln -sf "$(command -v convert)" /usr/local/bin/magick

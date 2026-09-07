@@ -1,0 +1,126 @@
+#!/bin/bash
+
+# omarchy:summary=Reload brcmfmac if Wi-Fi does not return after resume
+# omarchy:group=system
+# omarchy:hidden=true
+# omarchy:requires-sudo=true
+
+# The Broadcom firmware on Apple Silicon Macs (BCM4378/BCM4387) can wedge
+# across s2idle: scans fail with -52 and every association is rejected with
+# status_code=16, which NetworkManager surfaces as a wrong password. Toggling
+# the radio does not reset the chip firmware - only a driver reload does.
+# Upstream: https://github.com/AsahiLinux/linux/issues/439
+#
+# Run by omarchy-wifi-resume-fix.service after each resume (installed by
+# install/hardware/apple/fix-wifi-resume.sh). Output goes to the journal:
+#   journalctl -u omarchy-wifi-resume-fix
+
+WAIT_BEFORE=12 # backstop: reload anyway if wifi is still not up after this
+WAIT_AFTER=30  # seconds to wait for reconnect after a reload
+REJECTS=2      # ASSOC-REJECT status_code=16 events that confirm a wedge
+
+START=$(date '+%Y-%m-%d %H:%M:%S')
+
+# Journal position at start: entries after this cursor are post-resume no
+# matter what the wall clock says. On some Apple Silicon kernels the clock
+# steps backwards across resume, which would leave a --since window empty; an
+# unwindowed read is worse, counting stale rejects from the last genuine
+# wedge. The cursor is immune to both.
+CURSOR=$(journalctl -q -n 0 --show-cursor 2>/dev/null | sed -n 's/^-- cursor: //p')
+
+wifi_iface() {
+  nmcli -t -f DEVICE,TYPE device status 2>/dev/null |
+    awk -F: '$2 == "wifi" { print $1; exit }'
+}
+
+wifi_state() {
+  nmcli -t -f DEVICE,STATE device status 2>/dev/null |
+    awk -F: -v d="$1" '$1 == d { print $2; exit }'
+}
+
+# The wedged firmware rejects every association with status_code=16, repeating
+# every few seconds. A healthy association never does this, so seeing it more
+# than once confirms the wedge and we can reload immediately - typically ~7s
+# after resume - rather than sitting out the full backstop timer.
+# The \b keeps status_code=160-169 from counting as the signature.
+REJECT_SIGNATURE='CTRL-EVENT-ASSOC-REJECT.*status_code=16\b'
+
+wedged() {
+  local n
+  if [[ -n $CURSOR ]]; then
+    n=$(journalctl -q --after-cursor "$CURSOR" -t wpa_supplicant --no-pager 2>/dev/null |
+      grep -c "$REJECT_SIGNATURE")
+  else
+    # No cursor (unreadable journal), so a --since window is the best left. If
+    # the clock stepped backwards across resume it comes back empty and the
+    # backstop recovers instead - history from before suspend must not count.
+    n=$(journalctl -q --since "$START" -t wpa_supplicant --no-pager 2>/dev/null |
+      grep -c "$REJECT_SIGNATURE")
+  fi
+  ((${n:-0} >= REJECTS))
+}
+
+# Respect a deliberately disabled radio - do not fight the user or rfkill.
+if [[ $(nmcli radio wifi 2>/dev/null) == "disabled" ]]; then
+  echo "wifi radio is disabled, nothing to do"
+  exit 0
+fi
+
+# These are runtime invariants, but this runs from a bare systemd unit right
+# after resume; a missing tool should say so in the journal rather than
+# surface as a command-not-found mid-recovery.
+for cmd in nmcli journalctl modprobe; do
+  if omarchy-cmd-missing "$cmd"; then
+    echo "missing $cmd - cannot recover Wi-Fi"
+    exit 1
+  fi
+done
+
+IFACE=$(wifi_iface)
+: "${IFACE:=wlan0}"
+
+i=0
+while ((i < WAIT_BEFORE)); do
+  state=$(wifi_state "$IFACE")
+  if [[ $state == "connected" ]]; then
+    echo "wifi back after ${i}s on $IFACE - no reload needed"
+    exit 0
+  fi
+  if wedged; then
+    echo "wedged firmware confirmed after ${i}s (iface=$IFACE state=${state:-none}) - reloading brcmfmac"
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+if ((i >= WAIT_BEFORE)); then
+  echo "wifi not back after ${WAIT_BEFORE}s (iface=$IFACE state=${state:-none}) - reloading brcmfmac"
+fi
+
+if ! modprobe -r brcmfmac_wcc brcmfmac; then
+  echo "failed to unload brcmfmac - giving up, a reboot is needed"
+  exit 1
+fi
+sleep 1
+if ! modprobe brcmfmac; then
+  echo "failed to reload brcmfmac - giving up, a reboot is needed"
+  exit 1
+fi
+echo "brcmfmac reloaded, waiting for NetworkManager to reconnect"
+
+i=0
+while ((i < WAIT_AFTER)); do
+  IFACE=$(wifi_iface)
+  : "${IFACE:=wlan0}"
+  state=$(wifi_state "$IFACE")
+  if [[ $state == "connected" ]]; then
+    echo "reconnected ${i}s after reload on $IFACE"
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+echo "still not connected ${WAIT_AFTER}s after reload (iface=$IFACE state=${state:-none})"
+exit 1

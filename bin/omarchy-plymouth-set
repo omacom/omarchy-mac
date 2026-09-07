@@ -34,7 +34,11 @@ else
   usage
 fi
 
-if (( EUID == 0 )); then
+# The fixed packaged Plymouth default has no caller-selected input to open
+# before elevation, and system setup needs to publish it even when owner
+# provisioning is deferred. Keep every mode that accepts user input -- and the
+# unrelated SDDM refresh -- behind the unprivileged-caller boundary.
+if (( EUID == 0 )) && [[ $mode != "refresh-plymouth" ]]; then
   echo "Error: run omarchy-plymouth-set as your user, not under sudo." >&2
   exit 1
 fi
