@@ -1,14 +1,11 @@
-# Screenshots & Recording
+# Screenshots & OmaRecord
 
-On keyboards with a Print Screen key, one key and its modifiers handle
-screenshots, recording, colour picking, and text extraction. If your keyboard
-doesn't have one, use `Super + Ctrl + C` to open the same set as a menu. Apple
-keyboards also have direct F-key alternatives:
+On keyboards with a Print Screen key, one key and its modifiers handle screenshots, OmaRecord, colour picking, and text extraction. If your keyboard doesn't have one, use `Super + Ctrl + C` to open the same set as a menu. Apple keyboards also have direct F-key alternatives:
 
 | Hotkey | Function |
 | ------ | -------- |
 | `Print Screen` | Screenshot |
-| `Alt + Print Screen` | Screenrecord (or stop the one that's running) |
+| `Alt + Print Screen` | OmaRecord (or stop the one that's running) |
 | `Super + Print Screen` | Colour picker |
 | `Super + Ctrl + Print Screen` | Extract text from a region |
 | `Super + Ctrl + C` | Capture menu |
@@ -16,7 +13,7 @@ keyboards also have direct F-key alternatives:
 | `Super + F10` | Screenshot a window on an Apple keyboard |
 | `Super + F11` | Screenshot a region on an Apple keyboard |
 | `Super + F12` | Screenshot the full display on an Apple keyboard |
-| `Super + Alt + F12` | Start/stop fullscreen recording without audio on an Apple keyboard |
+| `Super + Alt + F12` | Start/stop fullscreen OmaRecord without audio on an Apple keyboard |
 
 Omarchy configures the top row on Apple keyboards as media keys, and binds both
 the media keycodes and F10-F12. These shortcuts work with or without `Fn`.
@@ -44,12 +41,13 @@ While the selection is up, you don't have to use the mouse at all:
 
 The arrows and Tab move the cursor to the window they pick, so the highlight follows along and you can see what you're about to capture. These bindings only exist while a selection is on screen, so they can't collide with anything in your own config.
 
-## Screen recording
+## OmaRecord
 
-`Alt + Print Screen` opens _Trigger > Capture > Screenrecord_, which asks what you want on the soundtrack: no audio, desktop audio, desktop plus microphone, or desktop plus microphone plus webcam. That last one only shows up if you actually have a camera plugged in. Pick one and you get the same picker as a screenshot: drag a region, or click a window or monitor.
+`Alt + Print Screen` opens _Trigger > Capture > OmaRecord_, which asks what you want on the soundtrack: no audio, desktop audio, desktop plus microphone, or desktop plus microphone plus webcam. That last one only shows up if you actually have a camera plugged in. Pick one and you get the same picker as a screenshot: drag a region, or click a window or monitor.
 
-On Apple Silicon, `Super + Alt + F12` starts a fullscreen recording immediately
-without audio. The same hotkey stops it, and holding `Fn` works too.
+From a terminal, use `omarecord` with the same options: `omarecord --fullscreen` starts a full-display recording, and `omarecord --stop-recording` stops it. The routed commands `omarchy screenrecord` and `omarchy capture screenrecording` remain supported.
+
+On Apple Silicon, `Super + Alt + F12` starts a fullscreen OmaRecord without audio. The same hotkey stops it, and holding `Fn` works too.
 
 Recording normally runs on gpu-screen-recorder, which encodes on the GPU at
 60fps and falls back to the CPU if it has to. On Apple Silicon it uses
@@ -59,7 +57,7 @@ video encoder. The result is an MP4 in `~/Videos`, named
 change that — but note that unlike the screenshot directory, this one has to
 exist already, or the recording refuses to start.
 
-While you're recording, a little indicator shows up in the bar. Click it to stop. You can also stop with `Alt + Print Screen` again, or with the _Stop Screenrecording_ entry under _Trigger > Capture > Screenrecord_, which only appears while something is actually recording.
+While you're recording, a little indicator shows up in the bar. Click it to stop. You can also stop with `Alt + Print Screen` again, or with the _Stop OmaRecord_ entry under _Trigger > Capture > OmaRecord_, which only appears while something is actually recording.
 
 Stopping does a bit of tidying before it hands you the file: the first frame gets trimmed, and if there's audio it's normalized to -14 LUFS with the PipeWire capture pop at the very start muted out. Then a notification appears with a thumbnail from the recording. Click it to play the file in mpv.
 
@@ -75,6 +73,16 @@ When you record with a webcam, the camera appears as a pinned, cropped portrait 
 There are three sizes — small, medium, and large — and the hotkeys step between them. Medium is the default. They're proportional to the recording, so the camera takes up the same share of the frame whether you're recording a 1080p monitor or a 6K one. And if you recorded a region rather than a whole display, the overlay anchors to that region's corner rather than the monitor's, so it stays inside the shot.
 
 You can also call it directly with `omarchy-capture-webcam-resize small`, or `reset` to go back to medium.
+
+### Showing keystrokes
+
+Install the optional overlay with `omarchy pkg add showmethekey`, then start a recording with `omarecord --show-keystrokes`. You can combine the flag with `--fullscreen`, audio, webcam, and resolution options; `omarchy screenrecord --show-keystrokes` and `omarchy capture screenrecording --show-keystrokes` remain supported.
+
+Omarchy starts `showmethekey-gtk -k -A -C`, waits for its floating window to appear, and only then starts the recorder. The recorder captures the visible overlay as pixels in the video; Omarchy does not create a separate key log. The overlay instance started for that recording is stopped when the recording stops, fails to start, or exits unexpectedly, without stopping independently launched Show Me The Key windows. If Show Me The Key is missing or its window cannot open, the recording aborts instead of continuing without keystrokes.
+
+`--show-keystrokes` requires monitor or region capture. It is rejected when `OMARCHY_SCREENRECORD_USE_PORTAL=true` selects portal capture because Omarchy cannot guarantee that the compositor-managed overlay will be included there.
+
+**Privacy warning:** Show Me The Key reads and displays every key you type, including passwords; password fields cannot be detected. Quickly press Alt twice (or press both Alt keys) to pause the overlay before entering anything sensitive, then repeat the gesture to resume.
 
 ## Text, QR codes, and colours
 

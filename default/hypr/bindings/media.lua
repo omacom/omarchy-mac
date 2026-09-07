@@ -44,11 +44,11 @@ o.bind("SUPER + F10", "Screenshot Window", "omarchy-capture-screenshot windows")
 
 -- Screen recording: SUPER+ALT+F12 mirrors the Display screenshot key. Starts a
 -- fullscreen recording and toggles off on the next press (no options menu).
-o.bind("SUPER + ALT + F12", "Screen recording Display", "omarchy-capture-screenrecording --fullscreen")
+o.bind("SUPER + ALT + F12", "OmaRecord Display", "omarchy-capture-screenrecording --fullscreen")
 
 -- Apple keyboards emit media keys on the top row, so the F-key captures above
 -- need Fn held. Bind the media keycodes too and the same presses work bare.
 o.bind("SUPER + XF86AudioMute", "Screenshot Window (Apple top row)", "omarchy-capture-screenshot windows")
 o.bind("SUPER + XF86AudioLowerVolume", "Screenshot Region (Apple top row)", "omarchy-capture-screenshot region")
 o.bind("SUPER + XF86AudioRaiseVolume", "Screenshot Display (Apple top row)", "omarchy-capture-screenshot fullscreen")
-o.bind("SUPER + ALT + XF86AudioRaiseVolume", "Screen recording Display (Apple top row)", "omarchy-capture-screenrecording --fullscreen")
+o.bind("SUPER + ALT + XF86AudioRaiseVolume", "OmaRecord Display (Apple top row)", "omarchy-capture-screenrecording --fullscreen")

@@ -438,6 +438,34 @@ assertEqual(
   'omarchy-hw-webcam',
   'menu only shows webcam screen recording when a webcam is available'
 )
+assertDeepEqual(
+  [
+    defaultById['trigger.capture.screenrecord.stop'].label,
+    defaultById['trigger.capture.screenrecord'].label
+  ],
+  ['Stop OmaRecord', 'OmaRecord'],
+  'menu brands recorder entries as OmaRecord'
+)
+assertDeepEqual(
+  [
+    defaultById['trigger.capture.screenrecord.stop'].action,
+    defaultById['trigger.capture.screenrecord.no-audio'].action,
+    defaultById['trigger.capture.screenrecord.desktop-audio'].action,
+    defaultById['trigger.capture.screenrecord.microphone'].action
+  ],
+  [
+    'omarecord --stop-recording',
+    'omarecord',
+    'omarecord --with-desktop-audio',
+    'omarecord --with-desktop-audio --with-microphone-audio'
+  ],
+  'menu sends direct recorder actions through omarecord'
+)
+assertEqual(
+  defaultById['trigger.capture.screenrecord.webcam'].action,
+  'omarchy-capture-screenrecording-with-webcam',
+  'menu keeps the webcam picker helper'
+)
 assert(
   /font\.family: row\.iconFont\.length > 0 \? row\.iconFont : root\.fontFamily/.test(menuQml),
   'menu rows support per-icon font families'

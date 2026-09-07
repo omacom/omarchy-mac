@@ -71,7 +71,7 @@ You can see all the main keyboard bindings with `Super + K` (Tmux bindings with 
 | `Super + Ctrl + 1-9`           | Toggle bar panel by position    |
 | `Super + Ctrl + S` | Share menu (via LocalSend) |
 | `Super + Ctrl + T`           | Activity (btop)    |
-| `Super + Ctrl + C` | Capture controls (screenshot/-recording/picker) |
+| `Super + Ctrl + C` | Capture controls (Screenshot/OmaRecord/Color picker) |
 | `Super + Ctrl + O` | Toggle menu |
 | `Super + Ctrl + H` | Hardware menu |
 | `Super + Ctrl + Q` | Calculator |
@@ -142,13 +142,13 @@ Usually on Linux, you need `Ctrl + Shift + C/V` to copy'n'paste in the terminal 
 | ------------------- | ------------------------------ |
 | `Super + Ctrl + C` | Capture menu (for keyboards w/o PrintScr button) |
 | `Print Screen`            | Screenshot                      |
-| `Alt + Print Screen`            | Screenrecord                     |
+| `Alt + Print Screen`            | OmaRecord                     |
 | `Super + Print Screen` | Color picker |
 | `Super + Ctrl + Print Screen` | Text extraction to clipboard |
 | `Super + F12` | Screenshot full display on Apple keyboards |
 | `Super + F11` | Screenshot region on Apple keyboards |
 | `Super + F10` | Screenshot window on Apple keyboards |
-| `Super + Alt + F12` | Start/stop fullscreen recording without audio on Apple keyboards |
+| `Super + Alt + F12` | Start/stop fullscreen OmaRecord without audio on Apple keyboards |
 | `Super + Alt + [` | Make webcam overlay smaller while recording |
 | `Super + Alt + ]` | Make webcam overlay larger while recording |
 | `Alt + Shift + L` | Copy current URL from webapp or Chromium |
@@ -156,10 +156,7 @@ Usually on Linux, you need `Ctrl + Shift + C/V` to copy'n'paste in the terminal 
 | `Super + Ctrl + X` | Start/stop dictation (requires _Install > AI > Dictation_) |
 | `F9` | Push-to-talk dictation (requires _Install > AI > Dictation_) |
 
-The standard screenrecording hotkey asks which audio you want, then starts
-recording. The Apple-specific fullscreen hotkey starts immediately without
-audio. Hit the same hotkey again to stop. See [screenshots and
-recording](12-screenshots-recording.md) for the details.
+The OmaRecord hotkey asks which audio you want, then starts recording. The Apple-specific fullscreen hotkey starts immediately without audio. Hit the same hotkey again to stop. See [Screenshots & OmaRecord](12-screenshots-recording.md) for the details.
 
 Apple keyboards use their top row for media controls by default. The
 Apple-specific shortcuts above work whether or not you hold `Fn`.

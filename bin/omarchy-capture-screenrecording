@@ -2,7 +2,7 @@
 
 # omarchy:summary=Start or stop screen recording
 # omarchy:group=capture
-# omarchy:args=[--fullscreen] [--with-desktop-audio] [--with-microphone-audio] [--with-webcam] [--webcam-device=<device>] [--webcam-size=<small|medium|large>] [--resolution=<size>] [--stop-recording]
+# omarchy:args=[--fullscreen] [--with-desktop-audio] [--with-microphone-audio] [--with-webcam] [--show-keystrokes] [--webcam-device=<device>] [--webcam-size=<small|medium|large>] [--resolution=<size>] [--stop-recording]
 # omarchy:examples=omarchy screenrecord | omarchy capture screenrecording --with-desktop-audio
 # omarchy:aliases=omarchy screenrecord
 #
@@ -40,6 +40,7 @@ fi
 DESKTOP_AUDIO="false"
 MICROPHONE_AUDIO="false"
 WEBCAM="false"
+SHOW_KEYSTROKES="false"
 WEBCAM_DEVICE=""
 WEBCAM_SIZE="medium"
 RESOLUTION=""
@@ -54,7 +55,12 @@ LOG_FILE=$([[ ${OMARCHY_SCREENRECORD_DEBUG:-false} == "true" ]] && echo "/tmp/om
 RECORDER_PROCESS_RE="^(gpu-screen-recorder|wf-recorder)"
 # Records the PulseAudio module ids of a combined-audio null sink for cleanup.
 PA_MODULES_FILE="/tmp/omarchy-screenrecord-pa-modules"
+# Records the overlay and recorder process identities. PID plus start time lets
+# cleanup and the detached watchdog leave unrelated or later instances alone.
+KEYSTROKE_OVERLAY_STATE="${XDG_RUNTIME_DIR:-/tmp}/omarchy-screenrecord-showmethekey.pid"
 REC_PID=""
+KEYSTROKE_OVERLAY_WATCHDOG=""
+KEYSTROKE_OVERLAY_STARTUP_OWNED="false"
 
 # gpu-screen-recorder can't initialize on Apple Silicon's Asahi GPU (see header),
 # so use wf-recorder there. Elsewhere prefer gpu-screen-recorder, falling back to
@@ -77,11 +83,13 @@ for arg in "$@"; do
   --with-desktop-audio) DESKTOP_AUDIO="true" ;;
   --with-microphone-audio) MICROPHONE_AUDIO="true" ;;
   --with-webcam) WEBCAM="true" ;;
+  --show-keystrokes) SHOW_KEYSTROKES="true" ;;
   --webcam-device=*) WEBCAM_DEVICE="${arg#*=}" ;;
   --webcam-size=*) WEBCAM_SIZE="${arg#*=}" ;;
   --resolution=*) RESOLUTION="${arg#*=}" ;;
   --fullscreen) FULLSCREEN="true" ;;
   --stop-recording) STOP_RECORDING="true" ;;
+  --keystroke-overlay-watchdog=*) KEYSTROKE_OVERLAY_WATCHDOG="${arg#*=}" ;;
   esac
 done
 
@@ -92,6 +100,142 @@ small | medium | large) ;;
   exit 1
   ;;
 esac
+
+process_start_time() {
+  local stat fields
+  IFS= read -r stat 2>/dev/null <"/proc/$1/stat" || return 1
+  read -ra fields <<<"${stat#*) }"
+  ((${#fields[@]} > 19)) || return 1
+  printf '%s\n' "${fields[19]}"
+}
+
+keystroke_overlay_process_matches() {
+  local pid=$1 started_at=$2 command_line
+  [[ $pid =~ ^[0-9]+$ && $started_at =~ ^[0-9]+$ ]] || return 1
+  [[ $(process_start_time "$pid") == "$started_at" ]] || return 1
+  command_line=$(ps -p "$pid" -o args= 2>/dev/null) || return 1
+  [[ $command_line =~ ^([^[:space:]]*/)?showmethekey-gtk([[:space:]]|$) ]]
+}
+
+terminate_keystroke_overlay() {
+  local pid=$1 started_at=$2 count=0
+  keystroke_overlay_process_matches "$pid" "$started_at" || return
+
+  kill "$pid" 2>/dev/null
+  while keystroke_overlay_process_matches "$pid" "$started_at" && ((count < 20)); do
+    sleep 0.05
+    ((count++))
+  done
+  if keystroke_overlay_process_matches "$pid" "$started_at"; then
+    kill -9 "$pid" 2>/dev/null
+  fi
+}
+
+cleanup_keystroke_overlay() {
+  local state pid started_at
+  [[ -f $KEYSTROKE_OVERLAY_STATE ]] || return
+  state=$(<"$KEYSTROKE_OVERLAY_STATE")
+  read -r pid started_at _ <<<"$state"
+  terminate_keystroke_overlay "$pid" "$started_at"
+  [[ -f $KEYSTROKE_OVERLAY_STATE && $(<"$KEYSTROKE_OVERLAY_STATE") == "$state" ]] &&
+    rm -f "$KEYSTROKE_OVERLAY_STATE"
+}
+
+cleanup_starting_keystroke_overlay() {
+  if [[ $KEYSTROKE_OVERLAY_STARTUP_OWNED == "true" ]]; then
+    cleanup_keystroke_overlay
+  fi
+}
+
+watch_keystroke_overlay() {
+  local overlay_pid=$1 overlay_started_at=$2 recorder_pid=$3 recorder_started_at=$4
+  [[ $overlay_pid =~ ^[0-9]+$ && $overlay_started_at =~ ^[0-9]+$ &&
+    $recorder_pid =~ ^[0-9]+$ && $recorder_started_at =~ ^[0-9]+$ ]] || return 1
+  local expected_state="$overlay_pid $overlay_started_at $recorder_pid $recorder_started_at"
+
+  while [[ $(process_start_time "$recorder_pid") == "$recorder_started_at" ]]; do
+    sleep 0.2
+  done
+
+  [[ -f $KEYSTROKE_OVERLAY_STATE ]] || return
+  [[ $(<"$KEYSTROKE_OVERLAY_STATE") == "$expected_state" ]] || return
+  terminate_keystroke_overlay "$overlay_pid" "$overlay_started_at"
+  [[ -f $KEYSTROKE_OVERLAY_STATE && $(<"$KEYSTROKE_OVERLAY_STATE") == "$expected_state" ]] &&
+    rm -f "$KEYSTROKE_OVERLAY_STATE"
+}
+
+handoff_keystroke_overlay() {
+  local recorder_pid=$1 recorder_started_at overlay_pid overlay_started_at
+  local next_state="${KEYSTROKE_OVERLAY_STATE}.tmp"
+  read -r overlay_pid overlay_started_at _ <"$KEYSTROKE_OVERLAY_STATE"
+  keystroke_overlay_process_matches "$overlay_pid" "$overlay_started_at" || return 1
+  recorder_started_at=$(process_start_time "$recorder_pid") || return 1
+
+  if ! printf '%s %s %s %s\n' "$overlay_pid" "$overlay_started_at" "$recorder_pid" "$recorder_started_at" >"$next_state" ||
+    ! mv -f "$next_state" "$KEYSTROKE_OVERLAY_STATE"; then
+    rm -f "$next_state"
+    return 1
+  fi
+  setsid -f "$0" --keystroke-overlay-watchdog="$overlay_pid:$overlay_started_at:$recorder_pid:$recorder_started_at" </dev/null &>/dev/null || return 1
+
+  KEYSTROKE_OVERLAY_STARTUP_OWNED="false"
+  trap - EXIT HUP INT TERM
+}
+
+if [[ -n $KEYSTROKE_OVERLAY_WATCHDOG ]]; then
+  IFS=: read -r overlay_pid overlay_started_at recorder_pid recorder_started_at <<<"$KEYSTROKE_OVERLAY_WATCHDOG"
+  watch_keystroke_overlay "$overlay_pid" "$overlay_started_at" "$recorder_pid" "$recorder_started_at"
+  exit 0
+fi
+
+start_keystroke_overlay() {
+  cleanup_keystroke_overlay
+
+  if omarchy-cmd-missing showmethekey-gtk; then
+    omarchy-notification-send -u critical -t 5000 "Show Me The Key is not installed" "Install it with: omarchy pkg add showmethekey"
+    return 1
+  fi
+
+  showmethekey-gtk -k -A -C &>/dev/null &
+  local pid=$! started_at
+  started_at=$(process_start_time "$pid") || {
+    omarchy-notification-send -u critical -t 5000 "Keystroke overlay failed to start" "Screen recording was not started."
+    kill "$pid" 2>/dev/null
+    return 1
+  }
+  if ! printf '%s %s\n' "$pid" "$started_at" >"$KEYSTROKE_OVERLAY_STATE"; then
+    omarchy-notification-send -u critical -t 5000 "Keystroke overlay state could not be saved" "Screen recording was not started."
+    kill "$pid" 2>/dev/null
+    return 1
+  fi
+  KEYSTROKE_OVERLAY_STARTUP_OWNED="true"
+  trap cleanup_starting_keystroke_overlay EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  local waited=0
+  while ((waited < 600)); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      omarchy-notification-send -u critical -t 5000 "Keystroke overlay failed to start" "Screen recording was not started."
+      cleanup_keystroke_overlay
+      return 1
+    fi
+
+    if hyprctl clients -j | jq -e --argjson pid "$pid" \
+      'any(.[]; .pid == $pid and (.class == "showmethekey-gtk" or .class == "one.alynx.showmethekey") and .title == "Floating Window - Show Me The Key")' >/dev/null 2>&1; then
+      omarchy-notification-send -u critical -t 8000 "Visible keystrokes will be recorded" "Show Me The Key displays every key you type, including passwords. Quickly press Alt twice to pause it."
+      return 0
+    fi
+
+    sleep 0.05
+    ((waited++))
+  done
+
+  omarchy-notification-send -u critical -t 5000 "Keystroke overlay did not appear" "Screen recording was not started."
+  cleanup_keystroke_overlay
+  return 1
+}
 
 start_webcam_overlay() {
   cleanup_webcam
@@ -272,7 +416,15 @@ start_screenrecording() {
     esac
   fi
 
+  if [[ $SHOW_KEYSTROKES == "true" && $target == "portal" ]]; then
+    omarchy-notification-send -u critical -t 5000 "Keystroke overlay cannot be recorded through the portal" "Use monitor or region capture with --show-keystrokes."
+    return 1
+  fi
+
   [[ $WEBCAM == "true" ]] && start_webcam_overlay "$target"
+  if [[ $SHOW_KEYSTROKES == "true" ]]; then
+    start_keystroke_overlay || return 1
+  fi
 
   local filename="$OUTPUT_DIR/screenrecording-$(date +'%Y-%m-%d_%H-%M-%S').mp4"
 
@@ -305,8 +457,14 @@ start_screenrecording() {
   done
 
   if kill -0 $pid 2>/dev/null; then
+    if [[ $SHOW_KEYSTROKES == "true" ]] && ! handoff_keystroke_overlay "$pid"; then
+      kill -SIGINT "$pid" 2>/dev/null
+      return 1
+    fi
     echo "$filename" >"$RECORDING_FILE"
     toggle_screenrecording_indicator
+  elif [[ $SHOW_KEYSTROKES == "true" ]]; then
+    return 1
   fi
 }
 
@@ -322,6 +480,7 @@ stop_screenrecording() {
 
   toggle_screenrecording_indicator
   cleanup_webcam
+  cleanup_keystroke_overlay
   wf_audio_cleanup
 
   if pgrep -f "$RECORDER_PROCESS_RE" >/dev/null; then
@@ -392,7 +551,14 @@ finalize_recording() {
 if screenrecording_active; then
   stop_screenrecording
 elif [[ $STOP_RECORDING == "true" ]]; then
+  cleanup_keystroke_overlay
   exit 1
 else
-  start_screenrecording || cleanup_webcam
+  if ! start_screenrecording; then
+    cleanup_webcam
+    if [[ $SHOW_KEYSTROKES == "true" ]]; then
+      cleanup_keystroke_overlay
+      exit 1
+    fi
+  fi
 fi

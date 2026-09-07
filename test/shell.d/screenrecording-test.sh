@@ -83,6 +83,35 @@ export OMARCHY_TEST_MENU_ARGS="$tmp_dir/menu-args"
 export OMARCHY_TEST_RECORDER_ARGS="$tmp_dir/recorder-args"
 export OMARCHY_TEST_NOTIFICATION_ARGS="$tmp_dir/notification-args"
 
+omarecord_root="$tmp_dir/omarecord-root"
+mkdir -p "$omarecord_root/bin"
+export OMARCHY_TEST_OMARECORD_ARGS="$tmp_dir/omarecord-args"
+
+cat >"$omarecord_root/bin/omarchy-capture-screenrecording" <<'SH'
+#!/bin/bash
+
+printf '%s\0' "$@" >"$OMARCHY_TEST_OMARECORD_ARGS"
+exit "${OMARCHY_TEST_OMARECORD_STATUS:-0}"
+SH
+chmod +x "$omarecord_root/bin/omarchy-capture-screenrecording"
+
+OMARCHY_PATH="$omarecord_root" "$ROOT/bin/omarecord" --fullscreen --show-keystrokes "two words" ""
+printf '%s\0' --fullscreen --show-keystrokes "two words" "" >"$tmp_dir/expected-omarecord-args"
+cmp -s "$OMARCHY_TEST_OMARECORD_ARGS" "$tmp_dir/expected-omarecord-args" ||
+  fail "omarecord forwards every argument unchanged"
+pass "omarecord forwards every argument unchanged"
+
+if OMARCHY_PATH="$omarecord_root" OMARCHY_TEST_OMARECORD_STATUS=37 "$ROOT/bin/omarecord" --stop-recording; then
+  fail "omarecord returns the implementation status"
+else
+  omarecord_status=$?
+fi
+(( omarecord_status == 37 )) || fail "omarecord returns the implementation status" "expected: 37\nactual:   $omarecord_status"
+printf '%s\0' --stop-recording >"$tmp_dir/expected-omarecord-stop-args"
+cmp -s "$OMARCHY_TEST_OMARECORD_ARGS" "$tmp_dir/expected-omarecord-stop-args" ||
+  fail "omarecord forwards the stop action unchanged"
+pass "omarecord forwards the stop action and returns the implementation status"
+
 mapfile -t capture_devices < <(omarchy-capture-webcam-list)
 expected_capture_devices=(
   "/dev/video42  Built-in Webcam: Integrated Camera"
@@ -288,6 +317,14 @@ grep -F 'o.bind("SUPER + ALT + code:35", "Make webcam overlay larger", "omarchy-
   "$ROOT/default/hypr/bindings/utilities.lua" >/dev/null || fail "webcam larger hotkey is configured"
 pass "webcam resize hotkeys are configured"
 
+grep -F 'o.bind("ALT + PRINT", "OmaRecord", "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord")' \
+  "$ROOT/default/hypr/bindings/utilities.lua" >/dev/null || fail "Print Screen recorder binding is branded OmaRecord"
+grep -F 'o.bind("SUPER + ALT + F12", "OmaRecord Display", "omarchy-capture-screenrecording --fullscreen")' \
+  "$ROOT/default/hypr/bindings/media.lua" >/dev/null || fail "Apple fullscreen recorder binding is branded OmaRecord"
+grep -F 'o.bind("SUPER + ALT + XF86AudioRaiseVolume", "OmaRecord Display (Apple top row)", "omarchy-capture-screenrecording --fullscreen")' \
+  "$ROOT/default/hypr/bindings/media.lua" >/dev/null || fail "Apple top-row recorder binding is branded OmaRecord"
+pass "recorder binding descriptions use OmaRecord"
+
 grep -F -- '--wayland-app-id="WebcamOverlay-$WEBCAM_SIZE"' \
   "$ROOT/bin/omarchy-capture-screenrecording" >/dev/null || fail "webcam uses a dedicated size-specific app id"
 
@@ -299,3 +336,348 @@ grep -F 'move = { "(monitor_w-monitor_h*2/9-40)", "(monitor_h-monitor_h/4-40)" }
 grep -F 'move = { "(monitor_w-monitor_h*3/10-40)", "(monitor_h-monitor_h*27/80-40)" }' "$webcam_rules" >/dev/null || \
   fail "large webcam starts at its final corner position"
 pass "webcam size rules place the initial window in its final corner"
+
+recording_stub_bin="$tmp_dir/recording-bin"
+mkdir -p "$recording_stub_bin"
+
+export OMARCHY_TEST_OVERLAY_ARGS="$tmp_dir/overlay-args"
+export OMARCHY_TEST_OVERLAY_LAST_PID="$tmp_dir/overlay-last-pid"
+export OMARCHY_TEST_OVERLAY_STOPPED="$tmp_dir/overlay-stopped"
+export OMARCHY_TEST_RECORDER_PROCESS_PID="$tmp_dir/recorder-process-pid"
+export OMARCHY_TEST_RECORDER_PROCESS_ARGS="$tmp_dir/recorder-process-args"
+export OMARCHY_SCREENRECORD_DIR="$tmp_dir/recordings"
+mkdir -p "$OMARCHY_SCREENRECORD_DIR"
+
+cat >"$recording_stub_bin/omarchy-cmd-missing" <<'SH'
+#!/bin/bash
+
+[[ $1 == "showmethekey-gtk" && ${OMARCHY_TEST_SHOWMETHEKEY_MISSING:-false} == "true" ]]
+SH
+
+cat >"$recording_stub_bin/omarchy-cmd-present" <<'SH'
+#!/bin/bash
+
+case "$1" in
+gpu-screen-recorder) [[ ${OMARCHY_TEST_BACKEND:-gpu-screen-recorder} == "gpu-screen-recorder" ]] ;;
+wf-recorder) exit 0 ;;
+*) exit 1 ;;
+esac
+SH
+
+cat >"$recording_stub_bin/grep" <<'SH'
+#!/bin/bash
+
+if [[ $* == *"/proc/device-tree/compatible"* ]]; then
+  [[ ${OMARCHY_TEST_BACKEND:-gpu-screen-recorder} == "wf-recorder" ]]
+else
+  exec /usr/bin/grep "$@"
+fi
+SH
+
+cat >"$recording_stub_bin/showmethekey-gtk" <<'SH'
+#!/bin/bash
+
+printf '%s\n' "$@" >"$OMARCHY_TEST_OVERLAY_ARGS"
+[[ ${OMARCHY_TEST_SHOWMETHEKEY_FAIL:-false} == "true" ]] && exit 1
+printf '%s\n' "$$" >"$OMARCHY_TEST_OVERLAY_LAST_PID"
+trap 'printf "%s\n" "$$" >>"$OMARCHY_TEST_OVERLAY_STOPPED"; exit 0' TERM INT
+while :; do
+  sleep 1
+done
+SH
+
+cat >"$recording_stub_bin/hyprctl" <<'SH'
+#!/bin/bash
+
+case "$1 $2" in
+"monitors -j")
+  printf '%s\n' '[{"focused":true,"width":1920,"height":1080}]'
+  ;;
+"clients -j")
+  if [[ ${OMARCHY_TEST_HYPR_MAP:-true} == "true" && -s $OMARCHY_TEST_OVERLAY_LAST_PID ]]; then
+    pid=$(cat "$OMARCHY_TEST_OVERLAY_LAST_PID")
+    printf '[{"pid":%s,"class":"showmethekey-gtk","title":"Floating Window - Show Me The Key"}]\n' "$pid"
+  else
+    printf '%s\n' '[]'
+  fi
+  ;;
+esac
+SH
+
+cat >"$recording_stub_bin/ps" <<'SH'
+#!/bin/bash
+
+pid=$2
+if kill -0 "$pid" 2>/dev/null; then
+  printf '%s\n' 'showmethekey-gtk -k -A -C'
+else
+  exit 1
+fi
+SH
+
+cat >"$recording_stub_bin/recorder-stub" <<'SH'
+#!/bin/bash
+
+printf '%s\n' "$(basename "$0")" "$@" >"$OMARCHY_TEST_RECORDER_PROCESS_ARGS"
+printf '%s\n' "$$" >"$OMARCHY_TEST_RECORDER_PROCESS_PID"
+[[ ${OMARCHY_TEST_RECORDER_FAIL:-false} == "true" ]] && exit 1
+
+filename=""
+while (($#)); do
+  case "$1" in
+  -o | -f)
+    filename=$2
+    shift 2
+    ;;
+  *)
+    shift
+    ;;
+  esac
+done
+
+[[ -n $filename && ${OMARCHY_TEST_RECORDER_NO_FILE:-false} != "true" ]] && : >"$filename"
+trap 'exit 0' TERM INT
+while :; do
+  sleep 1
+done
+SH
+ln -s recorder-stub "$recording_stub_bin/gpu-screen-recorder"
+ln -s recorder-stub "$recording_stub_bin/wf-recorder"
+
+cat >"$recording_stub_bin/pgrep" <<'SH'
+#!/bin/bash
+
+[[ -s $OMARCHY_TEST_RECORDER_PROCESS_PID ]] || exit 1
+pid=$(cat "$OMARCHY_TEST_RECORDER_PROCESS_PID")
+kill -0 "$pid" 2>/dev/null || exit 1
+printf '%s\n' "$pid"
+SH
+
+cat >"$recording_stub_bin/pkill" <<'SH'
+#!/bin/bash
+
+[[ -s $OMARCHY_TEST_RECORDER_PROCESS_PID ]] || exit 1
+pid=$(cat "$OMARCHY_TEST_RECORDER_PROCESS_PID")
+kill -TERM "$pid" 2>/dev/null
+SH
+
+cat >"$recording_stub_bin/omarchy-hyprland-monitor-focused" <<'SH'
+#!/bin/bash
+
+printf '%s\n' 'eDP-1'
+SH
+
+cat >"$recording_stub_bin/omarchy-shell" <<'SH'
+#!/bin/bash
+SH
+
+cat >"$recording_stub_bin/ffprobe" <<'SH'
+#!/bin/bash
+SH
+
+cat >"$recording_stub_bin/ffmpeg" <<'SH'
+#!/bin/bash
+
+exit 1
+SH
+
+chmod +x "$recording_stub_bin"/*
+export PATH="$recording_stub_bin:$PATH"
+
+keystroke_state="$XDG_RUNTIME_DIR/omarchy-screenrecord-showmethekey.pid"
+
+stop_test_recording() {
+  OMARCHY_TEST_BACKEND=$1 "$ROOT/bin/omarchy-capture-screenrecording" --stop-recording
+}
+
+wait_for_process_exit() {
+  local pid=$1 count=0
+  while kill -0 "$pid" 2>/dev/null && ((count < 40)); do
+    sleep 0.05
+    ((count++))
+  done
+  ! kill -0 "$pid" 2>/dev/null
+}
+
+test_process_start_time() {
+  local stat fields
+  IFS= read -r stat <"/proc/$1/stat"
+  read -ra fields <<<"${stat#*) }"
+  printf '%s\n' "${fields[19]}"
+}
+
+wait_for_file() {
+  local file=$1 count=0
+  while [[ ! -s $file ]] && ((count < 40)); do
+    sleep 0.05
+    ((count++))
+  done
+  [[ -s $file ]]
+}
+
+wait_for_file_removal() {
+  local file=$1 count=0
+  while [[ -e $file ]] && ((count < 40)); do
+    sleep 0.05
+    ((count++))
+  done
+  [[ ! -e $file ]]
+}
+
+grep -F '# omarchy:args=[--fullscreen] [--with-desktop-audio] [--with-microphone-audio] [--with-webcam] [--show-keystrokes]' \
+  "$ROOT/bin/omarchy-capture-screenrecording" >/dev/null || fail "screen recording metadata lists --show-keystrokes"
+pass "screen recording metadata lists --show-keystrokes"
+
+rm -f "$OMARCHY_TEST_OVERLAY_ARGS" "$keystroke_state" "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  OMARCHY_TEST_SHOWMETHEKEY_MISSING=true \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen
+
+[[ ! -e $OMARCHY_TEST_OVERLAY_ARGS ]] || fail "screen recording starts Show Me The Key without --show-keystrokes"
+[[ ! -e $keystroke_state ]] || fail "screen recording creates overlay state without --show-keystrokes"
+grep -Fx 'gpu-screen-recorder' "$OMARCHY_TEST_RECORDER_PROCESS_ARGS" >/dev/null || \
+  fail "default recording still starts gpu-screen-recorder"
+stop_test_recording gpu-screen-recorder >/dev/null
+pass "screen recording leaves the keystroke overlay off by default"
+
+rm -f "$OMARCHY_TEST_OVERLAY_ARGS" "$OMARCHY_TEST_RECORDER_PROCESS_ARGS" "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+if OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  OMARCHY_TEST_SHOWMETHEKEY_MISSING=true \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen --show-keystrokes; then
+  fail "screen recording continues when Show Me The Key is missing"
+fi
+[[ ! -e $OMARCHY_TEST_OVERLAY_ARGS ]] || fail "missing Show Me The Key is still launched"
+[[ ! -e $OMARCHY_TEST_RECORDER_PROCESS_ARGS ]] || fail "recorder starts without the requested keystroke overlay"
+[[ ! -e $keystroke_state ]] || fail "missing Show Me The Key leaves overlay state"
+grep -F 'omarchy pkg add showmethekey' "$OMARCHY_TEST_NOTIFICATION_ARGS" >/dev/null || \
+  fail "missing Show Me The Key notification gives the install command"
+pass "screen recording aborts when Show Me The Key is unavailable"
+
+rm -f "$OMARCHY_TEST_OVERLAY_ARGS" "$OMARCHY_TEST_RECORDER_PROCESS_ARGS" "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+if OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  OMARCHY_SCREENRECORD_USE_PORTAL=true \
+  "$ROOT/bin/omarchy-capture-screenrecording" --show-keystrokes; then
+  fail "--show-keystrokes continues with portal capture"
+fi
+[[ ! -e $OMARCHY_TEST_OVERLAY_ARGS ]] || fail "portal rejection launches the keystroke overlay"
+[[ ! -e $OMARCHY_TEST_RECORDER_PROCESS_ARGS ]] || fail "portal rejection launches the recorder"
+grep -F 'Use monitor or region capture with --show-keystrokes' "$OMARCHY_TEST_NOTIFICATION_ARGS" >/dev/null || \
+  fail "portal rejection does not explain the required capture modes"
+pass "--show-keystrokes rejects portal capture before startup"
+
+rm -f "$OMARCHY_TEST_RECORDER_PROCESS_ARGS" "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+if OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  OMARCHY_TEST_SHOWMETHEKEY_FAIL=true \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen --show-keystrokes; then
+  fail "screen recording continues when Show Me The Key fails to launch"
+fi
+[[ ! -e $OMARCHY_TEST_RECORDER_PROCESS_ARGS ]] || fail "recorder starts after the keystroke overlay fails to launch"
+[[ ! -e $keystroke_state ]] || fail "failed keystroke overlay launch leaves state"
+grep -F 'Keystroke overlay failed to start' "$OMARCHY_TEST_NOTIFICATION_ARGS" >/dev/null || \
+  fail "failed Show Me The Key launch is not reported"
+pass "screen recording aborts and cleans state when the keystroke overlay fails to launch"
+
+"$recording_stub_bin/showmethekey-gtk" -k -A -C &
+stale_overlay_pid=$!
+sleep 0.05
+printf '%s %s\n' "$stale_overlay_pid" "$(test_process_start_time "$stale_overlay_pid")" >"$keystroke_state"
+rm -f "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+if stop_test_recording gpu-screen-recorder >/dev/null; then
+  fail "--stop-recording succeeds without a recorder"
+fi
+wait_for_process_exit "$stale_overlay_pid" || fail "--stop-recording leaves stale owned overlay state running"
+[[ ! -e $keystroke_state ]] || fail "--stop-recording leaves stale owned overlay state"
+pass "--stop-recording cleans stale owned overlay state without a recorder"
+
+"$recording_stub_bin/showmethekey-gtk" -k -A -C &
+independent_overlay_pid=$!
+sleep 0.05
+rm -f "$OMARCHY_TEST_OVERLAY_STOPPED" "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen --show-keystrokes
+read -r owned_overlay_pid _ <"$keystroke_state"
+
+printf '%s\n' -k -A -C >"$tmp_dir/expected-overlay-args"
+cmp -s "$OMARCHY_TEST_OVERLAY_ARGS" "$tmp_dir/expected-overlay-args" || \
+  fail "--show-keystrokes uses the documented Show Me The Key launch arguments" "$(diff -u "$tmp_dir/expected-overlay-args" "$OMARCHY_TEST_OVERLAY_ARGS")"
+grep -Fx 'gpu-screen-recorder' "$OMARCHY_TEST_RECORDER_PROCESS_ARGS" >/dev/null || \
+  fail "--show-keystrokes changes the gpu-screen-recorder backend"
+
+grep -F 'including passwords' "$OMARCHY_TEST_NOTIFICATION_ARGS" >/dev/null || \
+  fail "--show-keystrokes does not warn that password keystrokes will be recorded"
+stop_test_recording gpu-screen-recorder >/dev/null
+wait_for_process_exit "$owned_overlay_pid" || fail "stopping a recording leaves its Show Me The Key process running"
+kill -0 "$independent_overlay_pid" 2>/dev/null || fail "stopping a recording kills an independently launched Show Me The Key process"
+[[ ! -e $keystroke_state ]] || fail "stopping a recording leaves keystroke overlay state"
+kill "$independent_overlay_pid"
+wait_for_process_exit "$independent_overlay_pid" || fail "independent Show Me The Key test process did not exit"
+pass "--show-keystrokes launches and cleans up only its owned overlay"
+
+rm -f "$OMARCHY_TEST_OVERLAY_STOPPED" "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+if OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  OMARCHY_TEST_RECORDER_FAIL=true \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen --show-keystrokes; then
+  fail "screen recording reports success when the recorder fails during startup"
+fi
+failed_start_overlay_pid=$(cat "$OMARCHY_TEST_OVERLAY_LAST_PID")
+wait_for_process_exit "$failed_start_overlay_pid" || fail "recorder startup failure leaves its Show Me The Key process running"
+[[ ! -e $keystroke_state ]] || fail "recorder startup failure leaves keystroke overlay state"
+pass "recorder startup failure cleans up the owned keystroke overlay"
+
+rm -f "$OMARCHY_TEST_RECORDER_PROCESS_PID" "$keystroke_state"
+OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  OMARCHY_TEST_RECORDER_NO_FILE=true \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen --show-keystrokes &
+starting_command_pid=$!
+wait_for_file "$OMARCHY_TEST_RECORDER_PROCESS_PID" || fail "startup signal test did not launch the recorder"
+wait_for_file "$keystroke_state" || fail "startup signal test did not save overlay state"
+read -r starting_overlay_pid _ <"$keystroke_state"
+starting_recorder_pid=$(cat "$OMARCHY_TEST_RECORDER_PROCESS_PID")
+kill -TERM "$starting_command_pid"
+wait "$starting_command_pid" 2>/dev/null || :
+wait_for_process_exit "$starting_overlay_pid" || fail "a startup signal leaves the unhanded keystroke overlay running"
+kill -TERM "$starting_recorder_pid" 2>/dev/null
+wait_for_process_exit "$starting_recorder_pid" || fail "startup signal test recorder did not exit"
+[[ ! -e $keystroke_state ]] || fail "a startup signal leaves unhanded overlay state"
+pass "startup signal cleanup owns the overlay until recorder handoff"
+
+rm -f "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen --show-keystrokes
+read -r watched_overlay_pid watched_overlay_started watched_recorder_pid watched_recorder_started <"$keystroke_state"
+kill -TERM "$watched_recorder_pid"
+wait_for_process_exit "$watched_recorder_pid" || fail "watchdog test recorder did not exit"
+wait_for_process_exit "$watched_overlay_pid" || fail "recorder exit leaves its watched keystroke overlay running"
+wait_for_file_removal "$keystroke_state" || fail "recorder exit leaves watched keystroke overlay state"
+pass "detached watchdog cleans the exact overlay after unexpected recorder exit"
+
+rm -f "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+OMARCHY_TEST_BACKEND=gpu-screen-recorder \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen --show-keystrokes
+read -r later_overlay_pid _ <"$keystroke_state"
+"$ROOT/bin/omarchy-capture-screenrecording" \
+  --keystroke-overlay-watchdog="$watched_overlay_pid:$watched_overlay_started:$watched_recorder_pid:$watched_recorder_started"
+kill -0 "$later_overlay_pid" 2>/dev/null || fail "an old watchdog kills a later recording's keystroke overlay"
+stop_test_recording gpu-screen-recorder >/dev/null
+pass "old watchdogs cannot clean a later recording's overlay"
+
+rm -f "$OMARCHY_TEST_RECORDER_PROCESS_PID"
+OMARCHY_TEST_BACKEND=wf-recorder \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen --show-keystrokes
+grep -Fx 'wf-recorder' "$OMARCHY_TEST_RECORDER_PROCESS_ARGS" >/dev/null || \
+  fail "--show-keystrokes changes the wf-recorder backend"
+stop_test_recording wf-recorder >/dev/null
+pass "--show-keystrokes preserves the wf-recorder backend"
+
+keystroke_rules="$ROOT/default/hypr/apps/showmethekey.lua"
+grep -F 'class = "^(one\\.alynx\\.showmethekey|showmethekey-gtk)$", title = "^Floating Window - Show Me The Key$"' "$keystroke_rules" >/dev/null || \
+  fail "Show Me The Key window rule does not match its documented app IDs and title"
+grep -F 'move = { "(monitor_w-window_w)/2", "monitor_h-window_h-40" }' "$keystroke_rules" >/dev/null || \
+  fail "Show Me The Key window rule is not positioned near the bottom center"
+grep -F 'float = true' "$keystroke_rules" >/dev/null &&
+  grep -F 'pin = true' "$keystroke_rules" >/dev/null &&
+  grep -F 'no_initial_focus = true' "$keystroke_rules" >/dev/null &&
+  grep -F 'focus_on_activate = false' "$keystroke_rules" >/dev/null &&
+  grep -F 'opacity = "1 1"' "$keystroke_rules" >/dev/null || \
+  fail "Show Me The Key window rule does not float, pin, preserve focus, and force full opacity"
+pass "Show Me The Key has a focused floating-window rule"
