@@ -103,6 +103,148 @@ out=$(PATH="$ROOT/bin:$PATH" OMARCHY_DRI_PATH="$dri" "$bind/demo" hello)
   fail "wrapper is a no-op when a render GPU exists" "$out"
 pass "wrapper is a no-op when a render GPU exists"
 
+wrap() {
+  PATH="$ROOT/bin:$PATH" OMARCHY_ELECTRON_GL_BIND_DIR="$bind" \
+    "$ROOT/bin/omarchy-cmd-electron-gl-wrap" "$@"
+}
+
+# Recognize only the legacy 1Password link, using the setup leaf's binary override
+# so this exercises the unmodified helper without writing to /opt.
+legacy_real="$test_tmp/1Password/1password"
+mkdir -p "$(dirname "$legacy_real")"
+cp "$real" "$legacy_real"
+chmod 751 "$legacy_real"
+legacy_hash=$(sha256sum "$legacy_real")
+ln -s "$legacy_real" "$bind/1password"
+if wrap 1password "$legacy_real" 2>"$test_tmp/error"; then
+  fail "default legacy exception must refuse an arbitrary 1Password target"
+fi
+OMARCHY_1PASSWORD_BIN="$legacy_real" wrap 1password "$legacy_real" ||
+  fail "known legacy 1Password symlink can be migrated"
+[[ ! -L $bind/1password && -f $bind/1password ]] ||
+  fail "legacy symlink is replaced with a regular wrapper"
+[[ $(sha256sum "$legacy_real") == "$legacy_hash" && $(stat -c %a "$legacy_real") == "751" ]] ||
+  fail "legacy migration preserves the real binary bytes and permissions"
+out=$(PATH="$ROOT/bin:$PATH" OMARCHY_DRI_PATH="$dri" "$bind/1password" "vault with spaces")
+[[ $out == "real vault with spaces" ]] || fail "migrated 1Password wrapper executes the real binary" "$out"
+legacy_wrapper_hash=$(sha256sum "$bind/1password")
+OMARCHY_1PASSWORD_BIN="$legacy_real" wrap 1password "$legacy_real"
+[[ $(sha256sum "$bind/1password") == "$legacy_wrapper_hash" ]] ||
+  fail "legacy migration is idempotent"
+pass "legacy 1Password migration preserves and executes the real binary, and is idempotent"
+
+rm "$bind/1password"
+ln -s "$legacy_real" "$bind/1password"
+OMARCHY_1PASSWORD_INSTALL_DIR="$(dirname "$legacy_real")" wrap 1password "$legacy_real" ||
+  fail "legacy migration honors the installer's configured directory"
+[[ ! -L $bind/1password && $(sha256sum "$legacy_real") == "$legacy_hash" ]] ||
+  fail "configured install-directory migration replaces only the link"
+pass "legacy migration honors the installer's configured directory"
+
+other_real="$test_tmp/other-real"
+cp "$real" "$other_real"
+wrap demo "$other_real"
+grep -Fxq "real=$other_real" "$bind/demo" || fail "marked wrapper can be updated to another binary"
+pass "marked regular wrappers can be updated"
+
+printf '#!/bin/bash\nprintf custom\\n\n' >"$bind/chromium"
+chmod 750 "$bind/chromium"
+custom_hash=$(sha256sum "$bind/chromium")
+if wrap chromium "$real" 2>"$test_tmp/error"; then
+  fail "custom Chromium launcher must be refused"
+fi
+[[ $(sha256sum "$bind/chromium") == "$custom_hash" && $(stat -c %a "$bind/chromium") == "750" ]] ||
+  fail "custom Chromium launcher bytes and permissions are preserved"
+grep -Fq 'unmanaged launcher' "$test_tmp/error" || fail "custom launcher refusal explains the conflict"
+pass "custom Chromium launcher is refused and preserved"
+
+for link_target in "$other_real" "$test_tmp/missing" "$bind/demo"; do
+  ln -s "$link_target" "$bind/unknown"
+  if wrap unknown "$real" 2>"$test_tmp/error"; then
+    fail "unknown symlink must be refused" "$link_target"
+  fi
+  [[ -L $bind/unknown && $(readlink "$bind/unknown") == "$link_target" ]] ||
+    fail "unknown symlink is preserved" "$link_target"
+  rm "$bind/unknown"
+done
+pass "unknown, dangling, and marked-wrapper symlinks are refused and preserved"
+
+ln -s "$other_real" "$bind/1password-other"
+if OMARCHY_1PASSWORD_BIN="$other_real" wrap 1password-other "$other_real" 2>"$test_tmp/error"; then
+  fail "legacy exception requires the 1password command name"
+fi
+rm "$bind/1password"
+ln -s "$other_real" "$bind/1password"
+if OMARCHY_1PASSWORD_BIN="$legacy_real" wrap 1password "$other_real" 2>"$test_tmp/error"; then
+  fail "legacy exception requires the configured 1Password binary"
+fi
+[[ $(readlink "$bind/1password") == "$other_real" ]] || fail "unknown 1Password link is preserved"
+pass "legacy exception requires both the known command name and binary"
+
+cp "$real" "$bind/self"
+self_hash=$(sha256sum "$bind/self")
+if wrap self "$bind/self" 2>"$test_tmp/error"; then
+  fail "literal self-wrap must be refused"
+fi
+[[ $(sha256sum "$bind/self") == "$self_hash" ]] || fail "self-wrap preserves real executable"
+ln "$real" "$bind/hardlink"
+if wrap hardlink "$real" 2>"$test_tmp/error"; then
+  fail "hardlink self-wrap must be refused"
+fi
+[[ $bind/hardlink -ef $real ]] || fail "hardlink self-wrap preserves hardlink"
+# The legacy exception applies to symlinks, never hardlinked 1Password binaries.
+rm "$bind/1password"
+ln "$legacy_real" "$bind/1password"
+if OMARCHY_1PASSWORD_BIN="$legacy_real" wrap 1password "$legacy_real" 2>"$test_tmp/error"; then
+  fail "hardlinked 1Password binary must be refused"
+fi
+[[ $(sha256sum "$legacy_real") == "$legacy_hash" && $(stat -c %a "$legacy_real") == "751" ]] ||
+  fail "hardlink self-wrap preserves binary bytes and mode"
+pass "literal self-wrap and hardlinked binaries are refused"
+
+for invalid_name in "" . .. ../escape nested/launcher; do
+  if wrap "$invalid_name" "$real" 2>"$test_tmp/error"; then
+    fail "command name must be a basename" "$invalid_name"
+  fi
+done
+[[ ! -e $test_tmp/escape && ! -e $bind/nested ]] || fail "invalid names do not escape the launcher directory"
+pass "invalid and traversing command names are refused"
+
+# Fail after staging has begun: neither an old wrapper nor the legacy symlink
+# may be replaced until both the staged write and permissions have succeeded.
+failure_stubs="$test_tmp/failure-stubs"
+mkdir -p "$failure_stubs"
+for command in mktemp tee chmod mv; do
+  printf '#!/bin/bash\nexit 93\n' >"$failure_stubs/$command"
+  chmod +x "$failure_stubs/$command"
+  for launcher in demo 1password; do
+    rm -f "$bind/1password"
+    ln -s "$legacy_real" "$bind/1password"
+    old_wrapper_hash=$(sha256sum "$bind/demo")
+    if [[ $launcher == "1password" ]]; then
+      target_real=$legacy_real
+    else
+      target_real=$real
+    fi
+    if PATH="$failure_stubs:$ROOT/bin:$PATH" \
+      OMARCHY_ELECTRON_GL_BIND_DIR="$bind" OMARCHY_1PASSWORD_BIN="$legacy_real" \
+      "$ROOT/bin/omarchy-cmd-electron-gl-wrap" "$launcher" "$target_real" \
+      2>"$test_tmp/error"; then
+      fail "failed staging $command must be reported for $launcher"
+    fi
+    [[ $(sha256sum "$bind/demo") == "$old_wrapper_hash" ]] || fail "failed $command preserves old wrapper"
+    [[ -L $bind/1password && $(readlink "$bind/1password") == "$legacy_real" ]] ||
+      fail "failed $command preserves legacy symlink"
+    [[ $(sha256sum "$legacy_real") == "$legacy_hash" && $(stat -c %a "$legacy_real") == "751" ]] ||
+      fail "failed $command preserves real binary bytes and mode"
+    if compgen -G "$bind/.omarchy-electron-gl.*" >/dev/null; then
+      fail "failed $command cleans up staged files"
+    fi
+  done
+  rm "$failure_stubs/$command"
+done
+pass "mktemp, write, chmod, and rename failures preserve launchers and clean up staged files"
+
 grep -Fq 'apple/electron-gl.sh' "$ROOT/install/user/all.sh" ||
   fail "Apple Electron GL setup runs during user hardware setup"
 pass "Apple Electron GL setup runs during user hardware setup"
