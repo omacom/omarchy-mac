@@ -1,9 +1,9 @@
 #!/bin/bash
 # Register this Apple Silicon machine as a GitHub Actions self-hosted runner
-# for the install-vm workflow. Run it from a terminal (it needs sudo).
+# for trusted manual hardware workflows. Run it from a terminal (it needs sudo).
 #
-# Public-repo safety: install-vm.yml is workflow_dispatch + nightly only. Do
-# not point a desktop runner at pull_request jobs from forks.
+# Install VM now uses disposable GitHub-hosted ARM runners. Do not point a
+# desktop runner at pull_request jobs from forks.
 
 set -euo pipefail
 
@@ -63,4 +63,4 @@ log "installing the runner systemd service"
 sudo bash -c "cd \"$RUNNER_DIR\" && ./svc.sh install \"$RUNNER_USER\" && ./svc.sh start"
 
 log "runner is up. Confirm it at https://github.com/$REPO/settings/actions/runners"
-log "then run the Install VM workflow from Actions → workflow_dispatch"
+log "use this runner only for trusted manual hardware workflows; Install VM uses GitHub-hosted ARM"

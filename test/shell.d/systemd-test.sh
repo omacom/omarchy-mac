@@ -31,6 +31,20 @@ grep -Fx 'systemctl --user daemon-reload' "$first_run_units" >/dev/null
 grep -F 'omarchy-sleep-lock.service' "$first_run_units" >/dev/null
 pass "first-run reloads and enables the sleep lock service"
 
+als_kbd_service="$ROOT/default/systemd/user/omarchy-brightness-keyboard-auto.service"
+grep -Fx 'ExecStart=/usr/bin/omarchy-brightness-keyboard-auto' "$als_kbd_service" >/dev/null
+grep -Fx 'ExecCondition=/usr/bin/omarchy-brightness-keyboard-auto --available' "$als_kbd_service" >/dev/null
+grep -Fx 'PartOf=graphical-session.target' "$als_kbd_service" >/dev/null
+grep -Fx 'ConditionEnvironment=WAYLAND_DISPLAY' "$als_kbd_service" >/dev/null
+grep -Fx 'WantedBy=graphical-session.target' "$als_kbd_service" >/dev/null
+pass "ALS keyboard backlight service follows the graphical session"
+
+grep -F 'omarchy-brightness-keyboard-auto.service' "$first_run_units" >/dev/null ||
+  fail "first-run does not enable ambient keyboard backlight"
+grep -e 'cp .*omarchy-brightness-keyboard-auto.service' "$first_run_units" >/dev/null &&
+  fail "first-run copies the ALS keyboard unit into ~/.config/systemd/user"
+pass "first-run enables ambient keyboard backlight"
+
 upgrade_to_quattro="$ROOT/bin/omarchy-upgrade-to-quattro"
 grep -F '6870b232a6c0474b59187882e6d25ae771bba735098bcbedef8a2b73b97e2b6a' "$upgrade_to_quattro" >/dev/null
 grep -F 'bcd1a76cb5c63514922bc5e11af22ae480fc6d06a99863364e02bdf3c7bdceaf' "$upgrade_to_quattro" >/dev/null

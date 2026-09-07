@@ -12,6 +12,19 @@ trap 'rm -rf "$test_tmp"' EXIT
 stub_bin="$test_tmp/bin"
 mkdir -p "$stub_bin"
 
+# Exercise the ARM update targets on every host, while keeping repository and
+# keyring preparation out of these conflict-recovery tests.
+cat >"$stub_bin/uname" <<'STUB'
+#!/bin/bash
+printf '%s\n' aarch64
+STUB
+
+mkdir -p "$test_tmp/omarchy/install/helpers"
+cat >"$test_tmp/omarchy/install/helpers/arm-package-sources.sh" <<'STUB'
+source "$ROOT/install/helpers/arm-package-sources.sh"
+omarchy_arm_prepare_package_sources() { :; }
+STUB
+
 cat >"$stub_bin/sudo" <<'STUB'
 #!/bin/bash
 exec "$@"
@@ -39,7 +52,7 @@ fi
 echo "upgrade complete"
 STUB
 
-chmod +x "$stub_bin/sudo" "$stub_bin/pacman"
+chmod +x "$stub_bin/sudo" "$stub_bin/pacman" "$stub_bin/uname"
 
 # Everything a blocked qemu-common upgrade leaves on stderr, and no more. The
 # ":: ... Remove qemu-block-gluster? [y/N]" pacman asked is deliberately absent:
@@ -56,6 +69,7 @@ write_conflict_report() {
 
 update_env() {
   printf '%s\n' \
+    "OMARCHY_PATH=$test_tmp/omarchy" \
     "OMARCHY_REPLACED_DIR=$test_tmp/replaced" \
     "PACMAN_ATTEMPTS=$test_tmp/attempts" \
     "PACMAN_CALLS=$test_tmp/calls" \
@@ -99,6 +113,12 @@ run_on_terminal || fail "a package conflict is not resolved on a terminal"
 [[ $(call_line 2 args) != *"--ask"* ]] ||
   fail "the interactive retry answers pacman's questions from a bitmask instead"
 pass "a package conflict is put back to the person running the update"
+
+for call in 1 2; do
+  [[ " $(call_line "$call" args) " == *" omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils "* ]] ||
+    fail "the initial upgrade or interactive retry loses the ARM targets"
+done
+pass "the initial upgrade and interactive retry retain the ARM targets"
 
 [[ $(call_line 2 tty0) == "yes" && $(call_line 2 tty2) == "yes" ]] ||
   fail "the interactive retry cannot be answered: pacman has no terminal left"

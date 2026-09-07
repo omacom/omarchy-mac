@@ -1,0 +1,325 @@
+#!/bin/bash
+# Run install.sh inside an isolated Arch Linux ARM machine on this aarch64 host.
+#
+# systemd-nspawn shares the ARM64 host kernel while giving install.sh its own
+# rootfs, users, and pacman. AWS runs a generic Linux kernel; this tests package
+# installation and userspace setup, not Asahi kernel or Apple GPU behavior.
+#
+# Needs root (or passwordless sudo), network, and several GB free.
+
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+CACHE="${OMARCHY_INSTALL_VM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-install-vm}"
+WORK="${OMARCHY_INSTALL_VM_WORK:-/var/tmp/omarchy-install-vm}"
+SOURCE="$WORK/source"
+TARBALL_URL="${OMARCHY_INSTALL_VM_TARBALL:-https://fl.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}"
+GUEST_USER=ci
+KEEP_ROOT=${OMARCHY_INSTALL_VM_KEEP:-0}
+CHECK_IDEMPOTENCY=${OMARCHY_INSTALL_VM_IDEMPOTENCY:-0}
+CHECK_PACKAGE_SOURCES=${OMARCHY_INSTALL_VM_PACKAGE_SOURCES:-0}
+PREPARED_CACHE_VERSION=3
+ROOTFS_SIGNING_FINGERPRINT=68B3537F39A313B3E574D06777193F152BDBE6A6
+ROOTFS_KEYSERVER=hkps://keyserver.ubuntu.com
+CALLER_UID=${SUDO_UID:-$(id -u)}
+CALLER_GID=${SUDO_GID:-$(id -g)}
+
+log() { printf '\033[32m==>\033[0m %s\n' "$*"; }
+fail() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+as_root() {
+  if (( EUID == 0 )); then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+cleanup() {
+  for entry in omarchy-install pacman; do
+    if [[ -f $WORK/root/var/log/$entry.log ]]; then
+      if [[ $entry == "omarchy-install" ]]; then
+        as_root cp "$WORK/root/var/log/$entry.log" "$WORK/logs/system-setup.log" || true
+      else
+        as_root cp "$WORK/root/var/log/$entry.log" "$WORK/logs/$entry.log" || true
+      fi
+    fi
+  done
+  as_root chmod -R a+rX "$WORK/logs" 2>/dev/null || true
+  as_root chown "$CALLER_UID:$CALLER_GID" "$WORK/logs" 2>/dev/null || true
+  if (( KEEP_ROOT )); then
+    log "keeping $WORK/root (OMARCHY_INSTALL_VM_KEEP=1)"
+    return 0
+  fi
+  as_root rm -rf "$WORK/root" "$SOURCE"
+}
+
+[[ $(uname -m) == "aarch64" ]] || fail "this harness only runs on aarch64"
+command -v systemd-nspawn >/dev/null || fail "systemd-nspawn is required"
+command -v curl >/dev/null || fail "curl is required"
+command -v gpg >/dev/null || fail "gpg is required"
+command -v sha256sum >/dev/null || fail "sha256sum is required"
+
+as_root true || fail "root (or passwordless sudo) is required to spawn the machine"
+
+# Work is disposable, but the caller's checkout must never be removed or chowned.
+[[ $WORK =~ ^/var/tmp/omarchy-[a-zA-Z0-9_.-]+$ && $WORK != *".."* && ! -L $WORK && ! -L $WORK/root && ! -L $SOURCE ]] || fail "unsafe work directory"
+[[ $ROOT != "$WORK" && $ROOT != "$WORK/"* ]] || fail "checkout must be outside the work directory"
+
+mkdir -p "$CACHE"
+as_root mkdir -p "$WORK/logs"
+as_root find "$WORK/logs" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+as_root chown "$CALLER_UID:$CALLER_GID" "$WORK/logs"
+as_root rm -rf "$WORK/root" "$SOURCE"
+as_root mkdir -p "$WORK/root" "$SOURCE"
+trap cleanup EXIT
+
+tarball="$CACHE/ArchLinuxARM-aarch64-latest.tar.gz"
+signature="$tarball.sig"
+
+verify_rootfs() {
+  local archive="$1" detached_signature="$2" keyring imported_fingerprint status signer_fingerprint result=0
+
+  keyring=$(mktemp -d "$WORK/rootfs-keyring.XXXXXX")
+  chmod 700 "$keyring"
+  if ! gpg --batch --homedir "$keyring" --keyserver "$ROOTFS_KEYSERVER" \
+    --recv-keys "$ROOTFS_SIGNING_FINGERPRINT" >/dev/null 2>&1; then
+    result=1
+  else
+    imported_fingerprint=$(gpg --batch --homedir "$keyring" --with-colons \
+      --fingerprint "$ROOTFS_SIGNING_FINGERPRINT" 2>/dev/null |
+      awk -F: '$1 == "fpr" { print $10; exit }')
+    if [[ $imported_fingerprint != "$ROOTFS_SIGNING_FINGERPRINT" ]]; then
+      result=1
+    elif ! status=$(gpg --batch --homedir "$keyring" --status-fd=1 \
+      --verify "$detached_signature" "$archive" 2>/dev/null); then
+      result=1
+    else
+      signer_fingerprint=$(awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" { print $3; exit }' <<<"$status")
+      [[ $signer_fingerprint == "$ROOTFS_SIGNING_FINGERPRINT" ]] || result=1
+    fi
+  fi
+  rm -rf "$keyring"
+  (( result == 0 ))
+}
+
+if [[ -f $tarball && -f $signature ]]; then
+  log "re-verifying cached Arch Linux ARM rootfs"
+  if ! verify_rootfs "$tarball" "$signature"; then
+    log "discarding an unverified rootfs cache"
+    rm -f "$tarball" "$signature"
+  fi
+elif [[ -f $tarball || -f $signature ]]; then
+  rm -f "$tarball" "$signature"
+fi
+
+if [[ ! -f $tarball ]]; then
+  log "downloading and verifying Arch Linux ARM rootfs"
+  download_dir=$(mktemp -d "$WORK/rootfs-download.XXXXXX")
+  curl -fL --retry 3 -o "$download_dir/rootfs.tar.gz" "$TARBALL_URL"
+  curl -fL --retry 3 -o "$download_dir/rootfs.tar.gz.sig" "$TARBALL_URL.sig"
+  if ! verify_rootfs "$download_dir/rootfs.tar.gz" "$download_dir/rootfs.tar.gz.sig"; then
+    rm -rf "$download_dir"
+    fail "Arch Linux ARM rootfs signature did not match $ROOTFS_SIGNING_FINGERPRINT"
+  fi
+  mv "$download_dir/rootfs.tar.gz" "$tarball"
+  mv "$download_dir/rootfs.tar.gz.sig" "$signature"
+  rmdir "$download_dir"
+fi
+
+rootfs_digest=$(sha256sum "$tarball" | awk '{ print $1 }')
+
+prepared="$CACHE/prepared-aarch64-v${PREPARED_CACHE_VERSION}-${rootfs_digest}.tar.gz"
+prepared_checksum="$prepared.sha256"
+
+if [[ -f $prepared && -f $prepared_checksum ]] &&
+  (cd "$CACHE" && sha256sum -c "$(basename "$prepared_checksum")" >/dev/null 2>&1); then
+  log "restoring prepared rootfs snapshot"
+  as_root tar -xzf "$prepared" -C "$WORK/root"
+else
+  rm -f "$prepared" "$prepared_checksum"
+  log "extracting rootfs into $WORK/root"
+  as_root tar -xzf "$tarball" -C "$WORK/root"
+fi
+
+as_root mkdir -p "$WORK/root/src/omarchy"
+
+nspawn() {
+  # Do not bind-ro /sys: nspawn has to mount its own cgroupfs on
+  # /sys/fs/cgroup, and a host /sys bind makes it refuse to start.
+  # Older host systemd filters omit the Landlock APIs used by current pacman.
+  # Allow those sandbox-enforcement calls while keeping the default filter.
+  as_root systemd-nspawn \
+    --directory="$WORK/root" \
+    --register=no \
+    --system-call-filter="landlock_create_ruleset landlock_add_rule landlock_restrict_self" \
+    --resolv-conf=bind-host \
+    --bind="$SOURCE:/src/omarchy" \
+    --console=pipe \
+    "$@"
+}
+
+stage_source() {
+  local guest_uid guest_gid
+  # Keep .git for package builds, without granting guest writes to the checkout.
+  as_root cp -a "$ROOT/." "$SOURCE/"
+  # Hosted runners and local developers can have a different UID from guest ci.
+  guest_uid=$(nspawn id -u "$GUEST_USER")
+  guest_gid=$(nspawn id -g "$GUEST_USER")
+  as_root chown -R "$guest_uid:$guest_gid" "$SOURCE"
+}
+
+set_test_mirror() {
+  # Avoid the rotating HTTP mirror that timed out during package downloads.
+  # This is a guest-only fixture, not a change to users' mirror preferences.
+  nspawn /bin/bash -euo pipefail -c 'printf "%s\n" "Server = https://fl.us.mirror.archlinuxarm.org/\$arch/\$repo" > /etc/pacman.d/mirrorlist'
+}
+
+set_test_mirror
+
+if [[ ! -f $prepared ]]; then
+  log "bootstrapping pacman, sudo, and the $GUEST_USER user"
+  nspawn /bin/bash -euo pipefail <<'BOOTSTRAP'
+pacman-key --init
+pacman-key --populate archlinuxarm
+pacman -Sy --noconfirm
+pacman -S --needed --noconfirm sudo git base-devel
+id ci >/dev/null 2>&1 || useradd -m -G wheel ci
+printf '%s\n' 'ci ALL=(ALL) NOPASSWD: ALL' >/etc/sudoers.d/ci
+chmod 440 /etc/sudoers.d/ci
+sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen >/dev/null
+printf 'LANG=en_US.UTF-8\n' >/etc/locale.conf
+BOOTSTRAP
+
+  log "saving prepared rootfs snapshot"
+  prepared_partial="$prepared.partial"
+  as_root rm -f "$prepared_partial"
+  as_root tar -czf "$prepared_partial" -C "$WORK/root" .
+  as_root chown "$CALLER_UID:$CALLER_GID" "$prepared_partial"
+  mv "$prepared_partial" "$prepared"
+  (cd "$CACHE" && sha256sum "$(basename "$prepared")" >"$(basename "$prepared_checksum")")
+  as_root chown "$CALLER_UID:$CALLER_GID" "$prepared_checksum"
+fi
+
+stage_source
+
+if [[ $CHECK_PACKAGE_SOURCES == "1" ]]; then
+  log "validating restricted package sources and current-stack repository remediation"
+  nspawn /bin/bash -euo pipefail <<'PACKAGE_SOURCES' 2>&1 | tee "$WORK/logs/package-sources.log"
+export OMARCHY_PATH=/src/omarchy
+export PATH="$OMARCHY_PATH/bin:$PATH"
+source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
+omarchy_arm_prepare_package_sources
+[[ $(pacman-conf --repo omarchy Usage) == "Sync" ]]
+pacman -Sy --noconfirm
+mapfile -t targets < <(omarchy_arm_package_targets)
+pacman -Sp --print-format '%r %n %v %l' "${targets[@]}" > /tmp/package-selection
+cat /tmp/package-selection
+awk '
+  $1 == "omarchy" {
+    if ($2 != "hyprland" && $2 != "hyprtoolkit" && $2 != "hyprland-guiutils") exit 1
+    selected[$2] = 1
+  }
+  $2 == "aquamarine" { if ($1 != "extra") exit 1; aquamarine = 1 }
+  END { if (length(selected) != 3 || !aquamarine) exit 1 }
+' /tmp/package-selection
+pacman -Syu --needed --noconfirm "${targets[@]}"
+pacman -Qii aquamarine hyprtoolkit hyprland-guiutils hyprland
+pacman -Dk
+printf 'PASS: fresh restricted-source transaction\n'
+
+# Reproduce an installed system whose old configuration has no edge section.
+awk '/^\[/ { omit = ($0 == "[omarchy]") } !omit { print }' /etc/pacman.conf >/etc/pacman.conf.previous
+mv /etc/pacman.conf.previous /etc/pacman.conf
+omarchy-update-system-pkgs
+[[ $(pacman-conf --repo omarchy Usage) == "Sync" ]]
+pacman -Qii aquamarine hyprtoolkit hyprland-guiutils hyprland
+pacman -Dk
+printf 'PASS: current-stack repository remediation and reinstall (not an old-stack upgrade fixture)\n'
+PACKAGE_SOURCES
+
+  # The package transaction above must not preinstall the stack for install.sh.
+  # Start the full installer independently from the clean prepared base image.
+  as_root cp "$WORK/root/var/log/pacman.log" "$WORK/logs/package-phase-pacman.log"
+  [[ $WORK == /var/tmp/omarchy-* && $WORK != *".."* && ! -L $WORK/root ]] || fail "unsafe work directory"
+  as_root rm -rf -- "$WORK/root"
+  as_root mkdir -p "$WORK/root"
+  as_root tar -xzf "$prepared" -C "$WORK/root"
+  as_root mkdir -p "$WORK/root/src/omarchy"
+  set_test_mirror
+  log "restored independent clean base for the full installation"
+fi
+
+run_install() {
+  local log_file="$1"
+  nspawn --user="$GUEST_USER" --chdir=/src/omarchy \
+    /bin/bash -euo pipefail -c 'export LANG=en_US.UTF-8; bash install.sh' \
+    2>&1 | tee "$log_file"
+  local status=${PIPESTATUS[0]}
+  return "$status"
+}
+
+log "running install.sh as $GUEST_USER (AUR builds take a while)"
+install_status=0
+run_install "$WORK/logs/install.log" || install_status=$?
+
+# Also run when later system setup fails: the default package loop must not
+# silently downgrade the explicit edge selection through an unqualified yay.
+assert_package_sources() {
+  local log_file="$1"
+  nspawn /bin/bash -euo pipefail <<'VERIFY_FINAL' 2>&1 | tee "$log_file"
+export LC_ALL=C
+source /src/omarchy/install/helpers/arm-package-sources.sh
+[[ $(pacman-conf --repo omarchy Usage) == "Sync" ]]
+while read -r target; do
+  package=${target#*/}
+  expected=$(pacman -Si "$target" | sed -n 's/^Version[[:space:]]*:[[:space:]]*//p')
+  installed=$(pacman -Q "$package" | cut -d ' ' -f2)
+  printf '%s installed=%s expected=%s\n' "$target" "$installed" "$expected"
+  [[ -n $expected && $installed == "$expected" ]]
+done < <(omarchy_arm_package_targets)
+pacman -Dk
+printf 'PASS: installer retained the explicit edge package versions\n'
+VERIFY_FINAL
+}
+
+assert_installed_system() {
+  local log_file="$1"
+  nspawn /bin/bash -euo pipefail <<'ASSERT' 2>&1 | tee "$log_file"
+source /usr/share/omarchy/default/bash/env-bootstrap
+command -v omarchy >/dev/null
+omarchy commands --check >/dev/null
+pacman -Q omarchy >/dev/null
+pacman -Q omarchy-settings >/dev/null
+[[ -d /usr/share/omarchy/bin ]]
+[[ -d /usr/share/omarchy/install ]]
+[[ -x /usr/share/omarchy/bin/omarchy ]]
+grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf
+grep -q '^=== Omarchy Setup Completed:' /var/log/omarchy-install.log
+id ci >/dev/null
+su ci -c 'set -e; source /usr/share/omarchy/default/bash/env-bootstrap; command -v omarchy >/dev/null; [[ -d $HOME/.config/hypr ]]; omarchy-done check finalize-user'
+printf 'ok - system setup completed and user finalization marker exists\n'
+printf 'ok - install.sh produced a working Omarchy userspace\n'
+ASSERT
+}
+
+if [[ $CHECK_PACKAGE_SOURCES == "1" ]]; then
+  assert_package_sources "$WORK/logs/final-package-sources.log"
+fi
+(( install_status == 0 )) || fail "install.sh exited $install_status (see $WORK/logs/install.log)"
+
+log "asserting the installed system"
+assert_installed_system "$WORK/logs/assert.log"
+
+if [[ $CHECK_IDEMPOTENCY == "1" ]]; then
+  log "running install.sh again to check idempotency"
+  run_install "$WORK/logs/install-second.log" || fail "second install.sh run exited $? (see $WORK/logs/install-second.log)"
+  if [[ $CHECK_PACKAGE_SOURCES == "1" ]]; then
+    assert_package_sources "$WORK/logs/second-package-sources.log"
+  fi
+  assert_installed_system "$WORK/logs/assert-second.log"
+  printf 'ok - second install.sh run completed and assertions passed\n' | tee "$WORK/logs/idempotency.log"
+fi
+
+log "install machine test passed"
