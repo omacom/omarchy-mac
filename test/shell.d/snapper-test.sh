@@ -112,8 +112,8 @@ find_omarchy_pks_root() {
 # Packaging coverage lives in the sibling omarchy-pkgs checkout, which is present
 # in CI/dev but not on an installed machine. Skip (don't fail) when it's absent.
 if pkgs_root=$(find_omarchy_pks_root); then
-  settings_pkgbuild="$pkgs_root/omarchy-settings-dev/PKGBUILD"
-  omarchy_pkgbuild="$pkgs_root/omarchy-dev/PKGBUILD"
+  settings_pkgbuild="$pkgs_root/omarchy-settings/PKGBUILD"
+  omarchy_pkgbuild="$pkgs_root/omarchy/PKGBUILD"
 
   grep -F 'cp -a default/. "$pkgdir/usr/share/omarchy/default/"' "$settings_pkgbuild" >/dev/null || fail "omarchy-settings package bundles default/"
   grep -F 'install -Dm644 default/snapper/root \' "$settings_pkgbuild" >/dev/null || fail "omarchy-settings package installs Snapper template source"
@@ -167,15 +167,15 @@ else
   pass "omarchy-iso checkout absent; skipping installer coverage"
 fi
 
-# Snapper needs a snapshot-capable root and Asahi installs land on ext4, where
-# create-config fails. config/all.sh runs early, so a non-zero exit here aborts
-# system setup before services are ever enabled.
+# Older installs may have an ext4 root; detect that filesystem independently
+# of Snapper's command status, which can also mean missing/broken packages.
 unsupported_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp" "$unsupported_tmp"' EXIT
 mkdir -p "$unsupported_tmp/bin"
 
 cat >"$unsupported_tmp/bin/snapper" <<'STUB'
 #!/bin/bash
+echo 'Snapper must not run on this ext4 fixture' >&2
 exit 1
 STUB
 chmod +x "$unsupported_tmp/bin/snapper"
@@ -185,6 +185,12 @@ cat >"$unsupported_tmp/bin/systemctl" <<'STUB'
 exit 0
 STUB
 chmod +x "$unsupported_tmp/bin/systemctl"
+
+cat >"$unsupported_tmp/bin/stat" <<'STUB'
+#!/bin/bash
+echo ext2/ext3
+STUB
+chmod +x "$unsupported_tmp/bin/stat"
 
 unsupported_output=$(
   PATH="$unsupported_tmp/bin:$PATH" \
