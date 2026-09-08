@@ -117,8 +117,11 @@ pass "a package conflict is put back to the person running the update"
 for call in 1 2; do
   [[ " $(call_line "$call" args) " == *" omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils "* ]] ||
     fail "the initial upgrade or interactive retry loses the ARM targets"
+  [[ " $(call_line "$call" args) " == *" --needed "* ]] ||
+    fail "the initial upgrade or interactive retry reinstalls current packages"
 done
 pass "the initial upgrade and interactive retry retain the ARM targets"
+pass "the initial upgrade and interactive retry skip current packages"
 
 [[ $(call_line 2 tty0) == "yes" && $(call_line 2 tty2) == "yes" ]] ||
   fail "the interactive retry cannot be answered: pacman has no terminal left"
