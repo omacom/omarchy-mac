@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# omarchy:summary=Map the Asahi laptop mic array to a stereo Pulse source
+# omarchy:group=audio
+# omarchy:hidden=true
+
+# asahi-audio publishes the beamformed array as AUX0. Recorders and the
+# desktop+mic null-sink ask for FL/FR, so they either fail to link or write
+# left-only audio that loudnorm then ruins. Duplicate AUX0 onto a low-priority
+# stereo sink and use its monitor as the default source. Never move existing
+# source-outputs — that steals the DSP chain's capture from the raw mics.
+
+set -euo pipefail
+
+omarchy-hw-apple || exit 0
+
+SINK_NAME=omarchy_asahi_mic
+
+wait_for_source() {
+  local pattern=$1
+  local i
+  for ((i = 0; i < 40; i++)); do
+    if pactl list short sources 2>/dev/null | grep -Eq "$pattern"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+wait_for_source 'effect_output\.j[0-9]+-mic' || exit 0
+
+dsp_source=$(pactl list short sources 2>/dev/null | awk '/effect_output\.j[0-9]+-mic\t/ { print $2; exit }')
+[[ -n $dsp_source ]] || exit 0
+
+convolver=$(pactl list short sinks 2>/dev/null | awk '/audio_effect\.j[0-9]+-convolver\t/ { print $2; exit }')
+previous_sink=$(pactl get-default-sink 2>/dev/null || true)
+
+if ! pactl list short sinks 2>/dev/null | grep -q $'\tomarchy_asahi_mic\t'; then
+  pactl load-module module-null-sink \
+    sink_name="$SINK_NAME" \
+    sink_properties='device.description=AsahiMicrophone node.virtual=true priority.session=1' >/dev/null
+fi
+
+for ((i = 0; i < 20; i++)); do
+  if pw-link -o 2>/dev/null | grep -qx "${dsp_source}:capture_AUX0" &&
+    pw-link -i 2>/dev/null | grep -qx "${SINK_NAME}:playback_FL"; then
+    break
+  fi
+  sleep 0.1
+done
+
+pw-link "${dsp_source}:capture_AUX0" "${SINK_NAME}:playback_FL" 2>/dev/null || true
+pw-link "${dsp_source}:capture_AUX0" "${SINK_NAME}:playback_FR" 2>/dev/null || true
+
+pactl set-source-volume "$dsp_source" 100% 2>/dev/null || true
+pactl set-sink-volume "$SINK_NAME" 100% 2>/dev/null || true
+pactl set-source-volume "${SINK_NAME}.monitor" 100% 2>/dev/null || true
+
+# A new null sink otherwise becomes the default output. Put back whatever
+# was playing — headphones, Bluetooth, or the speaker convolver — and only
+# fall back to the convolver when the dummy sink is what is left.
+current_sink=$(pactl get-default-sink 2>/dev/null || true)
+if [[ $current_sink == "$SINK_NAME" || -z $current_sink ]]; then
+  restore=$previous_sink
+  if [[ -z $restore || $restore == "$SINK_NAME" ]]; then
+    restore=$convolver
+  fi
+  if [[ -n $restore && $restore != "$SINK_NAME" ]]; then
+    pactl set-default-sink "$restore" 2>/dev/null || true
+  fi
+fi
+pactl set-default-source "${SINK_NAME}.monitor" 2>/dev/null || true

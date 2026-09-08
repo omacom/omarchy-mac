@@ -51,7 +51,7 @@ LOG_FILE=$([[ ${OMARCHY_SCREENRECORD_DEBUG:-false} == "true" ]] && echo "/tmp/om
 
 # Matches whichever recorder backend is running, so stop/toggle/active checks
 # work regardless of which one started the recording.
-RECORDER_PROCESS_RE="^(gpu-screen-recorder|wf-recorder)"
+RECORDER_PROCESS_RE="(^|/)(gpu-screen-recorder|wf-recorder)( |$)"
 # Records the PulseAudio module ids of a combined-audio null sink for cleanup.
 PA_MODULES_FILE="/tmp/omarchy-screenrecord-pa-modules"
 REC_PID=""
@@ -240,7 +240,11 @@ launch_wf_recorder() {
   # -r 60 caps the framerate: capturing a 120 Hz panel at its native rate makes
   # needlessly large files. wf-recorder's default libx264 is CPU-encoded, which
   # is the only option on Asahi (no supported hardware encoder).
-  wf-recorder "${geom_args[@]}" -r 60 "${audio_args[@]}" -f "$filename" 2>>"$LOG_FILE" &
+  #
+  # -R 48000 keeps the AAC track at 48 kHz. Asahi speaker DSP advertises 96 kHz,
+  # and wf-recorder will follow that into a 96 kHz file that this PipeWire graph
+  # (and many players) play as silence.
+  wf-recorder "${geom_args[@]}" -r 60 -R 48000 "${audio_args[@]}" -f "$filename" 2>>"$LOG_FILE" &
   REC_PID=$!
 }
 
