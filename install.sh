@@ -165,7 +165,7 @@ ensure_arm_package_repo() {
   ensure_asahi_alarm_keyring
   omarchy_arm_prepare_package_sources /etc/pacman.conf backup "$channel" "$checkout"
   local -a targets
-  mapfile -t targets < <(omarchy_arm_package_targets)
+  mapfile -t targets < <(omarchy_arm_package_upgrade_args)
   log "Upgrading system packages and installing the compatible Hyprland stack"
   sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --needed --noconfirm "${targets[@]}"
 }

@@ -5,6 +5,20 @@ omarchy_arm_package_targets() {
   printf '%s\n' omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils
 }
 
+# --needed drops unchanged explicit targets before sysupgrade considers the
+# regular repositories. Exclude those names from that implicit upgrade so a
+# newer regular build cannot replace the selected stack in the same transaction.
+# Explicit targets still install normally (pacman's IgnorePkg prompt defaults yes).
+omarchy_arm_package_upgrade_args() {
+  local target names=()
+  while read -r target; do
+    names+=("${target#*/}")
+  done < <(omarchy_arm_package_targets)
+  local IFS=,
+  printf '%s\n' --ignore "${names[*]}"
+  omarchy_arm_package_targets
+}
+
 omarchy_arm_package_is_selected() {
   local target
   while read -r target; do

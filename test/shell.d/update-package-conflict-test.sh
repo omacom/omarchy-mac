@@ -115,6 +115,8 @@ run_on_terminal || fail "a package conflict is not resolved on a terminal"
 pass "a package conflict is put back to the person running the update"
 
 for call in 1 2; do
+  [[ " $(call_line "$call" args) " == *" --ignore hyprland,hyprtoolkit,hyprland-guiutils "* ]] ||
+    fail "the initial upgrade or interactive retry permits the regular repo to replace unchanged ARM targets"
   [[ " $(call_line "$call" args) " == *" omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils "* ]] ||
     fail "the initial upgrade or interactive retry loses the ARM targets"
 done
