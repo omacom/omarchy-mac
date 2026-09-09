@@ -145,6 +145,13 @@ ensure_asahi_alarm_keyring() {
 # is already installed, so the repo has to be added now: otherwise herdr builds
 # zig0.15 from source for two hours and aarch64 rejects it anyway.
 ensure_arm_package_repo() {
+  local channel=stable
+  if grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf; then
+    channel=$(omarchy_arm_package_channel /etc/pacman.conf) || return
+  fi
+  # Pre-runtime installation has not exported OMARCHY_PATH yet. Validate with
+  # the checkout explicitly, before appending repositories or changing keys.
+  omarchy_arm_validate_channel "$channel" "$checkout" || return
   if ! grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf; then
     local block
     block=$(sed -n '/^\[omarchy-aarch64\]/,/^Server[[:space:]]*=/p' \
@@ -156,7 +163,7 @@ ensure_arm_package_repo() {
   fi
 
   ensure_asahi_alarm_keyring
-  omarchy_arm_prepare_package_sources
+  omarchy_arm_prepare_package_sources /etc/pacman.conf backup "$channel" "$checkout"
   local -a targets
   mapfile -t targets < <(omarchy_arm_package_targets)
   log "Upgrading system packages and installing the compatible Hyprland stack"

@@ -19,6 +19,9 @@ write_stub() {
   chmod +x "$stub_bin/$name"
 }
 
+write_stub uname '#!/bin/bash
+printf "x86_64\n"'
+
 write_stub omarchy-refresh-pacman '#!/bin/bash
 printf "refresh" >>"$OMARCHY_CHANNEL_TEST_LOG"
 for arg in "$@"; do printf "\t%s" "$arg" >>"$OMARCHY_CHANNEL_TEST_LOG"; done
@@ -147,11 +150,11 @@ run_channel dev
 assert_log_line $'gum\tconfirm\t--default=false\tSwitch to dev channel?' "dev asks for confirmation"
 assert_log_line $'refresh\tedge' "dev refreshes the edge pacman channel"
 assert_log_line $'sudo\tenv\tOMARCHY_UPDATE_PACMAN=1\tpacman\t-S\t--needed\t--noconfirm\t--ask\t4\tomarchy-dev\tomarchy-settings-dev' "dev installs development Omarchy packages"
-assert_log_line $'git\tclone\thttps://github.com/basecamp/omarchy.git\t'"$checkout" "dev clones the source checkout to ~/omarchy"
+assert_log_line $'git\tclone\t--branch\tquattro\thttps://github.com/omarchy-mac/omarchy-mac.git\t'"$checkout" "dev clones the source checkout to ~/omarchy"
 assert_log_line $'link\t'"$checkout"$'\t--no-reboot' "dev links ~/omarchy without an early reboot prompt"
 assert_log_line $'state\tset\treboot-required' "dev defers the reboot prompt to the update pipeline"
 assert_log_line $'update\t-y\tOMARCHY_PATH='"$checkout" "dev runs the normal update pipeline from the source checkout"
-[[ $(grep -E '^(git|link|state|refresh|sudo|update)' "$log_file") == $'git\tclone\thttps://github.com/basecamp/omarchy.git\t'"$checkout"$'\nlink\t'"$checkout"$'\t--no-reboot\nstate\tset\treboot-required\nrefresh\tedge\nsudo\tenv\tOMARCHY_UPDATE_PACMAN=1\tpacman\t-S\t--needed\t--noconfirm\t--ask\t4\tomarchy-dev\tomarchy-settings-dev\nupdate\t-y\tOMARCHY_PATH='"$checkout" ]] ||
+[[ $(grep -E '^(git|link|state|refresh|sudo|update)' "$log_file") == $'git\tclone\t--branch\tquattro\thttps://github.com/omarchy-mac/omarchy-mac.git\t'"$checkout"$'\nlink\t'"$checkout"$'\t--no-reboot\nstate\tset\treboot-required\nrefresh\tedge\nsudo\tenv\tOMARCHY_UPDATE_PACMAN=1\tpacman\t-S\t--needed\t--noconfirm\t--ask\t4\tomarchy-dev\tomarchy-settings-dev\nupdate\t-y\tOMARCHY_PATH='"$checkout" ]] ||
   fail "dev activates the checkout before changing or updating packages" "$(cat "$log_file")"
 pass "dev activates the checkout before changing or updating packages"
 

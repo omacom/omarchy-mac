@@ -25,12 +25,15 @@ readonly limine_dependencies=(
   limine-snapper-sync
 )
 
-readonly packages=(
-  omarchy-keyring
-  ttf-jetbrains-mono-nerd-basic
-  omarchy-settings
-  omarchy
-)
+# Channel selects package identity; a dev session consumes edge packages.
+package_channel=${OMARCHY_PACKAGE_CHANNEL:-stable}
+case "$package_channel" in
+  stable|rc) desktop_package=omarchy; settings_package=omarchy-settings ;;
+  edge|dev) desktop_package=omarchy-dev; settings_package=omarchy-settings-dev ;;
+  *) echo "Invalid OMARCHY_PACKAGE_CHANNEL: $package_channel" >&2; exit 1 ;;
+esac
+readonly package_channel desktop_package settings_package
+readonly packages=(omarchy-keyring ttf-jetbrains-mono-nerd-basic "$settings_package" "$desktop_package")
 
 log() {
   printf '\033[32m==>\033[0m %s\n' "$*"
@@ -167,14 +170,22 @@ build_package() {
   rm -rf "$build_dir/$package"
   cp -r "$pkgbuild_source/$package" "$build_dir/$package"
 
-  if [[ $package == "omarchy" ]]; then
+  if [[ $package == "$desktop_package" ]]; then
     strip_limine_dependencies "$build_dir/$package/PKGBUILD"
   fi
-  if [[ $package == "omarchy-settings" ]]; then
+  if [[ $package == "$settings_package" ]]; then
     keep_apple_silicon_mkinitcpio_drop_ins "$build_dir/$package/PKGBUILD"
   fi
-  if [[ $package == "omarchy" || $package == "omarchy-settings" ]]; then
+  if [[ $package == "$desktop_package" || $package == "$settings_package" ]]; then
     set_pkgrel "$build_dir/$package/PKGBUILD"
+    local source_version
+    source_version=$(tr -d '[:space:]' < "$checkout/version")
+    [[ $source_version =~ ^[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$ ]] || fail "invalid source version: $source_version"
+    if [[ $package_channel == "edge" || $package_channel == "dev" ]]; then
+      sed -i "s/^_pkgver_base=.*/_pkgver_base=$source_version/" "$build_dir/$package/PKGBUILD"
+    else
+      sed -i "s/^pkgver=.*/pkgver=$source_version/" "$build_dir/$package/PKGBUILD"
+    fi
   fi
 
   # SRCDEST caches downloaded sources outside the throwaway build directory, so

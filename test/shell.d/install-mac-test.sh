@@ -64,7 +64,7 @@ if ! (
   fail "set_pkgrel no-ops without OMARCHY_PKGREL, writes a number, and rejects junk"
 fi
 rm -rf "$rel_dir"
-grep -A2 'package == "omarchy-settings"' "$build_script" | grep -q set_pkgrel ||
+grep -A2 'package == "$desktop_package" || $package == "$settings_package"' "$build_script" | grep -q set_pkgrel ||
   fail "the package build stamps pkgrel on omarchy and omarchy-settings"
 pass "the package build can stamp a Mac-only pkgrel on omarchy and omarchy-settings"
 

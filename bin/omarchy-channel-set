@@ -34,7 +34,7 @@ validate_dev_checkout() {
 
 link_dev_checkout() {
   local checkout="$1"
-  [[ -d $checkout/.git ]] || git clone https://github.com/basecamp/omarchy.git "$checkout"
+  [[ -d $checkout/.git ]] || git clone --branch quattro https://github.com/omarchy-mac/omarchy-mac.git "$checkout"
 
   omarchy-dev-link "$checkout" --no-reboot
 }
@@ -71,6 +71,13 @@ case "$channel" in
     exit 1
     ;;
 esac
+
+# Do not link a checkout or replace configuration until the selected published
+# snapshot is complete. dev intentionally consumes the edge package snapshot.
+if [[ $(uname -m) == "aarch64" ]]; then
+  source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
+  omarchy_arm_validate_channel "$pacman_channel" || exit 1
+fi
 
 if [[ -z $dev_checkout && $OMARCHY_PATH != "/usr/share/omarchy" ]]; then
   leaving_dev=1
