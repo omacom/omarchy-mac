@@ -274,7 +274,12 @@ seed_user_defaults() {
 
 run_system_setup() {
   log "Running Omarchy system setup"
-  sudo omarchy-apply-system --install-user "$USER" --first-install
+  local channel
+  channel=$(omarchy_arm_package_channel /etc/pacman.conf) || return
+  omarchy_arm_validate_channel "$channel" "$checkout" || return
+  # System setup restores the matching pacman template. Preserve the selected
+  # channel explicitly across sudo instead of defaulting an RC install to stable.
+  sudo env OMARCHY_MIRROR="$channel" omarchy-apply-system --install-user "$USER" --first-install
 
   # System setup restores pacman.conf and can introduce repositories absent
   # from the starting image. Trust their keys and refresh with a full upgrade
