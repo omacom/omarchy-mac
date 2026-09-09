@@ -84,6 +84,27 @@ with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     def state():
         path = directory / ('state-' + str(len(list(directory.iterdir()))) + '.json'); return path
+    # Numeric IDs may be recycled while the transaction is running. Old links
+    # alone are not proof that the named DSP and stereo ports still own them.
+    for missing in ('capture_AUX0', 'playback_FL', 'playback_FR'):
+        class RecreatedAudio(Audio):
+            def graph(self):
+                graph = super().graph()
+                if len(self.linked) == 2:
+                    for item in graph:
+                        props = item.get('info', {}).get('props', {})
+                        if props.get('port.name') == missing:
+                            props['port.name'] = 'unrelated-recycled-port'
+                return graph
+        audio = RecreatedAudio()
+        try:
+            m.reconcile(audio, state())
+        except RuntimeError as error:
+            assert 'endpoints changed' in str(error)
+        else:
+            raise AssertionError('recycled endpoint IDs accepted')
+        assert audio.default == DSP and not audio.existing and not audio.linked
+        assert ('pactl', 'set-default-source', m.MONITOR) not in audio.calls
     for selected in (DSP, 'usb-mic', m.MONITOR):
         audio = Audio(True, selected); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
         before = copy.deepcopy((audio.sink, audio.monitor)); saved = state()

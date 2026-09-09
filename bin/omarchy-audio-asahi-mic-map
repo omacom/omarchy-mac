@@ -160,12 +160,20 @@ def reconcile(audio, state, save_only=False):
             raise RuntimeError('Asahi AUX0 and both stereo mapping ports must be ready')
         if module is not None:
             restore_gain(audio, state)
+        def validate_endpoints(graph):
+            if port(graph, dsp, 'capture_AUX0') != output or [
+                port(graph, SINK, 'playback_' + channel) for channel in ('FL', 'FR')
+            ] != inputs:
+                raise RuntimeError('Asahi microphone endpoints changed during mapping')
         for input_ in inputs:
+            graph = audio.graph()
+            validate_endpoints(graph)
             if not links(graph, output, input_):
                 audio.run('pw-link', '-L', '-w', '-p', json.dumps({OWNER: owner}), str(output), str(input_))
                 graph = audio.graph()
         for attempt in range(30):
             graph = audio.graph()
+            validate_endpoints(graph)
             if all(links(graph, output, input_) for input_ in inputs):
                 break
             audio.pause()
@@ -173,6 +181,10 @@ def reconcile(audio, state, save_only=False):
             raise RuntimeError('Asahi microphone stereo links did not become ready')
         restore_output(audio, original_output)
         current_input = audio.run('pactl', 'get-default-source')
+        graph = audio.graph()
+        validate_endpoints(graph)
+        if not all(links(graph, output, input_) for input_ in inputs):
+            raise RuntimeError('Asahi microphone links changed before selecting input')
         if original_input in ('', dsp) and current_input == original_input:
             changed_input = True
             audio.run('pactl', 'set-default-source', MONITOR)
