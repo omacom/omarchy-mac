@@ -85,3 +85,48 @@ grep -F 'Failed: finalize user (exit code: 42)' \
   "$retry_tmp/home/.local/state/omarchy/first-run.log" >/dev/null ||
   fail "first-run records a finalization failure"
 pass "failed user finalization keeps first-run retryable"
+
+# The same contract has to hold for the real enable-user-units leaf: a unit
+# that is installed but fails to enable must keep first-run pending, while the
+# historical missing brightness unit alone may still complete. The systemctl
+# stub represents a loaded service failing to start, not a missing file.
+printf '#!/bin/bash\nexit 0\n' >"$retry_bin/omarchy-provision-user"
+cp "$ROOT/install/user/first-run/enable-user-units.sh" "$retry_root/install/user/first-run/enable-user-units.sh"
+cat >"$retry_bin/systemctl" <<'SH'
+#!/bin/bash
+case "$2" in
+  enable)
+    if [[ $4 == "${FAIL_UNIT:-}" ]]; then
+      exit 42
+    fi
+    ;;
+  show) printf '%s\n' "${LOAD_STATE:-loaded}" ;;
+esac
+SH
+chmod +x "$retry_bin/systemctl"
+
+run_unit_first_run() {
+  HOME="$retry_tmp/home" PATH="$retry_bin:$PATH" OMARCHY_PATH="$retry_root" \
+    OMARCHY_TEST_FIRST_RUN_MARKER="$retry_marker" \
+    OMARCHY_TEST_FINALIZE_CALLED="$retry_finalize" \
+    bash "$ROOT/bin/omarchy-provision-first-run" >"$retry_tmp/output"
+}
+
+first_run_log="$retry_tmp/home/.local/state/omarchy/first-run.log"
+for unit in omarchy-sleep-lock.service omarchy-migrate-notify.service; do
+  rm -f "$retry_marker"
+  # The log is appended across runs, so an earlier iteration's failure line
+  # would satisfy this run's assertion.
+  : >"$first_run_log"
+  FAIL_UNIT="$unit" LOAD_STATE=loaded run_unit_first_run
+  [[ ! -e $retry_marker ]] || fail "$unit failure must not mark first-run complete"
+  grep -Fq 'Failed: enable user systemd units' "$first_run_log" ||
+    fail "enable failure is logged"
+  FAIL_UNIT='' run_unit_first_run
+  [[ -e $retry_marker ]] || fail "successful retry must mark first-run complete"
+done
+
+rm -f "$retry_marker"
+FAIL_UNIT=omarchy-brightness-keyboard-auto.service LOAD_STATE=not-found run_unit_first_run
+[[ -e $retry_marker ]] || fail "known missing brightness alone may complete first-run"
+pass "real unit failures preserve the first-run retry contract"
