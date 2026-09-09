@@ -11,7 +11,9 @@ all="$ROOT/install/hardware/all.sh"
 vulkan="$ROOT/install/hardware/vulkan.sh"
 envs="$ROOT/default/hypr/envs.lua"
 apple_lua="$ROOT/default/hypr/apple.lua"
+uwsm_env="$ROOT/default/uwsm/env.d/10-omarchy"
 pkgbuild="$ROOT/pkgbuilds/linux-asahi-wip/PKGBUILD"
+kernel_wip="$ROOT/bin/omarchy-mac-kernel-wip"
 
 grep -q 'apple/m3.sh' "$all" || fail "the M3 leaf runs during hardware setup"
 pass "the M3 leaf runs during hardware setup"
@@ -24,10 +26,18 @@ pass "vulkan.sh no longer keys vulkan-asahi off the device tree alone"
 
 grep -q 'require("default.hypr.apple")' "$envs" || fail "envs.lua loads the Apple session settings"
 pass "envs.lua loads the Apple session settings"
-grep -q 'AQ_NO_MODIFIERS' "$apple_lua" || fail "apple.lua sets the software-rendering environment"
-pass "apple.lua sets the software-rendering environment"
+grep -q 'AQ_NO_MODIFIERS' "$uwsm_env" || fail "UWSM sets AQ_NO_MODIFIERS before Hyprland starts"
+pass "UWSM sets AQ_NO_MODIFIERS before Hyprland starts"
+! grep -q 'hl.env("AQ_NO_MODIFIERS"' "$apple_lua" || fail "apple.lua does not set AQ_NO_MODIFIERS after Aquamarine init"
+pass "apple.lua does not set AQ_NO_MODIFIERS after Aquamarine init"
 grep -q -- '--gpu' "$apple_lua" || fail "apple.lua asks whether the GPU driver is bound"
 pass "apple.lua asks whether the GPU driver is bound"
+grep -q 'no_hardware_cursors' "$apple_lua" || fail "apple.lua still sets software-rendering Hyprland config"
+pass "apple.lua still sets software-rendering Hyprland config"
+grep -q -- '--rollback-boot' "$kernel_wip" || fail "the WIP kernel command can restore boot.bin"
+pass "the WIP kernel command can restore boot.bin"
+grep -q 'boot.bin.old' "$kernel_wip" || fail "the WIP kernel command documents boot.bin.old recovery"
+pass "the WIP kernel command documents boot.bin.old recovery"
 
 bash -n "$pkgbuild" || fail "the linux-asahi-wip PKGBUILD parses"
 pass "the linux-asahi-wip PKGBUILD parses"
@@ -120,7 +130,47 @@ pass "patching is idempotent"
 
 [[ $(mac_generation_for j516sap) == "m3" ]] || fail "J516s is an M3 Pro"
 pass "J516s is an M3 Pro"
+[[ $(mac_generation_for j575dap) == "m3" ]] || fail "J575d is an M3 Ultra"
+pass "J575d is an M3 Ultra"
 [[ $(mac_generation_for j316sap) == "m1" ]] || fail "J316s is an M1 Pro"
 pass "J316s is an M1 Pro"
 [[ $(mac_generation_for j999ap) == "unknown" ]] || fail "an unlisted target is unknown"
 pass "an unlisted target is unknown"
+
+grep -q 't6032' "$ROOT/bin/omarchy-mac-setup" ||
+  fail "the guided setup warns on an M3 Ultra as well as M3/Pro/Max"
+pass "the guided setup warns on an M3 Ultra as well as M3/Pro/Max"
+
+# UWSM, not apple.lua, must export AQ_NO_MODIFIERS before Aquamarine starts.
+stub_soc="$test_tmp/bin/omarchy-hw-apple-soc"
+mkdir -p "$(dirname "$stub_soc")"
+cat >"$stub_soc" <<'SH'
+#!/bin/bash
+case ${1:-} in
+  --gpu) exit 1 ;;
+  *) exit 0 ;;
+esac
+SH
+chmod +x "$stub_soc"
+aq=$(
+  OMARCHY_PATH="$test_tmp" HOME="$test_tmp" bash -c '
+    apple_soc="${OMARCHY_PATH%/}/bin/omarchy-hw-apple-soc"
+    if [ -x "$apple_soc" ] && "$apple_soc" >/dev/null 2>&1 && ! "$apple_soc" --gpu; then
+      export AQ_NO_MODIFIERS=1
+    fi
+    printf %s "${AQ_NO_MODIFIERS:-}"
+  '
+)
+[[ $aq == "1" ]] || fail "UWSM exports AQ_NO_MODIFIERS when the GPU driver is unbound"
+pass "UWSM exports AQ_NO_MODIFIERS when the GPU driver is unbound"
+
+# The same block must stay in the UWSM env file, not only in this test.
+python3 - "$uwsm_env" <<'PY' || fail "the UWSM env file is what exports AQ_NO_MODIFIERS"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+assert "AQ_NO_MODIFIERS=1" in text
+assert "omarchy-hw-apple-soc" in text
+assert "--gpu" in text
+PY
+pass "the UWSM env file is what exports AQ_NO_MODIFIERS"

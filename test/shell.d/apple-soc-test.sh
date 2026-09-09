@@ -21,7 +21,10 @@ m1=$(compat m1 apple,j314s apple,t6000 apple,arm-platform)
 m2=$(compat m2 apple,j413 apple,t8112 apple,arm-platform)
 m3=$(compat m3 apple,j516s apple,t6030 apple,arm-platform)
 m3max=$(compat m3max apple,j514c apple,t6031 apple,arm-platform)
+m3ultra=$(compat m3ultra apple,j575d apple,t6032 apple,arm-platform)
 m4=$(compat m4 apple,j713 apple,t8132 apple,arm-platform)
+m4pro=$(compat m4pro apple,j714 apple,t6040 apple,arm-platform)
+m5=$(compat m5 apple,j815 apple,t6050 apple,arm-platform)
 pi=$(compat pi raspberrypi,4-model-b brcm,bcm2711)
 
 run() {
@@ -37,8 +40,16 @@ pass "t8112 is an M2"
 pass "t6030 is an M3 Pro"
 [[ $(run "$m3max") == "m3" ]] || fail "t6031 is an M3 Max"
 pass "t6031 is an M3 Max"
+[[ $(run "$m3ultra") == "m3" ]] || fail "t6032 is an M3 Ultra"
+pass "t6032 is an M3 Ultra"
+run "$m3ultra" --is m3 || fail "--is m3 matches an M3 Ultra"
+pass "--is m3 matches an M3 Ultra"
 [[ $(run "$m4") == "m4" ]] || fail "t8132 is an M4"
 pass "t8132 is an M4"
+! run "$m4pro" || fail "t6040 stays unmapped until a confirmed M4 Pro device tree"
+pass "t6040 stays unmapped until a confirmed M4 Pro device tree"
+! run "$m5" || fail "t6050 is not claimed as M4"
+pass "t6050 is not claimed as M4"
 
 [[ $(run "$m3" --codename) == "j516s" ]] || fail "the codename is the non-SoC apple entry"
 pass "the codename is the non-SoC apple entry"

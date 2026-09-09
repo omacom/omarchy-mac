@@ -13,7 +13,7 @@
 # Two things stop the stock bootstrap on an M3, and this script undoes both:
 #
 # 1. The installer package. Asahi's own installer (asahi-installer 0.9.0 and
-#    later) lists every M3 machine (T8122, T6030, T6031, T6034) as expert-only
+#    later) lists every M3 machine (T8122, T6030, T6031, T6032, T6034) as expert-only
 #    against the macOS 14.8.3 firmware. Asahi Alarm ships its own build of that
 #    installer, and as of 0.8.4 it is an older one whose device table ends at
 #    M2: on an M3 it exits with "This device is not supported yet!" before it
@@ -57,7 +57,7 @@ mac_generation_for() {
   local target
   target=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
   case $target in
-    j433ap | j434ap | j504ap | j613ap | j615ap | j514sap | j514cap | j514map | j516sap | j516cap | j516map) echo m3 ;;
+    j433ap | j434ap | j504ap | j575dap | j613ap | j615ap | j514sap | j514cap | j514map | j516sap | j516cap | j516map) echo m3 ;;
     j413ap | j493ap | j414cap | j414sap | j416cap | j416sap | j473ap | j474sap | j415ap | j475cap | j475dap | j180dap) echo m2 ;;
     j274ap | j293ap | j313ap | j456ap | j457ap | j314cap | j314sap | j316cap | j316sap | j375cap | j375dap) echo m1 ;;
     *) echo unknown ;;
@@ -174,9 +174,9 @@ main() {
   done
 
   [[ -e /System ]] || fail "run this from macOS; it drives the Asahi installer, which only runs there"
-  command -v curl >/dev/null || fail "curl is required"
-  curl --no-progress-meter file:/// >/dev/null 2>&1 ||
-    fail "this curl is too old; Asahi needs macOS 13.5 or newer, and an M3 needs 14.8.3 or newer"
+  if ! curl --no-progress-meter file:/// >/dev/null 2>&1; then
+    fail "curl is required (macOS 13.5 or newer; an M3 needs 14.8.3 or newer)"
+  fi
 
   generation=$(mac_generation)
   log "Mac: $(sysctl -n hw.model) ($(sysctl -n hw.target)), $(sysctl -n machdep.cpu.brand_string), generation $generation"

@@ -8,8 +8,11 @@
 # The kernel names the SoC in the device tree's compatible list, as
 # "apple,<machine>", "apple,<soc>", "apple,arm-platform". The SoC id is what
 # decides which Asahi drivers exist for the machine, so it is what everything
-# else keys off. The table is the Asahi SoC list; the M4 rows are there so a
-# newer machine names itself rather than being mistaken for something older.
+# else keys off. Generation rows follow the pinned Asahi SoC table
+# (soc-codenames.md) and the better-sourced mappings from omarchy-mac#326:
+# t6032 is M3 Ultra (J575d); t8132 is the only confirmed M4. M4 Pro/Max
+# (t6040/t6041) stay unmapped until a root DTS or live device tree exists;
+# t6050 is M5, not M4.
 #
 # With no flag it prints the generation (m1, m2, m3, m4) and exits 0, or exits
 # 1 when this is not an Apple Silicon machine. --is <gen> is the conditional
@@ -24,8 +27,8 @@ soc_generation() {
   case $1 in
     t8103 | t6000 | t6001 | t6002) echo m1 ;;
     t8112 | t6020 | t6021 | t6022) echo m2 ;;
-    t8122 | t6030 | t6031 | t6034) echo m3 ;;
-    t8132 | t6040 | t6041 | t6050 | t6051) echo m4 ;;
+    t8122 | t6030 | t6031 | t6032 | t6034) echo m3 ;;
+    t8132) echo m4 ;;
     *) return 1 ;;
   esac
 }

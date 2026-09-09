@@ -16,7 +16,7 @@ place, see [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md).
 
 - A recent backup of macOS (Time Machine or similar).
 - An Apple Silicon Mac. M1 and M2 families are supported by Asahi: https://asahilinux.org/fedora/#device-support
-- **M3 family (M3, M3 Pro, M3 Max): experimental.** Asahi boots it but has released no display or GPU driver, so the desktop renders in software with no brightness control and no external displays. The stock installer refuses M3; step 1 below has an M3 variant. Read [docs/apple-m3.md](docs/apple-m3.md) first.
+- **M3 family (M3, M3 Pro, M3 Max, M3 Ultra): experimental.** Asahi boots it but has released no display or GPU driver, so the desktop renders in software with no brightness control and no external displays. The stock installer refuses M3; step 1 below has an M3 variant. Read [docs/apple-m3.md](docs/apple-m3.md) first.
 - At least 50 GB free on the internal SSD (100 GB recommended).
 - Internet access.
 

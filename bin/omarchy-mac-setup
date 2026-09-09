@@ -1153,7 +1153,7 @@ print_status() {
 notice_apple_m3() {
   local compatible=${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}
   [[ -f $compatible ]] || return 0
-  tr '\0' '\n' <"$compatible" | grep -qxE 'apple,(t8122|t6030|t6031|t6034)' || return 0
+  tr '\0' '\n' <"$compatible" | grep -qxE 'apple,(t8122|t6030|t6031|t6032|t6034)' || return 0
   warn "This is an M3-generation Mac. Asahi has not released for it: the desktop"
   warn "will render in software with no brightness control and no external"
   warn "displays until the M3 display and GPU drivers land. See docs/apple-m3.md"

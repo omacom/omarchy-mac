@@ -4,8 +4,10 @@
 # support -- the display driver against the macOS 14.8.3 firmware, and one day
 # the GPU -- lands in development branches before it is tagged, so this
 # package builds any branch of any fork with Asahi Alarm's own kernel config,
-# and installs next to linux-asahi rather than replacing it: GRUB lists both,
-# so a branch that does not boot costs one reboot.
+# and installs next to linux-asahi rather than replacing it. GRUB lists both
+# kernels, but they share one boot.bin: update-m1n1 writes the branch's DTBs
+# into that image, so the released entry is not a fallback. Restore the
+# snapshot with omarchy-mac-kernel-wip --rollback-boot, or boot.bin.old.
 #
 # Which branch is a build-time choice, so the day the M3 display branch is
 # pushed the only change is OMARCHY_KERNEL_BRANCH (or _branch below):
