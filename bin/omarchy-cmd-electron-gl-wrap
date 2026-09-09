@@ -1,15 +1,23 @@
 #!/bin/bash
 
 # omarchy:summary=Install a PATH wrapper that adds software GL flags when no render GPU is present
-# omarchy:args=<command-name> <real-binary>
+# omarchy:args=[--check] <command-name> <real-binary>
 # omarchy:examples=omarchy-cmd-electron-gl-wrap 1password /opt/1Password/1password | omarchy-cmd-electron-gl-wrap chromium /usr/bin/chromium
 # omarchy:hidden=true
 # omarchy:requires-sudo=true
 
 set -euo pipefail
 
+# Exit 3 means an administrator owns the launcher; callers may skip that case.
+# Exit 4 is reserved for --check: the managed wrapper is not ready yet.
+check=false
+if [[ ${1:-} == "--check" ]]; then
+  check=true
+  shift
+fi
+
 if (($# != 2)); then
-  echo "Usage: omarchy-cmd-electron-gl-wrap <command-name> <real-binary>" >&2
+  echo "Usage: omarchy-cmd-electron-gl-wrap [--check] <command-name> <real-binary>" >&2
   exit 2
 fi
 
@@ -44,9 +52,20 @@ if [[ $dest == "$real" ]] || { [[ $dest -ef $real ]] && ! $legacy_link; }; then
 fi
 
 if [[ -e $dest || -L $dest ]] && ! $legacy_link; then
-  if [[ -L $dest || ! -f $dest ]] || ! grep -q '^# omarchy-electron-gl-wrapper$' "$dest"; then
+  owned=false
+  if [[ ! -L $dest && -f $dest ]]; then
+    if grep -q '^# omarchy-electron-gl-wrapper$' "$dest"; then
+      owned=true
+    else
+      status=$?
+      if ((status != 1)); then
+        exit "$status"
+      fi
+    fi
+  fi
+  if ! $owned; then
     echo "omarchy-cmd-electron-gl-wrap: refusing to replace an unmanaged launcher: $dest" >&2
-    exit 1
+    exit 3
   fi
 fi
 
@@ -77,9 +96,16 @@ if [[ ! -L $dest && -f $dest && $(<"$dest") == "$wrapper" ]]; then
   # System setup may already have installed this wrapper before user finalization.
   # Leave correct permissions alone so first login needs no root access.
   if [[ $(stat -c %a "$dest") != "755" ]]; then
+    if $check; then
+      exit 4
+    fi
     as_root chmod 755 "$dest"
   fi
   exit 0
+fi
+
+if $check; then
+  exit 4
 fi
 
 staged=""

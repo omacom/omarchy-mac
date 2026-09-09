@@ -7,24 +7,28 @@
 compatible=${OMARCHY_DEVICE_TREE_COMPATIBLE:-/proc/device-tree/compatible}
 
 if [[ -f $compatible ]] && grep -qi apple "$compatible"; then
-  if omarchy-cmd-present omarchy-cmd-electron-gl-wrap; then
-    chromium_bin=${OMARCHY_CHROMIUM_BIN:-/usr/bin/chromium}
-    if [[ -x $chromium_bin ]]; then
-      omarchy-cmd-electron-gl-wrap chromium "$chromium_bin"
-      chromium_desktop=${OMARCHY_CHROMIUM_DESKTOP:-/usr/share/applications/chromium.desktop}
-      user_chromium=$HOME/.local/share/applications/chromium.desktop
-      if [[ -f $chromium_desktop ]]; then
-        mkdir -p "$HOME/.local/share/applications"
-        sed 's|^Exec=/usr/bin/chromium|Exec=/usr/local/bin/chromium|' \
-          "$chromium_desktop" >"$user_chromium"
+  for app in chromium 1password; do
+    if [[ $app == "chromium" ]]; then
+      real=${OMARCHY_CHROMIUM_BIN:-/usr/bin/chromium}
+      vendor=${OMARCHY_CHROMIUM_DESKTOP:-/usr/share/applications/chromium.desktop}
+    else
+      real=${OMARCHY_1PASSWORD_BIN:-/opt/1Password/1password}
+      vendor=${OMARCHY_1PASSWORD_DESKTOP:-/usr/share/applications/1password.desktop}
+    fi
+    if [[ -x $real ]]; then
+      if omarchy-cmd-electron-gl-wrap --check "$app" "$real"; then
+        omarchy-cmd-desktop-exec-repair "$HOME/.local/share/applications/$app.desktop" \
+          "$vendor" "${OMARCHY_ELECTRON_GL_BIND_DIR:-/usr/local/bin}/$app" "$real" "$app"
+      else
+        status=$?
+        if ((status == 3 || status == 4)); then
+          echo "Skipping $app desktop repair: managed wrapper is not ready" >&2
+        else
+          return "$status"
+        fi
       fi
     fi
-
-    onepassword_bin=${OMARCHY_1PASSWORD_BIN:-/opt/1Password/1password}
-    if [[ -x $onepassword_bin ]]; then
-      omarchy-cmd-electron-gl-wrap 1password "$onepassword_bin"
-    fi
-  fi
+  done
 
   looknfeel=$HOME/.config/hypr/looknfeel.lua
   if ! omarchy-hw-render-gpu && [[ -f $looknfeel ]] &&
