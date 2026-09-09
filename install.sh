@@ -64,6 +64,12 @@ check_preconditions() {
     warn "This does not look like Apple hardware; continuing anyway."
 }
 
+ensure_channel_tools() {
+  # Repository validation runs before desktop/AUR packages exist, including
+  # when yay is already installed. Bootstrap its tools from the current base.
+  sudo pacman -S --needed --noconfirm python curl libarchive
+}
+
 ensure_aur_helper() {
   command -v yay >/dev/null && return 0
 
@@ -304,6 +310,7 @@ snapshot_factory_baseline() {
 main() {
   check_preconditions
   ensure_utf8_locale
+  ensure_channel_tools
   ensure_arm_package_repo
   ensure_gum
   ensure_aur_helper

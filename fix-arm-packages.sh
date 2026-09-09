@@ -74,6 +74,17 @@ if [[ ! -f $PACMAN_CONF ]]; then
   exit 1
 fi
 
+# Recovery must not create a snapshot, import keys, or change repositories and
+# only then discover a missing preflight interpreter on an older installation.
+if (( ! dry_run )); then
+  for tool in python3 curl bsdtar git; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "Recovery requires $tool. Install python, curl, libarchive and git before retrying." >&2
+      exit 1
+    fi
+  done
+fi
+
 # One source of truth for what the repository and key must be. A checkout has
 # the helper next to this script; an installed machine has it under the package
 # once it is new enough. Neither is guaranteed on the machines this script
