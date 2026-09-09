@@ -49,6 +49,7 @@ printf "\n" >>"$OMARCHY_CHANNEL_TEST_LOG"
 write_stub omarchy-update '#!/bin/bash
 printf "update" >>"$OMARCHY_CHANNEL_TEST_LOG"
 for arg in "$@"; do printf "\t%s" "$arg" >>"$OMARCHY_CHANNEL_TEST_LOG"; done
+if [[ $OMARCHY_PATH == "$OMARCHY_TEST_PACKAGED_ROOT" ]]; then OMARCHY_PATH=/usr/share/omarchy; fi
 printf "\tOMARCHY_PATH=%s" "$OMARCHY_PATH" >>"$OMARCHY_CHANNEL_TEST_LOG"
 printf "\n" >>"$OMARCHY_CHANNEL_TEST_LOG"
 '
@@ -93,13 +94,19 @@ case "${OMARCHY_TEST_PACKAGES:-}" in
 esac
 '
 
+mkdir -p "$test_tmp/packaged/bin"
+ln -s "$stub_bin/omarchy-update" "$test_tmp/packaged/bin/omarchy-update"
+sed "s|/usr/share/omarchy|$test_tmp/packaged|g" "$ROOT/bin/omarchy-channel-set" > "$test_tmp/channel-set"
+chmod +x "$test_tmp/channel-set"
+
 run_channel() {
   : >"$log_file"
   OMARCHY_CHANNEL_TEST_LOG="$log_file" \
-    OMARCHY_PATH="${OMARCHY_TEST_PATH:-/usr/share/omarchy}" \
+    OMARCHY_PATH="${OMARCHY_TEST_PATH:-$test_tmp/packaged}" \
+    OMARCHY_TEST_PACKAGED_ROOT="$test_tmp/packaged" \
     HOME="$test_tmp/home" \
-    PATH="$stub_bin:$ROOT/bin:$PATH" \
-    "$ROOT/bin/omarchy-channel-set" "$@"
+    PATH="${OMARCHY_TEST_FORMER_PATH:+$OMARCHY_TEST_FORMER_PATH:}$stub_bin:$ROOT/bin:$PATH" \
+    "$test_tmp/channel-set" "$@"
 }
 
 assert_log_line() {
@@ -198,3 +205,10 @@ pass "current channel detects package-backed edge"
 
 [[ $(current_channel edge dev "$test_tmp/dev-checkout") == "dev" ]] || fail "current channel detects dev from OMARCHY_PATH"
 pass "current channel honors a dev link outside ~/omarchy"
+
+mkdir -p "$test_tmp/former/bin"
+printf '#!/bin/bash\necho stale-update-ran >> "%s"\nexit 99\n' "$log_file" > "$test_tmp/former/bin/omarchy-update"
+chmod +x "$test_tmp/former/bin/omarchy-update"
+OMARCHY_TEST_PATH="$test_tmp/former" OMARCHY_TEST_FORMER_PATH="$test_tmp/former/bin" run_channel stable
+! grep -q stale-update-ran "$log_file" || fail 'unlinked source must not run the final update'
+assert_log_line $'update\t-y\tOMARCHY_PATH=/usr/share/omarchy' 'final update resolves from packaged commands after unlinking'

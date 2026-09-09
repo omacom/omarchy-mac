@@ -107,4 +107,5 @@ else
   fi
 fi
 
-omarchy-update -y
+export PATH="/usr/share/omarchy/bin:$PATH"
+/usr/share/omarchy/bin/omarchy-update -y
