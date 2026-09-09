@@ -29,7 +29,7 @@ pass 'dry run changes nothing on the machine'
 grep -q '^+\[omarchy\]$' <<<"$output" || fail 'dry run adds the edge section' "$output"
 grep -q '^+Usage = Sync$' <<<"$output" || fail 'dry run keeps edge out of automatic selection' "$output"
 grep -q '^+SigLevel = Required DatabaseOptional$' <<<"$output" || fail 'dry run requires signed packages' "$output"
-grep -q 'would run: sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils' <<<"$output" ||
+grep -q 'would run: sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm --ignore hyprland,hyprtoolkit,hyprland-guiutils omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils' <<<"$output" ||
   fail 'dry run reports the selected packages' "$output"
 grep -q 'would run: sudo pacman-key' <<<"$output" || fail 'dry run reports the key import' "$output"
 pass 'dry run reports the restricted signed edge section and the transaction'
@@ -42,7 +42,7 @@ guard="$ROOT/bin/omarchy-update-pacman-guard"
 if [[ -f $guard ]]; then
   grep -q 'OMARCHY_UPDATE_PACMAN' "$guard" || fail 'the guard still reads OMARCHY_UPDATE_PACMAN'
 fi
-transaction=$(grep -n 'pacman -Syu --noconfirm "\${targets\[@\]}"' "$recovery") || fail 'recovery runs the selection'
+transaction=$(grep -nF 'pacman -Syu --noconfirm --ignore "$(omarchy_arm_sysupgrade_ignore)" "${targets[@]}"' "$recovery") || fail 'recovery runs the selection'
 [[ $transaction == *'sudo env OMARCHY_UPDATE_PACMAN=1 pacman'* ]] ||
   fail 'the transaction identifies itself to the update guard' "$transaction"
 reported=$(grep -o 'would run: sudo env [^"]*pacman -Syu --noconfirm' <<<"$output")
@@ -130,7 +130,7 @@ output=$(
     OMARCHY_TEST_CALL_LOG="$call_log" \
     bash -s -- --no-snapshot 2>&1
 ) || fail 'piped recovery succeeds without reading script text as prompt answers' "$output"
-grep -q $'^pacman\t-Syu\t--noconfirm\tomarchy/hyprland\tomarchy/hyprtoolkit\tomarchy/hyprland-guiutils$' "$call_log" ||
+grep -q $'^pacman\t-Syu\t--noconfirm\t--ignore\thyprland,hyprtoolkit,hyprland-guiutils\tomarchy/hyprland\tomarchy/hyprtoolkit\tomarchy/hyprland-guiutils$' "$call_log" ||
   fail 'piped recovery runs the noninteractive package transaction' "$(cat "$call_log")"
 ! grep -q '^answers' "$call_log" || fail 'piped recovery lets pacman prompt on script input' "$(cat "$call_log")"
 grep -q '^\[omarchy\]$' "$conf" || fail 'piped recovery prepares the package source' "$(cat "$conf")"

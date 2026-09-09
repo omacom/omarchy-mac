@@ -28,10 +28,12 @@ omarchy-hook pre-refresh-pacman
 
 # Reset all package DBs and then update
 targets=()
+ignore_args=()
 if [[ $(uname -m) == "aarch64" ]]; then
   source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
   # Keep the original configuration saved before the channel replacement.
   omarchy_arm_prepare_package_sources /etc/pacman.conf preserve-backup || exit 1
   mapfile -t targets < <(omarchy_arm_package_targets)
+  ignore_args=(--ignore "$(omarchy_arm_sysupgrade_ignore)")
 fi
-sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syyuu --noconfirm "${targets[@]}"
+sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syyuu --noconfirm "${ignore_args[@]}" "${targets[@]}"

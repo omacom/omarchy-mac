@@ -224,7 +224,7 @@ awk '
   $2 == "aquamarine" { if ($1 != "extra") exit 1; aquamarine = 1 }
   END { if (length(selected) != 3 || !aquamarine) exit 1 }
 ' /tmp/package-selection
-pacman -Syu --needed --noconfirm "${targets[@]}"
+pacman -Syu --needed --noconfirm --ignore "$(omarchy_arm_sysupgrade_ignore)" "${targets[@]}"
 pacman -Qii aquamarine hyprtoolkit hyprland-guiutils hyprland
 pacman -Dk
 printf 'PASS: fresh restricted-source transaction\n'

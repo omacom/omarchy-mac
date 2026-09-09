@@ -127,7 +127,7 @@ if (( dry_run )); then
   echo "Configuration change for $PACMAN_CONF:"
   diff -u "$PACMAN_CONF" "$preview" || true
   rm -f "$preview" "$preview.bak"
-  echo "would run: sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm ${targets[*]}"
+  echo "would run: sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm --ignore $(omarchy_arm_sysupgrade_ignore) ${targets[*]}"
   exit 0
 fi
 
@@ -151,7 +151,7 @@ fi
 # way omarchy-update-system-pkgs does. Without it the hook aborts the
 # transaction and the recovery gets no further than the machine it is fixing.
 echo "Updating the Hyprland stack together with the system"
-sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm "${targets[@]}"
+sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm --ignore "$(omarchy_arm_sysupgrade_ignore)" "${targets[@]}"
 
 cat <<'EOF'
 

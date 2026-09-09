@@ -5,6 +5,19 @@ omarchy_arm_package_targets() {
   printf '%s\n' omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils
 }
 
+# extra can ship a newer hyprtoolkit than the omarchy pin. `pacman -Syu
+# --needed omarchy/hyprtoolkit` then skips the pin ("up to date") and the
+# sysupgrade half replaces it from extra. --ignore applies only to that
+# sysupgrade; the explicit omarchy/ targets still install.
+omarchy_arm_sysupgrade_ignore() {
+  local names=() target
+  while read -r target; do
+    names+=("${target#*/}")
+  done < <(omarchy_arm_package_targets)
+  local IFS=,
+  printf '%s\n' "${names[*]}"
+}
+
 omarchy_arm_package_is_selected() {
   local target
   while read -r target; do

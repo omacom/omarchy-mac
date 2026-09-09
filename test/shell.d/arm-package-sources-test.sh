@@ -35,6 +35,10 @@ pass 'preparation after channel replacement preserves the original backup'
 
 mapfile -t targets < <(omarchy_arm_package_targets)
 [[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'only approved packages selected'
+[[ $(omarchy_arm_sysupgrade_ignore) == "hyprland,hyprtoolkit,hyprland-guiutils" ]] ||
+  fail 'sysupgrade ignore list matches the selected stack'
+grep -qF -- '--ignore "$(omarchy_arm_sysupgrade_ignore)"' "$ROOT/install.sh" ||
+  fail 'installer sysupgrade ignores the selected stack'
 pass 'Aquamarine remains a regular-repository dependency'
 
 # Exercise the real default-package loop after the compatibility transaction.
