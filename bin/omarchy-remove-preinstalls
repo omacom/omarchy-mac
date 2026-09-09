@@ -32,7 +32,7 @@ if gum confirm "Are you sure you want to remove all preinstalled web apps, TUI w
     omacalc
     omawrite
   )
-  if [[ $(uname -m) == "aarch64" ]]; then
+  if omarchy-hw-aarch64; then
     preinstall_packages+=(obsidian-appimage)
   fi
   omarchy-pkg-drop "${preinstall_packages[@]}"

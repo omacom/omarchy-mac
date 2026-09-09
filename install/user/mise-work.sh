@@ -19,7 +19,7 @@ case ${OMARCHY_SETUP_CONTEXT:-runtime} in
 esac
 
 # Node ships per-architecture tarballs, and Apple Silicon needs the arm64 one.
-case $(uname -m) in
+case $(omarchy-hw-arch) in
   aarch64) NODE_TARBALL_ARCH=arm64 ;;
   *) NODE_TARBALL_ARCH=x64 ;;
 esac

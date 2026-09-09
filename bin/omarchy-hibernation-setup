@@ -15,7 +15,7 @@ done
 
 # Apple Silicon / Asahi: resume path is Limine-oriented and hibernate is
 # unreliable; never create swap or limine drop-ins on aarch64 (even with --force).
-if [[ $(uname -m) == "aarch64" ]]; then
+if omarchy-hw-aarch64; then
   echo "Skipping hibernation setup (not supported on aarch64 / Omarchy Mac)"
   exit 0
 fi

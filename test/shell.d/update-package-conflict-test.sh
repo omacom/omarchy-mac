@@ -14,9 +14,9 @@ mkdir -p "$stub_bin"
 
 # Exercise the ARM update targets on every host, while keeping repository and
 # keyring preparation out of these conflict-recovery tests.
-cat >"$stub_bin/uname" <<'STUB'
+cat >"$stub_bin/omarchy-hw-aarch64" <<'STUB'
 #!/bin/bash
-printf '%s\n' aarch64
+exit 0
 STUB
 
 mkdir -p "$test_tmp/omarchy/install/helpers"
@@ -52,7 +52,7 @@ fi
 echo "upgrade complete"
 STUB
 
-chmod +x "$stub_bin/sudo" "$stub_bin/pacman" "$stub_bin/uname"
+chmod +x "$stub_bin/sudo" "$stub_bin/pacman" "$stub_bin/omarchy-hw-aarch64"
 
 # Everything a blocked qemu-common upgrade leaves on stderr, and no more. The
 # ":: ... Remove qemu-block-gluster? [y/N]" pacman asked is deliberately absent:

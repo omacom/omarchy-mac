@@ -5,7 +5,7 @@
 
 set -e
 
-if [[ $(uname -m) == "aarch64" ]]; then
+if omarchy-hw-aarch64; then
   source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
   omarchy_arm_prepare_package_sources
   # Refresh the distribution keyring before the immediately following full

@@ -84,6 +84,7 @@ Use these instead of raw shell commands:
 - `omarchy-pkg-drop` - remove packages; use this instead of raw `pacman -R*`
 - `omarchy-notification-send` - send desktop notifications; do not call `notify-send` directly
 - `omarchy-hw-asus-rog` - detect ASUS ROG hardware (and similar `hw-*` commands)
+- `omarchy-hw-arch` / `omarchy-hw-aarch64` / `omarchy-hw-apple-silicon` - architecture and Apple Silicon detection; do not call `uname -m` or grep `/proc/device-tree/compatible` in install or runtime code. `omarchy-mac-setup` may read `uname -m` because it can run from `curl | bash` before the checkout exists. Historical migrations keep their original checks.
 
 Commands installed by Omarchy's default package set are runtime invariants. Invoke them directly; do not add defensive `omarchy-cmd-present` / `omarchy-cmd-missing` checks around them. Use command-presence helpers only for genuinely optional dependencies or code that can run before the default package set is installed.
 

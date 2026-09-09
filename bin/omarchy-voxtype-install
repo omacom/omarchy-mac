@@ -11,7 +11,7 @@ if gum confirm "Install Voxtype + AI model (~150MB) to enable dictation?"; then
   # Mac fork: voxtype-bin ships x86_64-only prebuilt binaries; on Apple Silicon
   # build the source package instead (voxtype, arch includes aarch64) via the AUR
   # helper. wtype is in the repos on both.
-  if [[ "$(uname -m)" == "aarch64" ]]; then
+  if omarchy-hw-aarch64; then
     omarchy-pkg-add wtype
     omarchy-pkg-aur-add voxtype
   else

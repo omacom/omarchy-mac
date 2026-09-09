@@ -12,10 +12,10 @@ migration=$(/usr/bin/grep -rl 'Give the machine a UTF-8 locale' "$ROOT/migration
 
 # Asahi Alarm ships LANG=C, so the installer has to set the locale itself --
 # there is no ISO step here to do it.
-/usr/bin/grep -q '^  ensure_utf8_locale$' "$ROOT/install.sh" ||
+/usr/bin/grep -q '^  ensure_utf8_locale$' "$ROOT/install/aarch64/install.sh" ||
   fail "the installer sets a UTF-8 locale"
-locale_call=$(/usr/bin/grep -n '^  ensure_utf8_locale$' "$ROOT/install.sh" | cut -d: -f1)
-packages_call=$(/usr/bin/grep -n '^  install_default_package_set$' "$ROOT/install.sh" | cut -d: -f1)
+locale_call=$(/usr/bin/grep -n '^  ensure_utf8_locale$' "$ROOT/install/aarch64/install.sh" | cut -d: -f1)
+packages_call=$(/usr/bin/grep -n '^  install_default_package_set$' "$ROOT/install/aarch64/install.sh" | cut -d: -f1)
 (( locale_call < packages_call )) ||
   fail "the locale is set before the install starts printing package output"
 pass "the installer sets a UTF-8 locale before the package pass"

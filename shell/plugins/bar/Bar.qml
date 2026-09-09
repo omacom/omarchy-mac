@@ -335,8 +335,8 @@ Item {
   property bool appleSiliconHost: false
   Process {
     running: true
-    command: ["bash", "-c", "grep -qi apple /proc/device-tree/compatible 2>/dev/null && echo yes || echo no"]
-    stdout: SplitParser { onRead: function(line) { root.appleSiliconHost = String(line).trim() === "yes" } }
+    command: [Quickshell.env("OMARCHY_PATH") + "/bin/omarchy-hw-apple-silicon"]
+    onExited: function(exitCode) { root.appleSiliconHost = exitCode === 0 }
   }
 
   function normalizePosition(value) {

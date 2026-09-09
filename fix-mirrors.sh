@@ -7,16 +7,16 @@
 
 set -euo pipefail
 
-ARCH="$(uname -m)"
-if [[ $ARCH != "aarch64" ]]; then
-  echo "[ERROR] Asahi Alarm requires aarch64 (detected: $ARCH)" >&2
+_fix_mirrors_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if ! "$_fix_mirrors_root/bin/omarchy-hw-aarch64"; then
+  echo "[ERROR] Asahi Alarm requires aarch64 (detected: $("$_fix_mirrors_root/bin/omarchy-hw-arch"))" >&2
   exit 1
 fi
 
 OMARCHY_PATH="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
-PACMAN_CONF_SRC="$OMARCHY_PATH/default/pacman/pacman.conf"
-ASAHI_MIRRORLIST_SRC="$OMARCHY_PATH/default/pacman/mirrorlist.asahi-alarm"
-SRC="$OMARCHY_PATH/default/pacman/mirrorlist"
+PACMAN_CONF_SRC="$OMARCHY_PATH/default/pacman/aarch64/pacman.conf"
+ASAHI_MIRRORLIST_SRC="$OMARCHY_PATH/default/pacman/aarch64/mirrorlist.asahi-alarm"
+SRC="$OMARCHY_PATH/default/pacman/aarch64/mirrorlist"
 DEST="/etc/pacman.d/mirrorlist"
 ASAHI_MIRRORLIST_DEST="/etc/pacman.d/mirrorlist.asahi-alarm"
 PACMAN_ARCH="aarch64"

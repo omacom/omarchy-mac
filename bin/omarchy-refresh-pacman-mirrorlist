@@ -13,8 +13,21 @@
 #   missing from the system file. This avoids removing Arch Linux ARM or user-added
 #   mirrors while still making Omarchy's recommended servers available.
 
-SRC="$OMARCHY_PATH/default/pacman/mirrorlist"
-ASAHI_SRC="$OMARCHY_PATH/default/pacman/mirrorlist.asahi-alarm"
+if omarchy-hw-aarch64; then
+  SRC="$OMARCHY_PATH/default/pacman/aarch64/mirrorlist"
+  ASAHI_SRC="$OMARCHY_PATH/default/pacman/aarch64/mirrorlist.asahi-alarm"
+else
+  pacman_conf="${OMARCHY_PACMAN_CONF_PATH:-/etc/pacman.conf}"
+  channel=stable
+  for candidate in stable rc edge; do
+    if grep -qF "https://pkgs.omarchy.org/$candidate/" "$pacman_conf" 2>/dev/null; then
+      channel="$candidate"
+      break
+    fi
+  done
+  SRC="$OMARCHY_PATH/default/pacman/mirrorlist-$channel"
+  ASAHI_SRC=""
+fi
 DEST="/etc/pacman.d/mirrorlist"
 ASAHI_DEST="/etc/pacman.d/mirrorlist.asahi-alarm"
 

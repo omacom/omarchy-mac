@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# omarchy:summary=Print the canonical machine architecture (aarch64 or x86_64).
+
+# Maps uname's arm64 alias; unsupported or failed detection returns no name.
+# OMARCHY_UNAME_M stubs uname for tests (same idea as OMARCHY_PCI_DEVICES_PATH).
+arch="${OMARCHY_UNAME_M:-$(uname -m)}" || exit 1
+case $arch in
+aarch64 | arm64) printf '%s\n' aarch64 ;;
+x86_64) printf '%s\n' x86_64 ;;
+*) exit 1 ;;
+esac

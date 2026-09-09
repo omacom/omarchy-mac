@@ -53,12 +53,12 @@ echo "=== Mirror defaults ==="
 bash -n "$ROOT/fix-mirrors.sh" || fail "fix-mirrors.sh does not parse"
 pass "fix-mirrors.sh is present and parses"
 
-grep -q "mirror.archlinuxarm.org" "$ROOT/default/pacman/mirrorlist" ||
-  fail "the default mirrorlist has no Arch Linux ARM mirror"
-pass "the default mirrorlist points at Arch Linux ARM"
+grep -q "mirror.archlinuxarm.org" "$ROOT/default/pacman/aarch64/mirrorlist" ||
+  fail "the aarch64 mirrorlist has no Arch Linux ARM mirror"
+pass "the aarch64 mirrorlist points at Arch Linux ARM"
 
 grep -q 'github.com/asahi-alarm/asahi-alarm/releases/download/\$arch' \
-  "$ROOT/default/pacman/mirrorlist.asahi-alarm" ||
+  "$ROOT/default/pacman/aarch64/mirrorlist.asahi-alarm" ||
   fail "the Asahi Alarm mirrorlist has no \$arch release URL"
 pass "the Asahi Alarm mirrorlist keeps its \$arch release URL"
 
@@ -74,13 +74,13 @@ grep -qE 'aarch64|arm64' "$arm_mirrors" ||
   fail "arm-mirrors.sh does not mention aarch64"
 pass "the installer's ARM mirror step targets aarch64"
 
-conf="$ROOT/default/pacman/pacman.conf"
-[[ -f $conf ]] || fail "default/pacman/pacman.conf is missing"
+conf="$ROOT/default/pacman/aarch64/pacman.conf"
+[[ -f $conf ]] || fail "default/pacman/aarch64/pacman.conf is missing"
 grep -q "^Architecture = aarch64" "$conf" ||
-  fail "pacman.conf does not set Architecture = aarch64"
+  fail "aarch64 pacman.conf does not set Architecture = aarch64"
 grep -q "^\[asahi-alarm\]" "$conf" ||
-  fail "pacman.conf does not offer the asahi-alarm repo"
-pass "the shipped pacman.conf targets Asahi Alarm on aarch64"
+  fail "aarch64 pacman.conf does not offer the asahi-alarm repo"
+pass "the shipped aarch64 pacman.conf targets Asahi Alarm"
 
 echo
 echo "=== All Asahi compatibility checks passed ==="

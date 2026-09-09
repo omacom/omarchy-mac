@@ -118,7 +118,7 @@ esac
 # This is the upstream x86 upgrade: it repoints pacman at Omarchy's x86_64
 # mirrors and packages, which do not serve aarch64. On Apple Silicon the Mac
 # upgrade (omarchy-upgrade-to-quattro-mac) wires the source checkout instead.
-[[ $(uname -m) != "aarch64" ]] || fail "This is the upstream x86 upgrade. On Apple Silicon run omarchy-upgrade-to-quattro-mac."
+[[ $(omarchy-hw-arch) == "x86_64" ]] || fail "This is the upstream x86 upgrade. On Apple Silicon run omarchy-upgrade-to-quattro-mac."
 
 # Land on the Quattro equivalent of wherever the machine already is, unless the
 # caller said otherwise. Stable machines get the production packages off the

@@ -40,6 +40,11 @@ assert(
   'bar floors only top bars on Apple Silicon machines'
 )
 assert(
+  /command: \[Quickshell\.env\("OMARCHY_PATH"\) \+ "\/bin\/omarchy-hw-apple-silicon"\]/.test(barSource) &&
+    /onExited: function\(exitCode\) \{ root\.appleSiliconHost = exitCode === 0 \}/.test(barSource),
+  'bar detects Apple Silicon directly through OMARCHY_PATH'
+)
+assert(
   /BarModel\.notchHeight\(screen\.name, screen\.width, screen\.height, screen\.devicePixelRatio\)/.test(barSource),
   'bar derives the floor from its own screen geometry'
 )

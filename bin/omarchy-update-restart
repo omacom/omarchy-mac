@@ -2,21 +2,43 @@
 # omarchy:summary=Restart after an update when the kernel changed
 
 # Compare kernel version before and after updates.
-# Mac fork: this fork ships the Apple-Silicon kernel, so kernel-update detection
-# compares the linux-asahi *package version* (not upstream's `uname -r` vs
-# module-dir-name match, which is fragile across kernel naming). Keep this form.
-kernel_before=$(cat /tmp/omarchy-kernel-before 2>/dev/null)
-kernel_after=$(pacman -Q linux-asahi 2>/dev/null | awk '{print $2}')
-rm -f /tmp/omarchy-kernel-before
+if omarchy-hw-apple-silicon; then
+  # Apple Silicon ships linux-asahi; compare that package version rather than
+  # upstream's uname -r vs module-dir-name match, which is fragile across Asahi
+  # kernel naming.
+  kernel_before=$(cat /tmp/omarchy-kernel-before 2>/dev/null)
+  kernel_after=$(pacman -Q linux-asahi 2>/dev/null | awk '{print $2}')
+  rm -f /tmp/omarchy-kernel-before
 
-if [[ -n $kernel_before && $kernel_before != "$kernel_after" ]]; then
-  gum confirm "Linux kernel has been updated. Reboot?" && omarchy-state clear re*-required && sudo reboot now
-fi
+  if [[ -n $kernel_before && $kernel_before != "$kernel_after" ]]; then
+    gum confirm "Linux kernel has been updated. Reboot?" && omarchy-state clear re*-required && sudo reboot now
+  fi
 
-if find /usr/lib/modules -maxdepth 2 -name vmlinuz -newermt "$(uptime -s)" 2>/dev/null | grep -q .; then
-  gum confirm "Linux kernel has been updated. Reboot?" && omarchy-system-reboot
-elif [[ -f $HOME/.local/state/omarchy/reboot-required ]]; then
-  gum confirm "Updates require reboot. Ready?" && omarchy-system-reboot
+  if find /usr/lib/modules -maxdepth 2 -name vmlinuz -newermt "$(uptime -s)" 2>/dev/null | grep -q .; then
+    gum confirm "Linux kernel has been updated. Reboot?" && omarchy-system-reboot
+  elif [[ -f $HOME/.local/state/omarchy/reboot-required ]]; then
+    gum confirm "Updates require reboot. Ready?" && omarchy-system-reboot
+  fi
+else
+  running_kernel=$(uname -r)
+  kernel_updated=true
+
+  for kernel in /usr/lib/modules/*/vmlinuz; do
+    if [[ -f $kernel ]] && pacman -Qo "$kernel" &>/dev/null; then
+      installed_kernel=$(basename "$(dirname "$kernel")")
+
+      if [[ $installed_kernel == $running_kernel ]]; then
+        kernel_updated=false
+        break
+      fi
+    fi
+  done
+
+  if [[ $kernel_updated == "true" ]]; then
+    gum confirm "Linux kernel has been updated. Reboot?" && omarchy-system-reboot
+  elif [[ -f $HOME/.local/state/omarchy/reboot-required ]]; then
+    gum confirm "Updates require reboot. Ready?" && omarchy-system-reboot
+  fi
 fi
 
 running_hyprland=$(readlink /proc/$(pgrep -x Hyprland)/exe 2>/dev/null)

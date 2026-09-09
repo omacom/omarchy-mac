@@ -4,12 +4,38 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
-install_script="$ROOT/install.sh"
+install_script="$ROOT/install/aarch64/install.sh"
 build_script="$ROOT/build-packages.sh"
+
+grep -qF 'install/aarch64/install.sh' "$ROOT/install.sh" ||
+  fail "root install.sh dispatches aarch64 to the Apple Silicon installer"
+pass "root install.sh dispatches aarch64 to the Apple Silicon installer"
+
+x86_install=$(OMARCHY_UNAME_M=x86_64 bash "$ROOT/install.sh" 2>&1) &&
+  fail "x86 install.sh must not succeed without the ISO pipeline" || true
+[[ $x86_install == *omarchy.org* ]] ||
+  fail "x86 install.sh points at the Omarchy ISO" "$x86_install"
+pass "x86 install.sh points at the Omarchy ISO"
 
 [[ -x $install_script ]] || fail "the Apple Silicon installer ships and is executable"
 [[ -x $build_script ]] || fail "the Apple Silicon package build script ships and is executable"
 pass "the Apple Silicon install scripts ship and are executable"
+
+# After the move from repo-root install.sh, checkout must be the repo root
+# (two levels above install/aarch64/), not install/aarch64 itself.
+grep -qF '/../..' "$install_script" ||
+  fail "the Apple Silicon installer walks up to the repo root for checkout"
+script_dir=$(cd -- "$(dirname -- "$install_script")" && pwd)
+checkout=$(cd -- "$script_dir/../.." && pwd)
+[[ $checkout == "$ROOT" ]] ||
+  fail "install/aarch64/install.sh is two levels below the repo root" "resolved: $checkout"
+[[ -x $checkout/bin/omarchy-hw-arch ]] ||
+  fail "checkout contains bin/omarchy-hw-arch"
+[[ -x $checkout/build-packages.sh ]] ||
+  fail "checkout contains build-packages.sh"
+[[ -f $checkout/default/pacman/aarch64/pacman-stable.conf ]] ||
+  fail "checkout contains default/pacman/aarch64/pacman-stable.conf"
+pass "the Apple Silicon installer resolves checkout to the repo root"
 
 # Quattro renamed the setup entry points once already, and set -e turns a call
 # to a command that no longer ships into a half-finished install.

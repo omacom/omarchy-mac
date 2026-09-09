@@ -21,7 +21,8 @@ chmod +x "$stub_bin/busctl"
 run_laptop() {
   OMARCHY_DMI_CHASSIS_TYPE_PATH="$dmi_chassis" \
     OMARCHY_ACPI_LID_PATH="$acpi_lid" \
-    PATH="$stub_bin:$PATH" \
+    OMARCHY_UNAME_M="${OMARCHY_UNAME_M:-x86_64}" \
+    PATH="$stub_bin:$ROOT/bin:$PATH" \
     "$ROOT/bin/omarchy-hw-laptop"
 }
 
@@ -43,6 +44,15 @@ if run_laptop; then
   fail "a desktop DMI chassis is not classified as a laptop"
 fi
 pass "a desktop DMI chassis is not classified as a laptop"
+
+rm -f "$dmi_chassis"
+printf 'apple,j413\n' >"$test_tmp/compatible"
+OMARCHY_UNAME_M=aarch64 OMARCHY_APPLE_COMPATIBLE="$test_tmp/compatible" \
+  OMARCHY_DMI_CHASSIS_TYPE_PATH="$dmi_chassis" \
+  PATH="$stub_bin:$ROOT/bin:$PATH" \
+  "$ROOT/bin/omarchy-hw-laptop" ||
+  fail "Apple Silicon with no DMI chassis is a laptop"
+pass "Apple Silicon with no DMI chassis is a laptop"
 
 printf 'closed\n' >"$acpi_lid/macbook/state"
 run_lid_closed not-a-property ||

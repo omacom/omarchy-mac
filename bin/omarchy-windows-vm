@@ -2,8 +2,7 @@
 # omarchy:summary=Set up a Windows VM (unsupported on Apple Silicon)
 
 # Check for ARM64 architecture first
-ARCH=$(uname -m)
-if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+if omarchy-hw-aarch64; then
   cat << 'EOF'
 
 ╔═══════════════════════════════════════════════════════════════╗
@@ -22,7 +21,7 @@ if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
 ╚═══════════════════════════════════════════════════════════════╝
 
 EOF
-  echo "Current architecture: $ARCH"
+  echo "Current architecture: $(omarchy-hw-arch)"
   echo "This feature is only available on x86_64 systems."
   echo
   exit 1

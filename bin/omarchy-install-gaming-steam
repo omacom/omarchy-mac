@@ -9,7 +9,7 @@ echo "Installing Steam..."
 omarchy-pkg-add steam
 omarchy-install-gaming-gpu-lib32
 
-if [[ $(uname -m) == aarch64 ]]; then
+if omarchy-hw-aarch64; then
   omarchy-launch-steam --prepare
 fi
 

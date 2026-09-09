@@ -196,7 +196,7 @@ build_package() {
 }
 
 main() {
-  [[ $(uname -m) == "aarch64" ]] || fail "This builds the Apple Silicon packages; run it on aarch64."
+  omarchy-hw-aarch64 || fail "This builds the Apple Silicon packages; run it on aarch64."
   command -v makepkg >/dev/null || fail "makepkg is required (install base-devel)."
   (( EUID != 0 )) || fail "Run this as your regular user, not as root."
 

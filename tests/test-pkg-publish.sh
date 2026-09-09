@@ -6,7 +6,7 @@
 set -uo pipefail
 
 TOOL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/bin/omarchy-pkg-publish-aarch64"
-CONF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/default/pacman/pacman-stable.conf"
+CONF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/default/pacman/aarch64/pacman-stable.conf"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 pass=0

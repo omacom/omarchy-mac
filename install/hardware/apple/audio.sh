@@ -24,13 +24,12 @@
 # on purpose -- these drivers can be damaged by what the hardware will happily
 # ask them to do.
 
-compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
 OMARCHY_ASAHI_AUDIO_PACKAGES_CHANGED=0
 
 # Every device-tree machine has a compatible file, so it has to name Apple --
 # otherwise a Raspberry Pi would install the Asahi stack too.
-[[ $(uname -m) == "aarch64" ]] || return 0
-[[ -f $compatible ]] && grep -Faiq 'apple,' "$compatible" || return 0
+# Tests stub this via OMARCHY_UNAME_M and OMARCHY_APPLE_COMPATIBLE.
+omarchy-hw-apple-silicon || return 0
 
 # pkg-missing rather than a bare pkg-add, so the migration can tell whether this
 # actually installed anything and only then ask for a reboot.

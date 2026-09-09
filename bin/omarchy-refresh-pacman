@@ -5,9 +5,6 @@
 
 sudo cp -f /etc/pacman.conf /etc/pacman.conf.bak
 sudo cp -f /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak
-if [[ -f /etc/pacman.d/mirrorlist.asahi-alarm ]]; then
-  sudo cp -f /etc/pacman.d/mirrorlist.asahi-alarm /etc/pacman.d/mirrorlist.asahi-alarm.bak
-fi
 
 channel="${1:-stable}"
 
@@ -19,16 +16,29 @@ fi
 echo "Setting channel to $channel"
 echo
 
-sudo cp -f "$OMARCHY_PATH/default/pacman/pacman-$channel.conf" /etc/pacman.conf
-sudo cp -f "$OMARCHY_PATH/default/pacman/mirrorlist" /etc/pacman.d/mirrorlist
-sudo cp -f "$OMARCHY_PATH/default/pacman/mirrorlist.asahi-alarm" /etc/pacman.d/mirrorlist.asahi-alarm
+if omarchy-hw-aarch64; then
+  pacman_dir="$OMARCHY_PATH/default/pacman/aarch64"
+  mirrorlist_src="$pacman_dir/mirrorlist"
+  if [[ -f /etc/pacman.d/mirrorlist.asahi-alarm ]]; then
+    sudo cp -f /etc/pacman.d/mirrorlist.asahi-alarm /etc/pacman.d/mirrorlist.asahi-alarm.bak
+  fi
+else
+  pacman_dir="$OMARCHY_PATH/default/pacman"
+  mirrorlist_src="$pacman_dir/mirrorlist-$channel"
+fi
+
+sudo cp -f "$pacman_dir/pacman-$channel.conf" /etc/pacman.conf
+sudo cp -f "$mirrorlist_src" /etc/pacman.d/mirrorlist
+if omarchy-hw-aarch64; then
+  sudo cp -f "$pacman_dir/mirrorlist.asahi-alarm" /etc/pacman.d/mirrorlist.asahi-alarm
+fi
 
 # Allow user customization of /etc/pacman.conf before the upgrade runs
 omarchy-hook pre-refresh-pacman
 
 # Reset all package DBs and then update
 targets=()
-if [[ $(uname -m) == "aarch64" ]]; then
+if omarchy-hw-aarch64; then
   source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
   # Keep the original configuration saved before the channel replacement.
   omarchy_arm_prepare_package_sources /etc/pacman.conf preserve-backup || exit 1

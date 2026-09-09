@@ -5,6 +5,10 @@ system.
 
 ## Mental model
 
+Architecture is detected by `omarchy-hw-arch` (prints `aarch64` or `x86_64`; returns nonzero with no stdout for unsupported or failed detection), `omarchy-hw-aarch64` (boolean), and `omarchy-hw-apple-silicon` (aarch64 plus Apple in the device tree). Those three commands are the only place install and runtime code may read `uname -m` or `/proc/device-tree/compatible`. `omarchy-mac-setup` is the exception: it can run from `curl | bash` before the repo exists.
+
+x86 uses the files at `default/pacman/` (upstream Omarchy). aarch64 uses `default/pacman/aarch64/`. `omarchy-refresh-pacman` selects the tree. `install.sh` runs `install/aarch64/install.sh` on aarch64 and points x86 users at the Omarchy ISO.
+
 Two Arch packages are built from this one repo (PKGBUILDs live in the
 separate `omarchy-pkgs` repository, under `pkgbuilds/`):
 

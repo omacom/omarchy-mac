@@ -758,7 +758,7 @@ run_stage() {
   local encrypt="$1"
 
   (( EUID == 0 )) || fail "run as root"
-  [[ $(uname -m) == aarch64 ]] || fail "this tool is for Apple Silicon (aarch64) installs"
+  omarchy-hw-apple-silicon || fail "this tool is for Apple Silicon installs"
   [[ -f ${BASH_SOURCE[0]} ]] || fail "run this from a file, not via a pipe (curl -O it first)"
   [[ -d /boot/grub ]] || fail "no GRUB found at /boot/grub; unsupported boot layout"
 

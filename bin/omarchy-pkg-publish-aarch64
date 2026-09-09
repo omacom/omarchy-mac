@@ -10,9 +10,9 @@
 # self-hosted git server is up. It went down mid-install once and took the
 # whole desktop with it, because there is no Quattro shell without quickshell.
 #
-# The fix is the repo that already exists. default/pacman/pacman-stable.conf
-# points pacman at a GitHub release serving a real pacman database, and this
-# publishes into it: build on this machine, add to the database, upload.
+# The fix is the repo that already exists under default/pacman/aarch64/.
+# Its stable config points pacman at a GitHub release serving a real pacman
+# database, and this publishes into it: build on this machine, add to the database, upload.
 # Installs then fetch a binary instead of building one.
 #
 # Run it on Apple Silicon as your regular user, with gh logged in to the
@@ -31,10 +31,10 @@ readonly checkout="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 find_pacman_conf() {
   local candidate
   for candidate in \
-    "$checkout/default/pacman/pacman-stable.conf" \
-    "${OMARCHY_PATH:-}/default/pacman/pacman-stable.conf" \
-    "$HOME/.local/share/omarchy/default/pacman/pacman-stable.conf" \
-    /usr/share/omarchy/default/pacman/pacman-stable.conf \
+    "$checkout/default/pacman/aarch64/pacman-stable.conf" \
+    "${OMARCHY_PATH:-}/default/pacman/aarch64/pacman-stable.conf" \
+    "$HOME/.local/share/omarchy/default/pacman/aarch64/pacman-stable.conf" \
+    /usr/share/omarchy/default/pacman/aarch64/pacman-stable.conf \
     /etc/pacman.conf; do
     [[ -n $candidate && -f $candidate ]] || continue
     grep -q '^\[omarchy-aarch64\]' "$candidate" || continue
@@ -151,8 +151,8 @@ main() {
     (( ${#built[@]} )) || fail "no packages in $from_dir"
   else
     (( ${#packages[@]} )) || packages=(quickshell-git)
-    [[ $(uname -m) == "aarch64" ]] ||
-      fail "building runs on Apple Silicon; use --from to publish packages built elsewhere"
+    omarchy-hw-aarch64 ||
+      fail "building runs on aarch64; use --from to publish packages built elsewhere"
     command -v makepkg >/dev/null || fail "makepkg is required (install base-devel)"
 
     local build_dir="$work_root/build"

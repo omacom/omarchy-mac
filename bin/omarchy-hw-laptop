@@ -11,9 +11,15 @@ done
 # button. 8=Portable 9=Laptop 10=Notebook 14=Sub Notebook 30=Tablet
 # 31=Convertible 32=Detachable.
 chassis_type=""
-read -r chassis_type <"${OMARCHY_DMI_CHASSIS_TYPE_PATH:-/sys/class/dmi/id/chassis_type}" 2>/dev/null || true
+dmi_chassis="${OMARCHY_DMI_CHASSIS_TYPE_PATH:-/sys/class/dmi/id/chassis_type}"
+[[ -f $dmi_chassis ]] && read -r chassis_type <"$dmi_chassis" || true
 case "$chassis_type" in
 8 | 9 | 10 | 14 | 30 | 31 | 32) exit 0 ;;
 esac
+
+# Asahi MacBooks often expose neither an ACPI lid nor DMI chassis_type.
+# Only fall back when DMI said nothing — an explicit desktop chassis (Mac
+# Studio, Mini, or a test stub) must not be overridden by Apple Silicon.
+[[ -z $chassis_type ]] && omarchy-hw-apple-silicon && exit 0
 
 exit 1

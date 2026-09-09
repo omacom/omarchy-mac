@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# omarchy:summary=Detect whether the machine is aarch64.
+
+# Codebase split: pacman tree, installer, package filter, aarch64-only tools.
+# Self-contained so bootstrap can invoke it by absolute path before PATH is set.
+case ${OMARCHY_UNAME_M:-$(uname -m)} in
+aarch64 | arm64) exit 0 ;;
+esac
+exit 1

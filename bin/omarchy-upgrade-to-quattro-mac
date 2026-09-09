@@ -87,8 +87,8 @@ done
 command -v sudo >/dev/null 2>&1 || fail "sudo is required."
 command -v pacman >/dev/null 2>&1 || fail "This upgrade is only supported on Arch-based systems with pacman."
 command -v yay >/dev/null 2>&1 || fail "yay is required to build AUR packages. Install it first."
-[[ $(uname -m) == "aarch64" ]] || fail "This is the Apple Silicon upgrade. On x86 machines use omarchy-upgrade-to-quattro."
-grep -qi apple /proc/device-tree/compatible 2>/dev/null || warn "This does not look like Apple hardware; continuing anyway."
+omarchy-hw-aarch64 || fail "This is the Apple Silicon upgrade. On x86 machines use omarchy-upgrade-to-quattro."
+omarchy-hw-apple-silicon || warn "This does not look like Apple hardware; continuing anyway."
 [[ -d $checkout/.git ]] || fail "No Omarchy checkout found at $checkout. Is Omarchy Mac 3.x installed?"
 
 if (( ! yes )); then
@@ -173,8 +173,8 @@ ensure_arm_package_repo() {
   if ! grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf; then
     local block
     block=$(sed -n '/^\[omarchy-aarch64\]/,/^Server[[:space:]]*=/p' \
-      "$checkout/default/pacman/pacman-stable.conf")
-    [[ -n $block ]] || fail "default/pacman/pacman-stable.conf has no [omarchy-aarch64] section."
+      "$checkout/default/pacman/aarch64/pacman-stable.conf")
+    [[ -n $block ]] || fail "default/pacman/aarch64/pacman-stable.conf has no [omarchy-aarch64] section."
 
     log "Adding the Omarchy ARM package repo"
     printf '\n%s\n' "$block" | sudo tee -a /etc/pacman.conf >/dev/null

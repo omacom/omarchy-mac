@@ -5,30 +5,32 @@
 # omarchy:examples=omarchy pkg add jq ripgrep
 # omarchy:requires-sudo=true
 
-# Mac fork: upstream migrations sometimes install packages that don't exist in
-# Arch Linux ARM's repos (e.g. x86-only packages). Filter to what is actually
-# installable here so those installs skip cleanly with a warning instead of
-# hard-failing the whole migration.
-to_install=()
-for pkg in "$@"; do
-  if pacman -Q "$pkg" &>/dev/null || pacman -Si "$pkg" &>/dev/null; then
-    to_install+=("$pkg")
-  else
-    echo -e "\033[33mSkipping '$pkg': not available in the repos on this system\033[0m" >&2
-  fi
-done
+# On aarch64, upstream migrations sometimes name packages Arch Linux ARM does
+# not serve. Filter to what is installable so those skip with a warning instead
+# of failing the whole transaction. On x86 this is a no-op: missing packages
+# fail, matching upstream.
+packages=("$@")
+if omarchy-hw-aarch64; then
+  packages=()
+  for pkg in "$@"; do
+    if pacman -Q "$pkg" &>/dev/null || pacman -Si "$pkg" &>/dev/null; then
+      packages+=("$pkg")
+    else
+      echo -e "\033[33mSkipping '$pkg': not available in the repos on this system\033[0m" >&2
+    fi
+  done
+  ((${#packages[@]})) || exit 0
+fi
 
-((${#to_install[@]})) || exit 0
-
-if omarchy-pkg-missing "${to_install[@]}"; then
+if omarchy-pkg-missing "${packages[@]}"; then
   if (( EUID == 0 )); then
-    pacman -S --noconfirm --needed "${to_install[@]}" || exit 1
+    pacman -S --noconfirm --needed "${packages[@]}" || exit 1
   else
-    sudo pacman -S --noconfirm --needed "${to_install[@]}" || exit 1
+    sudo pacman -S --noconfirm --needed "${packages[@]}" || exit 1
   fi
 fi
 
-for pkg in "${to_install[@]}"; do
+for pkg in "${packages[@]}"; do
   # Secondary check to handle states where pacman doesn't actually register an error
   if ! pacman -Q "$pkg" &>/dev/null; then
     echo -e "\033[31mError: Package '$pkg' did not install\033[0m" >&2

@@ -12,7 +12,7 @@ SRC="$WORKDIR/src_mirrorlist"
 DEST="$WORKDIR/dest_mirrorlist"
 
 # Use the repository's bundled default mirrorlist as the SRC
-cp "$ROOT/default/pacman/mirrorlist" "$SRC"
+cp "$ROOT/default/pacman/aarch64/mirrorlist" "$SRC"
 
 # Create sample existing system mirrorlist
 cat >"$DEST" <<'EOF'

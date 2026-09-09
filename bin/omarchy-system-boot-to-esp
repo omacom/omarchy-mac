@@ -95,7 +95,7 @@ main() {
   done
 
   (( EUID == 0 )) || fail "run as root"
-  [[ $(uname -m) == "aarch64" ]] || fail "this tool is for Apple Silicon (aarch64) installs"
+  omarchy-hw-apple-silicon || fail "this tool is for Apple Silicon installs"
 
   if findmnt -no SOURCE /boot >/dev/null 2>&1; then
     log "/boot is already its own mount -- nothing to do."

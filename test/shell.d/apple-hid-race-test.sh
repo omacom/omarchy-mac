@@ -87,7 +87,8 @@ run_leaf() {
   : >"$calls"
   printf '%s' "$model" >"$compatible"
 
-  ARCH="$arch" TEST_LOG="$calls" PATH="$stub_bin:$PATH" \
+  OMARCHY_UNAME_M="$arch" OMARCHY_APPLE_COMPATIBLE="$compatible" \
+    ARCH="$arch" TEST_LOG="$calls" PATH="$stub_bin:$ROOT/bin:$PATH" \
     bash -eE -o pipefail -c 'source "$1"' bash "$sandboxed_leaf" </dev/null
 }
 
@@ -148,7 +149,8 @@ run_migration() {
   : >"$calls"
   printf '%s' "$model" >"$compatible"
 
-  ARCH="$arch" TEST_LOG="$calls" PATH="$stub_bin:$PATH" \
+  OMARCHY_UNAME_M="$arch" OMARCHY_APPLE_COMPATIBLE="$compatible" \
+    ARCH="$arch" TEST_LOG="$calls" PATH="$stub_bin:$ROOT/bin:$PATH" \
     MKINITCPIO_STATUS="$mkinitcpio_status" \
     OMARCHY_PATH="$test_tmp/omarchy" OMARCHY_APPLE_HID_CONF="$conf" \
     bash -euo pipefail "$migration"
