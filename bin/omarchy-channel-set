@@ -32,11 +32,12 @@ validate_dev_checkout() {
   fi
 }
 
-link_dev_checkout() {
+prepare_dev_checkout() {
   local checkout="$1"
   [[ -d $checkout/.git ]] || git clone --branch quattro https://github.com/omarchy-mac/omarchy-mac.git "$checkout"
 
-  omarchy-dev-link "$checkout" --no-reboot
+  [[ -f $checkout/install/helpers/arm-channel-manifest.py ]] ||
+    fail "$checkout does not support isolated ARM channels yet; update its Mac source branch first."
 }
 
 (( $# > 0 )) || { usage; exit 1; }
@@ -84,17 +85,20 @@ if [[ -z $dev_checkout && $OMARCHY_PATH != "/usr/share/omarchy" ]]; then
 fi
 
 if [[ -n $dev_checkout ]]; then
-  link_dev_checkout "$dev_checkout"
-  export OMARCHY_PATH="$dev_checkout"
-  export PATH="$OMARCHY_PATH/bin:$PATH"
-  omarchy-state set reboot-required
+  prepare_dev_checkout "$dev_checkout"
 fi
 
 omarchy-refresh-pacman "$pacman_channel"
 # --ask 4 accepts omarchy <-> omarchy-dev replacement prompts without file overwrites.
 sudo env OMARCHY_UPDATE_PACMAN=1 pacman -S --needed --noconfirm --ask 4 "${packages[@]}"
 
-if [[ -z $dev_checkout ]]; then
+if [[ -n $dev_checkout ]]; then
+  omarchy-dev-link "$dev_checkout" --no-reboot
+  omarchy-state set reboot-required
+  # The source link takes effect after reboot. Complete this transaction with
+  # the channel-capable package code, not scripts from the newly cloned tree.
+  export OMARCHY_PATH=/usr/share/omarchy
+else
   omarchy-dev-unlink --no-reboot
   export OMARCHY_PATH=/usr/share/omarchy
 
