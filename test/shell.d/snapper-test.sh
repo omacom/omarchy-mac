@@ -55,23 +55,7 @@ grep -Fx 'systemctl --user daemon-reload' "$test_tmp/calls.log" >/dev/null || fa
 grep -Fx 'systemctl --user stop app-limine\x2dsnapper\x2dnotify@autostart.service' "$test_tmp/calls.log" >/dev/null || fail "Limine Snapper warning notifier migration stops active watcher"
 pass "Limine Snapper warning notifier migration disables existing user autostart"
 
-: >"$test_tmp/calls.log"
-
-TEST_LOG="$test_tmp/calls.log" \
-PATH="$fake_bin:$PATH" \
-OMARCHY_SNAPPER_CONFIGURE_TEST=1 \
-OMARCHY_PATH="$ROOT" \
-OMARCHY_SNAPPER_CONFIG_PATH="$test_tmp/etc/snapper/configs/root" \
-OMARCHY_SNAPPER_CONF_PATH="$test_tmp/etc/conf.d/snapper" \
-  bash -euo pipefail "$ROOT/install/config/snapper.sh" >/dev/null
-
-cmp -s "$template" "$test_tmp/etc/snapper/configs/root" || fail "snapshot configure installs the Omarchy Snapper template"
-grep -Fx 'SNAPPER_CONFIGS="root"' "$test_tmp/etc/conf.d/snapper" >/dev/null || fail "snapshot configure writes /etc/conf.d/snapper"
-grep -Fx 'systemctl disable --now snapper-timeline.timer' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure disables timeline snapshots"
-grep -Fx 'systemctl enable --now snapper-cleanup.timer' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure enables cleanup"
-grep -Fx 'systemctl cat limine-snapper-sync.service' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure checks for Limine snapshot sync"
-grep -Fx 'systemctl enable --now limine-snapper-sync.service' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure enables Limine snapshot sync"
-pass "snapshot configure normalizes Snapper policy and services"
+# Backend creation and preservation are exercised by snapper-configure-test.sh.
 
 setup_system="$ROOT/bin/omarchy-apply-system"
 grep -F 'config/all.sh' "$setup_system" >/dev/null ||
