@@ -1,6 +1,14 @@
 #!/bin/bash
 # Compose actual package bytes inside the disposable guest; never publish.
 set -euo pipefail
+
+expose_verified_fixture() {
+  # Publisher staging directories are private (0700). Pacman's unprivileged
+  # downloader must traverse this verified fixture once it is mounted read-only.
+  find "$fixture" -type d -exec chmod 755 {} +
+  find "$fixture" -type f -exec chmod 644 {} +
+}
+
 [[ $EUID == 0 && ${container:-} == "systemd-nspawn" && -d /src/omarchy ]] || { echo 'Run only in the installation test guest' >&2; exit 1; }
 source_root=/src/omarchy
 publisher=/opt/omarchy-channel-publisher
@@ -45,3 +53,4 @@ python3 "$publisher/scripts/channel-snapshot.py" prepare --packages "$work/colle
   --publisher-sha "$(git -c safe.directory="$publisher" -C "$publisher" rev-parse HEAD)" \
   --output "$fixture/channel-$channel"
 printf '%s\n' "$channel" > "$fixture/channel"
+expose_verified_fixture
