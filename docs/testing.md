@@ -158,3 +158,5 @@ The job runs `./test/vm/run-selective-edge` with both package-source and idempot
 Each run uses unique work and cache directories with no cache shared across jobs. A private source copy retains Git metadata and is owned by the guest build user, so guest builds can write files even when the host runner has a different UID; the original checkout is not modified. Preparation fails if less than 20 GiB is free. Package-phase, installer, assertion, and repeat-install logs are uploaded even on failure and retained for seven days. The job has a 120-minute timeout. See [runner requirements](runner-requirements.md) for host dependencies and a local invocation.
 
 `test/shell.d/install-vm-workflow-test.sh` guards the workflow's PR coverage, hosted-runner isolation, and required validation flags. Its YAML parser requires PyYAML (`python-yaml` on Arch, `python3-yaml` on Ubuntu); CI installs it with the other test dependencies.
+
+The ARM channel manifest preflight tests inspect repository databases with `bsdtar`, provided by `libarchive` on Arch and `libarchive-tools` on Ubuntu. The ordinary CI test job installs this dependency even though it runs on x86_64.
