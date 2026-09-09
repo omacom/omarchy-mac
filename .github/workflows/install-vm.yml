@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: omarchy-mac/omarchy-pkgs-aarch64
-          ref: 4cc1097a1a394ff2e46fea75f0c894190ed38bf6
+          ref: 8abbb4d294c61535168e8bf7c936cb4784707aff
           path: channel-publisher
           persist-credentials: false
 
