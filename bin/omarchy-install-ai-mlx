@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# omarchy:summary=Install mlx-omarchy: Apple's MLX running on the Apple GPU through Honeykrisp Vulkan
+# omarchy:requires-sudo=true
+
+set -e
+
+if [ "$(uname -m)" != "aarch64" ]; then
+  echo "Skipping: mlx-omarchy runs on Apple Silicon only"
+  exit 0
+fi
+
+echo "Installing mlx-omarchy..."
+# Installs the verified release wheel and a chat demo into a private venv under
+# ~/.local/share/mlx-omarchy. Installs lapack and blas through omarchy-pkg-add;
+# does not replace Mesa or change any Omarchy file. Verified on the M1.
+curl -fsSL https://raw.githubusercontent.com/joshuaswarren/mlx-omarchy/main/install.sh | bash
+
+echo ""
+echo "mlx-omarchy has been installed. Run 'mlx-omarchy-demo' or open 'MLX Chat (Apple GPU)' from the launcher."
