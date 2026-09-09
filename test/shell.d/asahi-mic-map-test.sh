@@ -1,195 +1,213 @@
 #!/bin/bash
-
 set -euo pipefail
-
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
-
-user_all="$ROOT/install/user/all.sh"
-mic_leaf="$ROOT/install/user/hardware/apple/mic.sh"
-headset_conf="$ROOT/default/wireplumber/wireplumber.conf.d/asahi-headset-mic.conf"
-map_cmd="$ROOT/bin/omarchy-audio-asahi-mic-map"
-hw_cmd="$ROOT/bin/omarchy-hw-apple"
-autostart="$ROOT/default/hypr/autostart.lua"
-migration=$(grep -rl 'Map the Asahi mic array to stereo' "$ROOT/migrations" | head -n 1 || true)
-
-[[ -x $map_cmd ]] || fail "omarchy-audio-asahi-mic-map ships and is executable"
-[[ -x $hw_cmd ]] || fail "omarchy-hw-apple ships and is executable"
-[[ -f $mic_leaf ]] || fail "the Apple Silicon mic user leaf ships"
-[[ -f $headset_conf ]] || fail "the headset-mic WirePlumber drop-in ships"
-grep -Fq 'hardware/apple/mic.sh' "$user_all" ||
-  fail "Apple Silicon mic mapping runs during user setup"
-grep -Fq 'omarchy-audio-asahi-mic-map' "$autostart" ||
-  fail "Hyprland start remaps the Asahi mic array"
-[[ -n $migration ]] || fail "existing Apple Silicon installs get the mic mapping"
-grep -Fq 'apple/audio.sh' "$migration" || fail "the migration retries speakersafetyd"
-grep -Fq 'apple/mic.sh' "$migration" || fail "the migration maps the Asahi mic array"
-pass "fresh and existing installs are wired to Asahi mic mapping"
-
-grep -Fq 'HiFi__Headset__source' "$headset_conf" ||
-  fail "the headset drop-in targets the unused jack mic"
-pass "the headset drop-in targets the unused jack mic"
-
-! grep -Fq 'move-source-output' "$map_cmd" ||
-  fail "the mapper does not steal the DSP chain's capture"
-pass "the mapper does not steal the DSP chain's capture"
-
-test_tmp=$(mktemp -d)
-trap 'rm -rf "$test_tmp"' EXIT
-stub_bin="$test_tmp/bin"
-calls="$test_tmp/calls.log"
-compatible="$test_tmp/compatible"
-sink_created="$test_tmp/sink-created"
-default_sink="$test_tmp/default-sink"
-mkdir -p "$stub_bin"
-
-cat >"$stub_bin/uname" <<'SH'
-#!/bin/bash
-
-if [[ ${1:-} == "-m" ]]; then
-  printf '%s\n' "${TEST_ARCH:-x86_64}"
-else
-  exec /usr/bin/uname "$@"
-fi
-SH
-
-cat >"$stub_bin/pactl" <<'SH'
-#!/bin/bash
-
-printf 'pactl' >>"$TEST_LOG"
-printf '\t%s' "$@" >>"$TEST_LOG"
-printf '\n' >>"$TEST_LOG"
-
-case "${1:-}" in
-list)
-  if [[ ${2:-} == "short" && ${3:-} == "sources" ]]; then
-    printf '58\teffect_output.j313-mic\tPipeWire\ts32le 1ch 48000Hz\tSUSPENDED\n'
-  elif [[ ${2:-} == "short" && ${3:-} == "sinks" ]]; then
-    printf '59\taudio_effect.j313-convolver\tPipeWire\tfloat32le 2ch 48000Hz\tSUSPENDED\n'
-    if [[ -e $SINK_CREATED ]]; then
-      printf '60\tomarchy_asahi_mic\tPipeWire\tfloat32le 2ch 48000Hz\tSUSPENDED\n'
-    fi
-  fi
-  ;;
-load-module)
-  touch "$SINK_CREATED"
-  printf '%s\n' "omarchy_asahi_mic" >"$DEFAULT_SINK_FILE"
-  echo 42
-  ;;
-get-default-sink)
-  cat "$DEFAULT_SINK_FILE"
-  ;;
-set-default-sink)
-  printf '%s\n' "$2" >"$DEFAULT_SINK_FILE"
-  ;;
-esac
-SH
-
-cat >"$stub_bin/pw-link" <<'SH'
-#!/bin/bash
-
-printf 'pw-link' >>"$TEST_LOG"
-printf '\t%s' "$@" >>"$TEST_LOG"
-printf '\n' >>"$TEST_LOG"
-
-case "${1:-}" in
--o)
-  printf '%s\n' "effect_output.j313-mic:capture_AUX0"
-  ;;
--i)
-  printf '%s\n' "omarchy_asahi_mic:playback_FL"
-  printf '%s\n' "omarchy_asahi_mic:playback_FR"
-  ;;
-esac
-SH
-
-chmod +x "$stub_bin"/*
-
-run_hw() {
-  PATH="$stub_bin:$ROOT/bin:$PATH" \
-    TEST_ARCH="$1" \
-    OMARCHY_APPLE_COMPATIBLE="$compatible" \
-    "$hw_cmd"
-}
-
-: >"$compatible"
-run_hw x86_64 &&
-  fail "omarchy-hw-apple rejects non-aarch64 hosts" ||
-  pass "omarchy-hw-apple rejects non-aarch64 hosts"
-
-printf '%s\0' 'linux,dummy' >"$compatible"
-run_hw aarch64 &&
-  fail "omarchy-hw-apple rejects non-Apple aarch64 hosts" ||
-  pass "omarchy-hw-apple rejects non-Apple aarch64 hosts"
-
-printf '%s\0' 'apple,j313' >"$compatible"
-run_hw aarch64 ||
-  fail "omarchy-hw-apple detects Apple Silicon"
-pass "omarchy-hw-apple detects Apple Silicon"
-
-run_map() {
-  PATH="$stub_bin:$ROOT/bin:$PATH" \
-    TEST_ARCH="${1:-aarch64}" \
-    OMARCHY_APPLE_COMPATIBLE="$compatible" \
-    TEST_LOG="$calls" \
-    SINK_CREATED="$sink_created" \
-    DEFAULT_SINK_FILE="$default_sink" \
-    "$map_cmd"
-}
-
-: >"$calls"
-run_map x86_64
-[[ ! -s $calls ]] || fail "omarchy-audio-asahi-mic-map is a no-op off Apple Silicon" "$(cat "$calls")"
-pass "omarchy-audio-asahi-mic-map is a no-op off Apple Silicon"
-
-: >"$calls"
-rm -f "$sink_created"
-printf '%s\n' "audio_effect.j313-convolver" >"$default_sink"
-run_map || fail "the mapper succeeds on Apple Silicon with DSP present"
-
-grep -Fq $'pactl\tload-module\tmodule-null-sink' "$calls" ||
-  fail "the mapper creates a stereo null sink" "$(cat "$calls")"
-grep -Fq $'pw-link\teffect_output.j313-mic:capture_AUX0\tomarchy_asahi_mic:playback_FL' "$calls" ||
-  fail "the mapper copies AUX0 onto FL" "$(cat "$calls")"
-grep -Fq $'pw-link\teffect_output.j313-mic:capture_AUX0\tomarchy_asahi_mic:playback_FR' "$calls" ||
-  fail "the mapper copies AUX0 onto FR" "$(cat "$calls")"
-grep -Fq $'pactl\tset-default-sink\taudio_effect.j313-convolver' "$calls" ||
-  fail "the mapper restores the speaker convolver after the dummy sink steals it" "$(cat "$calls")"
-grep -Fq $'pactl\tset-default-source\tomarchy_asahi_mic.monitor' "$calls" ||
-  fail "the mapper uses the stereo monitor as the default source" "$(cat "$calls")"
-! grep -Fq 'move-source-output' "$calls" ||
-  fail "the mapper does not move existing source-outputs" "$(cat "$calls")"
-pass "the mapper duplicates AUX0 onto a stereo default source"
-
-: >"$calls"
-run_map || fail "the mapper is idempotent"
-! grep -Fq $'pactl\tload-module\tmodule-null-sink' "$calls" ||
-  fail "an existing stereo sink is reused" "$(cat "$calls")"
-! grep -Fq $'pactl\tset-default-sink' "$calls" ||
-  fail "a later run does not override an already-correct default sink" "$(cat "$calls")"
-pass "an existing stereo sink is reused"
-
-: >"$calls"
-rm -f "$sink_created"
-printf '%s\n' "bluez_output.headphones" >"$default_sink"
-run_map || fail "the mapper succeeds when headphones are the default sink"
-grep -Fq $'pactl\tset-default-sink\tbluez_output.headphones' "$calls" ||
-  fail "the mapper restores headphones after the dummy sink steals them" "$(cat "$calls")"
-! grep -Fq $'pactl\tset-default-sink\taudio_effect.j313-convolver' "$calls" ||
-  fail "the mapper does not force the speaker convolver over headphones" "$(cat "$calls")"
-pass "the mapper preserves headphones and Bluetooth as the default sink"
-
-fake_home="$test_tmp/home"
-mkdir -p "$fake_home"
-: >"$calls"
-PATH="$stub_bin:$ROOT/bin:$PATH" \
-  HOME="$fake_home" \
-  OMARCHY_PATH="$ROOT" \
-  TEST_ARCH=aarch64 \
-  OMARCHY_APPLE_COMPATIBLE="$compatible" \
-  TEST_LOG="$calls" \
-  SINK_CREATED="$sink_created" \
-  DEFAULT_SINK_FILE="$default_sink" \
-  bash -euo pipefail -c 'source "$1"' bash "$mic_leaf"
-[[ -f $fake_home/.config/wireplumber/wireplumber.conf.d/asahi-headset-mic.conf ]] ||
-  fail "user setup copies the headset-mic drop-in"
-pass "user setup copies the headset-mic drop-in"
+source "$(dirname "$0")/base-test.sh"
+python3 - "$ROOT" <<'PY'
+import copy
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from unittest import mock
+root = Path(sys.argv[1])
+loader = importlib.machinery.SourceFileLoader('mic', str(root / 'bin/omarchy-audio-asahi-mic-map'))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+DSP = 'effect_output.j414-mic'
+def obj(name, value=27525, mute=True):
+    return dict(name=name, volume={'front-left': {'value': value}, 'front-right': {'value': value}}, mute=mute)
+class Audio:
+    def __init__(self, existing=False, default=DSP):
+        self.calls = []; self.default = default; self.output = 'speakers'; self.existing = existing
+        self.sink = obj(m.SINK); self.monitor = obj(m.MONITOR); self.module = None
+        self.linked = {}; self.missing = None; self.fail_link = None; self.fail_module = False
+        self.fail_query = False; self.fail_graph = False; self.concurrent = False
+        self.next_id = 100; self.auto_input = False; self.initial_input = default; self.no_dsp = False
+    def objects(self, kind):
+        if self.fail_query: raise RuntimeError('live Pulse query failed')
+        if kind == 'sources': return ([] if self.no_dsp else [obj(DSP)]) + [obj('usb-mic')] + ([copy.deepcopy(self.monitor)] if self.existing else [])
+        if kind == 'sinks': return [obj('speakers')] + ([copy.deepcopy(self.sink)] if self.existing else [])
+        if kind == 'modules': return [self.module] if self.module else []
+        raise AssertionError(kind)
+    def modules(self): return [self.module] if self.module else []
+    def graph(self):
+        if self.fail_graph: raise RuntimeError('live graph query failed')
+        nodes = [dict(id=1, type='PipeWire:Interface:Node', info={'props': {'node.name': DSP}})]
+        ports = [(11, 1, 'capture_AUX0')]
+        if self.existing:
+            nodes.append(dict(id=2, type='PipeWire:Interface:Node', info={'props': {'node.name': m.SINK}}))
+            ports += [(21, 2, 'playback_FL'), (22, 2, 'playback_FR')]
+        for id_, node, name in ports:
+            if name != self.missing: nodes.append(dict(id=id_, type='PipeWire:Interface:Port', info={'props': {'node.id': node, 'port.name': name}}))
+        for id_, (input_, owner) in self.linked.items():
+            nodes.append(dict(id=id_, type='PipeWire:Interface:Link', info={'output-port-id': 11, 'input-port-id': input_, 'state': 'paused', 'props': {m.OWNER: owner}}))
+        if self.concurrent and len(self.linked) == 2: self.default = 'usb-mic'; self.output = 'headphones'
+        return nodes
+    def pause(self): pass
+    def run(self, *args):
+        self.calls.append(args)
+        if args[0] == 'pw-link':
+            if args[1] == '-d': self.linked.pop(int(args[2])); return ''
+            input_ = int(args[-1]); self.next_id += 1
+            self.linked[self.next_id] = (input_, json.loads(args[4])[m.OWNER])
+            if self.fail_link == input_: raise RuntimeError('link rejected after partial creation')
+            return ''
+        assert args[0] == 'pactl', args
+        command = args[1]
+        if command == 'get-default-source': return self.default
+        if command == 'get-default-sink': return self.output
+        if command == 'load-module':
+            if self.fail_module: raise RuntimeError('module failed')
+            self.module = dict(index=42, name='module-null-sink', argument=' '.join(args[2:]))
+            self.existing = True; self.output = m.SINK
+            if self.auto_input: self.default = m.MONITOR
+            self.sink = obj(m.SINK, 65536, False); self.monitor = obj(m.MONITOR, 65536, False)
+            return '42'
+        if command == 'unload-module':
+            self.existing = False; self.module = None; self.linked = {}
+            if self.default == m.MONITOR: self.default = self.initial_input
+            return ''
+        if command == 'set-default-source': self.default = args[2]; return ''
+        if command == 'set-default-sink': self.output = args[2]; return ''
+        target = self.sink if args[2] == m.SINK else self.monitor
+        assert args[2] in (m.SINK, m.MONITOR), 'DSP/user device must never be modified'
+        if command.endswith('-volume'):
+            target['volume'] = {str(i): {'value': int(value)} for i, value in enumerate(args[3:])}; return ''
+        if command.endswith('-mute'): target['mute'] = args[3] == '1'; return ''
+        raise AssertionError(args)
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    def state():
+        path = directory / ('state-' + str(len(list(directory.iterdir()))) + '.json'); return path
+    for selected in (DSP, 'usb-mic', m.MONITOR):
+        audio = Audio(True, selected); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
+        before = copy.deepcopy((audio.sink, audio.monitor)); saved = state()
+        m.reconcile(audio, saved); m.reconcile(audio, saved)
+        assert (audio.sink, audio.monitor) == before, '42 percent and mute must survive repeat mapping'
+        assert not any('volume' in call[1] or 'mute' in call[1] for call in audio.calls)
+        assert audio.default == (m.MONITOR if selected == DSP else selected)
+        assert sum(call[1] == 'set-default-source' for call in audio.calls) == (1 if selected == DSP else 0)
+    audio = Audio(default='usb-mic'); audio.no_dsp = True
+    try: m.reconcile(audio, state())
+    except m.Deferred: pass
+    else: raise AssertionError('Apple desktop without a mic array should defer safely')
+    assert not audio.calls[2:] and audio.default == 'usb-mic'
+    for selected in (DSP, 'usb-mic', ''):
+        for failure in (False, True):
+            audio = Audio(default=selected); audio.auto_input = True
+            if failure: audio.missing = 'playback_FR'
+            try: m.reconcile(audio, state())
+            except RuntimeError:
+                assert failure
+            else: assert not failure
+            expected = selected if failure or selected == 'usb-mic' else m.MONITOR
+            assert audio.default == expected, 'module auto-selection must not steal a source or survive failed links'
+    for missing in ('capture_AUX0', 'playback_FL', 'playback_FR'):
+        audio = Audio(); audio.missing = missing
+        try: m.reconcile(audio, state())
+        except RuntimeError: pass
+        else: raise AssertionError('missing port accepted')
+        assert audio.default == DSP and not audio.existing and audio.output == 'speakers'
+    for existing in (False, True):
+        audio = Audio(existing); audio.fail_link = 22
+        if existing: audio.linked = {90: (21, 'existing')}
+        try: m.reconcile(audio, state())
+        except RuntimeError: pass
+        else: raise AssertionError('failed link accepted')
+        assert audio.default == DSP and audio.existing == existing
+        assert audio.linked == ({90: (21, 'existing')} if existing else {}), 'rollback must preserve old links'
+    for failure in ('fail_module', 'fail_query', 'fail_graph'):
+        audio = Audio(); setattr(audio, failure, True)
+        try: m.reconcile(audio, state())
+        except RuntimeError: pass
+        else: raise AssertionError('live failure suppressed')
+        assert audio.default == DSP and not audio.existing
+    audio = Audio(); audio.concurrent = True
+    m.reconcile(audio, state())
+    assert audio.default == 'usb-mic' and audio.output == 'headphones', 'concurrent user selections must win'
+    audio = Audio(True, m.MONITOR); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
+    saved = state(); m.reconcile(audio, saved)
+    audio.existing = False; audio.linked = {}; audio.default = DSP
+    m.reconcile(audio, saved)
+    assert m.gain(audio.monitor) == {'volume': [27525, 27525], 'mute': True}, 'restart must recover owned mapped gain'
+    assert m.gain(audio.sink) == {'volume': [27525, 27525], 'mute': True}
+    bad = state(); bad.write_text('{invalid')
+    audio = Audio()
+    try: m.reconcile(audio, bad)
+    except ValueError: pass
+    else: raise AssertionError('corrupt saved state accepted')
+    assert not audio.existing and audio.default == DSP
+    runtime = directory / 'runtime'; runtime.mkdir()
+    with mock.patch.dict(os.environ, {}, clear=True):
+        try: m.run_once(Audio(), runtime, state())
+        except m.Deferred: pass
+        else: raise AssertionError('absent session was not explicitly deferred')
+        (runtime / 'pipewire-0').touch()
+        audio = Audio(); audio.fail_query = True
+        try: m.run_once(audio, runtime, state())
+        except RuntimeError: pass
+        else: raise AssertionError('broken live session was deferred')
+    entered = threading.Event()
+    def concurrent():
+        with m.mapping_lock(runtime): entered.set()
+    with m.mapping_lock(runtime):
+        thread = threading.Thread(target=concurrent); thread.start()
+        assert not entered.wait(0.1), 'mapping operations must serialize'
+    thread.join(2); assert entered.is_set()
+    audio = Audio(True); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}; saved = state()
+    passes = [0]
+    def operation():
+        passes[0] += 1
+        if passes[0] == 2: audio.existing = False; audio.linked = {}; audio.default = DSP
+        if passes[0] == 3: raise KeyboardInterrupt()
+        m.reconcile(audio, saved)
+    with mock.patch.object(m.time, 'sleep'):
+        try: m.supervise(operation)
+        except KeyboardInterrupt: pass
+    assert audio.existing and len(audio.linked) == 2 and m.gain(audio.monitor)['mute'], 'supervisor must rebuild lost nodes and gain'
+    audio = Audio(); saved = state(); passes = [0]
+    def retry_operation():
+        passes[0] += 1
+        if passes[0] == 3: raise KeyboardInterrupt()
+        audio.fail_module = passes[0] == 1
+        m.reconcile(audio, saved)
+    with mock.patch.object(m.time, 'sleep'):
+        try: m.supervise(retry_operation)
+        except KeyboardInterrupt: pass
+    assert audio.existing and len(audio.linked) == 2, 'supervisor must retry a failed live repair'
+    stub = directory / 'bin'; stub.mkdir()
+    for name, body in [('omarchy-hw-apple', 'exit 0'), ('systemctl', 'echo "$*" >> "$CALLS"'), ('omarchy-audio-asahi-mic-map', 'echo live-diagnostic >&2; exit "$MAP_STATUS"')]:
+        path = stub / name; path.write_text('#!/bin/bash\n' + body + '\n'); path.chmod(0o755)
+    home = directory / 'home'; home.mkdir()
+    policy = home / '.config/wireplumber/wireplumber.conf.d/asahi-headset-mic.conf'; policy.parent.mkdir(parents=True)
+    calls = directory / 'calls'
+    env = dict(os.environ, HOME=str(home), OMARCHY_PATH=str(root), PATH=str(stub) + ':' + os.environ['PATH'], XDG_RUNTIME_DIR=str(directory / 'no-session'), CALLS=str(calls))
+    command = ['bash', '-euo', 'pipefail', '-c', 'source "$OMARCHY_PATH/install/user/hardware/apple/mic.sh"']
+    for contents in (None, 'custom policy'):
+        if contents: policy.write_text(contents)
+        result = subprocess.run(command, env=dict(env, MAP_STATUS='75'), capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        if contents: assert policy.read_text() == contents
+    policy.unlink(); policy.symlink_to(directory / 'missing-custom-target')
+    result = subprocess.run(command, env=dict(env, MAP_STATUS='1'), capture_output=True, text=True)
+    assert result.returncode == 1 and 'live-diagnostic' in result.stderr and policy.is_symlink()
+    result = subprocess.run(['bash', '-euo', 'pipefail', str(root / 'migrations/1788979860.sh')], env=dict(env, MAP_STATUS='1'), capture_output=True, text=True)
+    assert result.returncode == 1 and 'live-diagnostic' in result.stderr, 'migration must remain failed on a live mapper error'
+    assert not calls.exists(), 'offline provisioning must not contact the user manager'
+    assert (home / '.config/systemd/user/graphical-session.target.wants/omarchy-asahi-mic.service').is_symlink()
+    assert (home / '.config/systemd/user/omarchy-asahi-mic.service').exists()
+with mock.patch.object(m.Audio, 'run', return_value='536870912\tmodule-null-sink\tsink_name=omarchy_asahi_mic omarchy.asahi-mic.owner=test\t1'):
+    assert m.Audio().modules()[0]['index'] == '536870912'
+unit = (root / 'default/systemd/user/omarchy-asahi-mic.service').read_text()
+assert '--watch' in unit and 'PartOf=graphical-session.target' in unit
+assert 'PartOf=pipewire.service' not in unit and 'After=graphical-session.target' not in unit
+assert 'systemctl --user start omarchy-asahi-mic.service' in (root / 'default/hypr/autostart.lua').read_text()
+assert '--save-state' in (root / 'bin/omarchy-restart-audio').read_text()
+assert 'mic.sh' in (root / 'migrations/1788979860.sh').read_text()
+print('ok - transactional Asahi mapping preserves choices/gain, rolls back failures and recovers lifecycle loss')
+PY
