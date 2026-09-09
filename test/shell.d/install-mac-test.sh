@@ -19,11 +19,11 @@ while read -r command_name; do
     fail "the installer only calls commands that ship in bin/" "missing: $command_name"
 # Anchored to command position so paths and filenames the script merely names,
 # like omarchy-base.packages or the omarchy-build cache directory, stay out.
-done < <(grep -oE '^[[:space:]]*(sudo[[:space:]]+)?omarchy-[a-z0-9-]+' "$install_script" |
+done < <(grep -oE '^[[:space:]]*(sudo[[:space:]]+(env[[:space:]]+OMARCHY_MIRROR="\$channel"[[:space:]]+)?)?omarchy-[a-z0-9-]+' "$install_script" |
   grep -oE 'omarchy-[a-z0-9-]+' | sort -u)
 pass "the installer only calls commands that ship in bin/"
 
-grep -F 'sudo omarchy-apply-system --install-user "$USER" --first-install' "$install_script" >/dev/null ||
+grep -F 'sudo env OMARCHY_MIRROR="$channel" omarchy-apply-system --install-user "$USER" --first-install' "$install_script" >/dev/null ||
   fail "the installer applies system setup as root for a first install"
 grep -F 'omarchy-provision-user --first-install' "$install_script" >/dev/null ||
   fail "the installer finalizes the user for a first install"
@@ -148,8 +148,11 @@ for failing_stage in none system repositories; do
   setup_output=$(SETUP_BODY="$setup_body" FAILING_STAGE="$failing_stage" bash -c '
     set -euo pipefail
     log() { :; }
+    checkout=/fixture/source
+    omarchy_arm_package_channel() { echo rc; }
+    omarchy_arm_validate_channel() { [[ $1 == rc && $2 == /fixture/source ]]; }
     sudo() {
-      [[ $* == "omarchy-apply-system --install-user $USER --first-install" ]]
+      [[ $* == "env OMARCHY_MIRROR=rc omarchy-apply-system --install-user $USER --first-install" ]]
       echo system
       [[ $FAILING_STAGE != "system" ]]
     }
