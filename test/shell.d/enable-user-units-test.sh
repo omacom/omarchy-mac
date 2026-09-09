@@ -8,58 +8,69 @@ script="$ROOT/install/user/first-run/enable-user-units.sh"
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
-mock_bin="$TMPDIR/bin"
-mkdir -p "$mock_bin"
+mkdir -p "$TMPDIR/bin"
 
-cat >"$mock_bin/systemctl" <<'SH'
+# The mock reports the enable status and the LoadState separately so a
+# transient failure of a unit that is installed is distinguishable from the
+# packaging omission the helper is allowed to tolerate.
+cat >"$TMPDIR/bin/systemctl" <<'SH'
 #!/bin/bash
-echo "$*" >>"$SYSTEMCTL_LOG"
-for failing_unit in ${SYSTEMCTL_FAIL_UNITS:-}; do
-  if [[ $* == *"$failing_unit"* ]]; then
-    echo "Failed to enable unit: Unit $failing_unit does not exist." >&2
-    exit 1
-  fi
-done
-exit 0
+printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"
+case "$2" in
+  daemon-reload) exit "${RELOAD_STATUS:-0}" ;;
+  enable)
+    if [[ $4 == "${FAIL_UNIT:-}" ]]; then
+      echo "Synthetic enable failure: $4" >&2
+      exit 42
+    fi
+    ;;
+  show)
+    # ${LOAD_STATE-loaded}, not :-, so an explicitly empty state stays empty
+    # and the empty-query case is not silently a duplicate of the transient one.
+    printf '%s\n' "${LOAD_STATE-loaded}"
+    exit "${SHOW_STATUS:-0}"
+    ;;
+  *) exit 99 ;;
+esac
 SH
-chmod +x "$mock_bin/systemctl"
+chmod +x "$TMPDIR/bin/systemctl"
 
-log="$TMPDIR/calls"
+run_case() {
+  local name="$1" expected="$2" failed="$3" state="$4" show="$5" reload="$6"
+  local status=0
+  : >"$TMPDIR/calls"
+  SYSTEMCTL_LOG="$TMPDIR/calls" FAIL_UNIT="$failed" LOAD_STATE="$state" \
+    SHOW_STATUS="$show" RELOAD_STATUS="$reload" PATH="$TMPDIR/bin:$PATH" \
+    bash "$script" >"$TMPDIR/out" 2>"$TMPDIR/err" || status=$?
+  if [[ $expected == "success" ]]; then
+    (( status == 0 )) || fail "$name" "$(cat "$TMPDIR/err")"
+  else
+    (( status != 0 )) || fail "$name must fail"
+  fi
+  if (( reload == 0 )); then
+    (( $(grep -c -- '^--user enable --now ' "$TMPDIR/calls") == 7 )) ||
+      fail "$name must attempt all seven units"
+    grep -Fxq -- '--user enable --now omarchy-brightness-keyboard-auto.service' "$TMPDIR/calls" ||
+      fail "$name must reach the final unit"
+  else
+    if grep -q -- 'enable --now' "$TMPDIR/calls"; then
+      fail "reload failure must stop before enables"
+    fi
+  fi
+  if [[ -n $failed ]] && (( reload == 0 )); then
+    grep -Fq "$failed" "$TMPDIR/err" || fail "$name must identify the failure"
+  fi
+  pass "$name"
+}
 
-# Happy path: reload once, then one enable call per unit.
-: >"$log"
-SYSTEMCTL_LOG="$log" PATH="$mock_bin:$PATH" bash "$script" ||
-  fail "enable-user-units exits 0 when every unit enables"
-grep -Fqx -- '--user daemon-reload' "$log" || fail "the script reloads the user manager first"
-(( $(grep -c -- '--user enable --now' "$log") >= 7 )) ||
-  fail "the script enables each shipped unit with its own systemctl call" "$(cat "$log")"
-while read -r enable_call; do
-  unit_count=$(grep -oE '[A-Za-z0-9@_-]+\.service' <<<"$enable_call" | wc -l)
-  (( unit_count == 1 )) ||
-    fail "each enable call names exactly one unit" "$enable_call"
-done < <(grep -- '--user enable --now' "$log")
-pass "enable-user-units enables units one at a time after a daemon reload"
-
-# One missing unit must not block the others or fail the first-run step:
-# a non-zero exit here is what kept first-run replaying at every login on
-# 4.0.2 when omarchy-brightness-keyboard-auto.service was never packaged.
-: >"$log"
-stderr_file="$TMPDIR/stderr"
-SYSTEMCTL_LOG="$log" SYSTEMCTL_FAIL_UNITS=omarchy-brightness-keyboard-auto.service \
-  PATH="$mock_bin:$PATH" bash "$script" 2>"$stderr_file" ||
-  fail "one missing unit does not fail the first-run step" "$(cat "$stderr_file")"
-grep -Fq 'could not enable omarchy-brightness-keyboard-auto.service' "$stderr_file" ||
-  fail "the failing unit is reported by name" "$(cat "$stderr_file")"
-grep -Fq 'bt-agent.service' "$log" || fail "units before the failing one are still enabled"
-grep -Fq 'omarchy-crash-watch.service' "$log" ||
-  fail "units after the failing one are still enabled" "$(cat "$log")"
-pass "a missing unit is reported per unit and never wedges first-run"
-
-# A dead user manager is a different failure: nothing can be enabled at all,
-# so the step must fail and let first-run retry at the next login.
-: >"$log"
-if SYSTEMCTL_LOG="$log" SYSTEMCTL_FAIL_UNITS="daemon-reload" \
-  PATH="$mock_bin:$PATH" bash "$script" 2>/dev/null; then
-  fail "a failed daemon-reload still fails the step"
-fi
-pass "a dead user manager still fails the step so first-run retries"
+run_case happy success '' loaded 0 0
+run_case known-missing success omarchy-brightness-keyboard-auto.service not-found 0 0
+run_case brightness-transient failure omarchy-brightness-keyboard-auto.service loaded 0 0
+run_case brightness-masked failure omarchy-brightness-keyboard-auto.service masked 0 0
+run_case brightness-bad-setting failure omarchy-brightness-keyboard-auto.service bad-setting 0 0
+run_case brightness-query-failed failure omarchy-brightness-keyboard-auto.service not-found 1 0
+run_case brightness-query-empty failure omarchy-brightness-keyboard-auto.service '' 0 0
+run_case sleep-transient failure omarchy-sleep-lock.service loaded 0 0
+run_case notify-transient failure omarchy-migrate-notify.service loaded 0 0
+run_case unrelated-missing failure omarchy-sleep-lock.service not-found 0 0
+run_case reload-failed failure '' loaded 0 1
