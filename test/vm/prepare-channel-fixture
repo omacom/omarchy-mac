@@ -1,0 +1,47 @@
+#!/bin/bash
+# Compose actual package bytes inside the disposable guest; never publish.
+set -euo pipefail
+[[ $EUID == 0 && ${container:-} == "systemd-nspawn" && -d /src/omarchy ]] || { echo 'Run only in the installation test guest' >&2; exit 1; }
+source_root=/src/omarchy
+publisher=/opt/omarchy-channel-publisher
+fixture=/opt/omarchy-ci-channel
+[[ -f $publisher/scripts/channel-snapshot.py ]] || { echo 'Pinned publisher tooling is missing' >&2; exit 1; }
+pacman -Syu --needed --noconfirm python curl libarchive git sudo base-devel jq gnupg pacman-contrib
+pacman-key --init
+pacman-key --recv-keys 40DFB630FF42BCFFB047046CF0134EE680CAC571 --keyserver hkps://keys.openpgp.org
+pacman-key --lsign-key 40DFB630FF42BCFFB047046CF0134EE680CAC571
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+chmod 755 "$work"
+mkdir "$work/built" "$work/cache" "$work/recipes"
+runuser -u ci -- bash "$publisher/scripts/prepare-omarchy-recipes.sh" "$source_root/omarchy-pkgs"
+cp -a "$source_root/omarchy-pkgs/." "$work/recipes/"
+chown -R ci:ci "$work/built" "$work/cache" "$work/recipes"
+runuser -u ci -- env OMARCHY_PKGS_PATH="$work/recipes" OMARCHY_PACKAGE_OUTPUT="$work/built" \
+  OMARCHY_PACKAGE_SRCDEST="$work/cache" bash "$source_root/build-packages.sh"
+channel=stable
+if grep -q rc "$source_root/version"; then channel=rc; fi
+cp /etc/pacman.conf "$work/pacman.conf"
+cat >> "$work/pacman.conf" <<'REPO'
+
+[omarchy]
+Usage = Sync
+SigLevel = Required DatabaseOptional
+Server = https://pkgs.omarchy.org/edge/$arch
+REPO
+mkdir -p "$work/db/local" "$work/db/sync"
+pacman --config "$work/pacman.conf" --dbpath "$work/db" -Sy --noconfirm
+pacman --config "$work/pacman.conf" --dbpath "$work/db" -Sp --print-format '%r|%n|%v|%l' \
+  omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils > "$work/import-plan"
+base_url=https://github.com/omarchy-mac/omarchy-pkgs-aarch64/releases/download/edge
+curl -fL --retry 3 "$base_url/omarchy-aarch64.db.tar.zst" -o "$work/base.db"
+python3 "$publisher/scripts/collect-channel.py" --base-url "$base_url" --base-db "$work/base.db" \
+  --import-plan "$work/import-plan" --sync-db-dir "$work/db/sync" --overlay "$work/built" \
+  --channel "$channel" --output "$work/collected"
+python3 "$publisher/scripts/channel-snapshot.py" prepare --packages "$work/collected" --channel "$channel" \
+  --inventory "$work/collected/inventory.json" --signed-inventory "$work/collected/signed-inventory.json" \
+  --source-sha "$(git -c safe.directory="$source_root" -C "$source_root" rev-parse HEAD)" \
+  --recipe-sha "$(git -c safe.directory="$work/recipes" -C "$work/recipes" rev-parse HEAD)" \
+  --publisher-sha "$(git -c safe.directory="$publisher" -C "$publisher" rev-parse HEAD)" \
+  --output "$fixture/channel-$channel"
+printf '%s\n' "$channel" > "$fixture/channel"

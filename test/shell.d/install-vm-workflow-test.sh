@@ -29,6 +29,9 @@ assert 'github.event.pull_request.number || github.ref' in workflow['concurrency
 assert workflow['concurrency']['cancel-in-progress'] == 'true'
 checkout = next(step for step in job['steps'] if step.get('uses', '').startswith('actions/checkout@'))
 assert checkout['with'] == {'persist-credentials': 'false'}, 'use the default merge ref without stored credentials'
+publisher = next(step for step in job['steps'] if step.get('with', {}).get('path') == 'channel-publisher')
+assert publisher['with']['ref'] == '4cc1097a1a394ff2e46fea75f0c894190ed38bf6'
+assert publisher['with']['persist-credentials'] == 'false'
 assert not any('actions/cache@' in step.get('uses', '') for step in job['steps'])
 assert not (root / '.github/workflows/install-vm-selective-edge.yml').exists()
 install_step = next(step for step in job['steps'] if 'bash ./test/vm/run-selective-edge' in step.get('run', ''))
