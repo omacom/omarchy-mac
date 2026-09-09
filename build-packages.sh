@@ -90,6 +90,36 @@ strip_limine_dependencies() {
   done
 }
 
+# Upstream's package() deletes /etc/mkinitcpio.conf.d wholesale on aarch64,
+# reasoning that omarchy_hooks.conf is the x86 file that would inject the
+# Limine hooks into an Asahi initramfs. That is true of upstream's copy and
+# false of ours: this fork rewrote the same file to insert the asahi hook --
+# which stages the Apple Silicon display, Wi-Fi and neural-engine firmware
+# into early boot -- and to drop btrfs-overlayfs when limine-snapper-sync is
+# absent. Ship without it and the next mkinitcpio writes an image that cannot
+# drive the hardware: the boot wedges in the initramfs, keyboard and all, with
+# `avd: failed to load firmware` and apple-dcp errors as the only clue.
+#
+# Narrow the deletion to the Limine entry-tool config, which really is x86
+# only, rather than forking the PKGBUILD, so it keeps tracking upstream.
+keep_apple_silicon_mkinitcpio_drop_ins() {
+  local pkgbuild="$1"
+  local upstream_line='rm -rf "$pkgdir/etc/limine-entry-tool.d" "$pkgdir/etc/mkinitcpio.conf.d"'
+
+  # Fail loudly if upstream restructures this. Silently not matching would
+  # ship a package missing the asahi hook, which is the failure this exists
+  # to prevent and the one nobody notices until the next kernel update.
+  grep -qF "$upstream_line" "$pkgbuild" ||
+    fail "omarchy-settings PKGBUILD no longer deletes /etc/mkinitcpio.conf.d as expected; re-check it against $pkgbuild"
+
+  sed -i 's| "\$pkgdir/etc/mkinitcpio\.conf\.d"||' "$pkgbuild"
+
+  ! grep -q 'pkgdir/etc/mkinitcpio\.conf\.d' "$pkgbuild" ||
+    fail "could not keep /etc/mkinitcpio.conf.d in $pkgbuild"
+  grep -qF 'rm -rf "$pkgdir/etc/limine-entry-tool.d"' "$pkgbuild" ||
+    fail "lost the limine-entry-tool.d cleanup in $pkgbuild"
+}
+
 # makepkg runs with --nodeps because the runtime dependencies include packages
 # built here, so pacman cannot resolve them yet. That skips makedepends too,
 # leaving the build tools to be installed up front.
@@ -139,6 +169,9 @@ build_package() {
 
   if [[ $package == "omarchy" ]]; then
     strip_limine_dependencies "$build_dir/$package/PKGBUILD"
+  fi
+  if [[ $package == "omarchy-settings" ]]; then
+    keep_apple_silicon_mkinitcpio_drop_ins "$build_dir/$package/PKGBUILD"
   fi
   if [[ $package == "omarchy" || $package == "omarchy-settings" ]]; then
     set_pkgrel "$build_dir/$package/PKGBUILD"
