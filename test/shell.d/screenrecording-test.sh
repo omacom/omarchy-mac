@@ -311,10 +311,10 @@ menu="$ROOT/default/omarchy/omarchy-menu.jsonc"
 bar="$ROOT/shell/plugins/bar/indicators/ScreenRecording.qml"
 grep -Fq -- '-R 48000' "$recorder" ||
   fail "wf-recorder records AAC at 48 kHz on the software path"
-grep -Fq '(^|/)(gpu-screen-recorder|wf-recorder)( |$)' "$recorder" ||
+grep -Fq 'omarchy-capture-screenrecording-process' "$recorder" ||
   fail "screenrecording stop matches wf-recorder by full path"
-grep -Fq '(^|/)(gpu-screen-recorder|wf-recorder)( |$)' "$menu" ||
+grep -Fq 'omarchy-capture-screenrecording-process' "$menu" ||
   fail "Capture Stop is visible while wf-recorder is running"
-grep -Fq '(^|/)(gpu-screen-recorder|wf-recorder)( |$)' "$bar" ||
+grep -Fq 'omarchy-capture-screenrecording-process' "$bar" ||
   fail "the bar recording indicator matches wf-recorder by full path"
 pass "screen recording detects and encodes wf-recorder on Apple Silicon"
