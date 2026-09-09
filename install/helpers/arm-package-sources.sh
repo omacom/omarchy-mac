@@ -68,7 +68,7 @@ omarchy_arm_package_repo() {
   url=$(omarchy_arm_channel_url "$1") || return
   # The managed snapshot carries both aliases, so existing qualified compositor
   # targets and automatic overlay updates resolve to the same frozen artifacts.
-  printf '%s\n' '[omarchy]' 'Usage = Sync' 'SigLevel = Optional TrustAll' "Server = $url" '' \
+  printf '%s\n' '[omarchy]' 'Usage = Sync' 'SigLevel = Required DatabaseOptional' "Server = $url" '' \
     '[omarchy-aarch64]' 'SigLevel = Optional TrustAll' "Server = $url"
 }
 
