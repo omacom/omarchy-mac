@@ -39,9 +39,18 @@ STUB
 cat >"$test_tmp/bin/systemctl" <<'STUB'
 #!/bin/bash
 printf 'systemctl %s\n' "$*" >>"$TEST_LOG"
-[[ ${FAIL_AT:-} != timer ]] || exit 23
-[[ $* == "enable --now snapper-cleanup.timer" ]] || exit 99
-touch "$FIXTURE/cleanup-active"
+case "$*" in
+  'enable --now snapper-cleanup.timer')
+    [[ ${FAIL_AT:-} != timer ]] || exit 23
+    touch "$FIXTURE/cleanup-active" ;;
+  'cat limine-snapper-sync.service')
+    [[ ${TEST_LIMINE_AVAILABLE:-0} == "1" ]] ;;
+  'enable --now limine-snapper-sync.service')
+    [[ ${TEST_LIMINE_AVAILABLE:-0} == "1" ]] || exit 99
+    [[ ${FAIL_AT:-} != limine ]] || exit 26
+    touch "$FIXTURE/limine-active" ;;
+  *) exit 99 ;;
+esac
 STUB
 chmod +x "$test_tmp/bin/"*
 export PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_SNAPPER_TEMPLATE="$ROOT/default/snapper/root"
@@ -79,7 +88,8 @@ for mode in direct source conditional; do
   cmp "$FIXTURE/expected-registry" "$FIXTURE/registry"
   [[ $(cat "$FIXTURE/home") == 'custom home retention' ]] || fail 'home unchanged'
   [[ $(grep -c 'create-config' "$TEST_LOG") == 1 ]] || fail 'retry never recreates root'
-  ! grep -E 'timeline|delete|limine' "$TEST_LOG" || fail 'preserve global timeline and snapshots'
+  ! grep -E 'timeline|delete' "$TEST_LOG" || fail 'preserve global timeline and snapshots'
+  ! grep -F 'enable --now limine' "$TEST_LOG" || fail 'absent optional Limine unit is not activated'
 
   for failure in stat probe create partial list backend timer settings; do
     new_fixture "$mode-$failure"
@@ -106,6 +116,22 @@ for mode in direct source conditional; do
     cmp "$FIXTURE/registry" "$FIXTURE/expected-registry"
     ! grep -E 'create-config|systemctl' "$TEST_LOG" || fail 'partial state has no mutations'
   done
+  new_fixture "limine-$mode"
+  TEST_LIMINE_AVAILABLE=1 run_leaf "$mode"
+  [[ -f $FIXTURE/cleanup-active && -f $FIXTURE/limine-active ]] || fail 'fresh root activates available Limine sync'
+  cp "$FIXTURE/root" "$FIXTURE/expected-root"
+  cp "$FIXTURE/registry" "$FIXTURE/expected-registry"
+  rm "$FIXTURE/limine-active"
+  status=0
+  TEST_LIMINE_AVAILABLE=1 FAIL_AT=limine run_leaf "$mode" >"$FIXTURE/output" 2>&1 || status=$?
+  (( status == 26 )) || fail 'existing root propagates optional service failure'
+  [[ ! -e $FIXTURE/limine-active ]] || fail 'failed optional service remains inactive'
+  TEST_LIMINE_AVAILABLE=1 run_leaf "$mode"
+  [[ -f $FIXTURE/limine-active ]] || fail 'existing root repairs optional service on retry'
+  cmp "$FIXTURE/root" "$FIXTURE/expected-root"
+  cmp "$FIXTURE/registry" "$FIXTURE/expected-registry"
+  [[ $(grep -c create-config "$TEST_LOG") == 1 ]] || fail 'service repair does not recreate backend'
+  ! grep -E 'timeline|delete' "$TEST_LOG" || fail 'optional service repair preserves timeline and snapshots'
   new_fixture "ext4-$mode"
   TEST_FILESYSTEM=ext2/ext3 run_leaf "$mode"
   [[ ! -e $TEST_LOG ]] || fail 'non-btrfs skips before dependencies and mutations'
@@ -149,12 +175,12 @@ run_migrate >>"$FIXTURE/output" 2>&1
 [[ $(grep -c 'create-config' "$TEST_LOG") == 1 ]] || fail 'retry and second user never recreate backend'
 pass 'new migration repairs already-marked released installs and second user is idempotent'
 
-for failure in stat probe create partial list backend timer settings sudo; do
+for failure in stat probe create partial list backend timer settings limine sudo; do
   # Root execution deliberately has no sudo call.
   if [[ $failure == sudo ]] && (( EUID == 0 )); then continue; fi
   new_fixture "migration-$failure"
   seed_old_marker
-  if FAIL_AT="$failure" run_migrate >"$FIXTURE/output" 2>&1; then fail "migration must propagate $failure"; fi
+  if TEST_LIMINE_AVAILABLE=1 FAIL_AT="$failure" run_migrate >"$FIXTURE/output" 2>&1; then fail "migration must propagate $failure"; fi
   [[ ! -e $FIXTURE/state/$(basename "$migration") && ! -e $FIXTURE/state/9999999999.sh ]] || fail "$failure leaves migration and later markers absent"
 done
 pass 'migration probe, privilege and mutation failures stop the queue without markers'

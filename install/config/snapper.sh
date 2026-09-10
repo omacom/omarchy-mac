@@ -41,6 +41,10 @@ configure_snapper_root() {
     # Setup and the service-repair migration both promise active cleanup,
     # including when an existing root already has custom retention policy.
     systemctl enable --now snapper-cleanup.timer || return $?
+    # Limine installs ship this optional unit; Apple/GRUB installs do not.
+    if systemctl cat limine-snapper-sync.service >/dev/null 2>&1; then
+      systemctl enable --now limine-snapper-sync.service || return $?
+    fi
     return 0
   fi
 
