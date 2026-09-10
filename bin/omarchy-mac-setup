@@ -3,7 +3,7 @@
 # omarchy:summary=Guided end-to-end Omarchy Mac install: boot layout, encryption, Omarchy
 # omarchy:group=setup
 # omarchy:requires-sudo=true
-# omarchy:args=[--encrypt|--no-encrypt] [--user <name>] [--hostname <name>] [--keymap <name>] [--repo <owner/repo>] [--ref <branch>] [--forge <host>] [--status] [--step <name>] [--fonts] [--autologin] [--resume] [--abort] [--allow-omarchy3] [--keep-root-password]
+# omarchy:args=[--encrypt|--no-encrypt] [--user <name>] [--hostname <name>] [--keymap <name>] [--from-source] [--repo <owner/repo>] [--ref <branch>] [--forge <host>] [--status] [--step <name>] [--fonts] [--autologin] [--resume] [--abort] [--allow-omarchy3] [--keep-root-password]
 # omarchy:examples=sudo omarchy-mac-setup --encrypt | omarchy-mac-setup --status
 
 # One command, run once as root on a fresh Asahi Alarm install, that carries the
@@ -313,6 +313,7 @@ load_conf() {
   repo=$DEFAULT_REPO
   ref=$DEFAULT_REF
   forge=$DEFAULT_FORGE
+  from_source=0
 
   if [[ -f $CONF ]]; then
     # shellcheck source=/dev/null
@@ -324,6 +325,7 @@ load_conf() {
     repo=${SETUP_REPO:-$repo}
     ref=${SETUP_REF:-$ref}
     forge=${SETUP_FORGE:-$forge}
+    from_source=${SETUP_FROM_SOURCE:-0}
   fi
 }
 
@@ -340,6 +342,7 @@ save_conf() {
     printf 'SETUP_REPO=%q\n' "$repo"
     printf 'SETUP_REF=%q\n' "$ref"
     printf 'SETUP_FORGE=%q\n' "$forge"
+    printf 'SETUP_FROM_SOURCE=%q\n' "${from_source:-0}"
   } >"$CONF"
   chmod 600 "$CONF"
 }
@@ -417,6 +420,8 @@ print_help() {
   elif [[ -f $SELF ]]; then
     source=$SELF
   fi
+  echo "Normal installs use published ARM packages. Use --from-source to build a checkout."
+  echo "Custom --repo or --ref selections require --from-source; the choice persists on --resume."
   if [[ -n $source ]]; then
     sed -n '/^# One command/,/^# where it left off/p' "$source" | sed 's/^# \{0,3\}//'
   else
@@ -1044,7 +1049,11 @@ step_omarchy() {
   # status is captured rather than left to set -e: a failed install must still
   # give the NOPASSWD rule back before anything else happens.
   local status=0
-  sudo -u "$username" -i bash -lc 'cd ~/.local/share/omarchy && bash install.sh' || status=$?
+  local -a install_args=()
+  if (( ${from_source:-0} )); then
+    install_args+=(--from-source)
+  fi
+  sudo -u "$username" -i bash -lc 'cd ~/.local/share/omarchy && bash install.sh "$@"' bash "${install_args[@]}" || status=$?
   revoke_passwordless_sudo
   (( status == 0 )) || fail "install.sh exited $status -- fix it and run '$SELF --resume'"
 
@@ -1206,7 +1215,11 @@ ask_questions() {
     boot_is_separate || log "  - move /boot onto the EFI partition, then reboot"
     root_is_encrypted || log "  - encrypt the root -- you choose the passphrase at the console"
   fi
-  log "  - install Omarchy from $repo ($ref) as $username"
+  if (( ${from_source:-0} )); then
+    log "  - build Omarchy from $repo ($ref) as $username"
+  else
+    log "  - install the published Omarchy ARM release as $username"
+  fi
   log "  - reboot into the desktop"
   echo
   read -rp "Start? [Y/n] " answer
@@ -1220,7 +1233,7 @@ ask_questions() {
 }
 
 main() {
-  local resume=0 status=0 abort=0 step_only="" allow_omarchy3=0 keep_root_password=0 encrypt_flag="" want_encrypt username hostname keymap repo ref forge
+  local resume=0 status=0 abort=0 step_only="" allow_omarchy3=0 keep_root_password=0 encrypt_flag="" want_encrypt username hostname keymap repo ref forge from_source=0
 
   # The parse loop below shifts every argument away, so keep a copy first. The
   # piped re-exec has to hand the same arguments to the copy on disk: without
@@ -1241,6 +1254,7 @@ main() {
         valid_keymap "$keymap" || fail "unknown keymap: $keymap (see localectl list-keymaps)"
         shift
         ;;
+      --from-source) from_source=1 ;;
       --repo) repo=${2:?--repo needs owner/repo}; shift ;;
       --ref) ref=${2:?--ref needs a branch}; shift ;;
       --forge) forge=${2:?--forge needs a host}; shift ;;
@@ -1264,6 +1278,10 @@ main() {
   if (( status )); then
     print_status
     exit 0
+  fi
+
+  if (( ! from_source && ! abort )) && [[ $repo != "$DEFAULT_REPO" || $ref != "$DEFAULT_REF" ]]; then
+    fail "Custom --repo or --ref selections require --from-source so the requested checkout is actually installed."
   fi
 
   (( EUID == 0 )) || fail "run as root"
@@ -1325,6 +1343,7 @@ main() {
     [[ -d $SRC/.git ]] || { require_network; ensure_source_checkout; }
   fi
 
+  save_conf
   run_step "$(current_step)"
 }
 

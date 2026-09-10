@@ -22,15 +22,15 @@ for package in "${unavailable_packages[@]}"; do
 done
 pass "every unavailable entry is in the default package set"
 
-grep -qF 'package_is_unavailable_here' "$ROOT/install.sh" ||
+grep -qF 'package_is_unavailable_here' "$ROOT/install/helpers/mac-install.sh" ||
   fail "the installer filters the default set through the unavailable list"
 pass "the installer filters the default set through the unavailable list"
 
 # The list is a default, not a verdict: AUR packages gain ARM support over time,
 # so a stale entry has to cost a prompt rather than be permanently wrong.
-grep -qF 'OMARCHY_TRY_UNAVAILABLE' "$ROOT/install.sh" ||
+grep -qF 'OMARCHY_TRY_UNAVAILABLE' "$ROOT/install/helpers/mac-install.sh" ||
   fail "the unavailable list can be overridden"
-grep -qF '[[ -r /dev/tty ]] || return 1' "$ROOT/install.sh" ||
+grep -qF '[[ -r /dev/tty ]] || return 1' "$ROOT/install/helpers/mac-install.sh" ||
   fail "the installer skips without a terminal instead of blocking on a prompt"
 pass "the unavailable list is a prompt-able default, and never blocks a headless install"
 
@@ -58,9 +58,9 @@ pass "every shipped pacman config offers the Omarchy ARM repo"
 # The shipped config only reaches /etc during post-install, which runs after the
 # package set. Adding the repo any later leaves herdr building zig from source
 # for two hours, so the order in main() is the whole point of the fix.
-install_main=$(sed -n '/^main() {/,/^}/p' "$ROOT/install.sh")
+install_main=$(sed -n '/^main() {/,/^}/p' "$ROOT/install/helpers/mac-install.sh")
 repo_call=$(grep -n '^  ensure_arm_package_repo$' <<<"$install_main" | cut -d: -f1)
-set_call=$(grep -n '^  install_default_package_set$' <<<"$install_main" | cut -d: -f1)
+set_call=$(grep -n 'exec bash /usr/share/omarchy/install/helpers/mac-install.sh' <<<"$install_main" | cut -d: -f1)
 [[ -n $repo_call && -n $set_call ]] || fail "the installer adds the ARM repo and installs the set"
 (( repo_call < set_call )) ||
   fail "the ARM repo is added before the default package set is installed"
