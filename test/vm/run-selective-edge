@@ -258,6 +258,7 @@ if [[ $CHECK_PACKAGE_SOURCES == "1" ]]; then
 export OMARCHY_PATH=/src/omarchy
 export PATH="$OMARCHY_PATH/bin:$PATH"
 bash "$OMARCHY_PATH/test/shell.d/arm-package-transaction-test.sh"
+bash "$OMARCHY_PATH/test/shell.d/channel-package-identity-test.sh"
 pacman -S --needed --noconfirm python curl libarchive
 source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
 omarchy_arm_prepare_package_sources /etc/pacman.conf backup "$(cat /opt/omarchy-ci-channel/channel)" /src/omarchy

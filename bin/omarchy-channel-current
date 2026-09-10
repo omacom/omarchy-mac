@@ -20,7 +20,8 @@ case "$channel" in
   edge) packages=(omarchy-dev omarchy-settings-dev) ;;
   *) echo unknown; exit 0 ;;
 esac
-if pacman -Q "${packages[@]}" >/dev/null 2>&1; then
+# pacman queries can resolve providers; compare the returned package names too.
+if installed=$(pacman -Qq "${packages[@]}" 2>/dev/null) && [[ $installed == "$(printf '%s\n' "${packages[@]}")" ]]; then
   echo "$channel"
 else
   echo unknown

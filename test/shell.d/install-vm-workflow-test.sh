@@ -42,6 +42,12 @@ for key in ('OMARCHY_INSTALL_VM_WORK', 'OMARCHY_INSTALL_VM_CACHE'):
     assert 'github.run_id' in install_env[key] and 'github.run_attempt' in install_env[key]
 print('ok - every PR gets isolated ARM install coverage with both validation modes')
 
+harness = (root / 'test/vm/run-selective-edge').read_text()
+package_phase = harness.split("<<'PACKAGE_SOURCES'", 1)[1].split('\nPACKAGE_SOURCES', 1)[0]
+for suite in ('arm-package-transaction', 'channel-package-identity'):
+    assert f'bash "$OMARCHY_PATH/test/shell.d/{suite}-test.sh"' in package_phase, f'{suite} must run with native pacman in the ARM guest'
+print('ok - ARM package validation includes native transaction and channel identity regressions')
+
 run = install_step['run']
 preserved = re.search(r'--preserve-env=([^\s]+)', run).group(1).split(',')
 assert set(install_env).issubset(preserved), 'sudo must preserve work, cache, and validation flags'

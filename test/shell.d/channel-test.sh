@@ -85,11 +85,26 @@ printf "%s\n" "${OMARCHY_TEST_VERSION_CHANNEL:-unknown}"
 '
 
 write_stub pacman '#!/bin/bash
-[[ $1 == "-Q" ]] || exit 1
+[[ $1 == "-Qq" ]] || exit 1
 shift
 case "${OMARCHY_TEST_PACKAGES:-}" in
-  stable) [[ $* == "omarchy omarchy-settings" ]] ;;
-  dev) [[ $* == "omarchy-dev omarchy-settings-dev" ]] ;;
+  stable)
+    [[ $* == "omarchy omarchy-settings" ]] || exit 1
+    printf "%s\n" omarchy omarchy-settings
+    ;;
+  dev)
+    # Real pacman may successfully resolve the stable names through provides.
+    [[ $* == "omarchy omarchy-settings" || $* == "omarchy-dev omarchy-settings-dev" ]] || exit 1
+    printf "%s\n" omarchy-dev omarchy-settings-dev
+    ;;
+  mixed)
+    [[ $* == "omarchy omarchy-settings" ]] || exit 1
+    printf "%s\n" omarchy omarchy-settings-dev
+    ;;
+  partial)
+    printf "%s\n" omarchy
+    exit 1
+    ;;
   *) exit 1 ;;
 esac
 '
@@ -202,6 +217,15 @@ pass "current channel detects rc"
 
 [[ $(current_channel edge dev /usr/share/omarchy) == "edge" ]] || fail "current channel detects package-backed edge"
 pass "current channel detects package-backed edge"
+
+for channel in stable rc; do
+  for packages in dev mixed partial missing; do
+    [[ $(current_channel "$channel" "$packages" /usr/share/omarchy) == "unknown" ]] ||
+      fail "$channel rejects provider substitutions and incomplete package pairs"
+  done
+done
+[[ $(current_channel edge stable /usr/share/omarchy) == "unknown" ]] || fail "edge rejects stable packages"
+pass "current channel requires the exact configured package pair, including successful provider queries"
 
 [[ $(current_channel edge dev "$test_tmp/dev-checkout") == "dev" ]] || fail "current channel detects dev from OMARCHY_PATH"
 pass "current channel honors a dev link outside ~/omarchy"
