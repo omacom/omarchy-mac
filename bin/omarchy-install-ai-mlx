@@ -19,6 +19,38 @@ if ! grep -Faiq 'apple,t8103' "$compatible"; then
   exit 0
 fi
 
+# The artifacts the pinned installer creates, and the ones its --uninstall
+# deletes. Kept in step with it by hand; MLX_OMARCHY_HOME is honoured the same
+# way so this entry and the installer always agree on where things live.
+PREFIX="${MLX_OMARCHY_HOME:-$HOME/.local/share/mlx-omarchy}"
+BIN="$HOME/.local/bin"
+APPS="$HOME/.local/share/applications"
+
+# Refuse before touching anything if an installation is already there. The
+# failure path below runs the installer's --uninstall, which deletes all of
+# these unconditionally, so a failed install over an existing one would take
+# the existing one with it. Checking first is what makes that impossible.
+existing=()
+for artifact in \
+  "$PREFIX" \
+  "$BIN/mlx-omarchy" \
+  "$BIN/mlx-omarchy-demo" \
+  "$APPS/mlx-omarchy-demo.desktop"; do
+  [ -e "$artifact" ] && existing+=("$artifact")
+done
+
+if [ ${#existing[@]} -gt 0 ]; then
+  echo "mlx-omarchy is already installed, or a previous attempt left files behind:" >&2
+  printf '  %s\n' "${existing[@]}" >&2
+  echo "" >&2
+  echo "Refusing to install over it, because cleaning up after a failure here" >&2
+  echo "would delete what is already there." >&2
+  echo "Remove it first with 'omarchy-remove-ai-mlx' (or the Remove > AI > MLX" >&2
+  echo "menu entry), then run this again. Model downloads in ~/.cache/huggingface" >&2
+  echo "are kept either way." >&2
+  exit 1
+fi
+
 # Pinned installer commit and its checksum. Bump both together; never point at a
 # moving branch, because this menu entry runs on other people's machines.
 INSTALLER_REPO="joshuaswarren/mlx-omarchy"
@@ -52,8 +84,18 @@ if [ "$status" -ne 0 ]; then
   echo "" >&2
   echo "mlx-omarchy installation failed (exit $status). The output above is the error." >&2
   echo "Cleaning up the partial install..." >&2
-  bash "$tmp/install.sh" --uninstall >/dev/null 2>&1 || true
-  echo "Nothing from mlx-omarchy is left installed. Re-run this entry to try again." >&2
+  # Only this attempt's files can be here: the guard above refused to start if
+  # anything already existed. Say what actually happened rather than asserting
+  # a clean machine, because a cleanup that failed leaves files to remove.
+  if bash "$tmp/install.sh" --uninstall >/dev/null 2>&1; then
+    echo "Nothing from mlx-omarchy is left installed. Re-run this entry to try again." >&2
+  else
+    echo "Cleanup did not finish. Files may remain in:" >&2
+    echo "  $PREFIX" >&2
+    echo "  $BIN/mlx-omarchy, $BIN/mlx-omarchy-demo" >&2
+    echo "  $APPS/mlx-omarchy-demo.desktop" >&2
+    echo "Run 'omarchy-remove-ai-mlx' before trying again." >&2
+  fi
   exit "$status"
 fi
 
