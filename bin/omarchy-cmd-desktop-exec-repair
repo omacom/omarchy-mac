@@ -23,7 +23,7 @@ def repair(target, vendor, wrapper, known):
   text = data.decode("utf-8")
   # Desktop Exec is not a shell command. Only replace a literal leading token;
   # env, shell commands, escaped/complex routes and all following bytes survive.
-  pattern = re.compile(r'^(Exec|TryExec)=([ \t]*)("[^"\\\n]+"|[^\s"\\]+)(?=[ \t\r\n]|$)', re.MULTILINE)
+  pattern = re.compile(r'^(Exec)=([ \t]*)("[^"\\\n]+"|[^\s"\\]+)(?=[ \t\r\n]|$)', re.MULTILINE)
   def replace(match):
     token = match[3]
     value = token[1:-1] if token.startswith('"') else token
@@ -33,7 +33,20 @@ def repair(target, vendor, wrapper, known):
     if token.startswith('"') or any(c.isspace() for c in new):
       new = '"' + new.replace('\\', '\\\\').replace('"', '\\"') + '"'
     return match[1] + '=' + match[2] + new
-  updated = pattern.sub(replace, text).encode("utf-8")
+  # TryExec is a desktop string containing the whole executable path, not an
+  # Exec command line. Quotes are literal bytes to its availability resolver.
+  escapes = {'s': ' ', 'n': '\n', 't': '\t', 'r': '\r', '\\': '\\'}
+  def replace_try_exec(match):
+    value = re.sub(r'\\([sntr\\])', lambda part: escapes[part[1]], match[1])
+    # Repair the quoted form emitted by older versions of this helper too.
+    if value.startswith('"') and value.endswith('"'):
+      value = value[1:-1]
+    if value not in known and value != wrapper:
+      return match[0]
+    new = wrapper.replace('\\', '\\\\').replace('\n', '\\n').replace('\t', '\\t').replace('\r', '\\r')
+    return 'TryExec=' + new + match[2]
+  updated = re.sub(r'^TryExec=([^\r\n]*)(\r?)$', replace_try_exec,
+                   pattern.sub(replace, text), flags=re.MULTILINE).encode("utf-8")
   if updated == data:
     return
   target.parent.mkdir(parents=True, exist_ok=True)

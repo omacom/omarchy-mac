@@ -56,7 +56,7 @@ Exec=env SPECIAL=yes chromium %U
   run([wrap, '--check', 'chromium', str(real)])
   run(['bash', '-euo', 'pipefail', '-c', leaf])
   desktop = home / '.local/share/applications/chromium.desktop'
-  expected = original.replace(f'"{real}"', f'"{bind}/chromium"')
+  expected = original.replace(f'"{real}"', f'"{bind}/chromium"').replace(f'TryExec="{bind}/chromium"', f'TryExec={bind}/chromium')
   assert desktop.read_text() == expected
   desktop.write_text(original + '# extra customization\n')
   run(['bash', '-euo', 'pipefail', '-c', leaf])
@@ -122,5 +122,33 @@ Exec=env SPECIAL=yes chromium %U
   env.update(OMARCHY_1PASSWORD_INSTALL_DIR=str(install), OMARCHY_1PASSWORD_BIN_LINK=str(bind / '1password'))
   run([str(root / 'bin/omarchy-install-1password')])
   assert not sentinel.exists()
+  # GLib must accept a valid desktop before and after rewriting a spaced
+  # executable path. Parsing the entry never executes its command.
+  import ctypes
+  gio = ctypes.CDLL('libgio-2.0.so.0')
+  gio.g_desktop_app_info_new_from_filename.argtypes = [ctypes.c_char_p]
+  gio.g_desktop_app_info_new_from_filename.restype = ctypes.c_void_p
+  gio.g_object_unref.argtypes = [ctypes.c_void_p]
+  def resolves(path):
+    app = gio.g_desktop_app_info_new_from_filename(os.fsencode(path))
+    if app:
+      gio.g_object_unref(app)
+    return bool(app)
+  spaced = tmp / 'wrapper directory' / 'chromium'
+  spaced.parent.mkdir()
+  spaced.write_bytes(real.read_bytes())
+  spaced.chmod(0o755)
+  valid = tmp / 'valid.desktop'
+  valid.write_text(f'[Desktop Entry]\nType=Application\nName=Spaced path\nExec="{real}" %U\nTryExec={real}\n')
+  assert resolves(valid), 'native resolver accepts the original unquoted TryExec path'
+  repair = str(root / 'bin/omarchy-cmd-desktop-exec-repair')
+  run([repair, str(valid), str(vendor), str(spaced), str(real)])
+  assert f'TryExec={spaced}\n' in valid.read_text()
+  assert resolves(valid), 'native resolver accepts the repaired spaced wrapper path'
+  bad = tmp / 'quoted.desktop'
+  bad.write_text(valid.read_text().replace(f'TryExec={spaced}', f'TryExec="{spaced}"'))
+  assert not resolves(bad), 'quoted TryExec is a rejected negative control'
+  run([repair, str(bad), str(vendor), str(spaced), str(real)])
+  assert resolves(bad), 'a previously generated quoted wrapper route is repaired too'
 print('ok - Electron ownership, user privilege boundary, preserving desktop repair and migration regressions')
 PY
