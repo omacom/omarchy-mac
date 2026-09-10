@@ -6,6 +6,7 @@ python3 - <<'PY'
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 
 root = Path(os.environ['ROOT'])
@@ -74,6 +75,35 @@ Exec=env SPECIAL=yes chromium %U
   run(['bash', '-euo', 'pipefail', '-c', leaf])
   for migration in ('1788639443.sh', '1788980682.sh'):
     run(['bash', '-euo', 'pipefail', str(root / 'migrations' / migration)])
+  assert not sentinel.exists()
+  # An administrator's ordinary Chromium alias must also skip both setup
+  # phases and permit a new migration after the old marker was completed.
+  (bind / 'chromium').unlink()
+  (bind / 'chromium').symlink_to(real)
+  binary_before = (real.read_bytes(), real.stat().st_mode)
+  for args in ([wrap, 'chromium', str(real)], [wrap, '--check', 'chromium', str(real)]):
+    run(args, 3)
+  run(['bash', '-euo', 'pipefail', '-c', system])
+  run(['bash', '-euo', 'pipefail', '-c', leaf])
+  migration_repo = tmp / 'migration-repo'
+  (migration_repo / 'migrations').mkdir(parents=True)
+  (migration_repo / 'install').symlink_to(root / 'install')
+  (migration_repo / 'bin').symlink_to(root / 'bin')
+  for migration in ('1788639443.sh', '1788980682.sh'):
+    shutil.copyfile(root / 'migrations' / migration, migration_repo / 'migrations' / migration)
+  (migration_repo / 'migrations/9999999999.sh').write_text('echo later\n')
+  markers = tmp / 'migration-state'
+  markers.mkdir()
+  (markers / '1788639443.sh').touch()
+  dismiss = bind / 'omarchy-notification-dismiss'
+  dismiss.write_text('#!/bin/bash\nexit 0\n')
+  dismiss.chmod(0o755)
+  env.update(OMARCHY_PATH=str(migration_repo), OMARCHY_MIGRATION_STATE=str(markers))
+  run([str(root / 'bin/omarchy-migrate')])
+  env['OMARCHY_PATH'] = str(root)
+  assert (markers / '1788980682.sh').exists() and (markers / '9999999999.sh').exists()
+  assert (bind / 'chromium').is_symlink() and (bind / 'chromium').readlink() == real
+  assert (real.read_bytes(), real.stat().st_mode) == binary_before
   assert not sentinel.exists()
   # Operational failures are not ownership conflicts and must stop the leaf.
   (bind / 'chromium').unlink()

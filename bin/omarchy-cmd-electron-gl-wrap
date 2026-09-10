@@ -46,7 +46,9 @@ if [[ $name == "1password" && $real == "$legacy_real" && -L $dest ]] &&
   legacy_link=true
 fi
 
-if [[ $dest == "$real" ]] || { [[ $dest -ef $real ]] && ! $legacy_link; }; then
+# An unmanaged symlink is an ownership conflict, even when it aliases the real
+# binary. Keep literal and hardlinked self-wraps fatal before inspecting markers.
+if [[ $dest == "$real" ]] || [[ ! -L $dest && $dest -ef $real ]]; then
   echo "omarchy-cmd-electron-gl-wrap: refusing to wrap a binary over itself: $dest" >&2
   exit 1
 fi
