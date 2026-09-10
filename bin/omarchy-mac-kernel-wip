@@ -70,7 +70,7 @@ rollback_boot_bin() {
   else
     return 1
   fi
-  sudo cp -a -- "$previous" "$boot"
+  sudo cp -a -- "$previous" "$boot" || return 1
   log "Restored $boot from $(basename "$previous")"
 }
 
@@ -128,7 +128,7 @@ main() {
     sudo pacman -R --noconfirm linux-asahi-wip
     # update-m1n1 picks the newest module directory, which was the one just
     # removed; rebuild boot.bin so m1n1 carries the released kernel's trees again.
-    sudo update-m1n1 2>/dev/null || true
+    sudo update-m1n1 || fail "could not rebuild the shared m1n1 boot image; saved images were retained. Restore with --rollback-boot before rebooting"
     if boot=$(m1n1_boot_bin 2>/dev/null); then
       sudo rm -f -- "${boot}.omarchy-pre-wip"
     fi
