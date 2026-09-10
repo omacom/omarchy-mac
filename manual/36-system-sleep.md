@@ -17,3 +17,9 @@ You toggle suspend by running `omarchy toggle suspend` from the terminal. That j
 You set up hibernation by running `omarchy hibernation setup` from the terminal. Hibernation creates a /swap subvolume on your boot drive the size of your physical RAM allocation, so make sure you have plenty of room to spare. On a 32GB machine, you'll always need 32GB+ free for this volume. Hibernation also requires the default Limine bootloader.
 
 When set up, you'll see the hibernate option under _System_ (or `Super + Esc`), and then you can see if it works consistently on your system. If not, you can remove it again by running `omarchy hibernation remove`.
+
+### Emergency battery protection
+
+Omarchy watches a discharging laptop from system startup, including before login and after logout. At 10% remaining, or when the battery reports no more than 90 seconds left, it gives you one minute to connect power. Connecting power cancels the countdown immediately. If power is still absent, Omarchy hibernates when configured hibernation support is available and otherwise performs an orderly shutdown before the battery reaches its hardware cutoff.
+
+Hibernation preserves the running session across the protection event. Omarchy Mac currently does not offer hibernation on Apple Silicon, so its safe fallback closes the session during shutdown; applications can restore only the state they saved themselves. Apple Silicon Mac laptops normally start when power is connected unless that firmware behavior has been disabled.
