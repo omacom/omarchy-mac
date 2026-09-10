@@ -1,5 +1,6 @@
-import Quickshell
 import QtQuick
+import Quickshell
+import Quickshell.Io
 
 Item {
   id: root
@@ -16,7 +17,28 @@ Item {
   }
 
   function applyLayout() {
-    Quickshell.execDetached(["bash", applyScript])
+    if (applyProc.running) return
+    applyErr.text = ""
+    applyProc.running = true
+  }
+
+  function reportApplyFailure(exitCode) {
+    var detail = String(applyErr.text || "").trim()
+    if (!detail) detail = "Could not install the Touch Bar layout (exit " + exitCode + ")"
+    Quickshell.execDetached([
+      "omarchy-notification-send", "-u", "critical", "-g", "󰁨",
+      "Touch Bar", detail
+    ])
+  }
+
+  Process {
+    id: applyProc
+    command: ["bash", root.applyScript]
+    stdout: StdioCollector { }
+    stderr: StdioCollector { id: applyErr; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) root.reportApplyFailure(exitCode)
+    }
   }
 
   // Only rewrite /etc when the user keeps an overlay. Fresh installs get the

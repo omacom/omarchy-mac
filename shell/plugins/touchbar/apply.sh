@@ -73,8 +73,28 @@ if [[ -f $ETC_CONF ]] && cmp -s "$toml_out" "$ETC_CONF"; then
   exit 0
 fi
 
-sudo mkdir -p "$(dirname "$ETC_CONF")"
-sudo install -m 644 "$toml_out" "$ETC_CONF"
-if command -v systemctl >/dev/null; then
-  sudo systemctl restart tiny-dfr.service 2>/dev/null || true
+# Quickshell has no terminal. sudo from a detached process fails silently once
+# the ticket is cold; pkexec puts up a polkit prompt. sudo stays for a real TTY
+# (install, migrations, running apply.sh by hand).
+run_as_root() {
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    "$@"
+  elif [[ -t 0 && -t 1 ]]; then
+    sudo "$@"
+  else
+    command -v pkexec >/dev/null || {
+      echo "omarchy.touchbar: pkexec is required to install the Touch Bar layout" >&2
+      exit 1
+    }
+    pkexec "$@"
+  fi
+}
+
+install_bin=$(command -v install)
+systemctl_bin=$(command -v systemctl || true)
+install_cmd="$(printf '%q' "$install_bin") -D -m 644 $(printf '%q' "$toml_out") $(printf '%q' "$ETC_CONF")"
+if [[ -n $systemctl_bin ]]; then
+  install_cmd+=" && $(printf '%q' "$systemctl_bin") restart tiny-dfr.service"
 fi
+
+run_as_root /bin/bash -c "$install_cmd"
