@@ -114,7 +114,14 @@ start_webcam_overlay() {
     fi
   done
 
-  mpv "av://v4l2:$WEBCAM_DEVICE" \
+  local renderer_options=()
+  if omarchy-hw-apple; then
+    # gpu-next crashes while releasing live camera frames on Asahi with both
+    # Vulkan and OpenGL. The older OpenGL renderer avoids that upload path.
+    renderer_options=(--vo=gpu --gpu-api=opengl)
+  fi
+
+  mpv "av://v4l2:$WEBCAM_DEVICE" "${renderer_options[@]}" \
     --profile=low-latency --untimed --no-cache \
     --demuxer-lavf-o="$capture_options" \
     '--vf=lavfi=[crop=ih*8/9:ih]' \
