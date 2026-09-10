@@ -65,6 +65,10 @@ cat >"$stub_bin/systemctl" <<'SH'
 printf 'systemctl' >>"$TEST_LOG"
 printf '\t%s' "$@" >>"$TEST_LOG"
 printf '\n' >>"$TEST_LOG"
+
+if [[ $1 == "is-active" ]]; then
+  exit "${SPEAKERSAFETYD_ACTIVE:-0}"
+fi
 SH
 
 cat >"$stub_bin/omarchy-state" <<'SH'
@@ -145,3 +149,21 @@ run_audio_setup "$migration" aarch64 linux,dummy
 [[ ! -s $calls ]] ||
   fail "the Apple Silicon audio repair skips unrelated hardware" "$(cat "$calls")"
 pass "the Apple Silicon audio repair skips unrelated hardware"
+
+rm -f "$installed_marker"
+touch "$installed_marker"
+: >"$calls"
+run_audio_setup "$leaf" aarch64 apple,j413
+grep -Fq $'systemctl\tenable\t--now\tspeakersafetyd' "$calls" ||
+  fail "speakersafetyd is enabled when already running" "$(cat "$calls")"
+! grep -Fq $'systemctl\treset-failed\tspeakersafetyd' "$calls" ||
+  fail "a running speakersafetyd is not reset" "$(cat "$calls")"
+pass "a running speakersafetyd is left alone"
+
+: >"$calls"
+SPEAKERSAFETYD_ACTIVE=3 run_audio_setup "$leaf" aarch64 apple,j413
+grep -Fq $'systemctl\treset-failed\tspeakersafetyd' "$calls" ||
+  fail "a dead speakersafetyd start-limit is cleared" "$(cat "$calls")"
+grep -Fq $'systemctl\tstart\tspeakersafetyd' "$calls" ||
+  fail "speakersafetyd is started after a start-limit" "$(cat "$calls")"
+pass "speakersafetyd recovers from a start-limit-hit"

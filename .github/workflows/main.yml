@@ -86,6 +86,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: omacom/omarchy-pkgs
+          # Companion first-run dependencies and units (omacom/omarchy-pkgs#341).
+          ref: 6d27290193109c07b0134360d382e64790ae5dda
           path: omarchy-pkgs
           persist-credentials: false
 

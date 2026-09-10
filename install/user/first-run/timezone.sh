@@ -24,5 +24,5 @@ timezone_needs_setting() {
 if timezone_needs_setting; then
   omarchy-notification-send -u critical -g 󰥔 "Set your timezone" \
     "This machine is on $(current_timezone). Click to choose yours." \
-    --exec "omarchy-launch-floating-terminal-with-presentation omarchy-cmd-tzupdate-enhanced"
+    --exec omarchy-launch-floating-terminal-with-presentation omarchy-cmd-tzupdate-enhanced
 fi

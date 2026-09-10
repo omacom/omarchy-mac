@@ -5,7 +5,7 @@ name: Install VM
 on:
   pull_request:
   push:
-    branches: [quattro]
+    branches: [quattro, integration/4.0.3rc1-green]
   workflow_dispatch:
   schedule:
     - cron: "17 5 * * *"
