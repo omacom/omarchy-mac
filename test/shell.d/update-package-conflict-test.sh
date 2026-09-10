@@ -36,6 +36,25 @@ STUB
 # for a person has to keep that stream.
 cat >"$stub_bin/pacman" <<'STUB'
 #!/bin/bash
+if [[ " $* " != *" -Syu "* ]]; then
+  case "$1" in
+    -Sy)
+      exit 0
+      ;;
+    -Q)
+      if [[ $2 == hyprtoolkit ]]; then
+        printf '%s %s\n' "$2" "0.5.4-5.0"
+      else
+        printf '%s %s\n' "$2" "0.5.4-5.1"
+      fi
+      exit 0
+      ;;
+    -Si)
+      printf 'Name            : %s\nVersion         : 0.5.4-5.1\n' "$2"
+      exit 0
+      ;;
+  esac
+fi
 attempt=$(($(cat "$PACMAN_ATTEMPTS") + 1))
 echo "$attempt" >"$PACMAN_ATTEMPTS"
 {
@@ -115,10 +134,15 @@ run_on_terminal || fail "a package conflict is not resolved on a terminal"
 pass "a package conflict is put back to the person running the update"
 
 for call in 1 2; do
-  [[ " $(call_line "$call" args) " == *" omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils "* ]] ||
-    fail "the initial upgrade or interactive retry loses the ARM targets"
+  [[ " $(call_line "$call" args) " == *" --ignore hyprland,hyprland-guiutils "* ]] ||
+    fail "the initial upgrade or interactive retry loses the current ARM target pin"
+  [[ " $(call_line "$call" args) " == *" omarchy/hyprtoolkit "* ]] ||
+    fail "the initial upgrade or interactive retry loses an out-of-date ARM target"
+  [[ " $(call_line "$call" args) " == *" --needed "* ]] ||
+    fail "the initial upgrade or interactive retry reinstalls current ARM targets"
 done
-pass "the initial upgrade and interactive retry retain the ARM targets"
+pass "the initial upgrade and interactive retry retain the current ARM target pin"
+pass "the initial upgrade and interactive retry retain out-of-date ARM targets"
 
 [[ $(call_line 2 tty0) == "yes" && $(call_line 2 tty2) == "yes" ]] ||
   fail "the interactive retry cannot be answered: pacman has no terminal left"
