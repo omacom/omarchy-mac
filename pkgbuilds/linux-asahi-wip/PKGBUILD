@@ -1,0 +1,106 @@
+# Asahi kernel built from a development branch, alongside linux-asahi.
+#
+# Asahi Alarm's linux-asahi follows Asahi's tagged releases. M3-generation
+# support -- the display driver against the macOS 14.8.3 firmware, and one day
+# the GPU -- lands in development branches before it is tagged, so this
+# package builds any branch of any fork with Asahi Alarm's own kernel config,
+# and installs next to linux-asahi rather than replacing it. GRUB lists both
+# kernels, but they share one boot.bin: update-m1n1 writes the branch's DTBs
+# into that image, so the released entry is not a fallback. Restore the
+# snapshot with omarchy-mac-kernel-wip --rollback-boot, or boot.bin.old.
+#
+# Which branch is a build-time choice, so the day the M3 display branch is
+# pushed the only change is OMARCHY_KERNEL_BRANCH (or _branch below):
+#
+#   OMARCHY_KERNEL_REPO=AsahiLinux/linux OMARCHY_KERNEL_BRANCH=asahi-wip makepkg -s
+#
+# bin/omarchy-mac-kernel-wip drives this. Maintainer notes in docs/apple-m3.md.
+
+_repo=${OMARCHY_KERNEL_REPO:-AsahiLinux/linux}
+_branch=${OMARCHY_KERNEL_BRANCH:-asahi-wip}
+_config_url=${OMARCHY_KERNEL_CONFIG_URL:-https://raw.githubusercontent.com/asahi-alarm/PKGBUILDs/main/linux-asahi/config}
+_m1n1_version=1.6.1
+
+pkgbase=linux-asahi-wip
+pkgname=("$pkgbase")
+pkgver=0
+pkgrel=1
+pkgdesc="AArch64 Apple Silicon kernel from the ${_repo}@${_branch} development branch"
+arch=('aarch64')
+url="https://github.com/${_repo}"
+license=('GPL2')
+makedepends=(
+  base-devel bc dtc kmod libelf pahole cpio perl rustup rust-bindgen tar xz xmlto python git
+)
+options=('!strip')
+source=(
+  "linux::git+https://github.com/${_repo}.git#branch=${_branch}"
+  "config::${_config_url}"
+  "rust-toolchain.toml::https://raw.githubusercontent.com/asahi-alarm/PKGBUILDs/main/linux-asahi/rust-toolchain.toml"
+)
+# A moving branch and a moving config: pinned by the branch name, not a hash.
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+export KBUILD_BUILD_HOST=archlinux
+export KBUILD_BUILD_USER=$pkgbase
+export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
+
+pkgver() {
+  cd linux
+  # asahi-7.1.12-1-5-gabc1234 -> 7.1.12.asahi1.r5.gabc1234
+  git describe --tags --long 2>/dev/null |
+    sed -E 's/^asahi-//; s/^v//; s/-rc/rc/; s/-([0-9]+)-([0-9]+)-g/.asahi\1.r\2.g/; s/-/./g' ||
+    printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd linux
+  cp ../rust-toolchain.toml .
+
+  echo "Setting version..."
+  echo "-wip-$pkgrel" > localversion.10-pkgrel
+
+  echo "Creating build directories..."
+  mkdir -p build/base
+
+  echo "Setting config (Asahi Alarm's, refreshed against this tree)..."
+  cp ../config build/base/.config
+  make olddefconfig prepare O=$PWD/build/base
+  diff -u ../config build/base/.config || :
+  make -s kernelrelease O=$PWD/build/base > build/base/version
+
+  echo "Prepared $pkgbase version $(<build/base/version) from ${_repo}@${_branch} ($(git rev-parse --short HEAD))"
+}
+
+build() {
+  cd linux
+  make all O=$PWD/build/base -j "$(nproc)"
+}
+
+package() {
+  pkgdesc="The $pkgdesc kernel and modules"
+  depends=(coreutils kmod initramfs "m1n1>=$_m1n1_version")
+  optdepends=('linux-firmware: firmware images needed for some devices')
+  provides=(WIREGUARD-MODULE "linux=${pkgver}")
+
+  cd linux
+  local O="$PWD/build/base"
+  local kernver="$(<$O/version)"
+  local modulesdir="$pkgdir/usr/lib/modules/$kernver"
+
+  echo "Installing boot image..."
+  install -Dm644 "$O"/arch/arm64/boot/Image "$modulesdir/vmlinuz"
+
+  # mkinitcpio names the kernel, its preset and /boot/vmlinuz-* after this.
+  echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
+
+  echo "Installing modules..."
+  make O="$O" INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 modules_install
+
+  # update-m1n1 concatenates every t6*/t81* dtb of the newest module directory
+  # into boot.bin, so a branch's device trees reach m1n1 through this install.
+  echo "Installing device trees..."
+  install -Dt "$modulesdir/dtbs" "$O"/arch/arm64/boot/dts/apple/*.dtb
+
+  rm -f "$modulesdir"/{source,build}
+}

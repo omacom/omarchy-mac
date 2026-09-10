@@ -125,7 +125,7 @@ grep -qF 'pacman-key --lsign-key "$asahi_alarm_key"' "$install_script" ||
 grep -qF 'pacman -Sy --needed --noconfirm asahi-alarm-keyring' "$install_script" ||
   fail "the installer installs the Asahi Alarm package keyring"
 keyring_call=$(grep -n '^  ensure_asahi_alarm_keyring$' "$install_script" | cut -d: -f1)
-refresh_call=$(grep -nF '  sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --needed --noconfirm "${targets[@]}"' "$install_script" | cut -d: -f1)
+refresh_call=$(grep -nF '  sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --needed --noconfirm --ignore "$(omarchy_arm_sysupgrade_ignore)" "${targets[@]}"' "$install_script" | cut -d: -f1)
 [[ -n $keyring_call && -n $refresh_call ]] || fail "the installer bootstraps the Asahi keyring before refresh"
 (( keyring_call < refresh_call )) ||
   fail "the Asahi keyring is installed before the package database refresh"

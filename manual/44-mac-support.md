@@ -2,7 +2,7 @@
 
 Omarchy has built-in support for **Intel Macs**. There are a couple of known limitations at the moment, but as long as you're aware and OK with those; you can breathe some new life into your old Macs by loading Omarchy.
 
-Please note that installing on an M-series Mac is not directly supported at this time. You can find out more about the state of this in #omarchy-on-other in our [Discord](https://discord.gg/tXFUdasqhY).
+Apple Silicon (M-series) Macs are the Omarchy Mac fork's own territory: M1 and M2 families install through Asahi Alarm as described in the README, and M3-family Macs install the same way with an experimental, software-rendered desktop until Asahi ships their display and GPU drivers. The details and limits are in the repository's `docs/apple-m3.md`. You can find out more about the state of this in #omarchy-on-other in our [Discord](https://discord.gg/tXFUdasqhY).
 
 In a simple test, we were able to achieve 36% performance gains on a 2019 MacBook Pro just by installing Omarchy.
 

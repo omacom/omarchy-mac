@@ -10,8 +10,17 @@ declare -A VULKAN_DRIVERS=(
 
 PACKAGES=()
 
-if [[ $(uname -m) == "aarch64" ]] && [[ -f /proc/device-tree/compatible ]] && grep -qi "apple" /proc/device-tree/compatible 2>/dev/null; then
-  PACKAGES+=(vulkan-asahi)
+# vulkan-asahi is Mesa's Honeykrisp driver, which needs the Asahi GPU driver
+# underneath it. On an SoC the kernel driver does not know yet (M3 and later on
+# the public kernel) it would install fine and then find no device, while
+# omarchy-hw-vulkan would report Vulkan as available. Ask whether the driver is
+# actually bound, and leave the package for the kernel that binds it.
+if [[ $(uname -m) == "aarch64" ]] && omarchy-hw-apple-soc >/dev/null 2>&1; then
+  if omarchy-hw-apple-soc --gpu; then
+    PACKAGES+=(vulkan-asahi)
+  else
+    echo "Apple $(omarchy-hw-apple-soc) SoC without a bound Asahi GPU driver; skipping vulkan-asahi"
+  fi
 fi
 
 for vendor in "${!VULKAN_DRIVERS[@]}"; do

@@ -1146,6 +1146,21 @@ print_status() {
   printf '  next step       %s\n\n' "$step"
 }
 
+# The M3 generation boots the public Asahi kernel but has no display or GPU
+# driver yet, so the desktop this installs runs in software on the firmware
+# framebuffer. Said before "Start?", from the device tree directly: the SoC
+# command lives in the checkout, which does not exist yet at this point.
+notice_apple_m3() {
+  local compatible=${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}
+  [[ -f $compatible ]] || return 0
+  tr '\0' '\n' <"$compatible" | grep -qxE 'apple,(t8122|t6030|t6031|t6032|t6034)' || return 0
+  warn "This is an M3-generation Mac. Asahi has not released for it: the desktop"
+  warn "will render in software with no brightness control and no external"
+  warn "displays until the M3 display and GPU drivers land. See docs/apple-m3.md"
+  warn "in the checkout, and omarchy-mac-kernel-wip for trying a newer kernel."
+  echo
+}
+
 ask_questions() {
   local answer
 
@@ -1153,6 +1168,7 @@ ask_questions() {
   echo "This installs Omarchy on this machine, rebooting a few times on the way."
   echo "It asks everything now, then runs on its own."
   echo
+  notice_apple_m3
 
   if [[ -n $encrypt_flag ]]; then
     : # already answered on the command line

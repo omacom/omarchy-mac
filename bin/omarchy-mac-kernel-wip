@@ -1,0 +1,174 @@
+#!/bin/bash
+
+# omarchy:summary=Build and install an Asahi development kernel next to linux-asahi
+# omarchy:group=mac
+# omarchy:args=[--repo <owner/repo>] [--branch <name>] [--build-only] [--remove] [--rollback-boot]
+# omarchy:examples=omarchy-mac-kernel-wip --branch asahi-wip | omarchy-mac-kernel-wip --rollback-boot | omarchy-mac-kernel-wip --remove
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# For machines the released Asahi kernel does not fully drive yet -- today the
+# M3 generation, whose display and GPU support is still in branches -- this
+# builds pkgbuilds/linux-asahi-wip from a chosen branch and installs it
+# alongside linux-asahi. GRUB gets an entry for each, and m1n1's boot image is
+# rebuilt with the new kernel's device trees, because a branch that adds M3
+# display support does it in the device tree as much as in the driver.
+#
+# Those device trees go into the shared boot.bin. Picking the released
+# linux-asahi GRUB entry is not a fallback: update-m1n1 already wrote the WIP
+# DTBs into the one image both entries use. Snapshot boot.bin before the
+# install, restore it with --rollback-boot, or from macOS copy boot.bin.old
+# over boot.bin (see docs/apple-m3.md).
+#
+# A kernel build on an M3 Pro takes about an hour. Run it plugged in.
+
+set -euo pipefail
+
+repo=AsahiLinux/linux
+branch=asahi-wip
+build_only=0
+remove=0
+rollback_boot=0
+
+log() { printf '\033[32m==>\033[0m %s\n' "$*"; }
+fail() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# update-m1n1 writes $ESP/m1n1/boot.bin and, when the contents change, copies
+# the previous image to boot.bin.old. Tests set OMARCHY_M1N1_BOOT_BIN.
+m1n1_boot_bin() {
+  if [[ -n ${OMARCHY_M1N1_BOOT_BIN:-} ]]; then
+    printf '%s\n' "$OMARCHY_M1N1_BOOT_BIN"
+    return 0
+  fi
+  local candidate
+  for candidate in /boot/m1n1/boot.bin /boot/efi/m1n1/boot.bin; do
+    if [[ -e $candidate ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Keep the pre-WIP image across rebuilds so a second --branch does not replace
+# the released snapshot with the previous WIP boot.bin.
+snapshot_boot_bin() {
+  local boot snapshot
+  boot=$(m1n1_boot_bin) || return 1
+  snapshot=${boot}.omarchy-pre-wip
+  [[ -e $snapshot ]] && return 0
+  sudo cp -a -- "$boot" "$snapshot"
+}
+
+rollback_boot_bin() {
+  local boot previous
+  boot=$(m1n1_boot_bin) || return 1
+  if [[ -e ${boot}.omarchy-pre-wip ]]; then
+    previous=${boot}.omarchy-pre-wip
+  elif [[ -e ${boot}.old ]]; then
+    previous=${boot}.old
+  else
+    return 1
+  fi
+  sudo cp -a -- "$previous" "$boot" || return 1
+  log "Restored $boot from $(basename "$previous")"
+}
+
+refresh_boot() {
+  # The kernel package's pacman hooks already ran mkinitcpio and update-m1n1
+  # for the newest module directory. GRUB is what still has to learn about the
+  # new /boot/vmlinuz-linux-asahi-wip.
+  if omarchy-cmd-present grub-mkconfig; then
+    log "Regenerating the GRUB menu"
+    sudo grub-mkconfig -o /boot/grub/grub.cfg
+  fi
+}
+
+warn_shared_boot_image() {
+  log "Both GRUB entries share one m1n1 boot.bin. update-m1n1 writes the WIP"
+  log "kernel's DTBs into that image, so the released linux-asahi entry is not a"
+  log "safe fallback. Before rebooting: omarchy-mac-kernel-wip --rollback-boot"
+  log "After a failed boot, from macOS copy m1n1/boot.bin.old over boot.bin."
+}
+
+main() {
+  while (( $# )); do
+    case $1 in
+      --repo) repo=${2:?--repo needs owner/repo}; shift ;;
+      --branch) branch=${2:?--branch needs a name}; shift ;;
+      --build-only) build_only=1 ;;
+      --remove) remove=1 ;;
+      --rollback-boot) rollback_boot=1 ;;
+      -h | --help)
+        sed -n '3,8p' "$0" | sed 's/^# omarchy:[a-z-]*=//'
+        exit 0
+        ;;
+      *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+    shift
+  done
+
+  [[ $(uname -m) == "aarch64" ]] || fail "this builds Apple Silicon kernels; run it on the Mac"
+  (( EUID != 0 )) || fail "run as your user; makepkg refuses root and sudo is used where needed"
+
+  if (( rollback_boot )); then
+    rollback_boot_bin ||
+      fail "could not restore m1n1/boot.bin (need boot.bin.omarchy-pre-wip or boot.bin.old)"
+    exit 0
+  fi
+
+  if (( remove )); then
+    pacman -Q linux-asahi-wip >/dev/null 2>&1 || fail "linux-asahi-wip is not installed"
+    log "Removing linux-asahi-wip (linux-asahi stays)"
+    if rollback_boot_bin; then
+      :
+    else
+      log "No saved boot.bin; update-m1n1 will rebuild from the remaining kernel"
+    fi
+    sudo pacman -R --noconfirm linux-asahi-wip
+    # update-m1n1 picks the newest module directory, which was the one just
+    # removed; rebuild boot.bin so m1n1 carries the released kernel's trees again.
+    sudo update-m1n1 || fail "could not rebuild the shared m1n1 boot image; saved images were retained. Restore with --rollback-boot before rebooting"
+    if boot=$(m1n1_boot_bin 2>/dev/null); then
+      sudo rm -f -- "${boot}.omarchy-pre-wip"
+    fi
+    refresh_boot
+    exit 0
+  fi
+
+  pkgbuild_dir="${OMARCHY_PATH}/pkgbuilds/linux-asahi-wip"
+  [[ -f $pkgbuild_dir/PKGBUILD ]] || fail "no PKGBUILD at $pkgbuild_dir"
+
+  build_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-build/linux-asahi-wip"
+  mkdir -p "$build_dir"
+  cp "$pkgbuild_dir/PKGBUILD" "$build_dir/"
+
+  log "Building linux-asahi-wip from $repo@$branch in $build_dir"
+  log "This takes about an hour on an M3 Pro; the sources are kept for the next build."
+  (
+    cd "$build_dir"
+    OMARCHY_KERNEL_REPO="$repo" OMARCHY_KERNEL_BRANCH="$branch" \
+      makepkg -s --noconfirm --needed --skipchecksums
+  )
+
+  if (( build_only )); then
+    log "Built: $(ls -1 "$build_dir"/linux-asahi-wip-*.pkg.tar.* | tail -1)"
+    exit 0
+  fi
+
+  pkg=$(ls -1t "$build_dir"/linux-asahi-wip-*.pkg.tar.* | grep -v '\.sig$' | head -1)
+  [[ -n $pkg ]] || fail "no package was produced"
+  snapshot_boot_bin || log "could not snapshot boot.bin; if the new DTBs do not boot, restore boot.bin.old from macOS"
+  log "Installing $(basename "$pkg")"
+  sudo pacman -U --noconfirm "$pkg"
+  refresh_boot
+
+  log "Installed. Reboot and pick the linux-asahi-wip entry in GRUB."
+  warn_shared_boot_image
+  log "Check what bound afterwards with: omarchy-hw-apple-soc --gpu; ls /sys/class/drm"
+}
+
+# Sourced by the test suite so the boot-image helpers can run against a stub ESP.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

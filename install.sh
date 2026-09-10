@@ -160,7 +160,7 @@ ensure_arm_package_repo() {
   local -a targets
   mapfile -t targets < <(omarchy_arm_package_targets)
   log "Upgrading system packages and installing the compatible Hyprland stack"
-  sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --needed --noconfirm "${targets[@]}"
+  sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --needed --noconfirm --ignore "$(omarchy_arm_sysupgrade_ignore)" "${targets[@]}"
 }
 
 load_unavailable_packages() {
