@@ -90,6 +90,20 @@ strip_limine_dependencies() {
   done
 }
 
+# Limine's snapshot integration normally pulls in Snapper transitively. Macs
+# still need Snapper for btrfs setup and snapshots after dropping that stack,
+# so make it a hard dependency rather than a best-effort default package.
+ensure_snapper_dependency() {
+  local pkgbuild="$1"
+
+  grep -qx 'depends=(' "$pkgbuild" ||
+    fail "omarchy PKGBUILD no longer has the expected depends array: $pkgbuild"
+  if ! sed -n '/^depends=(/,/^)/p' "$pkgbuild" |
+    grep -qE "^[[:space:]]*['\"]snapper([<>=][^'\"]*)?['\"]([[:space:]]|$)"; then
+    sed -i "/^depends=(/a\\  'snapper'" "$pkgbuild"
+  fi
+}
+
 # Upstream's package() deletes /etc/mkinitcpio.conf.d wholesale on aarch64,
 # reasoning that omarchy_hooks.conf is the x86 file that would inject the
 # Limine hooks into an Asahi initramfs. That is true of upstream's copy and
@@ -169,6 +183,7 @@ build_package() {
 
   if [[ $package == "omarchy" ]]; then
     strip_limine_dependencies "$build_dir/$package/PKGBUILD"
+    ensure_snapper_dependency "$build_dir/$package/PKGBUILD"
   fi
   if [[ $package == "omarchy-settings" ]]; then
     keep_apple_silicon_mkinitcpio_drop_ins "$build_dir/$package/PKGBUILD"
