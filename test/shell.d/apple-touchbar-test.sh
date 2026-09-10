@@ -23,8 +23,10 @@ grep -Fq 'apple/touchbar.sh' "$all" ||
 grep -Fq 'default.hypr.bindings.touchbar' "$omarchy_lua" ||
   fail "Hyprland loads Touch Bar key bindings"
 grep -Fq 'XF86Search' "$binds" || fail "Search on the Touch Bar opens the Omarchy menu"
-grep -Fq 'omarchy-launch-terminal' "$binds" || fail "F13 launches a terminal"
-grep -Fq 'omarchy-system-lock' "$binds" || fail "F14 locks the session"
+grep -Fq 'omarchy-launch-terminal' "$binds" || fail "the term key launches a terminal"
+grep -Fq 'omarchy-system-lock' "$binds" || fail "the lock key locks the session"
+grep -Fq 'code:191' "$binds" || fail "term is bound by KEY_F13 keycode, not the F13 keysym"
+grep -Fq 'code:192' "$binds" || fail "lock is bound by KEY_F14 keycode, not the F14 keysym"
 grep -q 'MediaLayerDefault = true' "$conf" ||
   fail "the default strip is the Omarchy/media layer without holding Fn"
 grep -q 'Action = "Search"' "$conf" || fail "the default strip includes the menu key"
