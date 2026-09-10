@@ -38,6 +38,9 @@ configure_snapper_root() {
       return 1
     fi
     snapper --no-dbus -c root list >/dev/null || return $?
+    # Setup and the service-repair migration both promise active cleanup,
+    # including when an existing root already has custom retention policy.
+    systemctl enable --now snapper-cleanup.timer || return $?
     return 0
   fi
 
@@ -51,11 +54,10 @@ configure_snapper_root() {
     return 1
   fi
 
-  # Enable cleanup before creating the config so a failed service operation
-  # remains retryable. Never change the global timeline timer: other configs
-  # may intentionally use it. Snapper owns backend creation and registration,
-  # preserving other registered configs, and applies policy only to this new root.
-  systemctl enable --now snapper-cleanup.timer || return $?
+  # Never change the global timeline timer: other configs may intentionally
+  # use it. Snapper owns backend creation and registration, preserving other
+  # registered configs, and applies policy only to this new root. The recursive
+  # validation below repairs services too, so failed activation stays retryable.
   snapper --no-dbus -c root create-config --template omarchy / || return $?
 
   [[ -f $config_path && ! -L $config_path && ! -L $snapshots_path ]] || {

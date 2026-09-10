@@ -40,6 +40,8 @@ cat >"$test_tmp/bin/systemctl" <<'STUB'
 #!/bin/bash
 printf 'systemctl %s\n' "$*" >>"$TEST_LOG"
 [[ ${FAIL_AT:-} != timer ]] || exit 23
+[[ $* == "enable --now snapper-cleanup.timer" ]] || exit 99
+touch "$FIXTURE/cleanup-active"
 STUB
 chmod +x "$test_tmp/bin/"*
 export PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_SNAPPER_TEMPLATE="$ROOT/default/snapper/root"
@@ -60,12 +62,19 @@ run_leaf() {
 for mode in direct source conditional; do
   new_fixture "success-$mode"
   run_leaf "$mode"
+  [[ -f $FIXTURE/cleanup-active ]] || fail 'fresh root activates cleanup'
   cmp "$ROOT/default/snapper/root" "$FIXTURE/root"
   [[ $(cat "$FIXTURE/registry") == $'home,/home\nroot,/' ]] || fail 'registration preserves home'
   echo 'NUMBER_LIMIT="42"' >>"$FIXTURE/root"
   cp "$FIXTURE/root" "$FIXTURE/expected-root"
   cp "$FIXTURE/registry" "$FIXTURE/expected-registry"
+  rm "$FIXTURE/cleanup-active"
+  status=0
+  FAIL_AT=timer run_leaf "$mode" >"$FIXTURE/output" 2>&1 || status=$?
+  (( status == 23 )) || fail 'existing backend propagates cleanup activation failure'
+  [[ ! -e $FIXTURE/cleanup-active ]] || fail 'failed activation does not claim active cleanup'
   run_leaf "$mode"
+  [[ -f $FIXTURE/cleanup-active ]] || fail 'existing root repairs cleanup on retry'
   cmp "$FIXTURE/expected-root" "$FIXTURE/root"
   cmp "$FIXTURE/expected-registry" "$FIXTURE/registry"
   [[ $(cat "$FIXTURE/home") == 'custom home retention' ]] || fail 'home unchanged'
