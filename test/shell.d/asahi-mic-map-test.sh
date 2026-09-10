@@ -105,6 +105,22 @@ with tempfile.TemporaryDirectory() as temporary:
             raise AssertionError('recycled endpoint IDs accepted')
         assert audio.default == DSP and not audio.existing and not audio.linked
         assert ('pactl', 'set-default-source', m.MONITOR) not in audio.calls
+    # Simulate a choice made during the final graph query, after output has
+    # been restored. The last default-source read must observe that new choice.
+    class FinalQueryChoice(Audio):
+        def __init__(self):
+            super().__init__()
+            self.choice_injected = False
+        def graph(self):
+            graph = super().graph()
+            if ('pactl', 'set-default-sink', 'speakers') in self.calls:
+                self.default = 'usb-mic'
+                self.choice_injected = True
+            return graph
+    audio = FinalQueryChoice()
+    m.reconcile(audio, state())
+    assert audio.choice_injected and audio.default == 'usb-mic'
+    assert ('pactl', 'set-default-source', m.MONITOR) not in audio.calls
     for selected in (DSP, 'usb-mic', m.MONITOR):
         audio = Audio(True, selected); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
         before = copy.deepcopy((audio.sink, audio.monitor)); saved = state()

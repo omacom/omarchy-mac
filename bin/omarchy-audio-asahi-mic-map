@@ -180,11 +180,13 @@ def reconcile(audio, state, save_only=False):
         else:
             raise RuntimeError('Asahi microphone stereo links did not become ready')
         restore_output(audio, original_output)
-        current_input = audio.run('pactl', 'get-default-source')
         graph = audio.graph()
         validate_endpoints(graph)
         if not all(links(graph, output, input_) for input_ in inputs):
             raise RuntimeError('Asahi microphone links changed before selecting input')
+        # Read the user's choice after the final graph query so a device change
+        # during that query is not overwritten. Pulse has no atomic compare/set.
+        current_input = audio.run('pactl', 'get-default-source')
         if original_input in ('', dsp) and current_input == original_input:
             changed_input = True
             audio.run('pactl', 'set-default-source', MONITOR)
