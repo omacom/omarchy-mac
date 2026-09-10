@@ -29,6 +29,11 @@ exit 0
 SH
 done
 
+cat >"$mock_bin/code" <<'SH'
+#!/bin/bash
+exit 0
+SH
+
 cat >"$mock_bin/setsid" <<'SH'
 #!/bin/bash
 printf 'launch:%s\n' "$*" >>"$OMARCHY_TEST_LOG"
@@ -44,7 +49,7 @@ chmod +x "$mock_bin"/*
 export HOME="$test_home"
 export OMARCHY_TEST_LOG="$test_tmp/launch.log"
 export OMARCHY_TEST_PRESENTATION="$test_tmp/presentation"
-export PATH="$mock_bin:$PATH"
+export PATH="$mock_bin:$ROOT/bin:$PATH"
 
 wait_for_launch() {
   local expected="$1"

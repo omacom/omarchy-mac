@@ -2,8 +2,25 @@
 
 # omarchy:summary=Install VS Code and configure Omarchy defaults for secrets, updates, and theme
 
+set -e
+
 echo "Installing VSCode..."
-omarchy-pkg-add visual-studio-code-bin
+if [[ $(uname -m) == "aarch64" ]]; then
+  if ! omarchy-pkg-aur-add visual-studio-code-bin; then
+    echo "Failed to install VSCode." >&2
+    exit 1
+  fi
+else
+  if ! omarchy-pkg-add visual-studio-code-bin; then
+    echo "Failed to install VSCode." >&2
+    exit 1
+  fi
+fi
+
+if ! omarchy-cmd-present code; then
+  echo "VSCode installation did not provide the code command." >&2
+  exit 1
+fi
 
 mkdir -p ~/.vscode ~/.config/Code/User
 
@@ -26,4 +43,5 @@ printf '{\n  "update.mode": "none"\n}\n' > ~/.config/Code/User/settings.json
 # Apply Omarchy theme to VSCode
 omarchy-theme-set-vscode
 
+# This queues a detached launch request; it cannot prove VS Code runtime health.
 setsid uwsm-app -- gtk-launch code >/dev/null 2>&1 &
