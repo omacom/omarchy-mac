@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# omarchy:summary=Print a hardware-aware keybinding label for user-facing messages.
+# omarchy:hidden=true
+
+usage() {
+  echo "Usage: omarchy-keybinding-label [--embedded] [--m1-air <label>] <default-label>" >&2
+  exit 1
+}
+
+embedded=0
+if [[ ${1:-} == "--embedded" ]]; then
+  embedded=1
+  shift
+fi
+
+m1_air_label=""
+if [[ ${1:-} == "--m1-air" ]]; then
+  (( $# == 3 )) || usage
+  m1_air_label="$2"
+  shift 2
+else
+  (( $# == 1 )) || usage
+fi
+
+label="$1"
+detector="$OMARCHY_PATH/bin/omarchy-hw-apple-m1-air"
+
+if "$detector"; then
+  if [[ -n $m1_air_label ]]; then
+    label="$m1_air_label"
+  elif ((embedded)); then
+    # Notification text may contain arbitrary filenames and prose. In that
+    # context, change a modifier only when '+' makes it part of a shortcut;
+    # an ordinary sentence containing the standalone word "Super" stays data.
+    label=$(sed -E \
+      -e 's/\<Super\>([[:space:]]*\+)/Command\1/g' \
+      -e 's/\<SUPER\>([[:space:]]*\+)/COMMAND\1/g' \
+      -e 's/\<Alt\>([[:space:]]*\+)/Option\1/g' \
+      -e 's/\<ALT\>([[:space:]]*\+)/OPTION\1/g' \
+      -e 's/\<Ctrl\>([[:space:]]*\+)/Control\1/g' \
+      -e 's/\<CTRL\>([[:space:]]*\+)/CONTROL\1/g' <<<"$label")
+  else
+    # Replace key names as complete words. Notification text is not always a
+    # bare shortcut, so substring replacements must not turn words such as
+    # "Alternative" or "Superman" into corrupted prose.
+    label=$(sed \
+      -e 's/\<Super\>/Command/g' \
+      -e 's/\<SUPER\>/COMMAND/g' \
+      -e 's/\<Alt\>/Option/g' \
+      -e 's/\<ALT\>/OPTION/g' \
+      -e 's/\<Ctrl\>/Control/g' \
+      -e 's/\<CTRL\>/CONTROL/g' <<<"$label")
+  fi
+fi
+
+printf '%s\n' "$label"

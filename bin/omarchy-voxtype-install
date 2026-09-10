@@ -30,5 +30,12 @@ if gum confirm "Install Voxtype + AI model (~150MB) to enable dictation?"; then
 
   hyprctl reload >/dev/null
   omarchy-restart-shell
-  omarchy-notification-send -g  "Voxtype Dictation Ready" "Hold F9 to dictate (or toggle with Super + Ctrl + X)." -t 10000
+  dictation_shortcut=$(omarchy-keybinding-label --m1-air 'F5' 'F9')
+  dictation_toggle_shortcut=$(omarchy-keybinding-label 'Super + Ctrl + X')
+  if [[ $dictation_shortcut == "F5" ]]; then
+    dictation_hint="Press $dictation_shortcut to toggle dictation (or use $dictation_toggle_shortcut)."
+  else
+    dictation_hint="Hold $dictation_shortcut to dictate (or toggle with $dictation_toggle_shortcut)."
+  fi
+  omarchy-notification-send -g  "Voxtype Dictation Ready" "$dictation_hint" -t 10000
 fi

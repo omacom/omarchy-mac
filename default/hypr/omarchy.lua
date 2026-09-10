@@ -2,6 +2,7 @@
 
 require("default.hypr.helpers")
 local require_optional = require("default.hypr.require_optional")
+local paths = require("default.hypr.paths")
 
 -- Use Omarchy defaults, but don't edit these directly.
 require("default.hypr.autostart")
@@ -12,6 +13,10 @@ if _G.omarchy_default_bindings ~= false then
   require("default.hypr.bindings.utilities")
   require("default.hypr.bindings.voxtype")
   require_optional.module("default.hypr.bindings.applications")
+  local apple_m1_air = paths.omarchy_path .. "/bin/omarchy-hw-apple-m1-air"
+  if o.shell_succeeds(o.shell_quote(apple_m1_air)) then
+    require("default.hypr.bindings.apple_m1_air")
+  end
 end
 require("default.hypr.envs")
 require("default.hypr.looknfeel")

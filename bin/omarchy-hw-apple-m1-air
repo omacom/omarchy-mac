@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# omarchy:summary=Detect an Apple MacBook Air (M1, 2020).
+
+# OMARCHY_APPLE_COMPATIBLE and OMARCHY_APPLE_MODEL stub the device-tree files
+# for tests, following the Apple Silicon detector's override convention.
+compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
+model="${OMARCHY_APPLE_MODEL:-/proc/device-tree/model}"
+
+architecture="${OMARCHY_UNAME_M:-$(uname -m)}" || exit 1
+case $architecture in
+aarch64 | arm64) ;;
+*) exit 1 ;;
+esac
+
+# Device-tree string properties are NUL-separated. Match complete records so a
+# future machine such as apple,j3130 cannot be mistaken for this M1 Air.
+grep -Fazqx 'apple,j313' "$compatible" 2>/dev/null &&
+  grep -Fazqx 'Apple MacBook Air (M1, 2020)' "$model" 2>/dev/null

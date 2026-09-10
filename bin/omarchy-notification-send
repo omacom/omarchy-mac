@@ -136,6 +136,14 @@ while (($# > 0)); do
   fi
 done
 
+# This is the single path for Omarchy desktop notifications, so normalize both
+# visible text fields here. Callers with a hardware-specific top-row mapping can
+# still use omarchy-keybinding-label --m1-air before sending; this pass is
+# idempotent and guarantees generic modifier labels cannot leak from any other
+# caller.
+headline=$("$OMARCHY_PATH/bin/omarchy-keybinding-label" --embedded "$headline")
+description=$("$OMARCHY_PATH/bin/omarchy-keybinding-label" --embedded "$description")
+
 case $urgency in
 low) urgency_byte=0 ;;
 normal) urgency_byte=1 ;;

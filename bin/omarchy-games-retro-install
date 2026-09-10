@@ -69,4 +69,5 @@ EOF
 chmod +x "$desktop_file"
 update-desktop-database "$desktop_dir" &>/dev/null || true
 
-omarchy-notification-send -g 󰯉 "$game_name installed" "Start it with Super + Space"
+menu_shortcut=$(omarchy-keybinding-label 'Super + Space')
+omarchy-notification-send -g 󰯉 "$game_name installed" "Start it with $menu_shortcut"

@@ -40,6 +40,13 @@ hl = setmetatable({
       release = opts.release == true,
     })
   end,
+  unbind = function(keys)
+    for index = #bindings, 1, -1 do
+      if bindings[index].keys == keys then
+        table.remove(bindings, index)
+      end
+    end
+  end,
   config = function() end,
   env = function() end,
   monitor = function() end,

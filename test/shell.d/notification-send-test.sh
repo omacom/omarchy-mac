@@ -26,6 +26,19 @@ tripwire="$tmpdir/notify-send-was-used"
 
 send() {
   OMARCHY_TEST_BUSCTL_ARGS="$args_file" OMARCHY_TEST_NOTIFY_TRIPWIRE="$tripwire" \
+    OMARCHY_PATH="$ROOT" OMARCHY_UNAME_M=x86_64 \
+    PATH="$tmpdir:$ROOT/bin:$PATH" omarchy-notification-send "$@"
+}
+
+compatible="$tmpdir/compatible"
+model="$tmpdir/model"
+printf 'apple,j313\0apple,t8103\0' >"$compatible"
+printf 'Apple MacBook Air (M1, 2020)\0' >"$model"
+
+send_m1() {
+  OMARCHY_TEST_BUSCTL_ARGS="$args_file" OMARCHY_TEST_NOTIFY_TRIPWIRE="$tripwire" \
+    OMARCHY_PATH="$ROOT" OMARCHY_UNAME_M=aarch64 \
+    OMARCHY_APPLE_COMPATIBLE="$compatible" OMARCHY_APPLE_MODEL="$model" \
     PATH="$tmpdir:$ROOT/bin:$PATH" omarchy-notification-send "$@"
 }
 
@@ -100,6 +113,32 @@ load
 [[ ${args[-1]} == "15000" ]] || fail "notification wrapper accepts --flag=value" "${args[-1]}"
 [[ ${args[12]} == "Body" ]] || fail "notification wrapper keeps the body with an =value flag" "${args[12]}"
 pass "notification wrapper accepts the --flag=value form"
+
+# All Omarchy notifications pass through this command. Hardware-aware modifier
+# names therefore apply to both visible fields without every caller having to
+# remember to opt in.
+: >"$args_file"
+send_m1 "Use Super+K" "Alt + F12; Ctrl+X or SUPER + SPACE" >/dev/null
+load
+[[ ${args[11]} == "Use Command+K" ]] ||
+  fail "M1 Air notification summaries use physical modifier names" "${args[11]}"
+[[ ${args[12]} == "Option + F12; Control+X or COMMAND + SPACE" ]] ||
+  fail "M1 Air notification bodies use physical modifier names" "${args[12]}"
+pass "notification wrapper normalizes shortcut labels in the summary and body"
+
+: >"$args_file"
+send_m1 "C++ Super Resolution" "A + Alt text; AltGr, Alt, and Ctrl remain plain data" >/dev/null
+load
+[[ ${args[11]} == "C++ Super Resolution" && ${args[12]} == "A + Alt text; AltGr, Alt, and Ctrl remain plain data" ]] ||
+  fail "notification label normalization does not rewrite prose, standalone words, or AltGr" "summary=${args[11]} body=${args[12]}"
+pass "notification wrapper only normalizes shortcut-shaped modifier names"
+
+: >"$args_file"
+send "Use Super+K" "Alt + Ctrl + X" >/dev/null
+load
+[[ ${args[11]} == "Use Super+K" && ${args[12]} == "Alt + Ctrl + X" ]] ||
+  fail "non-M1 notification labels retain their existing wording" "summary=${args[11]} body=${args[12]}"
+pass "notification wrapper preserves shortcut labels on non-M1 systems"
 
 # ---------------------------------------------------------------- no click cmd
 : >"$args_file"
