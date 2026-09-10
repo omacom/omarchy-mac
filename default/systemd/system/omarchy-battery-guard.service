@@ -1,5 +1,5 @@
 [Unit]
-Description=Protect the session from hard battery cutoff
+Description=Graceful shutdown before hard battery cutoff
 ConditionPathExists=/sys/class/power_supply
 After=systemd-udevd.service
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# omarchy:summary=Monitor battery discharge and prevent hard cutoff
+# omarchy:summary=Warn and shut down gracefully before battery cutoff
 # omarchy:group=battery
 # omarchy:args=[--oneshot]
 # omarchy:examples=omarchy battery guard
@@ -15,14 +15,14 @@ else
   STATE_ROOT="${OMARCHY_BATTERY_GUARD_STATE_DIR:-$HOME/.local/state/omarchy/battery-guard}"
 fi
 STATE_FILE="$STATE_ROOT/state"
-BOOT_MARKER_FILE="$STATE_ROOT/boot-preserve-required"
 
 POLL_INTERVAL="${OMARCHY_BATTERY_GUARD_POLL_INTERVAL:-1}"
 COUNTDOWN_SECONDS="${OMARCHY_BATTERY_GUARD_COUNTDOWN_SECONDS:-60}"
-THRESHOLD_PERCENT="${OMARCHY_BATTERY_GUARD_THRESHOLD_PERCENT:-10}"
+THRESHOLD_PERCENT="${OMARCHY_BATTERY_GUARD_THRESHOLD_PERCENT:-5}"
 TIMELEFT_TRIGGER_SECONDS="${OMARCHY_BATTERY_GUARD_TIMELEFT_TRIGGER_SECONDS:-90}"
 MAX_ONESHOT_CYCLES="${OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES:-1}"
 DRY_RUN="${OMARCHY_BATTERY_GUARD_DRY_RUN:-false}"
+CLOCK_PATH="${OMARCHY_BATTERY_GUARD_CLOCK_PATH:-/proc/uptime}"
 
 normalize_int() {
   local value="$1"
@@ -47,7 +47,7 @@ normalize_int() {
 
 POLL_INTERVAL=$(normalize_int "$POLL_INTERVAL" 1 1)
 COUNTDOWN_SECONDS=$(normalize_int "$COUNTDOWN_SECONDS" 60 1)
-THRESHOLD_PERCENT=$(normalize_int "$THRESHOLD_PERCENT" 10 0 100)
+THRESHOLD_PERCENT=$(normalize_int "$THRESHOLD_PERCENT" 5 0 100)
 TIMELEFT_TRIGGER_SECONDS=$(normalize_int "$TIMELEFT_TRIGGER_SECONDS" 90 1)
 MAX_ONESHOT_CYCLES=$(normalize_int "$MAX_ONESHOT_CYCLES" 1 1)
 
@@ -94,6 +94,7 @@ find_battery_supply() {
     fi
 
     [[ $(<"$path/type") == "Battery" ]] || continue
+    [[ ! -r $path/scope || $(<"$path/scope") != "Device" ]] || continue
     echo "$path"
     return 0
   done
@@ -214,291 +215,259 @@ read_battery_state() {
   return 0
 }
 
+# Notification IDs belong to each user's notification server, never to root.
+declare -A notification_ids=()
+declare -A close_plans=() close_done=() close_complete=()
+
+session_users() {
+  if (( EUID == 0 )); then
+    loginctl list-users --no-legend 2>/dev/null || true
+  else
+    printf '%s %s\n' "$EUID" "$(id -un)"
+  fi
+}
+
+as_session_user() {
+  local uid="$1" user="$2"
+  shift 2
+  if (( EUID == 0 )); then
+    timeout 2s runuser -u "$user" -- env -i \
+      PATH=/usr/bin:/bin USER="$user" LOGNAME="$user" \
+      XDG_RUNTIME_DIR="/run/user/$uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" "$@" 9>&-
+  else
+    timeout 2s "$@" 9>&-
+  fi
+}
+
 notify_critical() {
-  local message="$1"
-  local delivered=false
-  local runtime_dir
-  local uid
-  local user
-
-  if (( EUID != 0 )); then
-    omarchy-notification-send -i battery-caution -u critical "$message" >/dev/null 2>&1 || true
-    return 0
-  fi
-
+  local message="$1" lifetime="${2:-0}"
+  local uid user result id
   while read -r uid user _; do
-    [[ $uid =~ ^[0-9]+$ ]] || continue
+    [[ $uid =~ ^[0-9]+$ && -n $user ]] || continue
     (( uid >= 1000 )) || continue
-    runtime_dir="/run/user/$uid"
-    [[ -S $runtime_dir/bus ]] || continue
-
-    if timeout 2s runuser -u "$user" -- env \
-      XDG_RUNTIME_DIR="$runtime_dir" \
-      DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
-      /usr/bin/omarchy-notification-send -i battery-caution -u critical "$message" >/dev/null 2>&1; then
-      delivered=true
+    id=${notification_ids[$uid]:-0}
+    if result=$(as_session_user "$uid" "$user" omarchy-notification-send \
+      --app-name omarchy-battery-guard -i battery-caution -u critical \
+      -p -r "$id" -t "$lifetime" "Battery protection" "$message" 2>/dev/null); then
+      if [[ $result =~ ^[0-9]+$ ]]; then
+        notification_ids[$uid]=$result
+      fi
     fi
-  done < <(loginctl list-users --no-legend 2>/dev/null || true)
-
-  if ! $delivered; then
-    timeout 2s wall -n "$message" >/dev/null 2>&1 || true
-  fi
+  done < <(session_users)
 }
 
-mark_boot_recovery() {
-  local marker_tmp
-
-  mkdir -p "$STATE_ROOT"
-  chmod 700 "$STATE_ROOT"
-  marker_tmp=$(mktemp --tmpdir="$STATE_ROOT" .boot-preserve-required.XXXXXX)
-  printf '%s\n' "protected-action" >"$marker_tmp"
-  mv -f "$marker_tmp" "$BOOT_MARKER_FILE"
+# An online adapter may be too weak to stop discharge. Re-read the status at
+# every action boundary, rather than relying on the preceding polling sample.
+power_recovered() {
+  find_ac_online || return 1
+  [[ -r $battery_path/status ]] || return 1
+  case $(<"$battery_path/status") in
+    Charging|Full) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
-clear_boot_marker() {
-  [[ -f $BOOT_MARKER_FILE ]] || return 0
-  rm -f "$BOOT_MARKER_FILE"
+request_window_close() {
+  local uid user output signature pid wayland address extra plan valid result key
+  [[ $DRY_RUN != "true" ]] || return 0
+  while read -r uid user _; do
+    [[ $uid =~ ^[0-9]+$ && -n $user ]] || continue
+    (( uid >= 1000 )) || continue
+    power_recovered && return 0
+    (( $(now_seconds) + 2 < countdown_deadline )) || return 0
+    if [[ ${close_complete[$uid]:-false} != "true" ]]; then
+      # Snapshot is read-only. A failed/partial result cannot dispatch anything.
+      if ! output=$(as_session_user "$uid" "$user" /bin/bash /usr/share/omarchy/default/battery-guard/close-windows \
+        "$battery_path" --snapshot 2>/dev/null); then
+        continue
+      fi
+      plan="" valid=true
+      while read -r signature pid wayland address extra; do
+        [[ -n $signature ]] || continue
+        if [[ $signature =~ ^[a-zA-Z0-9_-]+$ && $pid =~ ^[0-9]+$ && $wayland =~ ^wayland-[0-9]+$ && $address =~ ^0x[0-9a-fA-F]+$ && -z $extra ]]; then
+          plan+="$signature $pid $wayland $address"$'\n'
+        else
+          valid=false
+        fi
+      done <<<"$output"
+      $valid || continue
+      close_plans[$uid]=$plan
+      # This sentinel also preserves an empty snapshot across daemon restarts.
+      close_complete[$uid]=true
+      write_state countdown
+    fi
+    while read -r signature pid wayland address; do
+      [[ -n $signature ]] || continue
+      key="$signature $address"
+      if grep -Fxq -- "$key" <<<"${close_done[$uid]:-}"; then continue; fi
+      power_recovered && return 0
+      (( $(now_seconds) + 2 < countdown_deadline )) || return 0
+      # Persist before any possible dispatch. If the daemon or RPC dies now,
+      # restarting must not resend a request that may already show a save dialog.
+      close_done[$uid]+="$key"$'\n'
+      close_requested=true
+      write_state countdown
+      result=0
+      as_session_user "$uid" "$user" /bin/bash /usr/share/omarchy/default/battery-guard/close-windows \
+        "$battery_path" --close-one "$signature" "$pid" "$wayland" "$address" >/dev/null 2>&1 || result=$?
+      # Only a definite rejection is retryable. Timeout/transport failures have
+      # an uncertain outcome and retain their persisted attempt marker.
+      if (( result == 2 )); then
+        close_done[$uid]=$(grep -Fxv -- "$key" <<<"${close_done[$uid]}") || true
+        [[ -z ${close_done[$uid]} ]] || close_done[$uid]+=$'\n'
+        write_state countdown
+      fi
+    done <<<"${close_plans[$uid]:-}"
+  done < <(session_users)
 }
 
 write_state() {
-  local mode="$1"
-  local percent_value="$2"
-  local remaining_value="$3"
-  local deadline_value="${4:-0}"
-  local state_tmp
-
-  mkdir -p "$STATE_ROOT"
-  chmod 700 "$STATE_ROOT"
+  local mode="$1" state_tmp uid line
   state_tmp=$(mktemp --tmpdir="$STATE_ROOT" .state.XXXXXX)
-  printf 'mode=%s\npercentage=%s\nremaining=%s\ndeadline=%s\nupdated=%s\n' \
-    "$mode" "$percent_value" "$remaining_value" "$deadline_value" "$(date +%s)" >"$state_tmp"
+  printf 'mode=%s\ndeadline=%s\nboot=%s\nclosed=%s\n' \
+    "$mode" "$countdown_deadline" "$boot_id" "$close_requested" >"$state_tmp"
+  for uid in "${!close_plans[@]}"; do
+    while read -r line; do
+      [[ -z $line ]] || printf 'plan:%s=%s\n' "$uid" "$line" >>"$state_tmp"
+    done <<<"${close_plans[$uid]}"
+  done
+  for uid in "${!close_complete[@]}"; do
+    [[ ${close_complete[$uid]} != "true" ]] || printf 'snapshot:%s=1\n' "$uid" >>"$state_tmp"
+  done
+  for uid in "${!close_done[@]}"; do
+    while read -r line; do
+      [[ -z $line ]] || printf 'done:%s=%s\n' "$uid" "$line" >>"$state_tmp"
+    done <<<"${close_done[$uid]}"
+  done
   mv -f "$state_tmp" "$STATE_FILE"
 }
 
+# Deadlines use uptime: wall-clock adjustments must not extend the save window.
+now_seconds() {
+  local uptime _
+  read -r uptime _ <"$CLOCK_PATH"
+  printf '%s\n' "${uptime%%.*}"
+}
+
 read_persisted_countdown() {
-  local key
-  local value
-  local persisted_mode=""
-  local persisted_remaining=""
-  local persisted_deadline=""
-  local now
-
-  [[ -r $STATE_FILE ]] || return 1
-
+  local key value mode="" deadline="" boot="" closed="false"
+  [[ -r $STATE_FILE ]] || return 0
   while IFS='=' read -r key value; do
     case "$key" in
-      mode) persisted_mode=$value ;;
-      remaining) persisted_remaining=$value ;;
-      deadline) persisted_deadline=$value ;;
+      mode) mode=$value ;;
+      deadline) deadline=$value ;;
+      boot) boot=$value ;;
+      closed) closed=$value ;;
+      snapshot:*)
+        [[ ${key#*:} =~ ^[0-9]+$ && $value == "1" ]] || continue
+        close_complete[${key#*:}]=true
+        ;;
+      plan:*)
+        [[ ${key#*:} =~ ^[0-9]+$ ]] || continue
+        close_plans[${key#*:}]+="$value"$'\n'
+        ;;
+      done:*)
+        [[ ${key#*:} =~ ^[0-9]+$ ]] || continue
+        close_done[${key#*:}]+="$value"$'\n'
+        ;;
     esac
   done <"$STATE_FILE"
-
-  [[ $persisted_mode == "countdown" ]] || return 1
-  [[ $persisted_remaining =~ ^[0-9]+$ ]] || return 1
-
-  if [[ $persisted_deadline =~ ^[0-9]+$ ]]; then
-    countdown_deadline=$persisted_deadline
-    now=$(date +%s)
-    countdown_remaining=$((countdown_deadline - now))
-    if (( countdown_remaining < 0 )); then
-      countdown_remaining=0
-    elif (( countdown_remaining > COUNTDOWN_SECONDS )); then
-      countdown_remaining=$COUNTDOWN_SECONDS
-      countdown_deadline=$((now + countdown_remaining))
-    fi
+  if [[ $mode == "countdown" && $boot == "$boot_id" && $deadline =~ ^[0-9]{1,10}$ ]]; then
+    countdown_deadline=$deadline
+    countdown_active=true
+    [[ $closed != "true" ]] || close_requested=true
+    # Replacement IDs are intentionally not reused across a daemon/server restart.
   else
-    countdown_remaining=$persisted_remaining
-    if (( countdown_remaining > COUNTDOWN_SECONDS )); then
-      countdown_remaining=$COUNTDOWN_SECONDS
-    fi
-    countdown_deadline=$(($(date +%s) + countdown_remaining))
+    close_plans=() close_done=() close_complete=()
   fi
+}
 
-  countdown_active=true
-  return 0
+cancel_countdown() {
+  local apps_were_asked_to_close=$close_requested
+  countdown_active=false
+  close_plans=() close_done=() close_complete=()
+  close_requested=false
+  countdown_deadline=0
+  write_state idle
+  if $apps_were_asked_to_close; then
+    notify_critical "Charging resumed. Shutdown cancelled. Reopen any closed apps." 5000
+  else
+    notify_critical "Charging resumed. Shutdown cancelled." 5000
+  fi
 }
 
 run_action_once() {
-  local action="poweroff"
-
-  if find_ac_online; then
-    clear_boot_marker
-    action_result="cancelled"
-    return 0
-  fi
-
-  if omarchy-hibernation-available >/dev/null 2>&1; then
-    action="hibernate"
-  fi
-
-  notify_critical "Battery guard activated. Preserving session where possible."
-
+  power_recovered && { cancel_countdown; return; }
+  notify_critical "Shutting down…"
+  power_recovered && { cancel_countdown; return; }
   if [[ $DRY_RUN == "true" ]]; then
-    mark_boot_recovery
-    action_result="dry-run"
-    return 0
+    write_state dry-run
+  else
+    # The regular shutdown transaction gives services their normal stop timeout
+    # and unmounts filesystems. Never use --force or terminate app PIDs here.
+    systemctl poweroff --no-wall
+    write_state actioned
   fi
-
-  if [[ $action == "hibernate" ]]; then
-    if find_ac_online; then
-      clear_boot_marker
-      action_result="cancelled"
-      return 0
-    fi
-
-    mark_boot_recovery
-    if systemctl hibernate --no-wall; then
-      action_result="resumed"
-      return 0
-    fi
-
-    if find_ac_online; then
-      clear_boot_marker
-      action_result="cancelled"
-      return 0
-    fi
-  fi
-
-  if find_ac_online; then
-    clear_boot_marker
-    action_result="cancelled"
-    return 0
-  fi
-
-  mark_boot_recovery
-  systemctl poweroff --no-wall
-  action_result="poweroff"
-}
-
-emit_boot_recovery_notice() {
-  if [[ ! -f $BOOT_MARKER_FILE ]]; then
-    return
-  fi
-
-  notify_critical "Battery guard previously took protective action. The session was restored only if hibernation completed."
-
-  clear_boot_marker
-}
-
-if ! is_battery_monitor_running; then
-  clear_boot_marker
   exit 0
-fi
+}
 
-emit_boot_recovery_notice
-
+[[ -d $POWER_SUPPLY_PATH ]] || exit 0
+boot_id=$(</proc/sys/kernel/random/boot_id)
 countdown_active=false
-countdown_remaining=$COUNTDOWN_SECONDS
 countdown_deadline=0
-
-read_persisted_countdown || true
-
+close_requested=false
+last_notice=61
+read_persisted_countdown
 cycle=0
 
 while true; do
   battery_path=$(find_battery_supply || true)
-  if [[ -z $battery_path ]]; then
-    countdown_active=false
-    sleep "$POLL_INTERVAL"
-    cycle=$((cycle + 1))
-    if $oneshot && (( cycle >= MAX_ONESHOT_CYCLES )); then
-      exit 0
-    fi
-    continue
-  fi
-
-  if ! read_battery_state "$battery_path"; then
-    countdown_active=false
-    sleep "$POLL_INTERVAL"
-    cycle=$((cycle + 1))
-    if $oneshot && (( cycle >= MAX_ONESHOT_CYCLES )); then
-      exit 0
-    fi
-    continue
-  fi
-
-  if find_ac_online; then
-    if $countdown_active; then
-      countdown_active=false
-      countdown_remaining=$COUNTDOWN_SECONDS
-      write_state idle "$percent" 0
-      notify_critical "Battery guard cancelled because AC power is available."
-    fi
-  else
-    should_guard=false
-    if $discharging; then
-      if (( percent <= THRESHOLD_PERCENT )); then
-        should_guard=true
-      elif (( seconds_to_empty > 0 && seconds_to_empty <= TIMELEFT_TRIGGER_SECONDS )); then
-        should_guard=true
-      fi
-    fi
-
-    if $should_guard; then
-      if ! $countdown_active; then
+  if [[ -n $battery_path ]] && read_battery_state "$battery_path"; then
+    if power_recovered; then
+      if $countdown_active; then cancel_countdown; fi
+    elif $discharging || $countdown_active; then
+      now=$(now_seconds)
+      if ! $countdown_active && (( percent <= THRESHOLD_PERCENT || (seconds_to_empty > 0 && seconds_to_empty <= TIMELEFT_TRIGGER_SECONDS) )); then
         countdown_active=true
-        countdown_remaining=$COUNTDOWN_SECONDS
-        countdown_deadline=$(($(date +%s) + COUNTDOWN_SECONDS))
-        write_state countdown "$percent" "$countdown_remaining" "$countdown_deadline"
-        if (( EUID != 0 )); then
-          timeout 2s omarchy-hook battery-guard "$percent" "$countdown_remaining" || true
+        close_requested=false
+        close_plans=() close_done=() close_complete=()
+        countdown_deadline=$((now + COUNTDOWN_SECONDS))
+        last_notice=61
+      fi
+      if $countdown_active; then
+        # Leave 30 seconds for the OS to stop services and flush storage.
+        # Runtime estimates can deteriorate; shorten, never extend a deadline.
+        if (( seconds_to_empty > 0 && now + seconds_to_empty - 30 < countdown_deadline )); then
+          countdown_deadline=$((now + seconds_to_empty - 30))
         fi
-        notify_critical "Battery low. Emergency shutdown in ${countdown_remaining}s unless AC power arrives."
-      else
-        countdown_remaining=$((countdown_deadline - $(date +%s)))
-        if (( countdown_remaining < 0 )); then
-          countdown_remaining=0
-        fi
-
-        write_state countdown "$percent" "$countdown_remaining" "$countdown_deadline"
-        if (( countdown_remaining > 0 && countdown_remaining % 10 == 0 )); then
-          notify_critical "Battery guard: ${countdown_remaining}s remain before protected shutdown."
-        fi
-
-        if (( countdown_remaining <= 0 )); then
-          if find_ac_online; then
-            countdown_active=false
-            countdown_remaining=$COUNTDOWN_SECONDS
-            write_state idle "$percent" 0
-            notify_critical "Battery guard cancelled because AC power is available."
+        remaining=$((countdown_deadline - now))
+        (( remaining >= 0 )) || remaining=0
+        write_state countdown
+        if (( remaining == 0 )); then
+          run_action_once
+        elif (( last_notice == 61 || (remaining <= 30 && last_notice > 30) || (remaining <= 10 && last_notice > 10) )); then
+          if (( remaining <= 10 )); then
+            notify_critical "Finish any save dialogs. Shutdown in ${remaining}s."
           else
-            countdown_active=false
-            run_action_once
-            case "$action_result" in
-              cancelled)
-                countdown_remaining=$COUNTDOWN_SECONDS
-                write_state idle "$percent" 0
-                notify_critical "Battery guard cancelled because AC power is available."
-                ;;
-              resumed)
-                clear_boot_marker
-                countdown_remaining=$COUNTDOWN_SECONDS
-                write_state idle "$percent" 0
-                notify_critical "Battery guard restored this session from hibernation."
-                ;;
-              dry-run)
-                countdown_remaining=$COUNTDOWN_SECONDS
-                write_state idle "$percent" 0
-                ;;
-              poweroff)
-                write_state actioned "$percent" 0
-                exit 0
-                ;;
-            esac
+            notify_critical "Save your work and connect your charger. Shutdown in ${remaining}s."
           fi
+          last_notice=$remaining
+        fi
+        # Notification delivery also consumes time; check the deadline again.
+        now=$(now_seconds)
+        remaining=$((countdown_deadline - now))
+        if power_recovered; then
+          cancel_countdown
+        elif (( remaining <= 0 )); then
+          run_action_once
+        elif (( remaining <= 15 )); then
+          request_window_close
         fi
       fi
-    elif $countdown_active; then
-      countdown_active=false
-      countdown_remaining=$COUNTDOWN_SECONDS
-      write_state idle "$percent" 0
     fi
   fi
-
   cycle=$((cycle + 1))
-  if $oneshot && (( cycle >= MAX_ONESHOT_CYCLES )); then
-    exit 0
-  fi
-
+  if $oneshot && (( cycle >= MAX_ONESHOT_CYCLES )); then exit 0; fi
   sleep "$POLL_INTERVAL"
 done

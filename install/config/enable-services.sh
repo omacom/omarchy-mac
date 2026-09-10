@@ -17,7 +17,5 @@ systemctl enable sddm.service
 # is what the user manager reports app.slice candidacy over.
 systemctl enable systemd-oomd.service
 
-# Keep the low-battery cutoff guard alive before login and after logout. The
-# packaged default tree is root-owned, so it is safe to link as a system unit.
-systemctl link --force /usr/share/omarchy/default/systemd/system/omarchy-battery-guard.service
-systemctl enable omarchy-battery-guard.service
+# Deploy the root-owned guard before enabling it; do not start it mid-install.
+bash "$OMARCHY_INSTALL/helpers/battery-guard.sh"

@@ -1,164 +1,217 @@
 #!/bin/bash
-
 set -euo pipefail
-
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
-
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
+mkdir -p "$tmp_dir/bin" "$tmp_dir/power/BAT0" "$tmp_dir/power/AC"
+export OMARCHY_POWER_SUPPLY_PATH="$tmp_dir/power"
+export OMARCHY_BATTERY_GUARD_STATE_DIR="$tmp_dir/state"
+export OMARCHY_BATTERY_GUARD_CLOCK_PATH="$tmp_dir/clock"
+export OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES=70
+export OMARCHY_BATTERY_GUARD_DRY_RUN=false
+export EVENTS="$tmp_dir/events" SCENARIO=""
+export PATH="$tmp_dir/bin:$PATH"
+unset OMARCHY_BATTERY_GUARD_THRESHOLD_PERCENT OMARCHY_BATTERY_GUARD_COUNTDOWN_SECONDS
 
-power_dir="$tmp_dir/power"
-state_dir="$tmp_dir/state"
-export HOME="$tmp_dir/home"
-
-mkdir -p "$power_dir/BAT0" "$power_dir/AC" "$state_dir" "$HOME"
-
-empty_power_dir="$tmp_dir/empty-power"
-empty_state_dir="$tmp_dir/empty-state"
-mkdir -p "$empty_power_dir"
-OMARCHY_POWER_SUPPLY_PATH="$empty_power_dir" OMARCHY_BATTERY_GUARD_STATE_DIR="$empty_state_dir" \
-  OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES=1 "$ROOT/bin/omarchy-battery-guard" --oneshot
-[[ ! -e $empty_state_dir/state ]] || fail "a machine without a battery must not receive periodic state writes"
-
-cat >"$power_dir/BAT0/type" <<'EOF'
-Battery
-EOF
-printf '%s\n' 1 >"$power_dir/BAT0/present"
-printf '%s\n' 5 >"$power_dir/BAT0/capacity"
-printf '%s\n' Discharging >"$power_dir/BAT0/status"
-printf '%s\n' 1000000 >"$power_dir/BAT0/power_now"
-printf '%s\n' 5000 >"$power_dir/BAT0/energy_now"
-
-export OMARCHY_POWER_SUPPLY_PATH="$power_dir"
-export OMARCHY_BATTERY_GUARD_STATE_DIR="$state_dir"
-export OMARCHY_BATTERY_GUARD_COUNTDOWN_SECONDS=2
-export OMARCHY_BATTERY_GUARD_POLL_INTERVAL=1
-export OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES=4
-export OMARCHY_BATTERY_GUARD_THRESHOLD_PERCENT=10
-export OMARCHY_BATTERY_GUARD_DRY_RUN=true
-
-"$ROOT/bin/omarchy-battery-guard" --oneshot
-
-action_file="$state_dir/boot-preserve-required"
-[[ -f $action_file ]] || fail "battery guard marks protective action when critical"
-
-grep -F 'mode=' "$state_dir/state" >/dev/null || fail "battery guard writes runtime mode"
-grep -F 'percentage=' "$state_dir/state" >/dev/null || fail "battery guard writes battery percentage into state"
-
-printf '%s\n' Mains >"$power_dir/AC/type"
-printf '%s\n' 1 >"$power_dir/AC/online"
-rm -f "$action_file"
-
-"$ROOT/bin/omarchy-battery-guard" --oneshot
-[[ ! -f $action_file ]] || fail "battery guard does not mark action when AC is present"
-
-cat >"$state_dir/state" <<STATE
-mode=countdown
-percentage=8
-remaining=5
-updated=1
-STATE
-
-"$ROOT/bin/omarchy-battery-guard" --oneshot
-grep -Fx 'mode=idle' "$state_dir/state" >/dev/null || fail "battery guard clears pending countdown after plug-in on boot"
-
-printf '%s\n' 0 >"$power_dir/AC/online"
-printf '%s\n' 50 >"$power_dir/BAT0/capacity"
-rm -f "$power_dir/BAT0/energy_now" "$power_dir/BAT0/power_now" "$action_file"
-printf '%s\n' 5000000 >"$power_dir/BAT0/charge_now"
-printf '%s\n' 1000 >"$power_dir/BAT0/current_now"
-printf '%s\n' 1000000 >"$power_dir/BAT0/voltage_now"
-
-"$ROOT/bin/omarchy-battery-guard" --oneshot
-[[ ! -f $action_file ]] || fail "charge and current units do not create a false time-to-empty action"
-
-injected_file="$tmp_dir/state-was-executed"
-printf 'mode=$(touch %s)\nremaining=5\n' "$injected_file" >"$state_dir/state"
-printf '%s\n' 1 >"$power_dir/AC/online"
-
-"$ROOT/bin/omarchy-battery-guard" --oneshot
-[[ ! -e $injected_file ]] || fail "battery guard must treat persisted state as data"
-
-mock_bin="$tmp_dir/mock-bin"
-migration_home="$tmp_dir/migration-home"
-systemctl_log="$tmp_dir/systemctl.log"
-mkdir -p "$mock_bin" "$migration_home"
-
-cat >"$mock_bin/systemctl" <<'EOF'
+cat >"$tmp_dir/bin/sleep" <<'SH'
 #!/bin/bash
-printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"
-
-if [[ $1 == "is-enabled" ]]; then
-  [[ ${SYSTEMCTL_ENABLED:-false} == "true" ]]
-elif [[ $1 == "is-active" ]]; then
-  [[ ${SYSTEMCTL_ACTIVE:-false} == "true" ]]
-elif [[ $1 == "hibernate" ]]; then
-  [[ ${SYSTEMCTL_HIBERNATE_SUCCESS:-false} == "true" ]]
-elif [[ $1 == "poweroff" ]]; then
-  exit 1
+read -r now _ <"$OMARCHY_BATTERY_GUARD_CLOCK_PATH"
+printf '%s 0\n' "$((now + 1))" >"$OMARCHY_BATTERY_GUARD_CLOCK_PATH"
+if [[ $SCENARIO == "plug" && $now == "46" ]]; then
+  printf '1\n' >"$OMARCHY_POWER_SUPPLY_PATH/AC/online"
+  printf 'Charging\n' >"$OMARCHY_POWER_SUPPLY_PATH/BAT0/status"
 fi
-EOF
-chmod +x "$mock_bin/systemctl"
-
-cat >"$mock_bin/sudo" <<'EOF'
-#!/bin/bash
-exec "$@"
-EOF
-
-cat >"$mock_bin/omarchy-hibernation-available" <<'EOF'
-#!/bin/bash
-if [[ -n ${PLUG_AC_ON_CHECK:-} ]]; then
-  printf '%s\n' 1 >"$PLUG_AC_ON_CHECK"
+if [[ $SCENARIO == "collapse" && $now == "5" ]]; then
+  printf '20\n' >"$OMARCHY_POWER_SUPPLY_PATH/BAT0/time_to_empty_now"
 fi
-[[ ${HIBERNATION_AVAILABLE:-false} == "true" ]]
-EOF
-cat >"$mock_bin/omarchy-hook" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-cat >"$mock_bin/omarchy-notification-send" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-chmod +x "$mock_bin/sudo" "$mock_bin/omarchy-hibernation-available" "$mock_bin/omarchy-hook" "$mock_bin/omarchy-notification-send"
-
-printf '%s\n' 0 >"$power_dir/AC/online"
-printf '%s\n' 5 >"$power_dir/BAT0/capacity"
-rm -f "$state_dir/state" "$action_file"
-: >"$systemctl_log"
-PATH="$mock_bin:$PATH" SYSTEMCTL_LOG="$systemctl_log" PLUG_AC_ON_CHECK="$power_dir/AC/online" \
-  OMARCHY_BATTERY_GUARD_DRY_RUN=false OMARCHY_BATTERY_GUARD_COUNTDOWN_SECONDS=1 \
-  OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES=3 "$ROOT/bin/omarchy-battery-guard" --oneshot
-! grep -Fx -- 'poweroff --no-wall' "$systemctl_log" >/dev/null || fail "AC arriving at the action boundary must cancel poweroff"
-
-: >"$systemctl_log"
-printf '%s\n' 0 >"$power_dir/AC/online"
-rm -f "$state_dir/state" "$action_file"
-if PATH="$mock_bin:$PATH" SYSTEMCTL_LOG="$systemctl_log" OMARCHY_BATTERY_GUARD_DRY_RUN=false \
-  OMARCHY_BATTERY_GUARD_COUNTDOWN_SECONDS=1 OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES=3 \
-  "$ROOT/bin/omarchy-battery-guard" --oneshot; then
-  fail "battery guard must propagate a failed poweroff"
+if [[ $SCENARIO == "unknown" && $now == "5" ]]; then
+  printf 'Unknown\n' >"$OMARCHY_POWER_SUPPLY_PATH/BAT0/status"
+  printf '1\n' >"$OMARCHY_POWER_SUPPLY_PATH/AC/online"
 fi
-grep -Fx -- 'poweroff --no-wall' "$systemctl_log" >/dev/null || fail "battery guard attempts poweroff directly"
+SH
+cat >"$tmp_dir/bin/timeout" <<'SH'
+#!/bin/bash
+shift
+if [[ $1 == "/bin/bash" && $2 == "/usr/share/omarchy/default/battery-guard/close-windows" ]]; then
+  shift
+  if [[ $3 == "--snapshot" ]]; then
+    printf 'snapshot\n' >>"$EVENTS"
+    if [[ $SCENARIO != "empty-snapshot" ]]; then
+      printf 'fixture 123 wayland-1 0xabc\n'
+      if [[ $SCENARIO == "close-partial" || $SCENARIO == "crash" ]]; then
+        printf 'fixture 123 wayland-1 0xdef\n'
+      fi
+    fi
+    exit 0
+  fi
+  [[ $3 == "--close-one" ]] || exit 1
+  printf 'close %s\n' "$(cat "$OMARCHY_BATTERY_GUARD_CLOCK_PATH")" >>"$EVENTS"
+  printf 'dispatch %s\n' "$7" >>"$EVENTS"
+  # Assert write-ahead state at the exact entry to a dispatch invocation.
+  grep -Eq '^snapshot:[0-9]+=1$' "$OMARCHY_BATTERY_GUARD_STATE_DIR/state" || exit 99
+  grep -Eq "^done:[0-9]+=fixture $7$" "$OMARCHY_BATTERY_GUARD_STATE_DIR/state" || exit 99
+  printf 'persisted-before-dispatch\n' >>"$EVENTS"
+  if [[ $SCENARIO == "reject-once" && ! -e $EVENTS.rejected ]]; then
+    touch "$EVENTS.rejected"
+    exit 2
+  fi
+  if [[ $SCENARIO == "crash" && $7 == "0xabc" ]]; then
+    kill -KILL "$GUARD_PID"
+    exit 124
+  fi
+  if [[ $SCENARIO == "close-partial" && $7 == "0xabc" ]]; then exit 124; fi
+  if [[ $SCENARIO == "close-plug" ]]; then
+    printf '1\n' >"$OMARCHY_POWER_SUPPLY_PATH/AC/online"
+    printf 'Charging\n' >"$OMARCHY_POWER_SUPPLY_PATH/BAT0/status"
+  fi
+else
+  exec "$@"
+fi
+SH
+cat >"$tmp_dir/bin/omarchy-notification-send" <<'SH'
+#!/bin/bash
+printf 'toast %s\n' "$*" >>"$EVENTS"
+if [[ $SCENARIO == "final-plug" && $* == *"Shutting down…"* ]]; then
+  printf '1\n' >"$OMARCHY_POWER_SUPPLY_PATH/AC/online"
+  printf 'Charging\n' >"$OMARCHY_POWER_SUPPLY_PATH/BAT0/status"
+fi
+printf '77\n'
+SH
+cat >"$tmp_dir/bin/systemctl" <<'SH'
+#!/bin/bash
+printf 'power %s %s\n' "$(cat "$OMARCHY_BATTERY_GUARD_CLOCK_PATH")" "$*" >>"$EVENTS"
+[[ $SCENARIO != "power-fail" ]]
+SH
+chmod +x "$tmp_dir/bin/"*
 
-: >"$systemctl_log"
-rm -f "$state_dir/state" "$action_file"
-PATH="$mock_bin:$PATH" SYSTEMCTL_LOG="$systemctl_log" HIBERNATION_AVAILABLE=true SYSTEMCTL_HIBERNATE_SUCCESS=true \
-  OMARCHY_BATTERY_GUARD_DRY_RUN=false OMARCHY_BATTERY_GUARD_COUNTDOWN_SECONDS=1 \
-  OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES=3 "$ROOT/bin/omarchy-battery-guard" --oneshot
-grep -Fx -- 'hibernate --no-wall' "$systemctl_log" >/dev/null || fail "battery guard waits for hibernation to return"
-! grep -Fx -- 'poweroff --no-wall' "$systemctl_log" >/dev/null || fail "successful hibernation must not fall through to poweroff"
-[[ ! -f $action_file ]] || fail "resumed hibernation clears the recovery marker"
+reset_fixture() {
+  rm -rf "$tmp_dir/state" "$tmp_dir/power/AAA"
+  rm -f "$EVENTS.rejected"
+  printf '0 0\n' >"$tmp_dir/clock"
+  : >"$EVENTS"
+  printf 'Battery\n' >"$tmp_dir/power/BAT0/type"
+  printf 'Discharging\n' >"$tmp_dir/power/BAT0/status"
+  printf '5\n' >"$tmp_dir/power/BAT0/capacity"
+  printf '600\n' >"$tmp_dir/power/BAT0/time_to_empty_now"
+  printf 'Mains\n' >"$tmp_dir/power/AC/type"
+  printf '0\n' >"$tmp_dir/power/AC/online"
+}
+run_guard() { bash -c 'export GUARD_PID=$$; exec "$ROOT/bin/omarchy-battery-guard" --oneshot'; }
 
-HOME="$migration_home" PATH="$mock_bin:$PATH" SYSTEMCTL_LOG="$systemctl_log" \
-  bash -euo pipefail "$ROOT/migrations/1789066533.sh" >/dev/null
-grep -Fx -- 'link --force /usr/share/omarchy/default/systemd/system/omarchy-battery-guard.service' "$systemctl_log" >/dev/null || fail "migration links the packaged system unit"
-grep -Fx -- 'daemon-reload' "$systemctl_log" >/dev/null || fail "migration reloads the system manager"
-grep -Fx -- 'enable --now omarchy-battery-guard.service' "$systemctl_log" >/dev/null || fail "migration enables and starts the system guard"
+reset_fixture
+printf '6\n' >"$tmp_dir/power/BAT0/capacity"
+run_guard
+[[ ! -s $EVENTS ]] || fail "raw 6 percent must not start countdown"
 
-: >"$systemctl_log"
-HOME="$migration_home" PATH="$mock_bin:$PATH" SYSTEMCTL_LOG="$systemctl_log" SYSTEMCTL_ENABLED=true SYSTEMCTL_ACTIVE=true \
-  bash -euo pipefail "$ROOT/migrations/1789066533.sh" >/dev/null
-[[ $(wc -l <"$systemctl_log") == 2 ]] || fail "migration is idempotent once the system guard is running"
+reset_fixture
+run_guard
+grep -Fx 'close 45 0' "$EVENTS" >/dev/null || fail "normal close gets last 15 seconds"
+grep -Fx 'power 60 0 poweroff --no-wall' "$EVENTS" >/dev/null || fail "default save window lasts 60 seconds"
+[[ $(grep -c '^toast ' "$EVENTS") == 4 ]] || fail "only initial, 30, 10, final notices"
+[[ $(grep -c -- '-p -r 0 -t 0' "$EVENTS") == 1 ]] || fail "first toast creates ID"
+[[ $(grep -c -- '-p -r 77 -t 0' "$EVENTS") == 3 ]] || fail "remaining notices replace same ID"
 
-pass "battery guard reacts safely in mocked low battery scenarios"
+reset_fixture
+SCENARIO=plug run_guard
+! grep '^power ' "$EVENTS" >/dev/null || fail "AC during save window aborts shutdown"
+grep -F -- '-r 77 -t 5000' "$EVENTS" >/dev/null || fail "cancel replaces toast and expires"
+
+reset_fixture
+SCENARIO=close-plug run_guard
+! grep '^power ' "$EVENTS" >/dev/null || fail "AC during close aborts shutdown"
+reset_fixture
+SCENARIO=final-plug run_guard
+! grep '^power ' "$EVENTS" >/dev/null || fail "AC during final notification aborts shutdown"
+
+reset_fixture
+printf '1\n' >"$tmp_dir/power/AC/online"
+run_guard
+grep '^power ' "$EVENTS" >/dev/null || fail "weak adapter must not cancel protection"
+
+reset_fixture
+printf '50\n' >"$tmp_dir/power/BAT0/time_to_empty_now"
+run_guard
+grep -Fx 'power 20 0 poweroff --no-wall' "$EVENTS" >/dev/null || fail "short runtime reserves 30 seconds"
+reset_fixture
+SCENARIO=collapse run_guard
+grep -Fx 'power 6 0 poweroff --no-wall' "$EVENTS" >/dev/null || fail "deteriorating runtime triggers emergency override"
+! grep '^close ' "$EVENTS" >/dev/null || fail "no close delay when reserve is exhausted"
+
+reset_fixture
+SCENARIO=close-partial run_guard
+[[ $(grep -c '^close ' "$EVENTS") == 2 ]] || fail "unfinished helper requests retry once with acknowledged windows excluded"
+grep -Fx 'power 60 0 poweroff --no-wall' "$EVENTS" >/dev/null || fail "close retries cannot extend save deadline"
+
+reset_fixture
+OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES=46 SCENARIO=close-partial run_guard
+grep -Fx 'done:1000=fixture 0xabc' "$tmp_dir/state/state" >/dev/null ||
+  grep -E '^done:[0-9]+=fixture 0xabc$' "$tmp_dir/state/state" >/dev/null || fail "partial close progress is persisted"
+SCENARIO=close-partial run_guard
+[[ $(grep -c '^close ' "$EVENTS") == 2 ]] || fail "restart retries unfinished snapshot without re-prompting completed windows"
+
+reset_fixture
+if SCENARIO=crash run_guard; then fail "fixture must interrupt the guard at dispatch entry"; fi
+grep -Fx 'persisted-before-dispatch' "$EVENTS" >/dev/null || fail "attempt is on disk before dispatch starts"
+SCENARIO=crash run_guard
+[[ $(grep -c '^snapshot$' "$EVENTS") == 1 ]] || fail "restart must not resnapshot save dialogs"
+[[ $(grep -c '^dispatch 0xabc$' "$EVENTS") == 1 ]] || fail "uncertain attempt must never be resent after crash"
+[[ $(grep -c '^dispatch 0xdef$' "$EVENTS") == 1 ]] || fail "restart still closes untouched original windows"
+
+reset_fixture
+OMARCHY_BATTERY_GUARD_MAX_ONESHOT_CYCLES=46 SCENARIO=empty-snapshot run_guard
+SCENARIO=empty-snapshot run_guard
+[[ $(grep -c '^snapshot$' "$EVENTS") == 1 ]] || fail "empty snapshot sentinel survives restart"
+! grep '^close ' "$EVENTS" >/dev/null || fail "empty snapshot never dispatches"
+
+reset_fixture
+SCENARIO=reject-once run_guard
+[[ $(grep -c '^dispatch 0xabc$' "$EVENTS") == 2 ]] || fail "explicit rejection unmarks the attempt for one successful retry"
+[[ $(grep -c '^snapshot$' "$EVENTS") == 1 ]] || fail "explicit rejection reuses the original snapshot"
+
+reset_fixture
+SCENARIO=unknown run_guard
+grep -Fx 'power 60 0 poweroff --no-wall' "$EVENTS" >/dev/null || fail "Unknown with online adapter preserves active deadline"
+
+reset_fixture
+mkdir -p "$tmp_dir/power/AAA"
+printf 'Battery\n' >"$tmp_dir/power/AAA/type"
+printf 'Device\n' >"$tmp_dir/power/AAA/scope"
+printf '95\n' >"$tmp_dir/power/AAA/capacity"
+run_guard
+grep '^power ' "$EVENTS" >/dev/null || fail "peripheral must not mask system battery"
+
+reset_fixture
+OMARCHY_BATTERY_GUARD_DRY_RUN=true run_guard
+! grep -E '^(close|power) ' "$EVENTS" >/dev/null || fail "dry run never closes apps or powers off"
+grep -Fx 'mode=dry-run' "$tmp_dir/state/state" >/dev/null || fail "dry run records outcome"
+
+reset_fixture
+if SCENARIO=power-fail run_guard; then fail "poweroff failure must propagate for systemd retry"; fi
+
+reset_fixture
+mkdir -p "$tmp_dir/state"
+printf 'mode=$(touch %s)\n' "$tmp_dir/injected" >"$tmp_dir/state/state"
+printf '6\n' >"$tmp_dir/power/BAT0/capacity"
+run_guard
+[[ ! -e $tmp_dir/injected ]] || fail "persisted state is data"
+
+# Exercise the notification function with two session recipients. It must keep
+# independent IDs in its caller, including the cancellation update.
+sed -n '/^notify_critical() {$/,/^}$/p' "$ROOT/bin/omarchy-battery-guard" >"$tmp_dir/notify.sh"
+(
+  declare -A notification_ids=()
+  source "$tmp_dir/notify.sh"
+  session_users() { printf '1000 alice\n1001 bob\n'; }
+  as_session_user() {
+    printf 'user %s %s\n' "$1" "$*" >>"$tmp_dir/recipients"
+    printf '%s\n' "$(($1 + 100))"
+  }
+  notify_critical initial
+  notify_critical update
+  notify_critical cancelled 5000
+)
+grep -E 'user 1000 .* -r 1100 -t 5000' "$tmp_dir/recipients" >/dev/null || fail "Alice retains her own replacement ID"
+grep -E 'user 1001 .* -r 1101 -t 5000' "$tmp_dir/recipients" >/dev/null || fail "Bob retains his own replacement ID"
+
+! rg 'systemctl hibernate|--force|killall|pkill' "$ROOT/bin/omarchy-battery-guard" "$ROOT/default/battery-guard/close-windows" | rg -v '^.*#' >/dev/null || fail "no forced process kills or hibernation"
+pass "battery guard thresholds, toast replacement, save window and emergency actions"
