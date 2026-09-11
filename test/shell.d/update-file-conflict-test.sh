@@ -10,6 +10,19 @@ trap 'rm -rf "$test_tmp"' EXIT
 stub_bin="$test_tmp/bin"
 mkdir -p "$stub_bin"
 
+# Exercise the ARM update targets on every host, while keeping repository and
+# keyring preparation out of these conflict-recovery tests.
+cat >"$stub_bin/uname" <<'STUB'
+#!/bin/bash
+printf '%s\n' aarch64
+STUB
+
+mkdir -p "$test_tmp/omarchy/install/helpers"
+cat >"$test_tmp/omarchy/install/helpers/arm-package-sources.sh" <<'STUB'
+source "$ROOT/install/helpers/arm-package-sources.sh"
+omarchy_arm_prepare_package_sources() { :; }
+STUB
+
 cat >"$stub_bin/sudo" <<'STUB'
 #!/bin/bash
 exec "$@"
@@ -24,6 +37,9 @@ if [[ $1 == -Qo ]]; then
   [[ " $OWNED_PATHS " == *" $2 "* ]]
   exit $?
 fi
+
+# Every initial transaction and retry must retain the explicit ARM targets.
+[[ " $* " == *" omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils "* ]] || exit 99
 
 attempt=$(($(cat "$PACMAN_ATTEMPTS") + 1))
 echo "$attempt" >"$PACMAN_ATTEMPTS"
@@ -40,12 +56,13 @@ fi
 echo "upgrade complete"
 STUB
 
-chmod +x "$stub_bin/sudo" "$stub_bin/pacman"
+chmod +x "$stub_bin/sudo" "$stub_bin/pacman" "$stub_bin/uname"
 
 replaced="$test_tmp/replaced"
 
 run_update() {
-  OMARCHY_REPLACED_DIR="$replaced" \
+  OMARCHY_PATH="$test_tmp/omarchy" \
+    OMARCHY_REPLACED_DIR="$replaced" \
     RETRY_FAILS="${RETRY_FAILS:-}" \
     RETRY_INSTALLS="${RETRY_INSTALLS:-}" \
     PACMAN_ATTEMPTS="$test_tmp/attempts" \

@@ -17,22 +17,21 @@ for config in "$ROOT"/default/pacman/pacman*.conf; do
 done
 pass "every shipped pacman config pins aarch64"
 
-# Omarchy's own package repo is x86_64 only (docs/upgrade-to-quattro.md). Any
-# config that still points at it makes pacman fetch aarch64 packages from an
-# x86 repo and breaks every system upgrade.
-leaky=()
-while read -r config; do
-  [[ -n $config ]] || continue
-  leaky+=("$(basename "$config")")
-done < <(grep -l 'pkgs\.omarchy\.org' "$ROOT"/default/pacman/pacman*.conf 2>/dev/null || true)
-(( ${#leaky[@]} == 0 )) ||
-  fail "no shipped pacman config points at the x86 Omarchy package repo" \
-    "still x86: ${leaky[*]}"
-pass "no shipped pacman config points at the x86 Omarchy package repo"
+# Official edge serves ARM packages, but only the selected compatibility stack
+# may use it. Keep architecture, channel, and signature constraints explicit.
+for config in "$ROOT"/default/pacman/pacman*.conf; do
+  section=$(awk '/^\[/ { selected = ($0 == "[omarchy]") } selected { print }' "$config")
+  grep -qxF 'Usage = Sync' <<< "$section" || fail "official edge requires explicit targets in $config"
+  grep -qxF 'SigLevel = Required DatabaseOptional' <<< "$section" || fail "official edge requires signed packages in $config"
+  grep -qxF 'Server = https://pkgs.omarchy.org/edge/$arch' <<< "$section" || fail "official edge uses target architecture in $config"
+  if grep '^[[:space:]]*Server.*pkgs\.omarchy\.org' "$config" | grep -vxF 'Server = https://pkgs.omarchy.org/edge/$arch'; then
+    fail "no x86 or alternate-channel official repository in $config"
+  fi
+done
+pass "official edge is architecture-aware, signed, and explicit-target-only"
 
-# Same for the bundled mirrorlists: an Omarchy mirror serves x86_64 only, so a
-# mirrorlist that reaches one would leave pacman querying an x86 repo for
-# aarch64 packages.
+# The regular distribution mirrorlists must remain Arch Linux ARM sources;
+# official edge belongs only in its restricted, separate repository section.
 leaky=()
 while read -r file; do
   [[ -n $file ]] || continue

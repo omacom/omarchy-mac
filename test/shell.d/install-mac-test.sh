@@ -118,15 +118,58 @@ pass "the installer styles its output with gum from the start"
 # or optional ARM packages fail later with a misleading missing-database error.
 grep -qF 'asahi_alarm_key=' "$install_script" ||
   fail "the installer pins the Asahi Alarm package signing key"
-grep -qF 'pacman-key --recv-keys "$asahi_alarm_key"' "$install_script" ||
+grep -qF 'pacman-key --recv-keys "$asahi_alarm_key" --keyserver hkps://keyserver.ubuntu.com' "$install_script" ||
   fail "the installer bootstraps the Asahi Alarm package signing key"
 grep -qF 'pacman-key --lsign-key "$asahi_alarm_key"' "$install_script" ||
   fail "the installer locally trusts the Asahi Alarm package signing key"
 grep -qF 'pacman -Sy --needed --noconfirm asahi-alarm-keyring' "$install_script" ||
   fail "the installer installs the Asahi Alarm package keyring"
 keyring_call=$(grep -n '^  ensure_asahi_alarm_keyring$' "$install_script" | cut -d: -f1)
-refresh_call=$(grep -n '^  sudo pacman -Sy --noconfirm$' "$install_script" | cut -d: -f1)
+refresh_call=$(grep -nF '  sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --needed --noconfirm "${targets[@]}"' "$install_script" | cut -d: -f1)
 [[ -n $keyring_call && -n $refresh_call ]] || fail "the installer bootstraps the Asahi keyring before refresh"
 (( keyring_call < refresh_call )) ||
   fail "the Asahi keyring is installed before the package database refresh"
 pass "the installer bootstraps Asahi signing keys before refreshing ARM packages"
+
+repo_call=$(sed -n '/^main() {/,/^}/p' "$install_script" | grep -n '^  ensure_arm_package_repo$' | cut -d: -f1)
+main_line=$(grep -n '^main() {$' "$install_script" | cut -d: -f1)
+repo_call=$(( main_line + repo_call - 1 ))
+build_call=$(grep -n '^  build_omarchy_packages$' "$install_script" | cut -d: -f1)
+[[ -n $repo_call && -n $build_call ]] || fail "the installer prepares repositories before package builds"
+(( repo_call < build_call && repo_call < gum_call )) || fail "the compatible stack transaction precedes package operations"
+grep -qF 'source "$checkout/install/helpers/arm-package-sources.sh"' "$install_script" || fail "the installer uses shared source policy"
+pass "the installer prepares the compatible stack before package operations"
+
+# Run the real orchestration with harmless stubs. A separate bash process
+# preserves errexit even when the test captures an expected nonzero status.
+setup_body=$(sed -n '/^run_system_setup() {/,/^}/p' "$install_script")
+for failing_stage in none system repositories; do
+  setup_status=0
+  setup_output=$(SETUP_BODY="$setup_body" FAILING_STAGE="$failing_stage" bash -c '
+    set -euo pipefail
+    log() { :; }
+    sudo() {
+      [[ $* == "omarchy-apply-system --install-user $USER --first-install" ]]
+      echo system
+      [[ $FAILING_STAGE != "system" ]]
+    }
+    ensure_arm_package_repo() {
+      echo repositories
+      [[ $FAILING_STAGE != "repositories" ]]
+    }
+    omarchy-provision-user() {
+      [[ $* == "--first-install" ]]
+      echo user
+    }
+    eval "$SETUP_BODY"
+    run_system_setup
+  ') || setup_status=$?
+  case $failing_stage in
+    none) expected_output=$'system\nrepositories\nuser'; expected_status=0 ;;
+    system) expected_output=system; expected_status=1 ;;
+    repositories) expected_output=$'system\nrepositories'; expected_status=1 ;;
+  esac
+  [[ $setup_output == "$expected_output" && $setup_status == "$expected_status" ]] ||
+    fail "system setup refreshes restored repositories before user setup ($failing_stage)" "$setup_output (status $setup_status)"
+done
+pass "system setup refreshes restored repositories before user setup and stops on failure"
