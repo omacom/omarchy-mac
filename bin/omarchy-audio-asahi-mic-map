@@ -1,0 +1,283 @@
+#!/usr/bin/python3
+# omarchy:summary=Reconcile the Asahi microphone stereo mapping
+# omarchy:group=audio
+# omarchy:args=[--watch|--save-state]
+# omarchy:hidden=true
+
+import argparse
+import contextlib
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+SINK = 'omarchy_asahi_mic'
+MONITOR = SINK + '.monitor'
+OWNER = 'omarchy.asahi-mic.owner'
+
+
+class Deferred(Exception):
+    pass
+
+
+class Audio:
+    def run(self, *args):
+        try:
+            return subprocess.run(args, check=True, capture_output=True, text=True, timeout=5).stdout.strip()
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(' '.join(args[:2]) + ': ' + error.stderr.strip()) from error
+
+    def objects(self, kind):
+        result = json.loads(self.run('pactl', '--format=json', 'list', kind))
+        if not isinstance(result, list):
+            raise ValueError('Invalid PulseAudio object list')
+        return result
+
+    def modules(self):
+        # PipeWire's pactl JSON module rows omit the numeric index. The short
+        # format retains the load-module identity needed for scoped rollback.
+        result = []
+        for line in self.run('pactl', 'list', 'short', 'modules').splitlines():
+            fields = line.split('\t')
+            if len(fields) < 3 or not fields[0].isdecimal():
+                raise ValueError('Invalid PulseAudio module identity')
+            result.append(dict(index=fields[0], name=fields[1], argument=fields[2]))
+        return result
+
+    def graph(self):
+        result = json.loads(self.run('pw-dump'))
+        if not isinstance(result, list):
+            raise ValueError('Invalid PipeWire graph')
+        return result
+
+    def pause(self):
+        time.sleep(0.1)
+
+
+def port(graph, node_name, port_name):
+    nodes = {obj['id'] for obj in graph if obj.get('type', '').endswith(':Node')
+             and obj.get('info', {}).get('props', {}).get('node.name') == node_name}
+    matches = [obj['id'] for obj in graph if obj.get('type', '').endswith(':Port')
+               and obj.get('info', {}).get('props', {}).get('node.id') in nodes
+               and obj['info']['props'].get('port.name') == port_name]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def links(graph, output, input_):
+    return [obj for obj in graph if obj.get('type', '').endswith(':Link')
+            and obj.get('info', {}).get('output-port-id') == output
+            and obj['info'].get('input-port-id') == input_
+            and obj['info'].get('state') in ('active', 'paused')]
+
+
+def gain(obj):
+    values = [channel['value'] for channel in obj['volume'].values()]
+    if len(values) != 2 or any(type(value) is not int or not 0 <= value < 2**32 - 1 for value in values) or type(obj['mute']) is not bool:
+        raise ValueError('Invalid stereo mapping gain state')
+    return dict(volume=values, mute=obj['mute'])
+
+
+def save_state(audio, path):
+    sinks = {obj['name']: obj for obj in audio.objects('sinks')}
+    sources = {obj['name']: obj for obj in audio.objects('sources')}
+    if SINK not in sinks or MONITOR not in sources:
+        return
+    data = json.dumps(dict(sink=gain(sinks[SINK]), monitor=gain(sources[MONITOR])), sort_keys=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.read_text() == data:
+        return
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as temporary:
+        temporary.write(data)
+    os.replace(temporary.name, path)
+
+
+def restore_gain(audio, path):
+    if not path.exists():
+        return
+    saved = json.loads(path.read_text())
+    for kind, name, key in (('sink', SINK, 'sink'), ('source', MONITOR, 'monitor')):
+        state = saved[key]
+        # Validate persisted values before using them as pactl arguments.
+        validated = gain(dict(volume={str(i): {'value': value} for i, value in enumerate(state['volume'])}, mute=state['mute']))
+        audio.run('pactl', 'set-' + kind + '-volume', name, *(str(value) for value in validated['volume']))
+        audio.run('pactl', 'set-' + kind + '-mute', name, '1' if validated['mute'] else '0')
+
+
+def restore_output(audio, previous):
+    if previous and previous != SINK and audio.run('pactl', 'get-default-sink') == SINK:
+        if previous in {obj['name'] for obj in audio.objects('sinks')}:
+            # Check again immediately before changing a default the module took.
+            if audio.run('pactl', 'get-default-sink') == SINK:
+                audio.run('pactl', 'set-default-sink', previous)
+
+
+def reconcile(audio, state, save_only=False):
+    if save_only:
+        save_state(audio, state)
+        return
+    sources = audio.objects('sources')
+    original_input = audio.run('pactl', 'get-default-source')
+    original_output = audio.run('pactl', 'get-default-sink')
+    dsp = next((obj['name'] for obj in sources if re.fullmatch(r'effect_output\.j[0-9]+-mic', obj['name'])), None)
+    if not dsp:
+        raise Deferred('No Asahi DSP microphone is present; user service will retry if an array appears')
+    sinks = audio.objects('sinks')
+    owner = uuid.uuid4().hex
+    module = None
+    changed_input = False
+    def restore_input():
+        if original_input and audio.run('pactl', 'get-default-source') == MONITOR:
+            if original_input in {obj['name'] for obj in audio.objects('sources')}:
+                if audio.run('pactl', 'get-default-source') == MONITOR:
+                    audio.run('pactl', 'set-default-source', original_input)
+    try:
+        if not any(obj['name'] == SINK for obj in sinks):
+            module = audio.run('pactl', 'load-module', 'module-null-sink', 'sink_name=' + SINK,
+                               'channels=2', 'channel_map=front-left,front-right',
+                               'sink_properties=device.description=AsahiMicrophone node.virtual=true priority.session=1 ' + OWNER + '=' + owner)
+            if not module.isdecimal():
+                raise RuntimeError('PulseAudio did not return a module identity')
+            # Some policy managers auto-select a newly created monitor. Undo
+            # only that owned temporary choice before waiting for its links.
+            restore_input()
+        for attempt in range(30):
+            graph = audio.graph()
+            output = port(graph, dsp, 'capture_AUX0')
+            inputs = [port(graph, SINK, 'playback_' + channel) for channel in ('FL', 'FR')]
+            monitor_exists = any(obj['name'] == MONITOR for obj in audio.objects('sources'))
+            if output is not None and all(value is not None for value in inputs) and monitor_exists:
+                break
+            audio.pause()
+        else:
+            raise RuntimeError('Asahi AUX0 and both stereo mapping ports must be ready')
+        if module is not None:
+            restore_gain(audio, state)
+        def validate_endpoints(graph):
+            if port(graph, dsp, 'capture_AUX0') != output or [
+                port(graph, SINK, 'playback_' + channel) for channel in ('FL', 'FR')
+            ] != inputs:
+                raise RuntimeError('Asahi microphone endpoints changed during mapping')
+        for input_ in inputs:
+            graph = audio.graph()
+            validate_endpoints(graph)
+            if not links(graph, output, input_):
+                audio.run('pw-link', '-L', '-w', '-p', json.dumps({OWNER: owner}), str(output), str(input_))
+                graph = audio.graph()
+        for attempt in range(30):
+            graph = audio.graph()
+            validate_endpoints(graph)
+            if all(links(graph, output, input_) for input_ in inputs):
+                break
+            audio.pause()
+        else:
+            raise RuntimeError('Asahi microphone stereo links did not become ready')
+        restore_output(audio, original_output)
+        graph = audio.graph()
+        validate_endpoints(graph)
+        if not all(links(graph, output, input_) for input_ in inputs):
+            raise RuntimeError('Asahi microphone links changed before selecting input')
+        # Read the user's choice after the final graph query so a device change
+        # during that query is not overwritten. Pulse has no atomic compare/set.
+        current_input = audio.run('pactl', 'get-default-source')
+        if original_input in ('', dsp) and current_input == original_input:
+            changed_input = True
+            audio.run('pactl', 'set-default-source', MONITOR)
+        # Existing DSP, monitor and sink gain/mute are never reset. Save only
+        # the owned mapping so a new module after daemon restart can recover it.
+        save_state(audio, state)
+    except Exception:
+        def cleanup(action):
+            try:
+                action()
+            except Exception as error:
+                print('Asahi microphone rollback incomplete: ' + str(error), file=sys.stderr)
+        def restore_changed_input():
+            if changed_input or module is not None:
+                restore_input()
+        def remove_links():
+            for obj in audio.graph():
+                if obj.get('type', '').endswith(':Link') and obj.get('info', {}).get('props', {}).get(OWNER) == owner:
+                    audio.run('pw-link', '-d', str(obj['id']))
+        def remove_module():
+            if module is not None:
+                for obj in audio.modules():
+                    if str(obj['index']) == module and obj.get('name') == 'module-null-sink' and OWNER + '=' + owner in obj.get('argument', ''):
+                        audio.run('pactl', 'unload-module', module)
+        # A dead PipeWire graph must not prevent removing a module still owned
+        # by PulseAudio, or restoring a default that this invocation changed.
+        for action in (restore_changed_input, lambda: restore_output(audio, original_output), remove_links, remove_module):
+            cleanup(action)
+        raise
+
+
+@contextlib.contextmanager
+def mapping_lock(runtime):
+    with (runtime / 'omarchy-asahi-mic.lock').open('a') as lock:
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Another Asahi microphone repair is still running')
+                time.sleep(0.1)
+        yield
+
+
+def run_once(audio, runtime, state, save_only=False):
+    if not os.environ.get('PULSE_SERVER') and not os.environ.get('PIPEWIRE_REMOTE') and not any((runtime / path).exists() for path in ('pulse/native', 'pipewire-0')):
+        raise Deferred('No audio session endpoints; microphone mapping deferred to the user service')
+    with mapping_lock(runtime):
+        reconcile(audio, state, save_only)
+
+
+def supervise(operation):
+    previous_error = None
+    while True:
+        try:
+            operation()
+            previous_error = None
+        except Exception as error:
+            message = str(error)
+            if message != previous_error:
+                print(message, file=sys.stderr, flush=True)
+                previous_error = message
+        time.sleep(2)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--watch', action='store_true')
+    mode.add_argument('--save-state', action='store_true')
+    args = parser.parse_args()
+    if subprocess.run(['omarchy-hw-apple']).returncode:
+        return 0
+    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid())))
+    state = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'omarchy/asahi-mic-gain.json'
+    operation = lambda: run_once(Audio(), runtime, state, args.save_state)
+    if args.watch:
+        supervise(operation)
+    else:
+        try:
+            operation()
+        except Deferred as error:
+            print(error, file=sys.stderr)
+            return 75
+        except Exception as error:
+            print('Asahi microphone mapping failed: ' + str(error), file=sys.stderr)
+            return 1
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

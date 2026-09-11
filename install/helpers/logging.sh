@@ -71,6 +71,10 @@ run_logged() {
     omarchy_log_line "[$(date '+%Y-%m-%d %H:%M:%S')] Completed: $script"
   else
     omarchy_log_line "[$(date '+%Y-%m-%d %H:%M:%S')] Failed: $script (exit code: $exit_code)"
+    if ! omarchy_log_to_stdout; then
+      printf 'Error: setup failed in %s (exit code: %s). See %s for details.\n' \
+        "$script" "$exit_code" "$OMARCHY_INSTALL_LOG_FILE" >&2
+    fi
   fi
 
   return $exit_code
