@@ -1,0 +1,262 @@
+diff --git a/drivers/gpu/drm/apple/apple_drv.c b/drivers/gpu/drm/apple/apple_drv.c
+index 17b5903..4926b87 100644
+--- a/drivers/gpu/drm/apple/apple_drv.c
++++ b/drivers/gpu/drm/apple/apple_drv.c
+@@ -106,9 +106,11 @@ static void apple_crtc_atomic_enable(struct drm_crtc *crtc,
+ 	struct drm_crtc_state *crtc_state;
+ 	crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+ 
+-	if (crtc_state->active_changed && crtc_state->active) {
++	if (crtc_state->active_changed && crtc_state->active &&
++	    !dcp_needs_recovery(to_apple_crtc(crtc)->dcp)) {
+ 		struct apple_crtc *apple_crtc = to_apple_crtc(crtc);
+-		dcp_poweron(apple_crtc->dcp);
++		if (dcp_poweron(apple_crtc->dcp))
++			return;
+ 		/* Force the CTM to be set on first swap */
+ 		crtc_state->color_mgmt_changed = true;
+ 	}
+@@ -223,8 +225,27 @@ static const struct drm_crtc_funcs apple_crtc_funcs = {
+ 
+ };
+ 
++static int apple_atomic_check(struct drm_device *dev,
++			      struct drm_atomic_state *state)
++{
++	struct drm_crtc *crtc;
++	struct drm_crtc_state *crtc_state;
++	int i;
++
++	/* Set this before check_modeset so allow_modeset and all affected
++	 * connectors/planes are checked. TEST_ONLY never consumes recovery.
++	 */
++	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
++		if (crtc_state->active &&
++		    dcp_needs_recovery(to_apple_crtc(crtc)->dcp))
++			crtc_state->mode_changed = true;
++	}
++
++	return drm_atomic_helper_check(dev, state);
++}
++
+ static const struct drm_mode_config_funcs apple_mode_config_funcs = {
+-	.atomic_check		= drm_atomic_helper_check,
++	.atomic_check		= apple_atomic_check,
+ 	.atomic_commit		= drm_atomic_helper_commit,
+ 	.fb_create		= drm_gem_fb_create,
+ };
+diff --git a/drivers/gpu/drm/apple/dcp-internal.h b/drivers/gpu/drm/apple/dcp-internal.h
+index 5783248..d49a539 100644
+--- a/drivers/gpu/drm/apple/dcp-internal.h
++++ b/drivers/gpu/drm/apple/dcp-internal.h
+@@ -187,6 +187,11 @@ struct apple_dcp {
+ 	/* Current display mode */
+ 	bool during_modeset;
+ 	bool valid_mode;
++	/* HDMI disconnect generation; recovery is consumed only after mode ACK.
++	 * IRQ/RTKit increment the generation; the CRTC commit tail owns recovered.
++	 */
++	atomic_t hdmi_generation;
++	int hdmi_recovered;
+ 	bool use_timestamps;
+ 	struct dcp_set_digital_out_mode_req mode;
+ 
+diff --git a/drivers/gpu/drm/apple/dcp.c b/drivers/gpu/drm/apple/dcp.c
+index ddd413f..1db7f52 100644
+--- a/drivers/gpu/drm/apple/dcp.c
++++ b/drivers/gpu/drm/apple/dcp.c
+@@ -327,6 +327,14 @@ void dcp_send_message(struct apple_dcp *dcp, u8 endpoint, u64 message)
+ 				 true);
+ }
+ 
++bool dcp_needs_recovery(struct platform_device *pdev)
++{
++	struct apple_dcp *dcp = platform_get_drvdata(pdev);
++
++	return dcp->hdmi_hpd &&
++		atomic_read(&dcp->hdmi_generation) != READ_ONCE(dcp->hdmi_recovered);
++}
++
+ int dcp_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
+ {
+ 	struct platform_device *pdev = to_apple_crtc(crtc)->dcp;
+@@ -463,6 +471,9 @@ static irqreturn_t dcp_dp2hdmi_hpd(int irq, void *data)
+ 	 * IRQs might be helpful for debugging.
+ 	 */
+ 	dev_info(dcp->dev, "DP2HDMI HPD irq, connected:%d\n", connected);
++	/* Invalidate even if firmware gates its callback during a modeset. */
++	if (!connected)
++		atomic_inc(&dcp->hdmi_generation);
+ 
+ 	if (connected) {
+ 		msleep(500);
+@@ -646,9 +657,10 @@ static void __maybe_unused dcp_sleep(struct apple_dcp *dcp)
+ 	}
+ }
+ 
+-void dcp_poweron(struct platform_device *pdev)
++int dcp_poweron(struct platform_device *pdev)
+ {
+ 	struct apple_dcp *dcp = platform_get_drvdata(pdev);
++	int ret;
+ 
+ 	if (dcp->hdmi_hpd) {
+ 		bool connected = gpiod_get_value_cansleep(dcp->hdmi_hpd);
+@@ -660,18 +672,21 @@ void dcp_poweron(struct platform_device *pdev)
+ 
+ 	switch (dcp->fw_compat) {
+ 	case DCP_FIRMWARE_V_12_3:
+-		iomfb_poweron_v12_3(dcp);
++		ret = iomfb_poweron_v12_3(dcp);
+ 		break;
+ 	case DCP_FIRMWARE_V_13_5:
+-		iomfb_poweron_v13_3(dcp);
++		ret = iomfb_poweron_v13_3(dcp);
+ 		break;
+ 	default:
+ 		WARN_ONCE(true, "Unexpected firmware version: %u\n", dcp->fw_compat);
+-		break;
++		return -EINVAL;
+ 	}
+ 
++	if (ret)
++		return ret;
+ 	if (dcp->avep)
+ 		av_service_connect(dcp);
++	return 0;
+ }
+ 
+ void dcp_poweroff(struct platform_device *pdev)
+@@ -996,6 +1011,7 @@ static int dcp_comp_bind(struct device *dev, struct device *main, void *data)
+ 		dev_info(dev, "DCP index:%u dptx target phy: %u dptx die: %u\n",
+ 			 dcp->index, dcp->dptx_phy, dcp->dptx_die);
+ 	mutex_init(&dcp->hpd_mutex);
++	atomic_set(&dcp->hdmi_generation, 0);
+ 
+ 	if (!show_notch)
+ 		ret = of_property_read_u32(dev->of_node, "apple,notch-height",
+diff --git a/drivers/gpu/drm/apple/dcp.h b/drivers/gpu/drm/apple/dcp.h
+index 2b42177..0a1108e 100644
+--- a/drivers/gpu/drm/apple/dcp.h
++++ b/drivers/gpu/drm/apple/dcp.h
+@@ -30,7 +30,8 @@ struct apple_encoder {
+ #define to_apple_encoder(x) container_of(x, struct apple_encoder, base)
+ 
+ void dcp_poweroff(struct platform_device *pdev);
+-void dcp_poweron(struct platform_device *pdev);
++int dcp_poweron(struct platform_device *pdev);
++bool dcp_needs_recovery(struct platform_device *pdev);
+ int dcp_set_crc(struct drm_crtc *crtc, bool enabled);
+ int dcp_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state);
+ int dcp_get_connector_type(struct platform_device *pdev);
+diff --git a/drivers/gpu/drm/apple/iomfb.c b/drivers/gpu/drm/apple/iomfb.c
+index 1d9448f..24d32c0 100644
+--- a/drivers/gpu/drm/apple/iomfb.c
++++ b/drivers/gpu/drm/apple/iomfb.c
+@@ -415,6 +415,8 @@ int dcp_crtc_atomic_modeset(struct drm_crtc *crtc,
+ 	struct drm_crtc_state *crtc_state;
+ 	int ret = -EIO;
+ 	bool modeset;
++	bool recover;
++	int generation;
+ 
+ 	crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+ 	if (!crtc_state)
+@@ -429,6 +431,19 @@ int dcp_crtc_atomic_modeset(struct drm_crtc *crtc,
+ 	if (crtc_state->mode.hdisplay == 0 && crtc_state->mode.vdisplay == 0)
+ 		return 0;
+ 
++	generation = atomic_read(&dcp->hdmi_generation);
++	recover = dcp->hdmi_hpd &&
++		generation != READ_ONCE(dcp->hdmi_recovered);
++	if (recover) {
++		if (!READ_ONCE(dcp->connector->connected))
++			return -ENOLINK;
++		/* HPD can power firmware down without changing DRM active. */
++		ret = dcp_poweron(apple_crtc->dcp);
++		if (ret)
++			return ret;
++		crtc_state->color_mgmt_changed = true;
++	}
++
+ 	switch (dcp->fw_compat) {
+ 	case DCP_FIRMWARE_V_12_3:
+ 		ret = iomfb_modeset_v12_3(dcp, crtc_state);
+@@ -442,6 +457,9 @@ int dcp_crtc_atomic_modeset(struct drm_crtc *crtc,
+ 		break;
+ 	}
+ 
++	/* Never consume a disconnect that raced the power/mode ACKs. */
++	if (!ret && recover)
++		WRITE_ONCE(dcp->hdmi_recovered, generation);
+ 	return ret;
+ }
+ 
+@@ -463,6 +481,15 @@ void dcp_flush(struct drm_crtc *crtc, struct drm_atomic_state *state)
+ 	struct platform_device *pdev = to_apple_crtc(crtc)->dcp;
+ 	struct apple_dcp *dcp = platform_get_drvdata(pdev);
+ 
++	/* HPD may race atomic_check or the mode ACK. Do not submit a swap
++	 * into powered-down firmware; deliver the owned event normally.
++	 * The next permitted modeset will retry the unconsumed generation.
++	 */
++	if (dcp_needs_recovery(pdev)) {
++		schedule_work(&dcp->vblank_wq);
++		return;
++	}
++
+ 	if (dcp_channel_busy(&dcp->ch_cmd))
+ 	{
+ 		if (!dcp->ch_cmd.warned_busy) {
+diff --git a/drivers/gpu/drm/apple/iomfb_template.c b/drivers/gpu/drm/apple/iomfb_template.c
+index cf40e27..fce7e2a 100644
+--- a/drivers/gpu/drm/apple/iomfb_template.c
++++ b/drivers/gpu/drm/apple/iomfb_template.c
+@@ -799,7 +799,7 @@ static void dcp_on_set_parameter(struct apple_dcp *dcp, void *out, void *cookie)
+ 	dcp_set_parameter_dcp(dcp, false, &param, dcp_on_set_power_state, cookie);
+ }
+ 
+-void DCP_FW_NAME(iomfb_poweron)(struct apple_dcp *dcp)
++int DCP_FW_NAME(iomfb_poweron)(struct apple_dcp *dcp)
+ {
+ 	struct dcp_wait_cookie *cookie;
+ 	int ret;
+@@ -808,7 +808,7 @@ void DCP_FW_NAME(iomfb_poweron)(struct apple_dcp *dcp)
+ 
+ 	cookie = kzalloc(sizeof(*cookie), GFP_KERNEL);
+ 	if (!cookie)
+-		return;
++		return -ENOMEM;
+ 
+ 	init_completion(&cookie->done);
+ 	kref_init(&cookie->refcount);
+@@ -844,6 +844,7 @@ void DCP_FW_NAME(iomfb_poweron)(struct apple_dcp *dcp)
+ 
+ 	/* Force a brightness update after poweron, to restore the brightness */
+ 	dcp->brightness.update = true;
++	return ret > 0 ? 0 : -ETIMEDOUT;
+ }
+ 
+ static void complete_set_powerstate(struct apple_dcp *dcp, void *out,
+@@ -1032,6 +1033,8 @@ static void dcpep_cb_hotplug(struct apple_dcp *dcp, u64 *connected)
+ 
+ 	/* Hotplug invalidates mode. DRM doesn't always handle this. */
+ 	if (!(*connected)) {
++		if (dcp->hdmi_hpd)
++			atomic_inc(&dcp->hdmi_generation);
+ 		dcp->valid_mode = false;
+ 		/* after unplug swap will not complete until the next
+ 		 * set_digital_out_mode */
+diff --git a/drivers/gpu/drm/apple/iomfb_template.h b/drivers/gpu/drm/apple/iomfb_template.h
+index 8efab49..76e8b19 100644
+--- a/drivers/gpu/drm/apple/iomfb_template.h
++++ b/drivers/gpu/drm/apple/iomfb_template.h
+@@ -158,7 +158,7 @@ struct apple_dcp;
+ int DCP_FW_NAME(iomfb_modeset)(struct apple_dcp *dcp,
+ 			       struct drm_crtc_state *crtc_state);
+ void DCP_FW_NAME(iomfb_flush)(struct apple_dcp *dcp, struct drm_crtc *crtc, struct drm_atomic_state *state);
+-void DCP_FW_NAME(iomfb_poweron)(struct apple_dcp *dcp);
++int DCP_FW_NAME(iomfb_poweron)(struct apple_dcp *dcp);
+ void DCP_FW_NAME(iomfb_poweroff)(struct apple_dcp *dcp);
+ void DCP_FW_NAME(iomfb_sleep)(struct apple_dcp *dcp);
+ void DCP_FW_NAME(iomfb_start)(struct apple_dcp *dcp);
