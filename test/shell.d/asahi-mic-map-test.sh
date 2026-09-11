@@ -204,7 +204,7 @@ with tempfile.TemporaryDirectory() as temporary:
         if passes[0] == 3: raise KeyboardInterrupt()
         m.reconcile(audio, saved)
     with mock.patch.object(m.time, 'sleep'):
-        try: m.supervise(operation)
+        try: m.supervise(operation, wait=lambda: None)
         except KeyboardInterrupt: pass
     assert audio.existing and len(audio.linked) == 2 and m.gain(audio.monitor)['mute'], 'supervisor must rebuild lost nodes and gain'
     audio = Audio(); saved = state(); passes = [0]
@@ -214,9 +214,27 @@ with tempfile.TemporaryDirectory() as temporary:
         audio.fail_module = passes[0] == 1
         m.reconcile(audio, saved)
     with mock.patch.object(m.time, 'sleep'):
-        try: m.supervise(retry_operation)
+        try: m.supervise(retry_operation, wait=lambda: None)
         except KeyboardInterrupt: pass
     assert audio.existing and len(audio.linked) == 2, 'supervisor must retry a failed live repair'
+    # The watcher sleeps on pactl events instead of polling: device events wake
+    # it once they settle, application and stream events never do, a steady
+    # stream cannot starve repair, and a lost subscription still yields one.
+    def feed(script):
+        return m.Subscription(command=['bash', '-c', script], quiet=0.1, settle=1.0, backstop=0.6, retry=0.05)
+    def timed(sub):
+        start = time.monotonic(); sub.wait(); elapsed = time.monotonic() - start; sub.stop(); return elapsed
+    elapsed = timed(feed("echo \"Event 'new' on source #7\"; sleep 3"))
+    assert 0.1 <= elapsed < 0.6, ('device event must wake after the quiet interval', elapsed)
+    elapsed = timed(feed("echo \"Event 'change' on server #0\"; sleep 3"))
+    assert 0.1 <= elapsed < 0.6, ('a default device switch must wake the watcher', elapsed)
+    elapsed = timed(feed("echo \"Event 'new' on client #9\"; echo \"Event 'change' on sink-input #4\"; echo \"Event 'change' on sink #1\"; echo \"Event 'change' on source #1\"; sleep 3"))
+    assert elapsed >= 0.6, ('stream start and stop must not wake before the backstop', elapsed)
+    elapsed = timed(feed("for i in $(seq 20); do echo \"Event 'new' on sink #1\"; sleep 0.05; done; sleep 3"))
+    assert 0.9 <= elapsed < 1.5, ('a steady event stream must repair at the settle cap', elapsed)
+    sub = feed('exit 0'); elapsed = timed(sub)
+    assert elapsed < 0.5 and sub.process is None, 'a lost subscription must yield a repair and resubscribe later'
+    assert timed(m.Subscription(command=['/nonexistent/pactl'], retry=0.05)) < 0.5, 'a missing subscriber must degrade to a paced retry'
     stub = directory / 'bin'; stub.mkdir()
     for name, body in [('omarchy-hw-apple', 'exit 0'), ('systemctl', 'echo "$*" >> "$CALLS"'), ('omarchy-audio-asahi-mic-map', 'echo live-diagnostic >&2; exit "$MAP_STATUS"')]:
         path = stub / name; path.write_text('#!/bin/bash\n' + body + '\n'); path.chmod(0o755)

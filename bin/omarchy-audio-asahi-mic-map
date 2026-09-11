@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import re
+import select
+import signal
 import subprocess
 import sys
 import tempfile
@@ -240,18 +242,102 @@ def run_once(audio, runtime, state, save_only=False):
         reconcile(audio, state, save_only)
 
 
-def supervise(operation):
-    previous_error = None
-    while True:
+class Subscription:
+    # Wakes the supervisor when the mapping may need repair: a sink, source,
+    # card or module appeared or vanished, a card or module changed, or the
+    # server did (pipewire-pulse restart, default device switch). Sink and
+    # source 'change' events are deliberately not watched: every stream start
+    # and stop emits them, and the mapping only depends on node existence,
+    # links and defaults. Client and stream events are ignored outright. A
+    # burst settles for a quiet interval so a hot-plug repairs once, a cap
+    # keeps a steady stream from starving repair, and a slow backstop keeps
+    # the eventually-consistent guarantee that polling every two seconds gave
+    # (it is also what persists a gain change made between other events).
+    EVENT = re.compile(rb"^Event '(new|remove)' on (sink|source|card|module) #|^Event 'change' on (card|module|server) #")
+
+    def __init__(self, command=('pactl', 'subscribe'), quiet=0.5, settle=5.0, backstop=600.0, retry=2.0):
+        self.command = list(command)
+        self.quiet, self.settle, self.backstop, self.retry = quiet, settle, backstop, retry
+        self.process = None
+        self.buffer = b''
+
+    def start(self):
         try:
-            operation()
-            previous_error = None
-        except Exception as error:
-            message = str(error)
-            if message != previous_error:
-                print(message, file=sys.stderr, flush=True)
-                previous_error = message
-        time.sleep(2)
+            self.process = subprocess.Popen(self.command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+        except OSError:
+            self.process = None
+        self.buffer = b''
+        return self.process is not None
+
+    def stop(self):
+        process, self.process = self.process, None
+        if process is None:
+            return
+        process.stdout.close()
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+    def lines(self):
+        chunk = os.read(self.process.stdout.fileno(), 4096)
+        if not chunk:
+            return None
+        self.buffer += chunk
+        *complete, self.buffer = self.buffer.split(b'\n')
+        return complete
+
+    def wait(self):
+        if self.process is None and not self.start():
+            time.sleep(self.retry)
+            return
+        started = time.monotonic()
+        due = None
+        latest = None
+        while True:
+            now = time.monotonic()
+            deadline = started + self.backstop if due is None else min(due, latest)
+            if deadline <= now:
+                return
+            ready, _, _ = select.select([self.process.stdout], [], [], deadline - now)
+            if not ready:
+                return
+            lines = self.lines()
+            if lines is None:
+                # The subscription ended: pipewire-pulse went away or is not up
+                # yet. Repair now, then resubscribe after a pause.
+                self.stop()
+                time.sleep(self.retry)
+                return
+            if any(self.EVENT.match(line) for line in lines):
+                now = time.monotonic()
+                due = now + self.quiet
+                if latest is None:
+                    latest = now + self.settle
+
+
+def supervise(operation, wait=None):
+    subscription = Subscription() if wait is None else None
+    if subscription is not None:
+        wait = subscription.wait
+    previous_error = None
+    try:
+        while True:
+            try:
+                operation()
+                previous_error = None
+            except Exception as error:
+                message = str(error)
+                if message != previous_error:
+                    print(message, file=sys.stderr, flush=True)
+                    previous_error = message
+            wait()
+    finally:
+        if subscription is not None:
+            subscription.stop()
 
 
 def main():
@@ -266,6 +352,8 @@ def main():
     state = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'omarchy/asahi-mic-gain.json'
     operation = lambda: run_once(Audio(), runtime, state, args.save_state)
     if args.watch:
+        # Let a service stop unwind through supervise so the subscriber exits too.
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         supervise(operation)
     else:
         try:
