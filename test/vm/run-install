@@ -1,0 +1,109 @@
+#!/bin/bash
+# Run install.sh inside an isolated Arch Linux ARM machine on this aarch64 host.
+#
+# GitHub's hosted ARM runners have no nested KVM, and this Asahi host uses 16k
+# pages, so a stock 4k Arch ARM QEMU guest cannot use KVM. systemd-nspawn shares
+# the host kernel (the same 16k kernel a real Mac install runs on) and still
+# gives install.sh its own rootfs, users, and pacman.
+#
+# Needs root (or passwordless sudo), network, and several GB free.
+
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+CACHE="${OMARCHY_INSTALL_VM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-install-vm}"
+WORK="${OMARCHY_INSTALL_VM_WORK:-/var/tmp/omarchy-install-vm}"
+TARBALL_URL="${OMARCHY_INSTALL_VM_TARBALL:-http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}"
+GUEST_USER=ci
+KEEP_ROOT=${OMARCHY_INSTALL_VM_KEEP:-0}
+
+log() { printf '\033[32m==>\033[0m %s\n' "$*"; }
+fail() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+as_root() {
+  if (( EUID == 0 )); then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+cleanup() {
+  as_root chmod -R a+rX "$WORK/logs" 2>/dev/null || true
+  if (( KEEP_ROOT )); then
+    log "keeping $WORK/root (OMARCHY_INSTALL_VM_KEEP=1)"
+    return 0
+  fi
+  as_root rm -rf "$WORK/root"
+}
+
+[[ $(uname -m) == "aarch64" ]] || fail "this harness only runs on aarch64"
+command -v systemd-nspawn >/dev/null || fail "systemd-nspawn is required"
+command -v curl >/dev/null || fail "curl is required"
+
+as_root true || fail "root (or passwordless sudo) is required to spawn the machine"
+
+mkdir -p "$CACHE" "$WORK/logs"
+as_root rm -rf "$WORK/root"
+as_root mkdir -p "$WORK/root"
+trap cleanup EXIT
+
+tarball="$CACHE/ArchLinuxARM-aarch64-latest.tar.gz"
+if [[ ! -f $tarball ]]; then
+  log "downloading Arch Linux ARM rootfs"
+  curl -fL --retry 3 -o "$tarball.partial" "$TARBALL_URL"
+  mv "$tarball.partial" "$tarball"
+fi
+
+log "extracting rootfs into $WORK/root"
+as_root tar -xzf "$tarball" -C "$WORK/root"
+as_root mkdir -p "$WORK/root/src/omarchy"
+
+nspawn() {
+  # Do not bind-ro /sys: nspawn has to mount its own cgroupfs on
+  # /sys/fs/cgroup, and a host /sys bind makes it refuse to start.
+  as_root systemd-nspawn \
+    --directory="$WORK/root" \
+    --register=no \
+    --resolv-conf=bind-host \
+    --bind="$ROOT:/src/omarchy" \
+    --console=pipe \
+    "$@"
+}
+
+log "bootstrapping pacman, sudo, and the $GUEST_USER user"
+nspawn /bin/bash -euo pipefail <<'BOOTSTRAP'
+pacman-key --init
+pacman-key --populate archlinuxarm
+pacman -Sy --noconfirm
+pacman -S --needed --noconfirm sudo git base-devel
+id ci >/dev/null 2>&1 || useradd -m -G wheel ci
+printf '%s\n' 'ci ALL=(ALL) NOPASSWD: ALL' >/etc/sudoers.d/ci
+chmod 440 /etc/sudoers.d/ci
+sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen >/dev/null
+printf 'LANG=en_US.UTF-8\n' >/etc/locale.conf
+BOOTSTRAP
+
+log "running install.sh as $GUEST_USER (AUR builds take a while)"
+set +e
+nspawn --user="$GUEST_USER" --chdir=/src/omarchy \
+  /bin/bash -euo pipefail -c 'export LANG=en_US.UTF-8; bash install.sh' \
+  | tee "$WORK/logs/install.log"
+install_status=${PIPESTATUS[0]}
+set -e
+(( install_status == 0 )) || fail "install.sh exited $install_status (see $WORK/logs/install.log)"
+
+log "asserting the installed system"
+nspawn /bin/bash -euo pipefail <<'ASSERT' | tee "$WORK/logs/assert.log"
+source /usr/share/omarchy/default/bash/env-bootstrap
+command -v omarchy >/dev/null
+omarchy commands --check >/dev/null
+pacman -Q omarchy >/dev/null
+[[ -d /usr/share/omarchy/bin ]]
+[[ -d /usr/share/omarchy/install ]]
+id ci >/dev/null
+printf 'ok - install.sh produced a working Omarchy userspace\n'
+ASSERT
+
+log "install machine test passed"

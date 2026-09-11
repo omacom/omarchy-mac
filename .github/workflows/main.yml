@@ -1,18 +1,8 @@
-name: CI (Linux ARM64 only)
+name: CI
 
 on:
   push:
-    branches: [ main, v0.* ]
-    paths:
-      - ".github/workflows/**"
-      - "**/*.sh"
-      - "scripts/**"
   pull_request:
-    branches: [ main, v0.* ]
-    paths:
-      - ".github/workflows/**"
-      - "**/*.sh"
-      - "scripts/**"
   workflow_dispatch:
 
 concurrency:
@@ -27,99 +17,104 @@ defaults:
     shell: bash -euo pipefail {0}
 
 jobs:
-  # 1) Lint shell scripts on native aarch64
-  lint:
-    name: Lint (shellcheck + shfmt) [aarch64]
-    runs-on: ubuntu-24.04-arm
+  syntax:
+    name: Syntax + shellcheck
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Assert we are on ARM64
-        run: |
-          arch=$(uname -m)
-          echo "Detected arch: $arch"
-          test "$arch" = "aarch64" || { echo "Not running on aarch64"; exit 1; }
-
-      - name: Install linters
+      - name: Install shellcheck
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck shfmt
+          sudo apt-get install -y shellcheck
 
-      - name: List scripts to lint
-        id: list_scripts
+      - name: Syntax-check bin/omarchy, bin/omarchy-*, test/vm/*
         run: |
-          # Exclude legacy migrations from lint/format to reduce noise
-          mapfile -t files < <(git ls-files | grep -E '\.sh$|^scripts/.*' | grep -v '^migrations/' || true)
-          printf "%s\n" "${files[@]}"
-          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+          failed=()
+          shopt -s nullglob
+          for f in bin/omarchy bin/omarchy-* test/vm/*; do
+            [[ -f $f ]] || continue
+            if head -1 "$f" | grep -q python; then
+              python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$f" || failed+=("$f")
+            else
+              bash -n "$f" || failed+=("$f")
+            fi
+          done
+          if (( ${#failed[@]} > 0 )); then
+            printf '%s\n' "${failed[@]}" >&2
+            exit 1
+          fi
+
+      - name: Syntax-check tracked *.sh
+        run: |
+          failed=()
+          while IFS= read -r -d '' f; do
+            bash -n "$f" || failed+=("$f")
+          done < <(git ls-files -z -- '*.sh')
+          if (( ${#failed[@]} > 0 )); then
+            printf '%s\n' "${failed[@]}" >&2
+            exit 1
+          fi
 
       - name: shellcheck
-        if: steps.list_scripts.outputs.count != '0'
         run: |
+          # install/ and many tests are sourced and omit shebangs; --shell=bash
+          # is the contract. Fixtures are intentionally invalid snippets.
+          # Tests stub commands as functions defined later (SC2218). SC1087,
+          # SC1113, and SC2096 fire on ANSI sequences and comments that look
+          # like shebangs, not on real errors.
+          mapfile -t files < <(git ls-files -- '*.sh' | grep -vE '^(migrations/|test/)' || true)
+          (( ${#files[@]} > 0 )) || exit 0
           shellcheck --version
-          # Only fail on actual errors; exclude network/dynamic source checks
-          # Exclude migrations/ to avoid flagging historical scripts
-          mapfile -t files < <(git ls-files | grep -E '\.sh$|^scripts/.*' | grep -v '^migrations/')
-          shellcheck -S error -e SC1090,SC1091 "${files[@]}"
+          shellcheck --shell=bash -S error -e SC1090,SC1091,SC1087,SC1113,SC2096,SC2218 "${files[@]}"
 
-      - name: shfmt (check only)
-        if: steps.list_scripts.outputs.count != '0'
-        run: |
-          # Show diffs but don't fail the build on formatting; exclude migrations/
-          mapfile -t files < <(git ls-files | grep -E '\.sh$|^scripts/.*' | grep -v '^migrations/')
-          shfmt -i 2 -ci -d "${files[@]}" || true
-
-  # 2) Syntax + smoke tests (safe, non-privileged)
-  smoke:
-    name: Syntax + Smoke [aarch64]
-    runs-on: ubuntu-24.04-arm
-    needs: [lint]
+  test:
+    name: test/all
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Assert we are on ARM64
-        run: |
-          arch=$(uname -m)
-          echo "Detected arch: $arch"
-          test "$arch" = "aarch64" || { echo "Not running on aarch64"; exit 1; }
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-      - name: Install helpful tools (optional)
+      - name: Checkout omarchy-pkgs
+        uses: actions/checkout@v4
+        with:
+          repository: omacom/omarchy-pkgs
+          # Companion first-run dependencies and units (omacom/omarchy-pkgs#341).
+          ref: 6d27290193109c07b0134360d382e64790ae5dda
+          path: omarchy-pkgs
+          persist-credentials: false
+
+      - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl coreutils
+          sudo apt-get install -y python3-yaml jq lua5.4 imagemagick libxkbcommon-tools ripgrep desktop-file-utils
+          sudo ln -sf /usr/bin/lua5.4 /usr/local/bin/lua
+          if ! command -v magick >/dev/null; then
+            sudo ln -sf "$(command -v convert)" /usr/local/bin/magick
+          fi
 
-      - name: Bash syntax check for all scripts
-        run: |
-          set -o pipefail
-          # Only .sh files and scripts directory
-          while IFS= read -r -d '' f; do
-            echo "::group::bash -n $f"
-            bash -n "$f"
-            echo "::endgroup::"
-          done < <(git ls-files -z | grep -z -E '\.sh$|^scripts/.*')
-
-      - name: Smoke run selected scripts in DRY_RUN/--help mode
+      - name: Run ./test/all
         env:
-          DRY_RUN: "1"
+          OMARCHY_PATH: ${{ github.workspace }}
+          OMARCHY_PKGS_PATH: ${{ github.workspace }}/omarchy-pkgs
         run: |
-          bash tests/test-asahi-compatibility.sh
+          export PATH="$GITHUB_WORKSPACE/bin:$PATH"
+          ./test/all
 
+  mac:
+    name: tests/all
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  # 3) OPTIONAL: Arch Linux ARM container tests
-  # NOTE: Only enable if you have a multi-arch container image that supports aarch64.
-  # Many 'archlinux' images are x86_64-only; verify before using.
-  # arch-arm-container:
-  #   name: Arch ARM container tests [aarch64]
-  #   runs-on: ubuntu-24.04-arm
-  #   container:
-  #     image: ghcr.io/<your-org>/<arch-arm-image>:latest # <-- ensure this is ARM64
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Verify container arch
-  #       run: uname -m | grep -q aarch64
-  #     - name: Run Arch-specific tests
-  #       run: |
-  #         pacman -Syu --noconfirm jq
-  #         # Run your Arch-only commands in here…
+      - name: Run ./tests/all
+        run: ./tests/all

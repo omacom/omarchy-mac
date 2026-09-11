@@ -1,0 +1,66 @@
+#!/bin/bash
+# Register this Apple Silicon machine as a GitHub Actions self-hosted runner
+# for trusted manual hardware workflows. Run it from a terminal (it needs sudo).
+#
+# Install VM now uses disposable GitHub-hosted ARM runners. Do not point a
+# desktop runner at pull_request jobs from forks.
+
+set -euo pipefail
+
+REPO="${OMARCHY_GITHUB_REPO:-omarchy-mac/omarchy-mac}"
+RUNNER_USER="${OMARCHY_RUNNER_USER:-github-runner}"
+RUNNER_HOME="/home/$RUNNER_USER"
+RUNNER_DIR="$RUNNER_HOME/actions-runner"
+LABELS="${OMARCHY_RUNNER_LABELS:-self-hosted,linux,ARM64,kvm}"
+
+log() { printf '\033[32m==>\033[0m %s\n' "$*"; }
+fail() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+(( EUID != 0 )) || fail "run as your user, not root; the script sudo's where needed"
+command -v gh >/dev/null || fail "gh is required to mint a registration token"
+gh auth status >/dev/null || fail "gh is not authenticated"
+
+[[ $(uname -m) == "aarch64" ]] || fail "this runner setup is for aarch64"
+
+if ! id "$RUNNER_USER" >/dev/null 2>&1; then
+  log "creating $RUNNER_USER"
+  sudo useradd --create-home --shell /bin/bash --groups wheel "$RUNNER_USER"
+fi
+
+log "granting $RUNNER_USER passwordless sudo (needed for systemd-nspawn)"
+printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$RUNNER_USER" | sudo tee "/etc/sudoers.d/50-$RUNNER_USER" >/dev/null
+sudo chmod 440 "/etc/sudoers.d/50-$RUNNER_USER"
+sudo visudo -cf "/etc/sudoers.d/50-$RUNNER_USER" >/dev/null
+
+token=$(gh api -X POST "repos/$REPO/actions/runners/registration-token" --jq .token)
+[[ -n $token ]] || fail "could not mint a runner registration token for $REPO"
+
+os=linux
+arch=arm64
+latest=$(gh api repos/actions/runner/releases/latest --jq .tag_name)
+version=${latest#v}
+tarball="actions-runner-${os}-${arch}-${version}.tar.gz"
+url="https://github.com/actions/runner/releases/download/${latest}/${tarball}"
+
+log "installing GitHub Actions runner $latest into $RUNNER_DIR"
+sudo mkdir -p "$RUNNER_DIR"
+sudo chown -R "$RUNNER_USER:$RUNNER_USER" "$RUNNER_HOME"
+if [[ ! -x $RUNNER_DIR/config.sh ]]; then
+  sudo -u "$RUNNER_USER" curl -fL -o "$RUNNER_DIR/$tarball" "$url"
+  sudo -u "$RUNNER_USER" tar -xzf "$RUNNER_DIR/$tarball" -C "$RUNNER_DIR"
+  sudo rm -f "$RUNNER_DIR/$tarball"
+fi
+
+log "configuring runner for $REPO ($LABELS)"
+sudo -u "$RUNNER_USER" bash -c "cd \"$RUNNER_DIR\" && ./config.sh --unattended --replace \
+  --url \"https://github.com/$REPO\" \
+  --token \"$token\" \
+  --name \"$(hostname)-install-vm\" \
+  --labels \"$LABELS\" \
+  --work \"$RUNNER_HOME/_work\""
+
+log "installing the runner systemd service"
+sudo bash -c "cd \"$RUNNER_DIR\" && ./svc.sh install \"$RUNNER_USER\" && ./svc.sh start"
+
+log "runner is up. Confirm it at https://github.com/$REPO/settings/actions/runners"
+log "use this runner only for trusted manual hardware workflows; Install VM uses GitHub-hosted ARM"

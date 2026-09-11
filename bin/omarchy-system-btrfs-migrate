@@ -669,6 +669,7 @@ echo "btrfs migration finished and cleaned up"
 EOF
   chmod 755 "$WORKER_DIR/finish"
 
+  # omarchy:heredoc-expands paths=WORKER_DIR -- $WORKER_DIR is the hardcoded /usr/local/lib/omarchy-btrfs-migrate tree
   cat >"$FINISH_UNIT" <<EOF
 [Unit]
 Description=Finish the Omarchy btrfs migration

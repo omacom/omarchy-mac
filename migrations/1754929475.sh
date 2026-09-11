@@ -1,6 +1,7 @@
 echo "Add start burst limit to login"
 
 if [[ -f /etc/systemd/system/omarchy-seamless-login.service ]]; then
+  # omarchy:heredoc-expands paths=none -- $USER is the login account name, not a path
   cat <<EOF | sudo tee /etc/systemd/system/omarchy-seamless-login.service
 [Unit]
 Description=Omarchy Seamless Auto-Login

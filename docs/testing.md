@@ -136,3 +136,25 @@ only a live session can prove.
 - **Assert the invariant, not the snapshot.** Config tests pin the property a
   test is named for (this widget stays adjacent to that one) rather than whole
   structures, so unrelated churn does not fail them.
+
+## CI
+
+GitHub Actions (`.github/workflows/main.yml`) runs on every push and pull request. Three jobs run in parallel on `ubuntu-24.04`:
+
+- **syntax** — shebang-aware parse of `bin/omarchy-*`, `bash -n` on tracked `*.sh`, and shellcheck (`--shell=bash -S error`, excluding `migrations/` and `test/`)
+- **test** — `./test/all` (`./test/cli` and `./test/shell`), with `omacom/omarchy-pkgs` checked out for PKGBUILD coverage
+- **mac** — `./tests/all` (Mac-specific suites; root/loop rehearsals skip without privileges)
+
+The graphical acceptance suite is not part of this workflow. Compositor-dependent shell tests skip on the headless runner.
+
+## Install machine (GitHub-hosted ARM)
+
+`.github/workflows/install-vm.yml` runs on every pull request, pushes to `quattro`, manual dispatch, and the nightly schedule. Each job gets a disposable `ubuntu-24.04-arm` machine with read-only repository permissions, no persisted checkout credentials, and no repository secrets. Pull requests use GitHub's default merge ref, so the test includes the proposed change and its target branch. Fork contributions remain subject to GitHub's normal workflow approval policy. Superseded runs cancel only within the same PR or ref.
+
+The job runs `./test/vm/run-selective-edge` with both package-source and idempotency checks enabled. It verifies the signed Arch Linux ARM rootfs, checks that only Hyprland, Hyprtoolkit, and Hyprland GUI utilities come from the restricted Omarchy edge repository while Aquamarine comes from the regular repository, and exercises repository remediation on the current stack. It then restores an independent clean base, runs the complete installer, checks package versions, dependency consistency, system setup and user finalization, and repeats the installer with the same package and installed-system assertions to catch failures on an already installed system.
+
+`systemd-nspawn` shares the hosted ARM64 kernel; it does not require nested KVM. This validates package installation and userspace setup, including AUR builds. It cannot prove Apple Silicon boot, the Asahi kernel, GPU behavior, or a graphical desktop session. Those checks still need Apple hardware or the separate graphical acceptance environment.
+
+Each run uses unique work and cache directories with no cache shared across jobs. A private source copy retains Git metadata and is owned by the guest build user, so guest builds can write files even when the host runner has a different UID; the original checkout is not modified. Preparation fails if less than 20 GiB is free. Package-phase, installer, assertion, and repeat-install logs are uploaded even on failure and retained for seven days. The job has a 120-minute timeout. See [runner requirements](runner-requirements.md) for host dependencies and a local invocation.
+
+`test/shell.d/install-vm-workflow-test.sh` guards the workflow's PR coverage, hosted-runner isolation, and required validation flags. Its YAML parser requires PyYAML (`python-yaml` on Arch, `python3-yaml` on Ubuntu); CI installs it with the other test dependencies.

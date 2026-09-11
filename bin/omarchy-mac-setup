@@ -430,6 +430,7 @@ print_help() {
 # anyone logging in. Conflicting with the getty keeps the two off each other's
 # console.
 install_unit() {
+  # omarchy:heredoc-expands paths=none -- $CONF and $SELF are hardcoded /etc and /usr/local paths
   cat >"$UNIT" <<EOF
 [Unit]
 Description=Omarchy Mac guided setup

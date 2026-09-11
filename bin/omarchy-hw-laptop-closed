@@ -3,14 +3,12 @@
 # omarchy:summary=Returns true when the laptop lid is closed
 # omarchy:hidden=true
 
-if command -v busctl >/dev/null 2>&1; then
-  lid_state=$(busctl get-property org.freedesktop.login1 \
-    /org/freedesktop/login1 org.freedesktop.login1.Manager LidClosed 2>/dev/null || true)
-  case "$lid_state" in
-    "b true") exit 0 ;;
-    "b false") exit 1 ;;
-  esac
-fi
+lid_state=$(busctl get-property org.freedesktop.login1 \
+  /org/freedesktop/login1 org.freedesktop.login1.Manager LidClosed 2>/dev/null || true)
+case "$lid_state" in
+  "b true") exit 0 ;;
+  "b false") exit 1 ;;
+esac
 
 for state in "${OMARCHY_ACPI_LID_PATH:-/proc/acpi/button/lid}"/*/state; do
   [[ -r $state ]] || continue

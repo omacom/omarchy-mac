@@ -60,7 +60,7 @@ grep -F 'hyprctl monitors all -j' "$ROOT/bin/omarchy-hyprland-monitor-modeless" 
 pass "modeless helper sees mirrors and ignores monitors disabled on purpose"
 
 grep -F 'omarchy-hw-laptop-closed && omarchy-hw-external-monitors' "$hw_clamshell" >/dev/null
-grep -F '/proc/acpi/button/lid/*/state' "$hw_laptop_closed" >/dev/null
+grep -F '/proc/acpi/button/lid' "$hw_laptop_closed" >/dev/null
 pass "clamshell helper detects closed-lid external monitor state"
 
 # A mirrored external is absent from plain `monitors`, so asking without `all`
@@ -99,6 +99,8 @@ pass "internal mirror helper recovers when no active external display remains"
 
 grep -F 'switch:on:Lid Switch", nil, "omarchy-system-lid-close"' "$utilities" >/dev/null
 grep -F 'switch:off:Lid Switch", nil, "omarchy-hyprland-monitor-clamshell"' "$utilities" >/dev/null
+grep -F 'switch:on:Apple SMC power/lid events", nil, "omarchy-system-lid-close"' "$utilities" >/dev/null
+grep -F 'switch:off:Apple SMC power/lid events", nil, "omarchy-hyprland-monitor-clamshell"' "$utilities" >/dev/null
 pass "lid switch bindings lock on close and reconcile clamshell display state"
 
 grep -F 'omarchy-hyprland-monitor-clamshell >/dev/null 2>&1 || true' "$system_wake" >/dev/null

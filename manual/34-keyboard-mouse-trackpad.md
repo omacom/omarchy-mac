@@ -57,6 +57,10 @@ shortcuts to both forms, so `Fn` is optional for those combinations.
 The Mac-specific brightness and capture combinations are listed in
 [Hotkeys](07-hotkeys.md).
 
+### Keyboard backlight
+
+Laptops with a keyboard backlight LED and an ambient light sensor light the keys in the dark and dim them as the room brightens. `Shift + Brightness Up/Down` still sets the level by hand; automatic control resumes when the ambient light changes enough that the old choice no longer fits. Automatic control pauses while the screen is locked or the lid is closed.
+
 Apple trackpads default to natural scrolling, physical clicks instead of
 tap-to-click, two-finger right-click, and a `0.4` scroll factor. Override any
 of these in `~/.config/hypr/input.lua` using the options shown above.
