@@ -203,6 +203,11 @@ recover_stuck_usb_audio() {
   (( reset_count > 0 ))
 }
 
+# Capture the owned mapping gain before a healthy daemon is deliberately reset.
+# A broken audio server must not prevent the existing recovery path.
+if ! omarchy-audio-asahi-mic-map --save-state; then
+  echo "Could not save microphone mapping gain before audio recovery." >&2
+fi
 restart_audio_services || true
 
 if ! wpctl_healthy; then

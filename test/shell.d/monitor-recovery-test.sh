@@ -99,6 +99,8 @@ pass "internal mirror helper recovers when no active external display remains"
 
 grep -F 'switch:on:Lid Switch", nil, "omarchy-system-lid-close"' "$utilities" >/dev/null
 grep -F 'switch:off:Lid Switch", nil, "omarchy-hyprland-monitor-clamshell"' "$utilities" >/dev/null
+grep -F 'switch:on:Apple SMC power/lid events", nil, "omarchy-system-lid-close"' "$utilities" >/dev/null
+grep -F 'switch:off:Apple SMC power/lid events", nil, "omarchy-hyprland-monitor-clamshell"' "$utilities" >/dev/null
 pass "lid switch bindings lock on close and reconcile clamshell display state"
 
 grep -F 'omarchy-hyprland-monitor-clamshell >/dev/null 2>&1 || true' "$system_wake" >/dev/null

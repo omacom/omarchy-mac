@@ -5,7 +5,7 @@ name: Install VM
 on:
   pull_request:
   push:
-    branches: [quattro]
+    branches: [quattro, integration/4.0.3rc1-green]
   workflow_dispatch:
   schedule:
     - cron: "17 5 * * *"
@@ -37,6 +37,15 @@ jobs:
           # The default pull_request checkout tests GitHub's merge ref.
           persist-credentials: false
 
+      - name: Checkout omarchy-pkgs
+        uses: actions/checkout@v4
+        with:
+          repository: omacom/omarchy-pkgs
+          # Companion first-run dependencies and units (omacom/omarchy-pkgs#341).
+          ref: 6d27290193109c07b0134360d382e64790ae5dda
+          path: omarchy-pkgs
+          persist-credentials: false
+
       - name: Prepare hosted machine
         run: |
           # These hosted-image toolchains are unused by the Arch guest.
@@ -64,11 +73,12 @@ jobs:
 
       - name: Validate package sources, fresh install, and repeat install
         env:
+          OMARCHY_PKGS_PATH: ${{ github.workspace }}/omarchy-pkgs
           OMARCHY_INSTALL_VM_CACHE: ${{ runner.temp }}/omarchy-install-cache-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           mkdir -p "$OMARCHY_INSTALL_VM_WORK/logs"
           set +e
-          sudo --preserve-env=HOME,OMARCHY_INSTALL_VM_WORK,OMARCHY_INSTALL_VM_CACHE,OMARCHY_INSTALL_VM_PACKAGE_SOURCES,OMARCHY_INSTALL_VM_IDEMPOTENCY \
+          sudo --preserve-env=HOME,OMARCHY_PKGS_PATH,OMARCHY_INSTALL_VM_WORK,OMARCHY_INSTALL_VM_CACHE,OMARCHY_INSTALL_VM_PACKAGE_SOURCES,OMARCHY_INSTALL_VM_IDEMPOTENCY \
             bash ./test/vm/run-selective-edge 2>&1 | tee "$RUNNER_TEMP/omarchy-harness.log"
           status=${PIPESTATUS[0]}
           set -e
