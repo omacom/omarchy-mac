@@ -22,8 +22,18 @@ assert(
 )
 
 assert(
-  /onAuthenticatingPasswordChanged: \{\s*if \(!lockRequested\) return\s*if \(authenticatingPassword\) idleBlankTimer\.stop\(\)\s*else armBlankTimer\(\)/.test(serviceQml),
-  'the blank timer is held off by password entry and re-armed when it finishes'
+  /onAuthenticatingPasswordChanged: \{\s*if \(!lockRequested\) return\s*if \(authenticatingPassword\) idleBlankTimer\.stop\(\)\s*else if \(authenticationVisible\) armBlankTimer\(\)/.test(serviceQml),
+  'password completion re-arms blanking only after authentication is revealed'
+)
+
+assert(
+  /function beginLock\(\)[\s\S]*?authenticationVisible = false\s*idleBlankTimer\.stop\(\)\s*lockRequested = true/.test(serviceQml),
+  'locking keeps the concealed screensaver lit'
+)
+
+assert(
+  /function runWake\(\)[\s\S]*?if \(lockRequested && authenticationVisible\) armBlankTimer\(\)/.test(serviceQml),
+  'display blanking starts only after authentication is revealed'
 )
 
 assert(

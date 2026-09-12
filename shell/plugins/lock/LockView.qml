@@ -15,8 +15,13 @@ Item {
   property bool inputEnabled: true
   property bool loadBackground: true
   property string passwordText: ""
+  property bool authenticationVisible: true
+  property string screensaverPath: ""
+  property string screensaverContent: ""
   property bool syncingPasswordText: false
 
+  readonly property bool authenticationUiVisible: authenticationUi.visible
+  readonly property bool screensaverVisible: screensaver.visible
   readonly property string placeholderText: "Enter Password"
   readonly property int fieldWidth: 381
   readonly property int fieldHeight: 67
@@ -42,6 +47,7 @@ Item {
   signal passwordTextEdited(string password)
   signal clearFailureRequested()
   signal wakeRequested()
+  signal authenticationRevealRequested()
 
   // Cache-busts the lock background by appending `?v=`. Adding a query
   // string keeps Image's loader happy while forcing it to reload when the
@@ -53,7 +59,19 @@ Item {
   }
 
   function forcePasswordFocus() {
-    passwordInput.forceActiveFocus()
+    if (inputEnabled && authenticationVisible) passwordInput.forceActiveFocus()
+  }
+
+  function requestAuthenticationReveal() {
+    if (!inputEnabled || authenticationVisible) return false
+    authenticationRevealRequested()
+    return true
+  }
+
+  function handleConcealedKey(event) {
+    if (!requestAuthenticationReveal()) return false
+    event.accepted = true
+    return true
   }
 
   function clearPassword() {
@@ -68,12 +86,23 @@ Item {
   }
 
   onPasswordTextChanged: syncPasswordText()
-  onInputEnabledChanged: {
-    if (inputEnabled) Qt.callLater(forcePasswordFocus)
-  }
+  onInputEnabledChanged: Qt.callLater(function() {
+    if (root.authenticationVisible) root.forcePasswordFocus()
+    else if (root.inputEnabled) root.forceActiveFocus()
+  })
+  onAuthenticationVisibleChanged: Qt.callLater(function() {
+    if (root.authenticationVisible) root.forcePasswordFocus()
+    else if (root.inputEnabled) root.forceActiveFocus()
+  })
   Component.onCompleted: {
     syncPasswordText()
-    if (inputEnabled) Qt.callLater(forcePasswordFocus)
+    if (authenticationVisible) Qt.callLater(forcePasswordFocus)
+    else if (inputEnabled) Qt.callLater(forceActiveFocus)
+  }
+
+  Keys.priority: Keys.BeforeItem
+  Keys.onPressed: function(event) {
+    root.handleConcealedKey(event)
   }
 
   // Measures the masked password at full size; passwordDotScale compares this
@@ -86,14 +115,23 @@ Item {
     text: "●".repeat(passwordInput.text.length)
   }
 
-  Rectangle {
+  SecureScreensaver {
+    id: screensaver
     anchors.fill: parent
-    color: Color.background
+    visible: !root.authenticationVisible
+    sourcePath: root.screensaverPath
+    content: root.screensaverContent
+  }
 
+  Rectangle {
+    id: authenticationUi
+    anchors.fill: parent
+    visible: root.authenticationVisible
+    color: Color.background
     Image {
       id: wallpaper
       anchors.fill: parent
-      source: root.loadBackground ? root.fileUrl(root.backgroundPath) : ""
+      source: root.authenticationVisible && root.loadBackground ? root.fileUrl(root.backgroundPath) : ""
       fillMode: Image.PreserveAspectCrop
       asynchronous: true
       cache: false
@@ -214,6 +252,23 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
       }
+    }
+  }
+
+  MouseArea {
+    anchors.fill: parent
+    visible: !root.authenticationVisible
+    enabled: root.inputEnabled
+    hoverEnabled: true
+    acceptedButtons: Qt.AllButtons
+    onPositionChanged: function(mouse) {
+      if (root.requestAuthenticationReveal()) mouse.accepted = true
+    }
+    onPressed: function(mouse) {
+      if (root.requestAuthenticationReveal()) mouse.accepted = true
+    }
+    onWheel: function(wheel) {
+      if (root.requestAuthenticationReveal()) wheel.accepted = true
     }
   }
 }
