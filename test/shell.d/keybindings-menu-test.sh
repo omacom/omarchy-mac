@@ -61,24 +61,24 @@ BINDS
 rendered=$(keybindings)
 [[ -n $rendered ]] || fail "the keybindings menu renders with a stubbed Hyprland"
 
-grep -q 'SUPER + F  *→ Full screen' <<<"$rendered" ||
+grep -q '⌘ + F  *→ Full screen' <<<"$rendered" ||
   fail "a chord with no alternative renders on its own" "$rendered"
 pass "the keybindings menu renders its entries"
 
 (( $(grep -c '→ Close window$' <<<"$rendered") == 1 )) ||
   fail "an alternative chord joins the row of the first one" "$rendered"
-grep -q 'SUPER + W / SUPER + Q  *→ Close window' <<<"$rendered" ||
+grep -q '⌘ + W / ⌘ + Q  *→ Close window' <<<"$rendered" ||
   fail "a shared row names both chords" "$rendered"
 pass "an alternative chord joins the row of the first one"
 
 # Which chord leads is the whole point of keeping Hyprland's order: SUPER + W is
 # the documented default and SUPER + Q the alternative bound after it.
-grep -q '^SUPER + W / SUPER + Q' <<<"$rendered" ||
+grep -q '^⌘ + W / ⌘ + Q' <<<"$rendered" ||
   fail "the chord declared first leads a shared row" "$rendered"
 pass "the chord declared first leads a shared row"
 
 # Hyprland calls the key left of 1 "grave". Nobody reads their keyboard that way.
-grep -q 'SUPER + S / SUPER + ~  *→ Toggle scratchpad' <<<"$rendered" ||
+grep -q '⌘ + S / ⌘ + ~  *→ Toggle scratchpad' <<<"$rendered" ||
   fail "the grave key reads as the symbol printed on it" "$rendered"
 ! grep -q 'grave' <<<"$rendered" ||
   fail "no entry still says grave" "$rendered"
@@ -86,14 +86,14 @@ pass "the grave key reads as the symbol printed on it"
 
 # Monospace menu: every arrow sits in one column, and nothing is allowed past
 # it. A row that overruns pushes its own arrow out of line.
-[[ $(awk -F '→' '{ print length($1) }' <<<"$rendered" | sort -u) == "36" ]] ||
+[[ $(sed 's/⌘/x/g; s/⌥/x/g; s/⌃/x/g; s/⇧/x/g' <<<"$rendered" | awk -F '→' '{ print length($1) }' | sort -u) == "36" ]] ||
   fail "every entry pads its chords to the same column" "$rendered"
 pass "every entry pads its chords to the same column"
 
 # The menu elides a row that outgrows its card: 754px of label, 78 monospace
 # characters at the heading size. The longest entry Omarchy ships sits at 74, so
 # a row has four characters of room and no more.
-(( $(awk '{ print length($0) }' <<<"$rendered" | sort -rn | head -1) <= 78 )) ||
+(( $(sed 's/⌘/x/g; s/⌥/x/g; s/⌃/x/g; s/⇧/x/g' <<<"$rendered" | awk '{ print length($0) }' | sort -rn | head -1) <= 78 )) ||
   fail "no entry outgrows the width the menu gives it" "$rendered"
 pass "no entry outgrows the width the menu gives it"
 
@@ -127,7 +127,7 @@ bind
 BINDS
 
 rendered=$(keybindings)
-grep -q 'SUPER + ~  *→ Toggle scratchpad' <<<"$rendered" ||
+grep -q '⌘ + ~  *→ Toggle scratchpad' <<<"$rendered" ||
   fail "a keycode resolves to the symbol printed on the key too" "$rendered"
 pass "a keycode resolves to the symbol printed on the key too"
 
@@ -167,7 +167,7 @@ BINDS
 rendered=$(keybindings)
 (( $(grep -c '→ Calculator$' <<<"$rendered") == 2 )) ||
   fail "chords too wide to share a row stay on their own" "$rendered"
-[[ $(awk -F '→' '{ print length($1) }' <<<"$rendered" | sort -u) == "36" ]] ||
+[[ $(sed 's/⌘/x/g; s/⌥/x/g; s/⌃/x/g; s/⇧/x/g' <<<"$rendered" | awk -F '→' '{ print length($1) }' | sort -u) == "36" ]] ||
   fail "chords too wide to share a row leave the column alone" "$rendered"
 pass "chords too wide to share a row stay on their own"
 
@@ -220,3 +220,23 @@ for action in "${expected_alternatives[@]}"; do
     fail "every action named as having an alternative is bound twice" "$action"
 done
 pass "every action named as having an alternative is bound twice"
+
+# A user-defined chord can exceed the standard display column. It must remain
+# intact without backwards padding, and an arrow in its description belongs to
+# the description rather than changing where the display formatter splits the
+# record. The dispatcher fields remain attached after the display field.
+stub_hyprctl <<BINDS
+$(exec_bind 77 "SUPER SHIFT CTRL ALT + EXTRAORDINARILY_LONG_KEY_NAME" "Explain → advanced behavior" "printf dispatch-metadata-survives")
+BINDS
+
+rendered=$(keybindings)
+grep -qF '⌘ ⇧ ⌃ ⌥ + EXTRAORDINARILY_LONG_KEY_NAME → Explain → advanced behavior' <<<"$rendered" ||
+  fail "an overlong chord and arrow-bearing description render intact" "$rendered"
+pass "overlong chords and arrow-bearing descriptions render intact"
+
+formatter_functions=$(sed -n '/^format_display_records()/,/^}/p' "$ROOT/bin/omarchy-menu-keybindings")
+eval "$formatter_functions"
+formatted_record=$(printf '%s\n' $'SUPER + K                          → Explain → advanced behavior\texec\tprintf dispatch-metadata-survives' | format_display_records)
+[[ $(cut -f2- <<<"$formatted_record") == $'exec\tprintf dispatch-metadata-survives' ]] ||
+  fail "display formatting preserves dispatcher metadata" "$formatted_record"
+pass "display formatting preserves dispatcher metadata"

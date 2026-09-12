@@ -53,12 +53,12 @@ output_keybindings() (
 function key_part_text(part, is_modifier, part_count) {
   gsub(/^\\/, "", part)
 
-  if (is_modifier && part == "C") return "CTRL"
-  if (is_modifier && part == "M") return "ALT"
-  if (is_modifier && part == "S") return "SHIFT"
+  if (is_modifier && part == "C") return "⌃"
+  if (is_modifier && part == "M") return "⌥"
+  if (is_modifier && part == "S") return "⇧"
   if (part == "Space") return "SPACE"
   if (part == "BSpace") return "BACKSPACE"
-  if (part == "BTab") return "SHIFT + TAB"
+  if (part == "BTab") return "⇧ + TAB"
   if (part == "PPage") return "PAGE UP"
   if (part == "NPage") return "PAGE DOWN"
   if (part == "DC") return "DELETE"
@@ -90,6 +90,14 @@ function table_text(table) {
   return toupper(table)
 }
 
+function padded(text, width,   measured) {
+  measured = text
+  gsub(/⌘|⌥|⌃|⇧/, "x", measured)
+  if (length(measured) >= width) return text
+
+  return text sprintf("%*s", width - length(measured), "")
+}
+
 $1 == "prefix" && NF == 2 { prefix = $2; next }
 $1 == "prefix2" && NF == 2 { prefix2 = $2; next }
 
@@ -101,7 +109,7 @@ $1 == "prefix2" && NF == 2 { prefix2 = $2; next }
       prefix_description = prefix_description " / " key_text(prefix2)
     }
 
-    printf "%-32s → %s\n", "PREFIX", prefix_description
+    printf "%s → %s\n", padded("PREFIX", 32), prefix_description
     header_printed = 1
   }
 
@@ -116,7 +124,7 @@ $1 == "prefix2" && NF == 2 { prefix2 = $2; next }
     combo = table_text(table) " + " key_text(key)
   }
 
-  printf "%-32s → %s\n", combo, note
+  printf "%s → %s\n", padded(combo, 32), note
 }'
 )
 
