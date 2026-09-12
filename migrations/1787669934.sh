@@ -2,6 +2,12 @@ echo "Ensure zram-generator is installed and activate configured zram swap"
 
 if omarchy-pkg-missing zram-generator; then
   omarchy-pkg-add zram-generator
+  # The ARM package helper can skip unavailable packages successfully, but
+  # this repair requires the generator before it can be marked complete.
+  if omarchy-pkg-missing zram-generator; then
+    echo "zram-generator is still missing; the zram repair will be retried." >&2
+    exit 1
+  fi
 fi
 
 # Some ARM settings packages shipped the default only under /usr/share/omarchy,
