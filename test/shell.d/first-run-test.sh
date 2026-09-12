@@ -85,3 +85,58 @@ grep -F 'Failed: finalize user (exit code: 42)' \
   "$retry_tmp/home/.local/state/omarchy/first-run.log" >/dev/null ||
   fail "first-run records a finalization failure"
 pass "failed user finalization keeps first-run retryable"
+
+# Exercise the full completion gate with the real notification parser and the
+# three leaves involved in the recurring update prompt. Stub only unrelated
+# setup and the external service/network/notification transports.
+require_command jq
+lifecycle="$retry_tmp/lifecycle"
+mkdir -p "$lifecycle/bin" "$lifecycle/omarchy/install/user/first-run"
+for leaf in timezone wifi enable-user-units; do
+  cp "$ROOT/install/user/first-run/$leaf.sh" "$lifecycle/omarchy/install/user/first-run/"
+done
+for leaf in welcome gnome-theme gtk-primary-paste audio-tuning; do
+  printf 'true\n' >"$lifecycle/omarchy/install/user/first-run/$leaf.sh"
+done
+for command in omarchy-provision-user omarchy-hook-install omarchy-notification-wait nm-online; do
+  printf '#!/bin/bash\nexit 0\n' >"$lifecycle/bin/$command"
+done
+printf '#!/bin/bash\nprintf "UTC\\n"\n' >"$lifecycle/bin/timedatectl"
+cat >"$lifecycle/bin/systemctl" <<'SH'
+#!/bin/bash
+[[ $* != '--user daemon-reload' ]] || exit 0
+[[ ${KEYBOARD_UNIT_PRESENT:-yes} == yes ]]
+SH
+cat >"$lifecycle/bin/busctl" <<'SH'
+#!/bin/bash
+for argument in "$@"; do
+  [[ $argument != 'Update System' ]] || printf 'update\n' >>"$NOTIFICATIONS"
+done
+exit 0
+SH
+chmod +x "$lifecycle/bin/"*
+
+login() {
+  HOME="$lifecycle/home" XDG_CONFIG_HOME="$lifecycle/home/.config" \
+    PATH="$lifecycle/bin:$ROOT/bin:$PATH" OMARCHY_PATH="$lifecycle/omarchy" \
+    NOTIFICATIONS="$lifecycle/notifications" KEYBOARD_UNIT_PRESENT="$1" \
+    bash "$ROOT/bin/omarchy-provision-first-run" 2>&1 | cat >"$lifecycle/output"
+  # wifi.sh detaches its network probe. A pipe stays open until that child
+  # exits, giving each simulated login a deterministic notification boundary.
+}
+
+marker="$lifecycle/home/.local/state/omarchy/done/first-run-user"
+login yes
+login yes
+[[ -f $marker ]] || fail "successful real first-run records completion"
+[[ $(wc -l <"$lifecycle/notifications") == 1 ]] || fail "two successful logins show the update prompt once"
+pass "real timezone action and shipped user unit allow first-run to finish once"
+
+rm -rf "$lifecycle/home" "$lifecycle/notifications"
+login no
+[[ ! -e $marker ]] || fail "missing user unit keeps first-run retryable"
+login yes
+[[ -f $marker ]] || fail "restored user unit allows the next login to finish"
+login yes
+[[ $(wc -l <"$lifecycle/notifications") == 2 ]] || fail "repair stops update prompts after the successful retry"
+pass "missing package unit retries setup until repaired, then stops repeating prompts"
