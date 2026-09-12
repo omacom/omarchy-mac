@@ -35,6 +35,7 @@ for artifact in \
   "$PREFIX" \
   "$BIN/mlx-omarchy" \
   "$BIN/mlx-omarchy-demo" \
+  "$BIN/mlx-omarchy-info" \
   "$APPS/mlx-omarchy-demo.desktop"; do
   [ -e "$artifact" ] && existing+=("$artifact")
 done
@@ -54,8 +55,8 @@ fi
 # Pinned installer commit and its checksum. Bump both together; never point at a
 # moving branch, because this menu entry runs on other people's machines.
 INSTALLER_REPO="joshuaswarren/mlx-omarchy"
-INSTALLER_REF="286ef7297b0db6576c70d9999c6f6b005ce1c8de"
-INSTALLER_SHA256="cdfa8a985d38984c68053c2765b50cc8875b7f894001c44d4c6732e47921ebf1"
+INSTALLER_REF="a1c771d6ef0750b2b6a154fcb5ab61174555aa45"
+INSTALLER_SHA256="b28a0fc32c7e9f1ff53a4e5617611a09a0ee12d187daad0293ec876814d16ad4"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -92,7 +93,7 @@ if [ "$status" -ne 0 ]; then
   else
     echo "Cleanup did not finish. Files may remain in:" >&2
     echo "  $PREFIX" >&2
-    echo "  $BIN/mlx-omarchy, $BIN/mlx-omarchy-demo" >&2
+    echo "  $BIN/mlx-omarchy, $BIN/mlx-omarchy-demo, $BIN/mlx-omarchy-info" >&2
     echo "  $APPS/mlx-omarchy-demo.desktop" >&2
     echo "Run 'omarchy-remove-ai-mlx' before trying again." >&2
   fi
