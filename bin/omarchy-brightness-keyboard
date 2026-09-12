@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# omarchy:summary=Adjust keyboard backlight brightness using available steps.
-# omarchy:args=[--no-osd] <up|down|cycle|off|restore>
+# omarchy:summary=Read or set keyboard backlight brightness.
+# omarchy:args=[--no-osd] <available|get|set <0-100>|up|down|cycle|off|restore>
 
 no_osd=0
 if [[ ${1:-} == "--no-osd" ]]; then
@@ -9,50 +9,178 @@ if [[ ${1:-} == "--no-osd" ]]; then
   shift
 fi
 
-direction="${1:-up}"
-
-# Find keyboard backlight device (look for *kbd_backlight* pattern in leds class).
+MAX_SAFE_BRIGHTNESS=90000000000000000
+keyboard_led_root="${OMARCHY_KEYBOARD_LED_ROOT:-/sys/class/leds}"
 device=""
-for candidate in /sys/class/leds/*kbd_backlight*; do
-  if [[ -e $candidate ]]; then
-    device="$(basename "$candidate")"
-    break
+max_brightness=""
+current_brightness=""
+
+find_device() {
+  local candidate
+
+  for candidate in "$keyboard_led_root"/*kbd_backlight*; do
+    if [[ -e $candidate ]]; then
+      device=${candidate##*/}
+      return 0
+    fi
+  done
+
+  printf '%s\n' "No keyboard backlight device found" >&2
+  return 1
+}
+
+normalize_decimal() {
+  local normalized="$1"
+  local candidate
+  local safe_limit
+
+  [[ $normalized =~ ^[0-9]+$ ]] || return 1
+  while [[ ${#normalized} -gt 1 && ${normalized:0:1} == "0" ]]; do
+    normalized=${normalized:1}
+  done
+  if (( ${#normalized} > ${#MAX_SAFE_BRIGHTNESS} )); then
+    return 1
   fi
-done
+  if (( ${#normalized} == ${#MAX_SAFE_BRIGHTNESS} )); then
+    candidate=$((10#$normalized))
+    safe_limit=$((10#$MAX_SAFE_BRIGHTNESS))
+    if (( candidate > safe_limit )); then
+      return 1
+    fi
+  fi
+  printf '%s\n' "$normalized"
+}
 
-if [[ -z $device ]]; then
-  echo "No keyboard backlight device found" >&2
-  exit 1
-fi
+read_levels() {
+  if ! max_brightness=$(brightnessctl -d "$device" max); then
+    printf '%s\n' "Unable to read keyboard backlight maximum" >&2
+    return 1
+  fi
+  if ! current_brightness=$(brightnessctl -d "$device" get); then
+    printf '%s\n' "Unable to read keyboard backlight brightness" >&2
+    return 1
+  fi
+  if ! max_brightness=$(normalize_decimal "$max_brightness") || ! current_brightness=$(normalize_decimal "$current_brightness"); then
+    printf '%s\n' "Keyboard backlight returned an invalid or unsafe brightness" >&2
+    return 1
+  fi
 
-if [[ $direction == "off" ]]; then
-  brightnessctl -sd "$device" set 0 >/dev/null
-  exit 0
-elif [[ $direction == "restore" ]]; then
-  brightnessctl -rd "$device" >/dev/null
-  exit 0
-fi
+  if (( max_brightness <= 0 )); then
+    printf '%s\n' "Keyboard backlight maximum must be positive" >&2
+    return 1
+  fi
+}
 
-# Get current and max brightness to determine step size.
-max_brightness="$(brightnessctl -d "$device" max)"
-current_brightness="$(brightnessctl -d "$device" get)"
+percent_for_current() {
+  local percent
 
-# Calculate step as 10% of max brightness. Keyboards with many levels (e.g. 512)
-# need larger steps; keyboards with few levels (e.g. 3) fall back to step=1.
-step=$(( max_brightness / 10 ))
-(( step < 1 )) && step=1
+  percent=$(( (current_brightness * 100 + max_brightness / 2) / max_brightness ))
+  (( percent < 0 )) && percent=0
+  (( percent > 100 )) && percent=100
+  printf '%s\n' "$percent"
+}
 
-if [[ $direction == "cycle" ]]; then
-  new_brightness=$(( current_brightness + step ))
-  (( new_brightness > max_brightness )) && new_brightness=0
-elif [[ $direction == "up" ]]; then
-  new_brightness=$(( current_brightness + step ))
-  (( new_brightness > max_brightness )) && new_brightness=$max_brightness
+show_osd() {
+  local percent="$1"
+
+  if (( no_osd )); then
+    return 0
+  fi
+  if ! omarchy-osd -i keyboard -p "$percent"; then
+    printf '%s\n' "Keyboard brightness write succeeded but OSD failed" >&2
+  fi
+  return 0
+}
+
+usage_error() {
+  printf '%s\n' "Usage: omarchy-brightness-keyboard [--no-osd] <available|get|set <0-100>|up|down|cycle|off|restore>" >&2
+  return 2
+}
+
+if [[ ${1:-} == "" ]]; then
+  action=up
 else
-  new_brightness=$(( current_brightness - step ))
-  (( new_brightness < 0 )) && new_brightness=0
+  action=$1
+  shift
 fi
 
-# Set the new brightness.
-brightnessctl -d "$device" set "$new_brightness" >/dev/null
-(( no_osd )) || omarchy-osd -i keyboard -p "$(( new_brightness * 100 / max_brightness ))"
+if (( no_osd )) && [[ $action == "available" || $action == "get" ]]; then
+  usage_error
+  exit $?
+fi
+
+case $action in
+  available)
+    [[ $# == 0 ]] || { usage_error; exit $?; }
+    find_device || exit $?
+    exit 0
+    ;;
+  get)
+    [[ $# == 0 ]] || { usage_error; exit $?; }
+    find_device || exit $?
+    read_levels || exit $?
+    percent_for_current
+    exit 0
+    ;;
+  set)
+    [[ $# == 1 ]] || { usage_error; exit $?; }
+    value=$(normalize_decimal "$1") || { usage_error; exit $?; }
+    value=$((10#$value))
+    (( value <= 100 )) || { usage_error; exit $?; }
+    find_device || exit $?
+    if ! brightnessctl -d "$device" set "${value}%" >/dev/null; then
+      printf '%s\n' "Unable to set keyboard backlight brightness" >&2
+      exit 1
+    fi
+    if (( no_osd )); then
+      exit 0
+    fi
+    show_osd "$value"
+    exit 0
+    ;;
+  up|down|cycle)
+    [[ $# == 0 ]] || { usage_error; exit $?; }
+    find_device || exit $?
+    read_levels || exit $?
+    step=$((max_brightness / 10))
+    (( step < 1 )) && step=1
+    if [[ $action == "cycle" ]]; then
+      new_brightness=$((current_brightness + step))
+      (( new_brightness > max_brightness )) && new_brightness=0
+    elif [[ $action == "up" ]]; then
+      new_brightness=$((current_brightness + step))
+      (( new_brightness > max_brightness )) && new_brightness=$max_brightness
+    else
+      new_brightness=$((current_brightness - step))
+      (( new_brightness < 0 )) && new_brightness=0
+    fi
+    if ! brightnessctl -d "$device" set "$new_brightness" >/dev/null; then
+      printf '%s\n' "Unable to set keyboard backlight brightness" >&2
+      exit 1
+    fi
+    show_osd "$((new_brightness * 100 / max_brightness))"
+    exit 0
+    ;;
+  off)
+    [[ $# == 0 ]] || { usage_error; exit $?; }
+    find_device || exit $?
+    if ! brightnessctl -sd "$device" set 0 >/dev/null; then
+      printf '%s\n' "Unable to turn off keyboard backlight" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  restore)
+    [[ $# == 0 ]] || { usage_error; exit $?; }
+    find_device || exit $?
+    if ! brightnessctl -rd "$device" >/dev/null; then
+      printf '%s\n' "Unable to restore keyboard backlight" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  *)
+    usage_error
+    exit $?
+    ;;
+esac
