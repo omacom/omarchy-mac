@@ -299,3 +299,22 @@ grep -F 'move = { "(monitor_w-monitor_h*2/9-40)", "(monitor_h-monitor_h/4-40)" }
 grep -F 'move = { "(monitor_w-monitor_h*3/10-40)", "(monitor_h-monitor_h*27/80-40)" }' "$webcam_rules" >/dev/null || \
   fail "large webcam starts at its final corner position"
 pass "webcam size rules place the initial window in its final corner"
+
+grep -Fq 'no_focus = true' "$webcam_rules" ||
+  fail "the webcam overlay does not take focus"
+grep -Fq 'no_follow_mouse = true' "$webcam_rules" ||
+  fail "the webcam overlay does not steal focus on hover"
+pass "the webcam overlay ignores clicks"
+
+recorder="$ROOT/bin/omarchy-capture-screenrecording"
+menu="$ROOT/default/omarchy/omarchy-menu.jsonc"
+bar="$ROOT/shell/plugins/bar/indicators/ScreenRecording.qml"
+grep -Fq -- '-R 48000' "$recorder" ||
+  fail "wf-recorder records AAC at 48 kHz on the software path"
+grep -Fq 'omarchy-capture-screenrecording-process' "$recorder" ||
+  fail "screenrecording stop matches wf-recorder by full path"
+grep -Fq 'omarchy-capture-screenrecording-process' "$menu" ||
+  fail "Capture Stop is visible while wf-recorder is running"
+grep -Fq 'omarchy-capture-screenrecording-process' "$bar" ||
+  fail "the bar recording indicator matches wf-recorder by full path"
+pass "screen recording detects and encodes wf-recorder on Apple Silicon"

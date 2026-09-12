@@ -49,8 +49,14 @@ if omarchy-pkg-missing rtkit pipewire-pulse pipewire-alsa asahi-audio speakersaf
 fi
 
 # The daemon has to be running before the speakers will produce anything.
-sudo systemctl enable --now speakersafetyd >/dev/null 2>&1 ||
-  echo "Warning: speakersafetyd did not start; the speakers stay muted."
+# A start-limit-hit after a bad IV-sense sample leaves the kernel holding
+# the drivers at -100 dB, so clear that and try once more.
+sudo systemctl enable --now speakersafetyd >/dev/null 2>&1 || true
+if ! sudo systemctl is-active --quiet speakersafetyd 2>/dev/null; then
+  sudo systemctl reset-failed speakersafetyd >/dev/null 2>&1 || true
+  sudo systemctl start speakersafetyd >/dev/null 2>&1 ||
+    echo "Warning: speakersafetyd did not start; the speakers stay muted."
+fi
 
 # pipewire-pulse is socket-activated per user, so enabling it system-wide is not
 # the job; the user units are enabled at first run.
