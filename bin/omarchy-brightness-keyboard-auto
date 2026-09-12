@@ -1,25 +1,74 @@
 #!/bin/bash
 
 # omarchy:summary=Drive keyboard backlight from the ambient light sensor
-# omarchy:args=[--once|--available|--map-lux N]
+# omarchy:args=[--once|--available|--map-lux N|--idle|--active|--idle-seconds]
 # omarchy:examples=omarchy brightness keyboard auto --once | omarchy brightness keyboard auto --map-lux 12
 
 # Inverse of display auto-brightness: dark rooms need the keys lit, bright
 # rooms do not. Manual Shift+F1/F2 (or any other write to the LED) pauses
 # auto until ambient light moves enough that the old choice no longer fits.
+#
+# The omarchy.keyboard-backlight shell service adds the other half of what
+# macOS does: --idle after IDLE_SECONDS without a key press or trackpad touch
+# turns the keys off, --active at the first input brings them back. Both only
+# record the state and prod the running loop, which stays the one writer of
+# the LED, so idle-off cannot race the ambient light control.
 
 set -euo pipefail
 
 POLL_SECONDS=5
 DARK_LUX=8
 BRIGHT_LUX=180
+IDLE_SECONDS=10
 DEADBAND_PERCENT=4
+HYSTERESIS_PERCENT=10
 OVERRIDE_LUX_DELTA=20
 OVERRIDE_LUX_RATIO=40
 
+config_file="$HOME/.config/omarchy/keyboard-backlight.conf"
+runtime_dir="${XDG_RUNTIME_DIR:-/tmp/omarchy-$UID}/omarchy-keyboard-backlight"
+idle_flag="$runtime_dir/idle"
+pid_file="$runtime_dir/pid"
+
+# The config is settings, not code: only whole-number assignments to the known
+# keys are read, so a stray line cannot take the loop down with it.
+read_config() {
+  local key value
+
+  [[ -r $config_file ]] || return 0
+  while IFS='=' read -r key value; do
+    key=${key//[[:space:]]/}
+    value=${value%%#*}
+    value=${value//[[:space:]]/}
+    [[ $value =~ ^[0-9]+$ ]] || continue
+    case "$key" in
+      DARK_LUX | BRIGHT_LUX | IDLE_SECONDS | POLL_SECONDS)
+        printf -v "$key" '%s' "$value"
+        ;;
+    esac
+  done <"$config_file"
+
+  # The ramp divides by the distance between the two; an inverted or collapsed
+  # pair falls back to the defaults rather than to a division by zero.
+  if (( BRIGHT_LUX <= DARK_LUX )); then
+    DARK_LUX=8
+    BRIGHT_LUX=180
+  fi
+  (( POLL_SECONDS > 0 )) || POLL_SECONDS=5
+  (( IDLE_SECONDS > 0 )) || IDLE_SECONDS=10
+}
+
+read_config
+
 once=0
 available_only=0
+idle_seconds_only=0
+idle_action=""
 map_lux=""
+
+usage() {
+  echo "Usage: omarchy-brightness-keyboard-auto [--once|--available|--map-lux N|--idle|--active|--idle-seconds]"
+}
 
 while (($#)); do
   case "$1" in
@@ -39,13 +88,25 @@ while (($#)); do
       map_lux=$2
       shift 2
       ;;
+    --idle)
+      idle_action=idle
+      shift
+      ;;
+    --active)
+      idle_action=active
+      shift
+      ;;
+    --idle-seconds)
+      idle_seconds_only=1
+      shift
+      ;;
     -h|--help)
-      echo "Usage: omarchy-brightness-keyboard-auto [--once|--available|--map-lux N]"
+      usage
       exit 0
       ;;
     *)
       echo "Unknown option: $1" >&2
-      echo "Usage: omarchy-brightness-keyboard-auto [--once|--available|--map-lux N]" >&2
+      usage >&2
       exit 1
       ;;
   esac
@@ -70,6 +131,35 @@ if [[ -n $map_lux ]]; then
     exit 1
   }
   lux_to_percent "$map_lux"
+  exit 0
+fi
+
+if (( idle_seconds_only )); then
+  printf '%s\n' "$IDLE_SECONDS"
+  exit 0
+fi
+
+# Wake the loop so idle-off and the return from idle happen now rather than at
+# the next poll. A pid can be reused after a crash, so only a process that is
+# this command gets the signal.
+signal_loop() {
+  local pid
+
+  [[ -r $pid_file ]] || return 0
+  pid=$(<"$pid_file")
+  [[ $pid =~ ^[0-9]+$ ]] || return 0
+  tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -qF "omarchy-brightness-keyboard-auto" || return 0
+  kill -USR1 "$pid" 2>/dev/null || true
+}
+
+if [[ -n $idle_action ]]; then
+  mkdir -p "$runtime_dir"
+  if [[ $idle_action == "idle" ]]; then
+    touch "$idle_flag"
+  else
+    rm -f "$idle_flag"
+  fi
+  signal_loop
   exit 0
 fi
 
@@ -143,6 +233,9 @@ max=$(<"$kbd_path/max_brightness")
 last_set=""
 paused=0
 pause_lux=0
+lit=1
+idle=0
+idle_saved=0
 
 session_locked() {
   omarchy-hyprland-session-locked >/dev/null 2>&1
@@ -158,6 +251,34 @@ read_lux() {
   raw=${raw%%.*}
   [[ $raw =~ ^[0-9]+$ ]] || return 1
   printf '%s\n' "$raw"
+}
+
+# Hysteresis on the off edge. Once the room is bright enough to turn the keys
+# off they stay off until it is dark enough for a clearly visible level again,
+# rather than flickering between off and 1-2% every time a cloud passes. The
+# band is a slice of the ramp, so it follows whatever thresholds are configured.
+auto_percent() {
+  local lux=$1 percent
+
+  percent=$(lux_to_percent "$lux")
+  if (( lit )); then
+    (( percent > 0 )) || lit=0
+  elif (( percent >= HYSTERESIS_PERCENT )); then
+    lit=1
+  fi
+
+  if (( lit )); then
+    printf '%s\n' "$percent"
+  else
+    printf '0\n'
+  fi
+}
+
+apply_raw() {
+  local target=$1
+
+  brightnessctl -d "$device" set "$target" >/dev/null
+  last_set=$(brightnessctl -d "$device" get || echo "$target")
 }
 
 apply_percent() {
@@ -176,8 +297,7 @@ apply_percent() {
     return 0
   fi
 
-  brightnessctl -d "$device" set "$target" >/dev/null
-  last_set=$(brightnessctl -d "$device" get || echo "$target")
+  apply_raw "$target"
 }
 
 tick() {
@@ -191,11 +311,34 @@ tick() {
 
   current=$(brightnessctl -d "$device" get) || return 0
 
+  # Someone pressed the brightness keys, so they are at the keyboard: whatever
+  # they chose stands, and it must not be replaced by the level from before
+  # idle when the shell reports them active a moment later.
   if [[ -n $last_set && $current != "$last_set" ]]; then
     paused=1
     pause_lux=$lux
     last_set=$current
+    idle=0
     return 0
+  fi
+
+  # Idle-off is an exact write, not a ramp target: the deadband must not keep
+  # a dim level lit, and the return from idle restores what was showing before,
+  # including a hand-set level the override pause is holding.
+  if [[ -e $idle_flag ]]; then
+    if (( ! idle )); then
+      idle=1
+      idle_saved=$current
+      apply_raw 0
+    fi
+    return 0
+  fi
+  if (( idle )); then
+    idle=0
+    if (( paused )); then
+      apply_raw "$idle_saved"
+      return 0
+    fi
   fi
 
   if (( paused )); then
@@ -211,7 +354,7 @@ tick() {
     paused=0
   fi
 
-  apply_percent "$(lux_to_percent "$lux")"
+  apply_percent "$(auto_percent "$lux")"
 }
 
 tick
@@ -220,8 +363,24 @@ if (( once )); then
   exit 0
 fi
 
+# USR1 from --idle and --active only needs to interrupt the wait below. The
+# sleep runs in the background for that reason: a foreground sleep would absorb
+# the signal until its full interval was up. The trap goes in before the pid
+# is published, since an untrapped USR1 would end the loop instead.
+trap ':' USR1
+# A signal that ends the shell skips the EXIT trap, so turn the ones systemd
+# and a terminal send into an ordinary exit, and the pid file and the sleep
+# still running in the background go with it.
+sleep_pid=""
+trap 'kill "$sleep_pid" 2>/dev/null || true; rm -f "$pid_file"' EXIT
+trap 'exit 0' TERM INT
+mkdir -p "$runtime_dir"
+printf '%s\n' "$$" >"$pid_file"
+
 while true; do
-  sleep "$POLL_SECONDS"
+  sleep "$POLL_SECONDS" &
+  sleep_pid=$!
+  wait "$sleep_pid" || kill "$sleep_pid" 2>/dev/null || true
   als_path=$(find_als || true)
   kbd_path=$(find_kbd || true)
   [[ -n $als_path && -n $kbd_path ]] || continue
