@@ -5,13 +5,12 @@
 
 set -e
 
-omarchy-pkg-drop minecraft-launcher
+omarchy-pkg-drop prismlauncher
 
 rm -rf \
-  "$HOME/.minecraft" \
-  "$HOME/.config/Minecraft Launcher" \
-  "$HOME/.local/share/minecraft-launcher" \
-  "$HOME/.cache/minecraft"
+  "$HOME/.local/share/PrismLauncher" \
+  "$HOME/.config/PrismLauncher" \
+  "$HOME/.cache/PrismLauncher"
 
 echo ""
 echo "Minecraft and its data have been removed."
