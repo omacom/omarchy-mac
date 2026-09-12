@@ -20,6 +20,7 @@ declare -A COMMAND_REQUIRES_SUDO
 declare -A COMMAND_HIDDEN
 declare -A COMMAND_ALIASES
 declare -A COMMAND_HAS_SUMMARY
+declare -A COMMAND_HAS_METADATA
 declare -A COMMAND_METADATA_ERRORS
 declare -A ROUTE_TO_KEY
 declare -A ROUTE_IS_ALIAS
@@ -184,6 +185,7 @@ register_command() {
   local name_seen="false"
   local fallback_summary=""
   local has_summary="false"
+  local has_metadata="false"
   local metadata_errors=""
 
   while IFS= read -r line && (( line_count < METADATA_SCAN_LIMIT )); do
@@ -202,6 +204,7 @@ register_command() {
     fi
 
     if [[ $line =~ ^[[:space:]]*#[[:space:]]*omarchy:([[:alnum:]_-]+)=(.*)$ ]]; then
+      has_metadata="true"
       metadata_key="${BASH_REMATCH[1]}"
       metadata_value="${BASH_REMATCH[2]}"
       metadata_value="${metadata_value%$'\r'}"
@@ -292,6 +295,7 @@ register_command() {
   COMMAND_REQUIRES_SUDO["$key"]="$requires_sudo"
   COMMAND_HIDDEN["$key"]="$hidden"
   COMMAND_HAS_SUMMARY["$key"]="$has_summary"
+  COMMAND_HAS_METADATA["$key"]="$has_metadata"
   COMMAND_METADATA_ERRORS["$key"]="$metadata_errors"
 
   BINARY_TO_KEY["$file_binary"]="$key"
@@ -705,7 +709,7 @@ show_commands_check() {
   done
 
   for key in "${COMMAND_KEYS[@]}"; do
-    if [[ ${COMMAND_HAS_SUMMARY[$key]} != "true" ]]; then
+    if [[ ${COMMAND_HAS_SUMMARY[$key]} != "true" && ${COMMAND_HAS_METADATA[$key]} == "true" ]]; then
       echo "Missing metadata summary: ${COMMAND_BINARY[$key]}" >&2
       failures=$((failures + 1))
     fi
