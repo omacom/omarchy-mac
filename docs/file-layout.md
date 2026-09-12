@@ -139,6 +139,16 @@ logo.{txt,svg}, icon.{txt,png}  ──► omarchy-settings    /usr/share/omarchy
                                                         /etc/skel/.config/omarchy/branding/{about,screensaver}.txt
 ```
 
+`default/system-paths.tsv` declares the selected fixed runtime defaults that the
+Apple Silicon checkout upgrade must mirror. Package-coverage tests compare
+those rows against the discovered external PKGBUILD for drift; that PKGBUILD
+does not consume this manifest. The Mac wiring links systemd user units and
+drop-ins into the checkout and copies other fixed files. The zram-generator
+drop-in is intentionally copied as a regular mode-0644 file; zram-generator
+ignores a symlink at that path. The manifest does not cover the complete
+`omarchy-settings` package, recursive defaults, hardware-conditional sleep
+hooks, ALPM hooks, or broad `/etc` content.
+
 ### Why `etc-overrides/` exists
 
 Some files under `/etc/` (`.bashrc` in `/etc/skel`, `nsswitch.conf`,

@@ -159,7 +159,148 @@ validate_quattro_tree() {
       fail "The '$upgrade_ref' tree at $checkout is missing bin/$path; it does not have the Quattro layout."
   done
 
+  load_system_path_manifest
+
   log "The '$upgrade_ref' tree at $checkout is Quattro ($version)"
+}
+
+system_path_sources=()
+system_path_destinations=()
+system_path_policies=()
+system_path_source_paths=()
+system_profile_source_path=""
+system_command_names=()
+system_command_source_paths=()
+declare -A system_path_seen_destinations=()
+
+# Read and validate the complete fixed-path manifest before wire_system_paths
+# invokes sudo. The Mac checkout is user-owned by design, so accepting a path
+# outside it or a destination with surprising syntax would turn a data file
+# into a privileged command input.
+load_system_path_manifest() {
+  local manifest="$checkout/default/system-paths.tsv"
+  local line line_number=0 source destination policy remainder source_path
+  local resolved_checkout resolved_source resolved_profile resolved_command manifest_digest
+  local profile_source command_path command_paths expected_rows=19 zram_rows=0
+  local expected_manifest_sha256="a8fd68dfc45eddb3160db475874265e573b6cf0333f1e75f9fec840504144f05"
+  local zram_source="default/systemd/zram-generator.conf.d/90-omarchy.conf"
+  local zram_destination="/usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf"
+
+  [[ -f $manifest && ! -L $manifest ]] ||
+    fail "The Quattro tree is missing default/system-paths.tsv."
+  resolved_checkout=$(realpath -e -- "$checkout") ||
+    fail "The Quattro checkout path cannot be resolved: $checkout"
+  [[ -d $resolved_checkout ]] ||
+    fail "The Quattro checkout path is not a directory: $checkout"
+
+  system_path_sources=()
+  system_path_destinations=()
+  system_path_policies=()
+  system_path_source_paths=()
+  system_profile_source_path=""
+  system_command_names=()
+  system_command_source_paths=()
+  system_path_seen_destinations=()
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    ((line_number += 1))
+
+    [[ -n $line ]] || fail "Invalid system path manifest row $line_number: blank rows are not allowed."
+    [[ $line == \#* ]] && continue
+
+    [[ $line == *$'\t'* ]] ||
+      fail "Invalid system path manifest row $line_number: expected three tab-separated fields."
+    source=${line%%$'\t'*}
+    remainder=${line#*$'\t'}
+    [[ $remainder == *$'\t'* ]] ||
+      fail "Invalid system path manifest row $line_number: expected three tab-separated fields."
+    destination=${remainder%%$'\t'*}
+    policy=${remainder#*$'\t'}
+    [[ $policy != *$'\t'* ]] ||
+      fail "Invalid system path manifest row $line_number: extra fields are not allowed."
+
+    [[ -n $source && -n $destination && -n $policy ]] ||
+      fail "Invalid system path manifest row $line_number: fields cannot be empty."
+    [[ $source != *[[:space:][:cntrl:]]* && $destination != *[[:space:][:cntrl:]]* ]] ||
+      fail "Invalid system path manifest row $line_number: paths cannot contain whitespace or control characters."
+
+    case "$source" in
+      /*|*/|*//*|.|./*|*/./*|*/.|..|../*|*/../*)
+        fail "Invalid system path manifest row $line_number: source is not canonical: $source"
+        ;;
+    esac
+    case "$destination" in
+      /|/*/|*//*|/./*|*/./*|*/.|/../*|*/..|*/../*)
+        fail "Invalid system path manifest row $line_number: destination is not canonical: $destination"
+        ;;
+      /*) ;;
+      *)
+        fail "Invalid system path manifest row $line_number: destination is not absolute: $destination"
+        ;;
+    esac
+
+    case "$policy" in
+      copy|link) ;;
+      *) fail "Invalid system path manifest row $line_number: unknown policy: $policy" ;;
+    esac
+
+    [[ -z ${system_path_seen_destinations[$destination]+seen} ]] ||
+      fail "Invalid system path manifest row $line_number: duplicate destination: $destination"
+    source_path="$checkout/$source"
+    [[ -f $source_path && ! -L $source_path ]] ||
+      fail "Invalid system path manifest row $line_number: source is not a regular file: $source"
+    resolved_source=$(realpath -e -- "$source_path") ||
+      fail "Invalid system path manifest row $line_number: source cannot be resolved: $source"
+    [[ $resolved_source == "$resolved_checkout"/* ]] ||
+      fail "Invalid system path manifest row $line_number: source resolves outside the checkout: $source"
+
+    if [[ $source == "$zram_source" || $destination == "$zram_destination" ]]; then
+      ((zram_rows += 1))
+      [[ $source == "$zram_source" && $destination == "$zram_destination" && $policy == "copy" ]] ||
+        fail "Invalid system path manifest row $line_number: zram drop-in must be the canonical copy row."
+    fi
+
+    system_path_sources+=("$source")
+    system_path_destinations+=("$destination")
+    system_path_policies+=("$policy")
+    system_path_source_paths+=("$resolved_source")
+    system_path_seen_destinations["$destination"]=1
+  done <"$manifest"
+
+  (( ${#system_path_sources[@]} == expected_rows )) ||
+    fail "The system path manifest must contain exactly $expected_rows data rows."
+  (( zram_rows == 1 )) || fail "The system path manifest must contain exactly one canonical zram drop-in row."
+  manifest_digest=$(sha256sum -- "$manifest") ||
+    fail "The system path manifest checksum could not be calculated."
+  [[ ${manifest_digest%% *} == "$expected_manifest_sha256" ]] ||
+    fail "The system path manifest does not match the canonical fixed-path contract."
+
+  profile_source="$checkout/etc/profile.d/omarchy.sh"
+  [[ -f $profile_source && ! -L $profile_source ]] ||
+    fail "The Quattro tree profile source is not a regular file: etc/profile.d/omarchy.sh"
+  resolved_profile=$(realpath -e -- "$profile_source") ||
+    fail "The Quattro tree profile source cannot be resolved: etc/profile.d/omarchy.sh"
+  [[ $resolved_profile == "$resolved_checkout"/* ]] ||
+    fail "The Quattro tree profile source resolves outside the checkout: etc/profile.d/omarchy.sh"
+  system_profile_source_path="$resolved_profile"
+
+  command_paths=("$checkout/bin"/omarchy-*)
+  [[ -e ${command_paths[0]} ]] ||
+    fail "The Quattro tree has no bin/omarchy-* commands."
+  for command_path in "${command_paths[@]}"; do
+    [[ -e $command_path || -L $command_path ]] || continue
+    if [[ ! -f $command_path || -L $command_path ]]; then
+      fail "The Quattro tree command is not a regular file: ${command_path##*/}"
+    fi
+    resolved_command=$(realpath -e -- "$command_path") ||
+      fail "The Quattro tree command cannot be resolved: ${command_path##*/}"
+    [[ $resolved_command == "$resolved_checkout"/* ]] ||
+      fail "The Quattro tree command resolves outside the checkout: ${command_path##*/}"
+    system_command_names+=("${command_path##*/}")
+    system_command_source_paths+=("$resolved_command")
+  done
+  (( ${#system_command_source_paths[@]} )) ||
+    fail "The Quattro tree has no regular bin/omarchy-* command files."
 }
 
 # A 3.x machine's /etc/pacman.conf predates the [omarchy-aarch64] repo. Without
@@ -245,18 +386,33 @@ install_quattro_packages() {
 wire_system_paths() {
   log "Wiring the checkout into /usr/share/omarchy, /etc, and /usr/bin"
 
-  sudo ln -sfn "$checkout" /usr/share/omarchy
-  printf 'export OMARCHY_PATH="%s"\n' "$checkout" | sudo tee /etc/omarchy.conf >/dev/null
+  load_system_path_manifest
 
-  sudo install -Dm644 "$checkout/etc/profile.d/omarchy.sh" /etc/profile.d/omarchy.sh
-  sudo install -Dm644 "$checkout/default/uwsm/env.d/10-omarchy" /usr/share/uwsm/env.d/10-omarchy
-  sudo install -Dm644 "$checkout/default/environment.d/10-omarchy-fcitx.conf" /usr/lib/environment.d/10-omarchy-fcitx.conf
+  sudo ln -sfnT "$checkout" /usr/share/omarchy
+  printf 'export OMARCHY_PATH=%q\n' "$checkout" | sudo tee /etc/omarchy.conf >/dev/null
+
+  sudo install -Dm644 -T "$system_profile_source_path" /etc/profile.d/omarchy.sh
+
+  local index source destination policy source_path command command_source
+  for index in "${!system_path_sources[@]}"; do
+    source=${system_path_sources[$index]}
+    destination=${system_path_destinations[$index]}
+    policy=${system_path_policies[$index]}
+    source_path=${system_path_source_paths[$index]}
+    sudo install -d -m755 "$(dirname -- "$destination")"
+    if [[ $policy == "copy" ]]; then
+      sudo install -Dm644 -T "$source_path" "$destination"
+    else
+      sudo ln -sfnT "$source_path" "$destination"
+    fi
+  done
 
   # Omarchy's systemd units start commands by their /usr/bin/omarchy-* path,
   # which packaged installs provide. Symlink the checkout's commands there.
-  local command
-  for command in "$checkout/bin"/omarchy-*; do
-    sudo ln -sf "$command" "/usr/bin/$(basename "$command")"
+  for index in "${!system_command_names[@]}"; do
+    command=${system_command_names[$index]}
+    command_source=${system_command_source_paths[$index]}
+    sudo ln -sfnT "$command_source" "/usr/bin/$command"
   done
 }
 
