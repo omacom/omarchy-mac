@@ -55,8 +55,8 @@ fi
 # Pinned installer commit and its checksum. Bump both together; never point at a
 # moving branch, because this menu entry runs on other people's machines.
 INSTALLER_REPO="joshuaswarren/mlx-omarchy"
-INSTALLER_REF="a1c771d6ef0750b2b6a154fcb5ab61174555aa45"
-INSTALLER_SHA256="b28a0fc32c7e9f1ff53a4e5617611a09a0ee12d187daad0293ec876814d16ad4"
+INSTALLER_REF="0545dc7f8678c9d25800d37f96ab7262cb07fc2b"
+INSTALLER_SHA256="993bf0222c998367c7a82732f03477723aa7d5b1a44e89edb56ee1fa977444e8"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
