@@ -43,7 +43,9 @@ LOG_FILE=/var/log/omarchy-system-factory-reset.log
 # than via `sudo -E`, so styling survives even under an env_reset sudoers.
 if (( EUID != 0 )); then
   mapfile -t gum_env < <(env | grep '^GUM_' || true)
-  exec sudo env "${gum_env[@]}" "$0" "$@"
+  exec sudo env "${gum_env[@]}" \
+    OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}" \
+    "$0" "$@"
 fi
 
 export PATH="$OMARCHY_PATH/bin:$PATH"
@@ -248,19 +250,24 @@ factory_uses_limine() {
 }
 
 # First-boot LUKS re-key runs from the factory clone, which predates this
-# helper on machines that only gained it via an update. Copy it in so the
-# clone can rebuild GRUB, and install it as limine-update when the snapshot
-# has no real one — older provision-owner still calls that name.
+# helper on machines that only gained it via an update. Copy the live reset
+# tools into the clone so GRUB rebuild and a later factory-reset both work
+# without waiting for the new owner to update. Install the helper as
+# limine-update when the snapshot has no real one — older provision-owner
+# still calls that name.
 install_boot_rebuild_into_next() {
-  local next="$1" src="$OMARCHY_PATH/bin/omarchy-boot-rebuild"
+  local next="$1" name src
 
-  [[ -x $src ]] || fail "missing $src"
-  install -Dm755 "$src" "$next/usr/bin/omarchy-boot-rebuild"
-  if [[ -d $next/usr/share/omarchy/bin ]]; then
-    install -Dm755 "$src" "$next/usr/share/omarchy/bin/omarchy-boot-rebuild"
-  fi
+  for name in omarchy-boot-rebuild omarchy-system-factory-reset omarchy-provision-owner; do
+    src="$OMARCHY_PATH/bin/$name"
+    [[ -x $src ]] || fail "missing $src"
+    install -Dm755 "$src" "$next/usr/bin/$name"
+    if [[ -d $next/usr/share/omarchy/bin ]]; then
+      install -Dm755 "$src" "$next/usr/share/omarchy/bin/$name"
+    fi
+  done
   if [[ ! -x $next/usr/bin/limine-update ]]; then
-    install -Dm755 "$src" "$next/usr/bin/limine-update"
+    install -Dm755 "$OMARCHY_PATH/bin/omarchy-boot-rebuild" "$next/usr/bin/limine-update"
   fi
 }
 

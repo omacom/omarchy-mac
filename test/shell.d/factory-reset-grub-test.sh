@@ -20,6 +20,8 @@ pass "omarchy-boot-rebuild is a hidden Limine-or-GRUB helper"
 grep -qF 'factory_uses_limine' "$reset" || fail "factory reset distinguishes Limine factory snapshots"
 grep -qF 'install_boot_rebuild_into_next' "$reset" ||
   fail "factory reset copies omarchy-boot-rebuild into the staged clone"
+grep -qF 'omarchy-system-factory-reset omarchy-provision-owner' "$reset" ||
+  fail "factory reset copies the live reset tools into the staged clone so a later reset still works"
 grep -qF 'verify_grub_provisioning_boot' "$reset" ||
   fail "factory reset verifies the GRUB provisioning boot files"
 grep -qF 'usr/bin/grub-mkconfig' "$reset" || fail "factory reset has a GRUB rebuild path"
