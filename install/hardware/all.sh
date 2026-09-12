@@ -45,6 +45,7 @@ run_logged "$OMARCHY_INSTALL/hardware/apple/enable-notch.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/electron-gl.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/audio.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/video-decode.sh"
+run_logged "$OMARCHY_INSTALL/hardware/apple/touchbar.sh"
 
 run_logged "$OMARCHY_INSTALL/hardware/lenovo/fix-yoga-pro7-bass-speakers.sh"
 
