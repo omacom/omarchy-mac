@@ -134,6 +134,43 @@ keep_apple_silicon_mkinitcpio_drop_ins() {
     fail "lost the limine-entry-tool.d cleanup in $pkgbuild"
 }
 
+# Upstream's omarchy-settings PKGBUILD installs its user units from an explicit
+# list rather than a glob, so a unit this fork adds under default/systemd/user/
+# ships under /usr/share/omarchy/default/ but never reaches
+# /usr/lib/systemd/user/, where first-run and the migration enable it. That is
+# what 4.0.2-2 did with the ambient keyboard backlight unit: every install got
+# a wants symlink to a unit systemd reports as not-found. Add an install line
+# for each fork unit right after upstream's own, and step aside for a unit
+# upstream has since adopted.
+readonly fork_user_units=(
+  omarchy-brightness-keyboard-auto.service
+)
+
+install_fork_user_units() {
+  local pkgbuild="$1" unit last line
+
+  for unit in "${fork_user_units[@]}"; do
+    [[ -f "$checkout/default/systemd/user/$unit" ]] ||
+      fail "default/systemd/user/$unit is listed in fork_user_units but missing from the checkout"
+    if grep -qF "default/systemd/user/$unit " "$pkgbuild"; then
+      continue
+    fi
+
+    # Fail loudly if upstream restructures this. Silently not matching would
+    # ship a package without the unit, which is the failure this exists to
+    # prevent and the one that only shows as a dangling symlink after install.
+    last=$(grep -nE '^[[:space:]]*install -Dm644 default/systemd/user/[^[:space:]]+\.service ' "$pkgbuild" |
+      tail -n 1 | cut -d: -f1)
+    [[ -n $last ]] ||
+      fail "omarchy-settings PKGBUILD no longer installs user units as expected; re-check it against $pkgbuild"
+
+    line="  install -Dm644 default/systemd/user/$unit \"\$pkgdir/usr/lib/systemd/user/$unit\""
+    awk -v n="$last" -v line="$line" '{ print } NR == n { print line }' "$pkgbuild" >"$pkgbuild.tmp" &&
+      mv "$pkgbuild.tmp" "$pkgbuild"
+    grep -qF "$line" "$pkgbuild" || fail "could not add $unit to $pkgbuild"
+  done
+}
+
 # makepkg runs with --nodeps because the runtime dependencies include packages
 # built here, so pacman cannot resolve them yet. That skips makedepends too,
 # leaving the build tools to be installed up front.
@@ -187,6 +224,7 @@ build_package() {
   fi
   if [[ $package == "omarchy-settings" ]]; then
     keep_apple_silicon_mkinitcpio_drop_ins "$build_dir/$package/PKGBUILD"
+    install_fork_user_units "$build_dir/$package/PKGBUILD"
   fi
   if [[ $package == "omarchy" || $package == "omarchy-settings" ]]; then
     set_pkgrel "$build_dir/$package/PKGBUILD"

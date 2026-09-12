@@ -64,6 +64,43 @@ if ! (
   fail "set_pkgrel no-ops without OMARCHY_PKGREL, writes a number, and rejects junk"
 fi
 rm -rf "$rel_dir"
+# Upstream's package() lists its user units one by one, so a unit only this
+# fork ships has to be added to that list or it never reaches
+# /usr/lib/systemd/user/ and the migration that enables it dangles.
+units_dir=$(mktemp -d)
+cat >"$units_dir/PKGBUILD" <<'PKG'
+package() {
+  install -Dm644 default/systemd/user/bt-agent.service "$pkgdir/usr/lib/systemd/user/bt-agent.service"
+  install -Dm644 default/systemd/user/omarchy-crash-watch.service "$pkgdir/usr/lib/systemd/user/omarchy-crash-watch.service"
+  install -d "$pkgdir/usr/share/omarchy/applications"
+}
+PKG
+if ! (
+  source "$build_script"
+  install_fork_user_units "$units_dir/PKGBUILD"
+  # A second pass, or upstream adopting the unit, must not add it twice.
+  install_fork_user_units "$units_dir/PKGBUILD"
+  added='install -Dm644 default/systemd/user/omarchy-brightness-keyboard-auto.service "$pkgdir/usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service"'
+  [[ $(grep -cF "$added" "$units_dir/PKGBUILD") == 1 ]] || exit 1
+  # Directly after upstream's last unit, so it stays inside package().
+  grep -A1 -F 'omarchy-crash-watch.service' "$units_dir/PKGBUILD" | grep -qF "$added" || exit 1
+  printf 'package() {\n  install -d "$pkgdir/usr/share"\n}\n' >"$units_dir/PKGBUILD"
+  if ( install_fork_user_units "$units_dir/PKGBUILD" >/dev/null 2>&1 ); then
+    exit 1
+  fi
+); then
+  rm -rf "$units_dir"
+  fail "install_fork_user_units adds each fork unit once after upstream's units and refuses an unrecognised package()"
+fi
+rm -rf "$units_dir"
+pass "install_fork_user_units adds each fork unit once after upstream's units and refuses an unrecognised package()"
+
+grep -A3 'package == "omarchy-settings"' "$build_script" | grep -q install_fork_user_units ||
+  fail "the package build installs the fork's user units into omarchy-settings"
+grep -qF '  omarchy-brightness-keyboard-auto.service' "$build_script" ||
+  fail "the package build lists the ambient keyboard backlight unit as a fork unit"
+pass "the package build installs the fork's user units into omarchy-settings"
+
 grep -A2 'package == "omarchy-settings"' "$build_script" | grep -q set_pkgrel ||
   fail "the package build stamps pkgrel on omarchy and omarchy-settings"
 pass "the package build can stamp a Mac-only pkgrel on omarchy and omarchy-settings"
