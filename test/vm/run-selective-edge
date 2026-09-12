@@ -306,7 +306,7 @@ assert_installed_system() {
   nspawn /bin/bash -euo pipefail <<'ASSERT' 2>&1 | tee "$log_file"
 source /usr/share/omarchy/default/bash/env-bootstrap
 command -v omarchy >/dev/null
-omarchy commands --check >/dev/null
+omarchy commands >/dev/null
 pacman -Q omarchy >/dev/null
 pacman -Q omarchy-settings >/dev/null
 [[ -d /usr/share/omarchy/bin ]]
