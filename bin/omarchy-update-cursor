@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# omarchy:summary=Update the Cursor AppImage on Apple Silicon
+# omarchy:requires-sudo=true
+
+set -euo pipefail
+
+CURSOR_DIR="${OMARCHY_CURSOR_DIR:-/opt/cursor}"
+CURSOR_APPIMAGE="$CURSOR_DIR/cursor.AppImage"
+CURSOR_VERSION_FILE="$CURSOR_DIR/version"
+CURSOR_RELEASE_API="https://www.cursor.com/api/download?platform=linux-arm64&releaseTrack=latest"
+
+# x86_64 installs Cursor as cursor-bin, so pacman/AUR already moved it.
+# Machines that never chose Cursor have no AppImage to refresh.
+if [[ $(uname -m) == "aarch64" && -f $CURSOR_APPIMAGE ]]; then
+  echo -e "\e[32m\nUpdate Cursor\e[0m"
+
+  metadata=$(curl -fsSL "$CURSOR_RELEASE_API")
+  latest_version=$(jq -er '.version' <<<"$metadata")
+  download_url=$(jq -er '.downloadUrl' <<<"$metadata")
+
+  if [[ -f $CURSOR_VERSION_FILE && $(<"$CURSOR_VERSION_FILE") == "$latest_version" ]]; then
+    echo "Cursor $latest_version already installed"
+  else
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' EXIT
+
+    echo "Downloading Cursor $latest_version..."
+    curl -L --fail --output "$tmp_dir/cursor.AppImage" "$download_url"
+    chmod +x "$tmp_dir/cursor.AppImage"
+
+    sudo mkdir -p "$CURSOR_DIR"
+    sudo install -m 755 "$tmp_dir/cursor.AppImage" "$CURSOR_APPIMAGE"
+    printf '%s\n' "$latest_version" | sudo tee "$CURSOR_VERSION_FILE" >/dev/null
+  fi
+fi

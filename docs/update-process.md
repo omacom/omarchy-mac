@@ -283,6 +283,7 @@ scripts.
 | `omarchy-update-available` | Update checker for shell widget and post-update refresh. | **Keep.** Could eventually be renamed `omarchy-update-check`, but current name matches widget semantics. |
 | `omarchy-update-aur-pkgs` | Updates AUR packages with `yay -Sua` if foreign packages exist and AUR is reachable. | **Question.** Omarchy is package-backed now, but users may still install AUR packages. Keep for now. |
 | `omarchy-update-mise` | Runs `MISE_MINIMUM_RELEASE_AGE=0 mise up` for mise-managed tools — the override of mise's release-age cooldown is the point. | **Keep.** Mise-managed tools are intentionally part of the blessed update path. |
+| `omarchy-update-cursor` | Replaces `/opt/cursor/cursor.AppImage` from Cursor's linux-arm64 latest API when the installed version is behind. No-ops on x86_64 and when the AppImage is absent. | **Keep.** The aarch64 installer disables in-app updates (`update.mode: none`), so Omarchy has to own the AppImage. |
 | `omarchy-update-orphan-pkgs` | Lists orphans and prompts before removal; noninteractive mode never removes. | **Keep for now.** Safe because it is prompt-only. |
 | `omarchy-update-analyze-logs` | Scans `/tmp/omarchy-update.log` for known failure patterns, currently initramfs generation. | **Keep/expand.** Useful safety net; should grow only for high-signal checks. |
 | `omarchy-update-restart` | Prompts for reboot after kernel/Hyprland updates, restarts components with `restart-*-required` markers, and always restarts the shell. | **Keep.** Important final step; may eventually include service-restart checks. |
@@ -308,10 +309,15 @@ scripts.
 4. **Mise remains in the blessed update path**
    - `omarchy-update-mise` intentionally runs as part of `omarchy update`.
 
-5. **Orphan cleanup stays in the update path for now**
+5. **ARM Cursor AppImage is part of the blessed update path**
+   - `omarchy-update-cursor` runs after mise.
+   - It no-ops on x86_64, where Cursor is `cursor-bin`, and when `/opt/cursor/cursor.AppImage` is not installed.
+   - In-app Cursor updates stay disabled; Omarchy replaces the AppImage.
+
+6. **Orphan cleanup stays in the update path for now**
    - It is prompt-only and never removes packages noninteractively.
 
-6. **Direct pacman user follow-up is based on actual migration state**
+7. **Direct pacman user follow-up is based on actual migration state**
    - Direct `sudo pacman -Syu` no longer uses a fake user-update marker.
    - User notifications are shown only when `omarchy-migrate --pending` finds
      missing per-user migration state.
