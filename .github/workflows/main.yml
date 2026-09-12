@@ -108,6 +108,19 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/bin:$PATH"
           ./test/all
 
+  asahi-reconnect:
+    name: Asahi HDMI source + C seam
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check pinned patch and RED/GREEN regressions
+        run: python3 test/asahi/reconnect.py
+
   mac:
     name: tests/all
     runs-on: ubuntu-24.04
