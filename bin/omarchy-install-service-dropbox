@@ -2,6 +2,16 @@
 
 # omarchy:summary=Install and start the Dropbox service. Must then be authenticated via the web.
 
+set -e
+
+# Everything below needs dropbox-cli, which only exists as an AUR package built
+# around Dropbox's x86_64-only daemon. When the repos cannot serve it there is
+# no Dropbox to start — say so instead of enabling a bar widget for nothing.
+if ! omarchy-pkg-present dropbox-cli && ! pacman -Si dropbox-cli &>/dev/null; then
+  echo "Dropbox is not available on this system (no aarch64 build exists)."
+  exit 1
+fi
+
 echo "Installing all dependencies..."
 omarchy-pkg-add dropbox dropbox-cli libappindicator-gtk3 python-gpgme nautilus-dropbox
 
