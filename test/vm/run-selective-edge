@@ -271,7 +271,7 @@ run_install() {
     install_env=(--setenv=OMARCHY_PKGS_PATH=/src/omarchy/omarchy-pkgs)
   fi
   nspawn "${install_env[@]}" --user="$GUEST_USER" --chdir=/src/omarchy \
-    /bin/bash -euo pipefail -c 'export LANG=en_US.UTF-8; bash install.sh' \
+    /bin/bash -euo pipefail -c 'export LANG=en_US.UTF-8; bash install.sh --from-source' \
     2>&1 | tee "$log_file"
   local status=${PIPESTATUS[0]}
   return "$status"
