@@ -13,6 +13,9 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 CACHE="${OMARCHY_INSTALL_VM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-install-vm}"
 WORK="${OMARCHY_INSTALL_VM_WORK:-/var/tmp/omarchy-install-vm}"
 SOURCE="$WORK/source"
+FIXTURE="$WORK/channel-fixture"
+PUBLISHER="${OMARCHY_CHANNEL_PUBLISHER_PATH:-$ROOT/channel-publisher}"
+FIXTURE_BIND=--bind-ro
 TARBALL_URL="${OMARCHY_INSTALL_VM_TARBALL:-https://fl.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}"
 GUEST_USER=ci
 KEEP_ROOT=${OMARCHY_INSTALL_VM_KEEP:-0}
@@ -51,7 +54,7 @@ cleanup() {
     log "keeping $WORK/root (OMARCHY_INSTALL_VM_KEEP=1)"
     return 0
   fi
-  as_root rm -rf "$WORK/root" "$SOURCE"
+  as_root rm -rf "$WORK/root" "$SOURCE" "$FIXTURE"
 }
 
 [[ $(uname -m) == "aarch64" ]] || fail "this harness only runs on aarch64"
@@ -59,6 +62,7 @@ command -v systemd-nspawn >/dev/null || fail "systemd-nspawn is required"
 command -v curl >/dev/null || fail "curl is required"
 command -v gpg >/dev/null || fail "gpg is required"
 command -v sha256sum >/dev/null || fail "sha256sum is required"
+[[ -f $PUBLISHER/scripts/channel-snapshot.py ]] || fail "OMARCHY_CHANNEL_PUBLISHER_PATH must contain the pinned channel publisher"
 
 as_root true || fail "root (or passwordless sudo) is required to spawn the machine"
 
@@ -70,8 +74,8 @@ mkdir -p "$CACHE"
 as_root mkdir -p "$WORK/logs"
 as_root find "$WORK/logs" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 as_root chown "$CALLER_UID:$CALLER_GID" "$WORK/logs"
-as_root rm -rf "$WORK/root" "$SOURCE"
-as_root mkdir -p "$WORK/root" "$SOURCE"
+as_root rm -rf "$WORK/root" "$SOURCE" "$FIXTURE"
+as_root mkdir -p "$WORK/root" "$SOURCE" "$FIXTURE"
 trap cleanup EXIT
 
 tarball="$CACHE/ArchLinuxARM-aarch64-latest.tar.gz"
@@ -155,6 +159,8 @@ nspawn() {
     --system-call-filter="landlock_create_ruleset landlock_add_rule landlock_restrict_self" \
     --resolv-conf=bind-host \
     --bind="$SOURCE:/src/omarchy" \
+    "$FIXTURE_BIND=$FIXTURE:/opt/omarchy-ci-channel" \
+    --bind-ro="$PUBLISHER:/opt/omarchy-channel-publisher" \
     --console=pipe \
     "$@"
 }
@@ -217,26 +223,53 @@ fi
 
 stage_source
 
+log "building an isolated channel fixture from the candidate source and pinned recipes"
+FIXTURE_BIND=--bind
+nspawn /bin/bash /src/omarchy/test/vm/prepare-channel-fixture 2>&1 | tee "$WORK/logs/channel-fixture.log"
+FIXTURE_BIND=--bind-ro
+as_root cp "$FIXTURE/channel-$(cat "$FIXTURE/channel")/channel-manifest.json" "$WORK/logs/channel-manifest.json"
+
+install_fixture_transport() {
+  nspawn /bin/bash -euo pipefail <<'TRANSPORT'
+install -Dm755 /src/omarchy/test/vm/channel-download /usr/local/bin/curl
+install -Dm755 /src/omarchy/test/vm/channel-download /usr/local/bin/pacman
+channel=$(cat /opt/omarchy-ci-channel/channel)
+source /src/omarchy/install/helpers/arm-package-sources.sh
+omarchy_arm_package_repo "$channel" >> /etc/pacman.conf
+pacman -Sy --noconfirm
+TRANSPORT
+}
+
+# Fixture construction must not preinstall dependencies for either test phase.
+restore_clean_guest() {
+  [[ $WORK == /var/tmp/omarchy-* && $WORK != *".."* && ! -L $WORK/root ]] || fail "unsafe work directory"
+  as_root rm -rf -- "$WORK/root"
+  as_root mkdir -p "$WORK/root"
+  as_root tar -xzf "$prepared" -C "$WORK/root"
+  as_root mkdir -p "$WORK/root/src/omarchy"
+  set_test_mirror
+  install_fixture_transport
+}
+restore_clean_guest
+
 if [[ $CHECK_PACKAGE_SOURCES == "1" ]]; then
   log "validating restricted package sources and current-stack repository remediation"
   nspawn /bin/bash -euo pipefail <<'PACKAGE_SOURCES' 2>&1 | tee "$WORK/logs/package-sources.log"
 export OMARCHY_PATH=/src/omarchy
 export PATH="$OMARCHY_PATH/bin:$PATH"
 bash "$OMARCHY_PATH/test/shell.d/arm-package-transaction-test.sh"
+bash "$OMARCHY_PATH/test/shell.d/channel-package-identity-test.sh"
+pacman -S --needed --noconfirm python curl libarchive
 source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
-omarchy_arm_prepare_package_sources
+omarchy_arm_prepare_package_sources /etc/pacman.conf backup "$(cat /opt/omarchy-ci-channel/channel)" /src/omarchy
 [[ $(pacman-conf --repo omarchy Usage) == "Sync" ]]
 pacman -Sy --noconfirm
 mapfile -t targets < <(omarchy_arm_package_targets)
 pacman -Sp --print-format '%r %n %v %l' "${targets[@]}" > /tmp/package-selection
 cat /tmp/package-selection
 awk '
-  $1 == "omarchy" {
-    if ($2 != "hyprland" && $2 != "hyprtoolkit" && $2 != "hyprland-guiutils") exit 1
-    selected[$2] = 1
-  }
-  $2 == "aquamarine" { if ($1 != "extra") exit 1; aquamarine = 1 }
-  END { if (length(selected) != 3 || !aquamarine) exit 1 }
+  $1 == "omarchy" { selected[$2] = 1 }
+  END { if (!selected["hyprland"] || !selected["hyprtoolkit"] || !selected["hyprland-guiutils"]) exit 1 }
 ' /tmp/package-selection
 pacman -Syu --needed --noconfirm "${targets[@]}"
 pacman -Qii aquamarine hyprtoolkit hyprland-guiutils hyprland
@@ -256,12 +289,7 @@ PACKAGE_SOURCES
   # The package transaction above must not preinstall the stack for install.sh.
   # Start the full installer independently from the clean prepared base image.
   as_root cp "$WORK/root/var/log/pacman.log" "$WORK/logs/package-phase-pacman.log"
-  [[ $WORK == /var/tmp/omarchy-* && $WORK != *".."* && ! -L $WORK/root ]] || fail "unsafe work directory"
-  as_root rm -rf -- "$WORK/root"
-  as_root mkdir -p "$WORK/root"
-  as_root tar -xzf "$prepared" -C "$WORK/root"
-  as_root mkdir -p "$WORK/root/src/omarchy"
-  set_test_mirror
+  restore_clean_guest
   log "restored independent clean base for the full installation"
 fi
 
@@ -274,6 +302,11 @@ run_install() {
     /bin/bash -euo pipefail -c 'export LANG=en_US.UTF-8; bash install.sh' \
     2>&1 | tee "$log_file"
   local status=${PIPESTATUS[0]}
+  nspawn /bin/bash -euo pipefail -c 'find /src/omarchy/build-output -maxdepth 1 -name "*.pkg.tar.*" -type f -exec sha256sum {} +' \
+    > "$log_file.package-sha256" || { (( status != 0 )) || return 1; }
+  if (( status == 0 )); then
+    [[ -s $log_file.package-sha256 ]] || return 1
+  fi
   return "$status"
 }
 
@@ -287,11 +320,19 @@ assert_package_sources() {
   local log_file="$1"
   nspawn /bin/bash -euo pipefail <<'VERIFY_FINAL' 2>&1 | tee "$log_file"
 export LC_ALL=C
+export OMARCHY_PATH=/src/omarchy
 source /src/omarchy/install/helpers/arm-package-sources.sh
 [[ $(pacman-conf --repo omarchy Usage) == "Sync" ]]
 while read -r target; do
   package=${target#*/}
-  expected=$(pacman -Si "$target" | sed -n 's/^Version[[:space:]]*:[[:space:]]*//p')
+  expected=$(python3 - "$package" <<'EXPECTED'
+import json, pathlib, sys
+root = pathlib.Path('/opt/omarchy-ci-channel')
+channel = (root / 'channel').read_text().strip()
+manifest = json.loads((root / ('channel-' + channel) / 'channel-manifest.json').read_text())
+print(next(row['version'] for row in manifest['packages'] if row['name'] == sys.argv[1]))
+EXPECTED
+)
   installed=$(pacman -Q "$package" | cut -d ' ' -f2)
   printf '%s installed=%s expected=%s\n' "$target" "$installed" "$expected"
   [[ -n $expected && $installed == "$expected" ]]
@@ -311,6 +352,9 @@ pacman -Q omarchy >/dev/null
 pacman -Q omarchy-settings >/dev/null
 [[ -d /usr/share/omarchy/bin ]]
 [[ -d /usr/share/omarchy/install ]]
+cmp /src/omarchy/version /usr/share/omarchy/version
+cmp /src/omarchy/install/helpers/arm-package-sources.sh /usr/share/omarchy/install/helpers/arm-package-sources.sh
+cmp /src/omarchy/install/helpers/arm-channel-manifest.py /usr/share/omarchy/install/helpers/arm-channel-manifest.py
 [[ -x /usr/share/omarchy/bin/omarchy ]]
 grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf
 grep -q '^=== Omarchy Setup Completed:' /var/log/omarchy-install.log

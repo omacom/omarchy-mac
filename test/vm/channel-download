@@ -1,0 +1,42 @@
+#!/bin/bash
+# Guest-only transport: canonical channel URLs map to immutable local fixtures.
+set -euo pipefail
+prefix=https://github.com/omarchy-mac/omarchy-pkgs-aarch64/releases/download/channel-
+fixture=/opt/omarchy-ci-channel
+if [[ ${0##*/} == "pacman" ]]; then
+  config=/etc/pacman.conf
+  args=()
+  while (( $# )); do
+    case "$1" in
+      --config) config="$2"; shift 2 ;;
+      --config=*) config=${1#*=}; shift ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  temporary=$(mktemp)
+  trap 'rm -f "$temporary"' EXIT
+  # System setup restores pacman.conf. Inject transport into a per-command copy
+  # rather than weakening or changing the configuration supplied by the source.
+  awk '
+    /^[[:space:]]*XferCommand[[:space:]]*=/ { next }
+    { print }
+    /^\[options\]$/ { print "XferCommand = /usr/local/bin/curl -fL -o %o %u"; found=1 }
+    END { if (!found) exit 1 }
+  ' "$config" > "$temporary"
+  /usr/bin/pacman --config "$temporary" "${args[@]}"
+else
+  args=()
+  for argument in "$@"; do
+    if [[ $argument == "$prefix"* ]]; then
+      suffix=${argument#"$prefix"}
+      channel=${suffix%%/*}
+      filename=${suffix#*/}
+      [[ $channel == "$(cat "$fixture/channel")" && $filename != "$suffix" && $filename =~ ^[A-Za-z0-9@_+.-]+$ && -f $fixture/channel-$channel/$filename ]] || {
+        echo "Missing or invalid isolated channel fixture: $argument" >&2; exit 1;
+      }
+      argument="file://$fixture/channel-$channel/$filename"
+    fi
+    args+=("$argument")
+  done
+  /usr/bin/curl "${args[@]}"
+fi
