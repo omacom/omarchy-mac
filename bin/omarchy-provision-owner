@@ -907,22 +907,22 @@ rekey_luks() {
   # slot; all but the current one are killed once the rebuild succeeds).
   cryptsetup luksAddKey --key-file "$PROVISIONING_DIR/luks-key" "$device" <(printf '%s' "$password")
 
-  # Rebuild the no-auto-unlock UKI FIRST, keeping the throwaway key and slot as
-  # a fallback. Only once that succeeds do we kill the other slots and destroy
-  # the staged key — so a limine-update failure leaves a recoverable,
+  # Rebuild without auto-unlock FIRST, keeping the throwaway key and slot as a
+  # fallback. Only once that succeeds do we kill the other slots and destroy
+  # the staged key — so a boot-rebuild failure leaves a recoverable,
   # still-auto-unlocking state to retry, never a disk locked to a password the
   # user may have just changed.
   rm -f /etc/omarchy/provisioning.key \
     /etc/limine-entry-tool.d/99-omarchy-provisioning-unlock.conf \
     /etc/mkinitcpio.conf.d/99-omarchy-provisioning-key.conf
   reset_limine_config
-  if ! limine-update >>"$LOG_FILE" 2>&1; then
-    log_step "limine-update failed during re-key; restoring auto-unlock for retry"
+  if ! rebuild_boot >>"$LOG_FILE" 2>&1; then
+    log_step "boot rebuild failed during re-key; restoring auto-unlock for retry"
     install -Dm600 "$PROVISIONING_DIR/luks-key" /etc/omarchy/provisioning.key
     echo 'KERNEL_CMDLINE[default]+=" cryptkey=rootfs:/etc/omarchy/provisioning.key"' \
       >/etc/limine-entry-tool.d/99-omarchy-provisioning-unlock.conf
     echo 'FILES+=(/etc/omarchy/provisioning.key)' >/etc/mkinitcpio.conf.d/99-omarchy-provisioning-key.conf
-    limine-update >>"$LOG_FILE" 2>&1 || true
+    rebuild_boot >>"$LOG_FILE" 2>&1 || true
     return 1
   fi
 
@@ -980,6 +980,17 @@ limine_entries_stale() {
   grep -o 'machine-id=[0-9a-f]*' "$esp/limine.conf" 2>/dev/null |
     grep -qv "machine-id=$machine_id" && return 0
   ! grep -q "machine-id=$machine_id" "$esp/limine.conf"
+}
+
+# Limine machines rebuild via limine-update. Apple Silicon factory snapshots
+# have no Limine; factory-reset copies omarchy-boot-rebuild in (and as
+# limine-update on older snapshots) so first-boot re-key can rebuild GRUB.
+rebuild_boot() {
+  if omarchy-cmd-present omarchy-boot-rebuild; then
+    omarchy-boot-rebuild
+  else
+    limine-update
+  fi
 }
 
 reset_limine_config() {
@@ -1059,7 +1070,7 @@ run_provisioning() {
     log_step "refreshing boot entries for the new machine identity"
     echo boot >"$STATE_FILE"
     reset_limine_config
-    limine-update
+    rebuild_boot
   fi
 
   log_step "cleaning up provisioning state"

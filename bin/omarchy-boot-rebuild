@@ -1,0 +1,117 @@
+#!/bin/bash
+
+# omarchy:summary=Rebuild boot files for Limine or GRUB
+# omarchy:group=system
+# omarchy:hidden=true
+# omarchy:requires-sudo=true
+
+# Rebuilds whatever this machine actually boots with. Intel Omarchy uses
+# Limine and limine-update; Apple Silicon boots m1n1 → U-Boot → GRUB and has
+# neither. Factory reset and first-boot LUKS re-key both need a rebuild that
+# embeds or drops the provisioning auto-unlock keyfile, so one helper covers
+# both bootloaders.
+#
+# Detection uses the `limine` binary, not limine-update: factory-reset may
+# install this script at /usr/bin/limine-update on GRUB machines so an older
+# factory snapshot's provision-owner still rebuilds on first boot.
+
+set -euo pipefail
+
+CRYPTKEY_ARG='cryptkey=rootfs:/etc/omarchy/provisioning.key'
+KEYFILE=/etc/omarchy/provisioning.key
+GRUB_FILE=/etc/default/grub
+ASAHI_PRESET=/etc/mkinitcpio.d/linux-asahi.preset
+
+fail() {
+  printf 'Error: %s\n' "$1" >&2
+  exit 1
+}
+
+# Prefix every host path when tests point the helper at a fixture tree.
+# Unset (the runtime case) means the live filesystem.
+path() {
+  printf '%s%s' "${OMARCHY_BOOT_REBUILD_ROOT:-}" "$1"
+}
+
+sync_grub_cryptkey() {
+  local grub
+  grub=$(path "$GRUB_FILE")
+  [[ -f $grub ]] || return 0
+
+  if [[ -f $(path "$KEYFILE") ]]; then
+    if ! grep -qF "$CRYPTKEY_ARG" "$grub"; then
+      sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$CRYPTKEY_ARG |" "$grub"
+    fi
+  else
+    sed -i "s| *$CRYPTKEY_ARG||g" "$grub"
+  fi
+}
+
+# linux-asahi.preset reads ALL_kver from /boot, which is the ESP and is not
+# part of a btrfs snapshot. After cloning @factory the modules in the factory
+# root can be older than the live vmlinuz; copy this root's image onto the ESP
+# before mkinitcpio so the initramfs matches the kernel it will boot.
+install_asahi_vmlinuz() {
+  local preset dest="" f best="" best_mtime=0 mtime
+  preset=$(path "$ASAHI_PRESET")
+  [[ -f $preset ]] || return 0
+
+  dest=$(sed -n 's/^ALL_kver="\(.*\)"/\1/p' "$preset" | tail -1)
+  dest=${dest:-/boot/vmlinuz-linux-asahi}
+
+  local files=()
+  shopt -s nullglob
+  files=($(path /usr/lib/modules)/*/vmlinuz)
+  shopt -u nullglob
+  ((${#files[@]} > 0)) || fail "linux-asahi.preset is present but no kernel image exists under /usr/lib/modules"
+
+  for f in "${files[@]}"; do
+    if [[ $f == $(path /usr/lib/modules)/$(uname -r)/vmlinuz ]]; then
+      best=$f
+      break
+    fi
+    mtime=$(stat -c %Y "$f")
+    if ((mtime >= best_mtime)); then
+      best=$f
+      best_mtime=$mtime
+    fi
+  done
+
+  install -Dm644 "$best" "$(path "$dest")"
+}
+
+rebuild_grub() {
+  [[ -f $(path "$GRUB_FILE") ]] || fail "GRUB is present but /etc/default/grub is missing"
+  omarchy-cmd-present mkinitcpio || fail "GRUB rebuild requires mkinitcpio"
+  omarchy-cmd-present grub-mkconfig || fail "GRUB rebuild requires grub-mkconfig"
+
+  sync_grub_cryptkey
+  install_asahi_vmlinuz
+  mkinitcpio -P
+  grub-mkconfig -o "$(path /boot/grub/grub.cfg)"
+}
+
+rebuild_limine() {
+  omarchy-cmd-present limine-update || fail "Limine is present but limine-update is not"
+  limine-update
+}
+
+main() {
+  if omarchy-cmd-present limine; then
+    rebuild_limine
+  elif omarchy-cmd-present grub-mkconfig; then
+    rebuild_grub
+  else
+    fail "no supported bootloader rebuild (need Limine or GRUB)"
+  fi
+}
+
+# Sourcing exposes the functions to tests without running anything.
+# OMARCHY_BOOT_REBUILD_ROOT is a test-only fixture prefix; skip sudo there so
+# the suite can drive the helper as the unprivileged test user.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  if ((EUID != 0)) && [[ -z ${OMARCHY_BOOT_REBUILD_ROOT:-} ]]; then
+    exec sudo -- "$0" "$@"
+  fi
+  main "$@"
+fi

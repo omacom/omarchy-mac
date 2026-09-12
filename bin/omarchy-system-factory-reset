@@ -19,6 +19,10 @@
 # passphrase with an auto-unlock keyfile for the provisioning window; first-boot setup
 # re-keys it to the new owner's password and removes the keyfile.
 #
+# Apple Silicon factory images have no Limine template (Macs boot GRUB). The
+# staged rebuild then uses omarchy-boot-rebuild to write initramfs + grub.cfg
+# and put cryptkey= on the GRUB cmdline so the provisioning window auto-unlocks.
+#
 # Honest limitations:
 #  - On unencrypted disks this is deletion, not forensic erasure. fstrim helps
 #    on SSDs; use blkdiscard + a reinstall if you need certainty.
@@ -203,7 +207,14 @@ reset_limine_config() {
       break
     fi
   done
-  [[ -n $found ]] || fail "no limine.conf template in $root/usr/share/omarchy"
+  if [[ -z $found ]]; then
+    # Apple Silicon factory images omit the Limine template. A Limine machine
+    # without one cannot rebuild the ESP; GRUB machines continue without it.
+    if [[ -x $root/usr/bin/limine ]]; then
+      fail "no limine.conf template in $root/usr/share/omarchy"
+    fi
+    return 0
+  fi
 
   local machine_id old_id
   machine_id=$(cat "$root/etc/machine-id" 2>/dev/null || true)
@@ -229,7 +240,66 @@ verify_limine_hashes() {
   done < <(grep -o 'boot():/EFI/Linux/[^#]*#[0-9a-f]*' "$root$esp/limine.conf")
 }
 
-# Rebuild the UKI from inside the next root so the deployed kernel/initramfs
+factory_uses_limine() {
+  local next="$1"
+  [[ -x $next/usr/bin/limine ]] || return 1
+  [[ -f $next/usr/share/omarchy/default/limine/limine.conf ||
+     -f $next/usr/share/omarchy/install/assets/limine/limine.conf ]]
+}
+
+# First-boot LUKS re-key runs from the factory clone, which predates this
+# helper on machines that only gained it via an update. Copy it in so the
+# clone can rebuild GRUB, and install it as limine-update when the snapshot
+# has no real one — older provision-owner still calls that name.
+install_boot_rebuild_into_next() {
+  local next="$1" src="$OMARCHY_PATH/bin/omarchy-boot-rebuild"
+
+  [[ -x $src ]] || fail "missing $src"
+  install -Dm755 "$src" "$next/usr/bin/omarchy-boot-rebuild"
+  if [[ -d $next/usr/share/omarchy/bin ]]; then
+    install -Dm755 "$src" "$next/usr/share/omarchy/bin/omarchy-boot-rebuild"
+  fi
+  if [[ ! -x $next/usr/bin/limine-update ]]; then
+    install -Dm755 "$src" "$next/usr/bin/limine-update"
+  fi
+}
+
+unmount_next_boot() {
+  local next="$1" esp_mount="$2" dir
+  for dir in run dev sys proc; do
+    umount -R "$next/$dir" 2>/dev/null || true
+  done
+  umount "$next$esp_mount" 2>/dev/null || true
+}
+
+verify_grub_provisioning_boot() {
+  local next="$1" esp="$2" img="" f
+  local imgs=()
+
+  shopt -s nullglob
+  imgs=("$next$esp"/initramfs-linux-asahi.img "$next$esp"/initramfs-*.img)
+  shopt -u nullglob
+  for f in "${imgs[@]}"; do
+    [[ -f $f ]] || continue
+    img=$f
+    [[ $f == *"/initramfs-linux-asahi.img" ]] && break
+  done
+  [[ -n $img ]] || fail "boot rebuild wrote no initramfs under $esp"
+
+  if [[ -e $next/usr/lib/initcpio/install/asahi ]]; then
+    lsinitcpio "$img" | grep -qx 'hooks/asahi' ||
+      fail "rebuilt initramfs is missing the asahi hook"
+  fi
+
+  if [[ -f $next/etc/omarchy/provisioning.key ]]; then
+    lsinitcpio "$img" | grep -q 'provisioning.key' ||
+      fail "rebuilt initramfs is missing the provisioning keyfile"
+    grep -q 'cryptkey=rootfs:/etc/omarchy/provisioning.key' "$next$esp/grub/grub.cfg" ||
+      fail "grub.cfg is missing cryptkey= for the provisioning window"
+  fi
+}
+
+# Rebuild boot files from inside the next root so the deployed kernel/initramfs
 # match the factory root's modules (the seller may have updated kernels since
 # install) and embed the auto-unlock keyfile on encrypted machines.
 rebuild_next_boot() {
@@ -282,19 +352,30 @@ rebuild_next_boot() {
       fail "hibernation setup did not recreate $next/swap/swapfile (see $LOG_FILE)"
   fi
 
-  reset_limine_config "$next" "$esp_mount"
+  local chroot_env=(env OMARCHY_PATH=/usr/share/omarchy PATH="/usr/share/omarchy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 
-  log "Rebuilding boot files from the factory system (this can take a minute)"
-  if ! chroot "$next" /usr/bin/limine-update >>"$LOG_FILE" 2>&1; then
-    fail "limine-update failed in the factory root (see $LOG_FILE)"
+  if factory_uses_limine "$next"; then
+    reset_limine_config "$next" "$esp_mount"
+    log "Rebuilding boot files from the factory system (this can take a minute)"
+    if ! chroot "$next" "${chroot_env[@]}" /usr/bin/limine-update >>"$LOG_FILE" 2>&1; then
+      unmount_next_boot "$next" "$esp_mount"
+      fail "limine-update failed in the factory root (see $LOG_FILE)"
+    fi
+    verify_limine_hashes "$next" "$esp_mount"
+  elif [[ -x $next/usr/bin/grub-mkconfig && -f $next/etc/default/grub ]]; then
+    install_boot_rebuild_into_next "$next"
+    log "Rebuilding GRUB boot files from the factory system (this can take a minute)"
+    if ! chroot "$next" "${chroot_env[@]}" /usr/bin/omarchy-boot-rebuild >>"$LOG_FILE" 2>&1; then
+      unmount_next_boot "$next" "$esp_mount"
+      fail "boot rebuild failed in the factory root (see $LOG_FILE)"
+    fi
+    verify_grub_provisioning_boot "$next" "$esp_mount"
+  else
+    unmount_next_boot "$next" "$esp_mount"
+    fail "factory snapshot has no Limine or GRUB boot rebuild"
   fi
 
-  verify_limine_hashes "$next" "$esp_mount"
-
-  for dir in run dev sys proc; do
-    umount -R "$next/$dir" 2>/dev/null || true
-  done
-  umount "$next$esp_mount"
+  unmount_next_boot "$next" "$esp_mount"
 }
 
 # Remove the seller's account material and machine identity from the retained

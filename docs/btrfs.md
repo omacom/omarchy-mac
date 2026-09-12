@@ -171,9 +171,11 @@ you want the full fresh state.
 - Only the busybox `encrypt` hook is wired up. An initramfs built around the
   systemd hooks (`sd-encrypt`) is rejected rather than half-configured.
 - On encrypted installs, `omarchy-system-factory-reset`'s provisioning-window
-  auto-unlock injects its kernel argument via Limine's entry tool, which does
-  not exist on the Mac's GRUB boot chain. The reset still works; the first
-  boot after it asks for the disk passphrase instead of unlocking itself.
+  auto-unlock embeds a throwaway keyfile in the initramfs and puts
+  `cryptkey=rootfs:/etc/omarchy/provisioning.key` on the GRUB command line.
+  First-boot setup re-keys LUKS to the new owner's password and rebuilds GRUB
+  without that key. Machines that boot Limine still go through `limine-update`
+  and the Limine entry-tool drop-in.
 
 ## Testing changes to the migration
 
