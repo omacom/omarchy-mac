@@ -52,3 +52,10 @@ o.bind("SUPER + XF86AudioMute", "Screenshot Window (Apple top row)", "omarchy-ca
 o.bind("SUPER + XF86AudioLowerVolume", "Screenshot Region (Apple top row)", "omarchy-capture-screenshot region")
 o.bind("SUPER + XF86AudioRaiseVolume", "Screenshot Display (Apple top row)", "omarchy-capture-screenshot fullscreen")
 o.bind("SUPER + ALT + XF86AudioRaiseVolume", "Screen recording Display (Apple top row)", "omarchy-capture-screenrecording --fullscreen")
+
+-- Mac fork: the Touch Bar Now Playing mini app (docs/touchbar.md). A live
+-- spectrum, the current track and transport buttons on the Touch Bar,
+-- borrowed from tiny-dfr while it runs. Only Touch Bar Macs get the binding.
+if o.shell_succeeds("omarchy-hw-touchbar") then
+  o.bind_toggle("SUPER + CTRL + M", "Touch Bar: Now Playing", "touchbar-now-playing")
+end

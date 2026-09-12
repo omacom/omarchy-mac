@@ -1,0 +1,122 @@
+#!/bin/bash
+
+# omarchy:summary=Root helper: hand the Touch Bar to a user mini app, or back to tiny-dfr
+# omarchy:args=app|keys|devices
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# Touch Bar mini apps (omarchy-touchbar-now-playing) run as the logged-in
+# user, but the Touch Bar's display and digitizer are root-owned device nodes
+# held by tiny-dfr. "app" stops tiny-dfr and gives the calling user
+# (SUDO_USER) a read/write ACL on exactly those two nodes plus the Touch Bar
+# backlight; "keys" reverses that and starts tiny-dfr again. "devices" only
+# prints what would be handed over and needs no root. The sudoers rule in
+# etc/sudoers.d/omarchy-touchbar lets wheel run "app" and "keys" without a
+# password, since a hotkey has no terminal to carry a password prompt.
+
+set -euo pipefail
+
+verb=${1:-}
+user=${SUDO_USER:-}
+sysfs=${OMARCHY_SYSFS_PATH:-/sys}
+
+case $verb in
+  app | keys | devices) ;;
+  *)
+    echo "usage: omarchy-touchbar-handoff app|keys|devices" >&2
+    exit 2
+    ;;
+esac
+
+# The Touch Bar display is the DRM card driven by adp (Apple Silicon) or
+# appletbdrm (T2 Macs); the digitizer is the input device named "* Touch Bar";
+# the backlight belongs to the bar's own panel.
+find_drm() {
+  local card driver
+  for card in "$sysfs"/class/drm/card[0-9]*; do
+    [[ -e $card/device/driver ]] || continue
+    driver=$(basename "$(readlink -f "$card/device/driver")")
+    if [[ $driver == adp || $driver == appletbdrm ]]; then
+      echo "/dev/dri/$(basename "$card")"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_touch() {
+  local ev name
+  for ev in "$sysfs"/class/input/event*; do
+    name=$(cat "$ev/device/name" 2>/dev/null || true)
+    if [[ $name == *"Touch Bar"* ]]; then
+      echo "/dev/input/$(basename "$ev")"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_backlight() {
+  local bl name driver
+  for bl in "$sysfs"/class/backlight/*; do
+    [[ -e $bl ]] || continue
+    name=$(basename "$bl")
+    driver=$(basename "$(readlink -f "$bl/device/driver" 2>/dev/null)" 2>/dev/null || true)
+    if [[ $name == appletb_backlight || $driver == panel-summit || $name == *.dsi.* ]]; then
+      echo "$bl/brightness"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! drm=$(find_drm); then
+  echo "omarchy-touchbar-handoff: no Touch Bar display found" >&2
+  exit 1
+fi
+if ! touch_dev=$(find_touch); then
+  echo "omarchy-touchbar-handoff: no Touch Bar digitizer found" >&2
+  exit 1
+fi
+backlight=$(find_backlight || true)
+
+if [[ $verb == devices ]]; then
+  echo "drm=$drm"
+  echo "touch=$touch_dev"
+  if [[ -n $backlight ]]; then
+    echo "backlight=$backlight"
+  fi
+  exit 0
+fi
+
+if [[ -z $user ]] || ! id -u "$user" >/dev/null 2>&1; then
+  echo "omarchy-touchbar-handoff: run through sudo" >&2
+  exit 2
+fi
+if (( EUID != 0 )); then
+  echo "omarchy-touchbar-handoff: must run as root" >&2
+  exit 2
+fi
+
+# Device nodes take an ACL. The backlight is a sysfs attribute, and sysfs has
+# no ACLs, so it changes owner instead, the same way udev's backlight rules
+# grant access.
+case $verb in
+  app)
+    systemctl stop tiny-dfr.service 2>/dev/null || true
+    setfacl -m "u:$user:rw" "$drm" "$touch_dev"
+    echo "drm=$drm"
+    echo "touch=$touch_dev"
+    if [[ -n $backlight ]]; then
+      chown "$user" "$backlight"
+      echo "backlight=$backlight"
+    fi
+    ;;
+  keys)
+    setfacl -x "u:$user" "$drm" "$touch_dev" 2>/dev/null || true
+    if [[ -n $backlight ]]; then
+      chown root "$backlight" 2>/dev/null || true
+    fi
+    systemctl start tiny-dfr.service 2>/dev/null || true
+    ;;
+esac
