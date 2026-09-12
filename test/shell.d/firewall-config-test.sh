@@ -15,7 +15,7 @@ if ! grep -qx 'ENABLED=no' "$TEST_UFW_CONFIG"; then
   exit 90
 fi
 case ${1:-} in
-  default|allow) ;;
+  default|allow|limit) ;;
   *) echo 'unexpected live firewall command' >&2; exit 91 ;;
 esac
 [[ ${TEST_FAIL_AT:-} != "ufw" ]] || exit 42
@@ -36,8 +36,12 @@ STUB
 cat >"$stub_dir/systemctl" <<'STUB'
 #!/bin/bash
 printf 'systemctl %s\n' "$*" >>"$TEST_LOG"
-[[ $* == "enable ufw" ]] || exit 92
-[[ ${TEST_FAIL_AT:-} != "systemctl" ]] || exit 44
+case $* in
+  "enable ufw") [[ ${TEST_FAIL_AT:-} != "systemctl" ]] || exit 44 ;;
+  "is-enabled --quiet sshd.service"|"is-enabled --quiet sshd.socket")
+    [[ ${TEST_SSHD_ENABLED:-no} == "yes" ]] || exit 1 ;;
+  *) exit 92 ;;
+esac
 STUB
 chmod +x "$stub_dir/ufw" "$stub_dir/ufw-docker" "$stub_dir/systemctl"
 
@@ -64,6 +68,19 @@ for run in first repeat; do
   [[ $(grep -c '^caller-exit$' "$TEST_LOG") == "1" ]] || fail "source must preserve caller EXIT trap"
   pass "$run firewall setup edits rules without reloading the live firewall"
 done
+
+# A target that will start sshd on boot keeps its access path open; without
+# sshd the firewall opens no SSH port at all.
+printf '# preserved comment\nENABLED=no\nLOGLEVEL=low\n' >"$TEST_UFW_CONFIG"
+TEST_SSHD_ENABLED=yes run_config || fail "firewall configuration with sshd enabled must stay offline"
+grep -q '^ufw limit ssh ' "$TEST_LOG" || fail "an sshd-enabled target must allow SSH through the firewall"
+pass "firewall rate-limits SSH inbound when sshd is enabled on the target"
+
+TEST_SSHD_ENABLED=no run_config || fail "firewall configuration without sshd must stay offline"
+if grep -qE '^(ufw (allow|limit) (ssh|22))|port 22' "$TEST_LOG"; then
+  fail "a target without sshd must not open the SSH port"
+fi
+pass "firewall opens no SSH port when sshd is not enabled"
 
 for enabled in no yes; do
   for failure in ufw docker systemctl; do
