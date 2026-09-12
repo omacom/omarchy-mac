@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # omarchy:summary=Set the default editor used by omarchy-launch-editor
-# omarchy:args=[code|cursor|zed|sublime_text|helix|vim|emacs|nvim]
+# omarchy:args=[code|cursor|zed|sublime_text|helix|vim|emacs|nvim|nano|micro|fresh]
 # omarchy:examples=omarchy default editor | omarchy default editor code | omarchy default editor helix
 
 installing=false
@@ -26,12 +26,15 @@ code) selection="code"; editor="code"; name="VSCode"; glyph= ;;
 cursor) selection="cursor"; editor="cursor"; name="Cursor"; glyph= ;;
 zed | zeditor) selection="zed"; editor="zeditor"; name="Zed"; glyph= ;;
 sublime_text) selection="sublime_text"; editor="sublime_text"; name="Sublime Text"; glyph= ;;
-helix) selection="helix"; editor="helix"; name="Helix"; glyph= ;;
+helix | hx) selection="helix"; editor="helix"; name="Helix"; glyph= ;;
 vim) selection="vim"; editor="vim"; name="Vim"; glyph= ;;
 emacs) selection="emacs"; editor="emacs"; name="Emacs"; glyph= ;;
 nvim) selection="nvim"; editor="nvim"; name="Neovim"; glyph= ;;
+nano) selection="nano"; editor="nano"; name="Nano"; glyph= ;;
+micro) selection="micro"; editor="micro"; name="Micro"; glyph= ;;
+fresh) selection="fresh"; editor="fresh"; name="Fresh"; glyph= ;;
 *)
-  echo "Usage: omarchy-default-editor <code|cursor|zed|sublime_text|helix|vim|emacs|nvim>"
+  echo "Usage: omarchy-default-editor <code|cursor|zed|sublime_text|helix|vim|emacs|nvim|nano|micro|fresh>"
   exit 1
   ;;
 esac
@@ -49,6 +52,9 @@ if omarchy-cmd-missing "$editor"; then
     vim) omarchy-pkg-add vim ;;
     emacs) omarchy-install-editor-emacs ;;
     nvim) omarchy-pkg-add neovim ;;
+    nano) omarchy-pkg-add nano ;;
+    micro) omarchy-pkg-add micro ;;
+    fresh) omarchy-pkg-add fresh-editor ;;
     esac || exit 1
   fi
 fi
