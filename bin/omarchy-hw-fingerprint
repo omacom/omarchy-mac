@@ -10,6 +10,8 @@
 # reader — those still match on the product string below when present.
 fingerprint_vendors=" 27c6 138a 06cb 08ff 1c7a 147e "
 usb_devices_path="${OMARCHY_USB_DEVICES_PATH:-/sys/bus/usb/devices}"
+bus_devices_root="${OMARCHY_BUS_DEVICES_PATH:-/sys/bus}"
+fprintd_service_file="${OMARCHY_FPRINTD_SERVICE_FILE:-/usr/share/dbus-1/system-services/net.reactivated.Fprint.service}"
 
 # libfprint drives every reader it supports from userspace over libusb, so a
 # real reader sits there with no kernel driver bound to any of its interfaces.
@@ -52,5 +54,28 @@ for dev in "$usb_devices_path"/*; do
       ! has_kernel_driver "$dev" && exit 0
   fi
 done
+
+# Readers on other buses. USB covers nearly every shipping reader, but nothing
+# about a fingerprint sensor requires USB — Touch ID, if it ever gets a driver,
+# would sit on the SoC's own fabric. A device that names itself a fingerprint
+# reader is trusted here too; there is no vendor list to guess from.
+for dev in "$bus_devices_root"/*/devices/*; do
+  [[ $dev == "$bus_devices_root"/usb/* ]] && continue
+  for attr in name product modalias; do
+    [[ -r $dev/$attr ]] || continue
+    text=$(<"$dev/$attr")
+    text=${text,,}
+    [[ $text == *fingerprint* || $text == *biometric* || $text == *touchid* || $text == *touch_id* ]] && exit 0
+  done
+done
+
+# When fprintd is installed, its device list is the authoritative "a usable
+# reader exists" answer and catches sensors the sysfs passes miss. Skipped when
+# absent so this still works before the fingerprint setup pulls anything in.
+if [[ -f $fprintd_service_file ]]; then
+  busctl call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
+    net.reactivated.Fprint.Manager GetDevices --timeout=2 2>/dev/null |
+    grep -q "/net/reactivated/Fprint/Device/" && exit 0
+fi
 
 exit 1
