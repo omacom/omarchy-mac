@@ -47,7 +47,12 @@ case "$*" in
       exit 1
     fi
     ;;
-  '--user reset-failed omarchy-sleep-lock.service') ;;
+  '--user reset-failed omarchy-sleep-lock.service')
+    if [[ ${FAIL_SYSTEMCTL_ACTION:-} == "reset-failed" ]]; then
+      echo "reset-failed failed" >&2
+      exit 1
+    fi
+    ;;
   *) exit 1 ;;
 esac
 STUB
@@ -95,6 +100,20 @@ grep -Fx -- '--user stop omarchy-sleep-lock.service' "$active_calls" >/dev/null 
   fail "sleep lock migration stops the monitor inside an active graphical session"
 pass "sleep lock migration replaces the monitor inside an active graphical session"
 
+active_reset_failed_calls="$test_tmp/active-reset-failed-calls"
+if ! run_migration "$test_tmp/active-reset-failed-home" "$active_reset_failed_calls" \
+  env GRAPHICAL_STATE=active SLEEP_LOCK_STATE=active FAIL_SYSTEMCTL_ACTION=reset-failed \
+  >/dev/null 2>&1; then
+  fail "sleep lock migration treats an active-session reset-failed failure as fatal"
+fi
+active_reset_line=$(grep -n -Fx -- '--user reset-failed omarchy-sleep-lock.service' \
+  "$active_reset_failed_calls" | cut -d: -f1)
+active_restart_line=$(grep -n -Fx -- '--user restart omarchy-sleep-lock.service' \
+  "$active_reset_failed_calls" | cut -d: -f1)
+((active_reset_line < active_restart_line)) ||
+  fail "sleep lock migration does not restart after an active-session reset-failed failure"
+pass "sleep lock migration continues an active-session repair after reset-failed fails"
+
 inactive_home="$test_tmp/inactive-home"
 inactive_calls="$test_tmp/inactive-calls"
 mkdir -p "$inactive_home"
@@ -107,6 +126,20 @@ grep -Fx -- '--user stop omarchy-sleep-lock.service' "$inactive_calls" >/dev/nul
 grep -Fx -- '--user restart omarchy-sleep-lock.service' "$inactive_calls" >/dev/null &&
   fail "sleep lock migration starts the monitor outside a graphical session"
 pass "sleep lock migration stops a monitor left behind after logout"
+
+inactive_reset_failed_calls="$test_tmp/inactive-reset-failed-calls"
+if ! run_migration "$test_tmp/inactive-reset-failed-home" "$inactive_reset_failed_calls" \
+  env GRAPHICAL_STATE=inactive FAIL_SYSTEMCTL_ACTION=reset-failed \
+  >/dev/null 2>&1; then
+  fail "sleep lock migration treats an inactive-session reset-failed failure as fatal"
+fi
+inactive_stop_line=$(grep -n -Fx -- '--user stop omarchy-sleep-lock.service' \
+  "$inactive_reset_failed_calls" | cut -d: -f1)
+inactive_reset_line=$(grep -n -Fx -- '--user reset-failed omarchy-sleep-lock.service' \
+  "$inactive_reset_failed_calls" | cut -d: -f1)
+((inactive_stop_line < inactive_reset_line)) ||
+  fail "sleep lock migration does not stop before an inactive-session reset-failed failure"
+pass "sleep lock migration continues inactive-session cleanup after reset-failed fails"
 
 failed_calls="$test_tmp/failed-calls"
 if run_migration "$test_tmp/failed-home" "$failed_calls" \
@@ -157,6 +190,6 @@ run_migration "$deferred_home" "$deferred_calls" \
 [[ -f $deferred_home/.config/systemd/user/omarchy-sleep-lock.service.d/90-omarchy-session-environment.conf ]] ||
   fail "sleep lock migration does not persist the repair without a live user manager"
 deferred_call_count=$(wc -l <"$deferred_calls")
-(( deferred_call_count == 1 )) ||
+((deferred_call_count == 1)) ||
   fail "sleep lock migration tries to mutate a user manager that is not running"
 pass "sleep lock migration defers safely when no user manager is running"
