@@ -88,7 +88,15 @@ rebuild_grub() {
   sync_grub_cryptkey
   install_asahi_vmlinuz
   mkinitcpio -P
-  grub-mkconfig -o "$(path /boot/grub/grub.cfg)"
+  # grub-probe reads /proc/self/mountinfo. Inside a staging chroot that still
+  # shows the host's /, so it errors "cannot find a device for /" even with
+  # /dev rbind-mounted. First-boot (real root) probes fine. Skip here and let
+  # the caller write grub.cfg from the host.
+  if omarchy-cmd-present grub-probe && ! grub-probe / >/dev/null 2>&1; then
+    echo "grub-probe cannot map / (staging chroot); skipping grub-mkconfig" >&2
+  else
+    grub-mkconfig -o "$(path /boot/grub/grub.cfg)"
+  fi
 }
 
 rebuild_limine() {

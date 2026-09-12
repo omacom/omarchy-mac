@@ -42,6 +42,13 @@ write_stub limine-update '#!/bin/bash
 printf "limine-update\n" >>"$TEST_LOG"
 '
 
+# Unprivileged tests cannot talk to device-mapper; pretend probe works so the
+# GRUB path still exercises grub-mkconfig. The staging-chroot case overrides
+# this stub to fail.
+write_stub grub-probe '#!/bin/bash
+exit 0
+'
+
 run_rebuild() {
   env PATH="$stub_bin:$ROOT/bin:$PATH" \
     OMARCHY_BOOT_REBUILD_ROOT="$1" \
@@ -99,6 +106,26 @@ grep -qF 'cryptdevice=UUID=abc:root:allow-discards quiet splash' "$grub_strip/et
 ! grep -qF 'cryptkey=' "$grub_strip/boot/grub/grub.cfg" ||
   fail "generated grub.cfg has no leftover cryptkey="
 pass "GRUB rebuild drops cryptkey= after the provisioning keyfile is removed"
+
+# --- Staging chroot: grub-probe cannot map /, so skip grub-mkconfig ---------
+
+write_stub grub-probe '#!/bin/bash
+exit 1
+'
+grub_chroot="$work/grub-chroot"
+make_grub_root "$grub_chroot"
+printf 'throwaway\n' >"$grub_chroot/etc/omarchy/provisioning.key"
+: >"$work/grub-chroot.log"
+run_rebuild "$grub_chroot" "$work/grub-chroot.log"
+
+grep -Fxq 'mkinitcpio -P' "$work/grub-chroot.log" ||
+  fail "chroot GRUB rebuild still runs mkinitcpio" "$(cat "$work/grub-chroot.log")"
+! grep -q 'grub-mkconfig' "$work/grub-chroot.log" ||
+  fail "chroot GRUB rebuild skips grub-mkconfig when grub-probe fails" \
+    "$(cat "$work/grub-chroot.log")"
+pass "staging chroot skips grub-mkconfig when grub-probe cannot map /"
+
+rm -f "$stub_bin/grub-probe"
 
 # --- Limine present: GRUB tools are not invoked -----------------------------
 

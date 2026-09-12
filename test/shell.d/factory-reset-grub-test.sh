@@ -27,6 +27,8 @@ grep -qF 'verify_grub_provisioning_boot' "$reset" ||
 grep -qF 'usr/bin/grub-mkconfig' "$reset" || fail "factory reset has a GRUB rebuild path"
 grep -qF '/usr/bin/omarchy-boot-rebuild' "$reset" ||
   fail "factory reset chroots into omarchy-boot-rebuild on GRUB"
+grep -qF 'generate_grub_cfg_from_factory' "$reset" ||
+  fail "factory reset writes grub.cfg on the host when grub-probe cannot map / in chroot"
 grep -qF 'if [[ -x $root/usr/bin/limine ]]; then' "$reset" ||
   fail "missing limine.conf template is fatal only on Limine factory images"
 pass "factory reset rebuilds GRUB when the factory snapshot has no Limine"

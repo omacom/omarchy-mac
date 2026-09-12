@@ -277,6 +277,23 @@ unmount_next_boot() {
     umount -R "$next/$dir" 2>/dev/null || true
   done
   umount "$next$esp_mount" 2>/dev/null || true
+  umount "$next" 2>/dev/null || true
+}
+
+# grub-mkconfig inside the factory chroot fails: grub-probe cannot map /.
+# Generate grub.cfg on the host using the factory /etc/default/grub (which
+# already has cryptkey= for the provisioning window).
+generate_grub_cfg_from_factory() {
+  local next="$1" esp="$2"
+  local src=$next/etc/default/grub dest=/etc/default/grub cfg=$next$esp/grub/grub.cfg
+
+  [[ -f $src && -f $dest ]] || return 1
+  mount --bind "$src" "$dest"
+  if ! grub-mkconfig -o "$cfg" >>"$LOG_FILE" 2>&1; then
+    umount "$dest" 2>/dev/null || true
+    return 1
+  fi
+  umount "$dest"
 }
 
 verify_grub_provisioning_boot() {
@@ -322,6 +339,11 @@ rebuild_next_boot() {
     esp_device="/dev/disk/by-uuid/${esp_source#UUID=}"
   fi
   [[ -e $esp_device ]] || fail "ESP device $esp_device not found"
+
+  # Bind the snapshot onto itself so it is a mount point (arch-chroot trick).
+  if ! mountpoint -q "$next"; then
+    mount --bind "$next" "$next"
+  fi
 
   mount "$esp_device" "$next$esp_mount"
 
@@ -375,6 +397,10 @@ rebuild_next_boot() {
     if ! chroot "$next" "${chroot_env[@]}" /usr/bin/omarchy-boot-rebuild >>"$LOG_FILE" 2>&1; then
       unmount_next_boot "$next" "$esp_mount"
       fail "boot rebuild failed in the factory root (see $LOG_FILE)"
+    fi
+    if ! generate_grub_cfg_from_factory "$next" "$esp_mount"; then
+      unmount_next_boot "$next" "$esp_mount"
+      fail "host grub-mkconfig failed (see $LOG_FILE)"
     fi
     verify_grub_provisioning_boot "$next" "$esp_mount"
   else
