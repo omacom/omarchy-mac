@@ -31,6 +31,8 @@ grep -qF 'generate_grub_cfg_from_factory' "$reset" ||
   fail "factory reset writes grub.cfg on the host when grub-probe cannot map / in chroot"
 grep -qF 'if [[ -x $root/usr/bin/limine ]]; then' "$reset" ||
   fail "missing limine.conf template is fatal only on Limine factory images"
+grep -qF 'gum_tty' "$reset" || fail "gum prompts read /dev/tty so sudo does not feed them EOF"
+grep -qF -- '--yes' "$reset" || fail "factory reset accepts --yes to skip the type-reset prompt"
 pass "factory reset rebuilds GRUB when the factory snapshot has no Limine"
 
 grep -qF 'rebuild_boot()' "$owner" || fail "provision-owner has a boot-rebuild wrapper"

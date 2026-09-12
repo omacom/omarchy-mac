@@ -115,6 +115,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# gum input/confirm must read the controlling TTY. After sudo, stdin is often
+# not a terminal (EOF or an empty line), which makes gum return immediately
+# and look like "Reset not confirmed."
+gum_tty() {
+  gum "$@" </dev/tty
+}
+
 confirm_reset() {
   echo
   gum style --bold --foreground 1 "Reset this computer to factory state?"
@@ -128,8 +135,13 @@ confirm_reset() {
   gum style --foreground 8 "Note: on disks without encryption this is deletion, not secure erasure."
   echo
 
+  if [[ ${SKIP_CONFIRM:-0} == 1 ]]; then
+    log "Confirmation skipped (--yes)"
+    return 0
+  fi
+
   local typed
-  typed=$(gum input --placeholder "Type 'reset' to continue" --prompt "> ") || exit 1
+  typed=$(gum_tty input --placeholder "Type 'reset' to continue" --prompt "> ") || exit 1
   [[ $typed == "reset" ]] || fail "Reset not confirmed."
 }
 
@@ -145,7 +157,7 @@ stage_luks_rekey() {
   gum style "Confirm your disk encryption passphrase to authorize the re-key."
   local current
   while true; do
-    current=$(gum input --password --placeholder "Current disk encryption passphrase" --prompt "Passphrase> ") || exit 1
+    current=$(gum_tty input --password --placeholder "Current disk encryption passphrase" --prompt "Passphrase> ") || exit 1
     if cryptsetup open --test-passphrase --key-file <(printf '%s' "$current") "$device" 2>/dev/null; then
       break
     fi
@@ -514,6 +526,15 @@ require_factory_snapshot() {
 }
 
 main() {
+  SKIP_CONFIRM=0
+  local arg
+  for arg in "$@"; do
+    case $arg in
+      --yes | -y) SKIP_CONFIRM=1 ;;
+      *) fail "unknown argument: $arg" ;;
+    esac
+  done
+
   omarchy-cmd-present btrfs || { echo "Error: btrfs-progs is required" >&2; exit 1; }
 
   root_is_btrfs_at || fail "reset requires the standard Omarchy Btrfs layout (subvol=@)"
@@ -545,8 +566,14 @@ main() {
 
   echo
   gum style --bold "Reset staged. The wipe finishes on the next boot."
-  if gum confirm --affirmative "Reboot now" --negative "Reboot later" "Reboot to complete the reset?"; then
-    systemctl reboot
+  if [[ $SKIP_CONFIRM == 1 ]] || gum_tty confirm --affirmative "Reboot now" --negative "Reboot later" "Reboot to complete the reset?"; then
+    log "Rebooting to complete the reset"
+    # A failed reboot after swap is not a failed reset: @ is already the
+    # factory clone and GRUB already points at it.
+    systemctl reboot || {
+      gum style --foreground 3 "Reset is staged. Reboot this machine to finish."
+      exit 0
+    }
   else
     gum style --foreground 3 "Do not keep using this machine — changes made now will be lost."
   fi
