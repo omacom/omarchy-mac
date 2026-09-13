@@ -21,10 +21,11 @@ readonly PACMAN_CONF="${OMARCHY_ARM_PACMAN_CONF:-/etc/pacman.conf}"
 dry_run=0
 snapshot=1
 downloaded_helper=""
+download_root=""
 helper=""
 
 cleanup() {
-  [[ -n $downloaded_helper ]] && rm -f "$downloaded_helper"
+  [[ -n $download_root ]] && rm -rf "$download_root"
   return 0
 }
 trap cleanup EXIT
@@ -73,27 +74,48 @@ if [[ ! -f $PACMAN_CONF ]]; then
   exit 1
 fi
 
+# Recovery must not create a snapshot, import keys, or change repositories and
+# only then discover a missing preflight interpreter on an older installation.
+if (( ! dry_run )); then
+  for tool in python3 curl bsdtar git; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "Recovery requires $tool. Install python, curl, libarchive and git before retrying." >&2
+      exit 1
+    fi
+  done
+fi
+
 # One source of truth for what the repository and key must be. A checkout has
 # the helper next to this script; an installed machine has it under the package
 # once it is new enough. Neither is guaranteed on the machines this script
 # exists for, so fall back to fetching it rather than restating its contents.
 resolve_helper() {
-  local script_dir="" candidate
+  local script_dir="" candidate helper_url="$HELPER_URL" source_sha
 
   if [[ -f ${BASH_SOURCE[0]} ]]; then
     script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
   fi
 
   for candidate in "$script_dir" "${OMARCHY_PATH:-}" /usr/share/omarchy; do
-    if [[ -n $candidate && -f "$candidate/$HELPER_RELATIVE_PATH" ]]; then
+    if [[ -n $candidate && -f "$candidate/$HELPER_RELATIVE_PATH" && -f "$candidate/install/helpers/arm-channel-manifest.py" ]]; then
       helper="$candidate/$HELPER_RELATIVE_PATH"
       return 0
     fi
   done
 
-  downloaded_helper=$(mktemp)
-  if curl -fsSL "$HELPER_URL" -o "$downloaded_helper"; then
+  if [[ -z ${OMARCHY_ARM_HELPER_URL:-} ]]; then
+    source_sha=$(git ls-remote https://github.com/omarchy-mac/omarchy-mac.git refs/heads/quattro | awk '{print $1}') || return
+    [[ $source_sha =~ ^[0-9a-f]{40}$ ]] || return 1
+    helper_url="https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/$source_sha/$HELPER_RELATIVE_PATH"
+  fi
+  download_root=$(mktemp -d)
+  mkdir -p "$download_root/install/helpers"
+  downloaded_helper="$download_root/$HELPER_RELATIVE_PATH"
+  if curl -fsSL "$helper_url" -o "$downloaded_helper"; then
     helper="$downloaded_helper"
+    if (( ! dry_run )); then
+      curl -fsSL "${helper_url%/*}/arm-channel-manifest.py" -o "$download_root/install/helpers/arm-channel-manifest.py" || return
+    fi
     return 0
   fi
 
@@ -108,6 +130,7 @@ if ! resolve_helper; then
 fi
 # shellcheck source=install/helpers/arm-package-sources.sh
 source "$helper"
+helper_root=$(cd -- "$(dirname -- "$helper")/../.." && pwd)
 
 mapfile -t targets < <(omarchy_arm_package_targets)
 
@@ -123,7 +146,8 @@ if (( dry_run )); then
       command "$@"
     fi
   }
-  omarchy_arm_prepare_package_sources "$preview" preserve-backup
+  omarchy_arm_validate_channel() { echo "would validate published $1 snapshot"; }
+  omarchy_arm_prepare_package_sources "$preview" preserve-backup "" "$helper_root"
   echo "Configuration change for $PACMAN_CONF:"
   diff -u "$PACMAN_CONF" "$preview" || true
   rm -f "$preview" "$preview.bak"
@@ -140,7 +164,7 @@ if (( snapshot )) && command -v omarchy-snapshot >/dev/null; then
 fi
 
 echo "Preparing package sources"
-if ! omarchy_arm_prepare_package_sources "$PACMAN_CONF"; then
+if ! omarchy_arm_prepare_package_sources "$PACMAN_CONF" backup "" "$helper_root"; then
   echo "Could not prepare package sources" >&2
   exit 1
 fi

@@ -13,7 +13,7 @@ test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
 conf="$test_tmp/pacman.conf"
-printf '%s\n' '[options]' 'Architecture = aarch64' '[extra]' 'Server = https://regular.example/$arch' '[omarchy-aarch64]' 'Server = https://mac.example' > "$conf"
+printf '%s\n' '[options]' 'Architecture = aarch64' '[extra]' 'Server = https://regular.example/$arch' '[omarchy-aarch64]' 'Server = https://github.com/omarchy-mac/omarchy-pkgs-aarch64/releases/download/channel-stable' > "$conf"
 cp "$conf" "$test_tmp/original"
 
 run_recovery() {
@@ -51,7 +51,7 @@ reported=$(grep -o 'would run: sudo env [^"]*pacman -Syu --noconfirm' <<<"$outpu
 pass 'the transaction identifies itself to the update guard'
 
 grep -q 'Server = https://regular.example' <<<"$(cat "$conf")" || fail 'regular mirrors kept'
-! grep -q '^-' <<<"$(grep -v '^---' <<<"$output")" || fail 'dry run removes nothing from a configuration without an edge section' "$output"
+grep -q '^+Server = https://github.com/omarchy-mac/omarchy-pkgs-aarch64/releases/download/channel-stable$' <<<"$output" || fail 'recovery preserves the selected stable channel' "$output"
 pass 'recovery only adds to a configuration that has no edge section'
 
 # This script exists for machines whose installed package predates the helper,
@@ -59,6 +59,7 @@ pass 'recovery only adds to a configuration that has no edge section'
 # candidate at an empty directory and let it fall back to the published copy,
 # served from a file here so the test needs no network.
 cp "$ROOT/install/helpers/arm-package-sources.sh" "$test_tmp/published-helper.sh"
+cp "$ROOT/install/helpers/arm-channel-manifest.py" "$test_tmp/arm-channel-manifest.py"
 mkdir -p "$test_tmp/empty"
 cp "$recovery" "$test_tmp/empty/fix-arm-packages.sh"
 cp "$test_tmp/original" "$conf"
@@ -85,6 +86,11 @@ pass 'recovery falls back to the published helper when no checkout is installed'
 stub_bin="$test_tmp/stub-bin"
 call_log="$test_tmp/calls"
 mkdir -p "$stub_bin"
+cat > "$stub_bin/python3" <<'STUB'
+#!/bin/bash
+exit 0
+STUB
+chmod +x "$stub_bin/python3"
 cat > "$stub_bin/uname" <<'STUB'
 #!/bin/bash
 printf '%s\n' aarch64

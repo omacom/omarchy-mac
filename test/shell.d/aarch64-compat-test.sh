@@ -23,12 +23,12 @@ for config in "$ROOT"/default/pacman/pacman*.conf; do
   section=$(awk '/^\[/ { selected = ($0 == "[omarchy]") } selected { print }' "$config")
   grep -qxF 'Usage = Sync' <<< "$section" || fail "official edge requires explicit targets in $config"
   grep -qxF 'SigLevel = Required DatabaseOptional' <<< "$section" || fail "official edge requires signed packages in $config"
-  grep -qxF 'Server = https://pkgs.omarchy.org/edge/$arch' <<< "$section" || fail "official edge uses target architecture in $config"
-  if grep '^[[:space:]]*Server.*pkgs\.omarchy\.org' "$config" | grep -vxF 'Server = https://pkgs.omarchy.org/edge/$arch'; then
-    fail "no x86 or alternate-channel official repository in $config"
+  grep -qE '^Server = https://github.com/omarchy-mac/omarchy-pkgs-aarch64/releases/download/channel-(stable|rc|edge)$' <<< "$section" || fail "compositor uses an isolated ARM snapshot in $config"
+  if grep -q '^[[:space:]]*Server.*pkgs\.omarchy\.org' "$config"; then
+    fail "no rolling official endpoint bypasses the selected snapshot in $config"
   fi
 done
-pass "official edge is architecture-aware, signed, and explicit-target-only"
+pass "selected compositor snapshot is ARM-specific, signed, and explicit-target-only"
 
 # The regular distribution mirrorlists must remain Arch Linux ARM sources;
 # official edge belongs only in its restricted, separate repository section.

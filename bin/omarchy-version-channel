@@ -2,6 +2,12 @@
 
 # omarchy:summary=Print the active Omarchy mirror and package channel
 
+if [[ $(uname -m) == "aarch64" ]]; then
+  source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
+  omarchy_arm_package_channel || echo unknown
+  exit 0
+fi
+
 if grep -q "https://stable-mirror.omarchy.org/" /etc/pacman.d/mirrorlist; then
   mirror="stable"
 elif grep -q "https://rc-mirror.omarchy.org/" /etc/pacman.d/mirrorlist; then

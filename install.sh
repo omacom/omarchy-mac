@@ -64,6 +64,12 @@ check_preconditions() {
     warn "This does not look like Apple hardware; continuing anyway."
 }
 
+ensure_channel_tools() {
+  # Repository validation runs before desktop/AUR packages exist, including
+  # when yay is already installed. Bootstrap its tools from the current base.
+  sudo pacman -S --needed --noconfirm python curl libarchive
+}
+
 ensure_aur_helper() {
   command -v yay >/dev/null && return 0
 
@@ -145,6 +151,13 @@ ensure_asahi_alarm_keyring() {
 # is already installed, so the repo has to be added now: otherwise herdr builds
 # zig0.15 from source for two hours and aarch64 rejects it anyway.
 ensure_arm_package_repo() {
+  local channel=stable
+  if grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf; then
+    channel=$(omarchy_arm_package_channel /etc/pacman.conf) || return
+  fi
+  # Pre-runtime installation has not exported OMARCHY_PATH yet. Validate with
+  # the checkout explicitly, before appending repositories or changing keys.
+  omarchy_arm_validate_channel "$channel" "$checkout" || return
   if ! grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf; then
     local block
     block=$(sed -n '/^\[omarchy-aarch64\]/,/^Server[[:space:]]*=/p' \
@@ -156,7 +169,7 @@ ensure_arm_package_repo() {
   fi
 
   ensure_asahi_alarm_keyring
-  omarchy_arm_prepare_package_sources
+  omarchy_arm_prepare_package_sources /etc/pacman.conf backup "$channel" "$checkout"
   local -a targets
   mapfile -t targets < <(omarchy_arm_package_upgrade_args)
   log "Upgrading system packages and installing the compatible Hyprland stack"
@@ -261,7 +274,12 @@ seed_user_defaults() {
 
 run_system_setup() {
   log "Running Omarchy system setup"
-  sudo omarchy-apply-system --install-user "$USER" --first-install
+  local channel
+  channel=$(omarchy_arm_package_channel /etc/pacman.conf) || return
+  omarchy_arm_validate_channel "$channel" "$checkout" || return
+  # System setup restores the matching pacman template. Preserve the selected
+  # channel explicitly across sudo instead of defaulting an RC install to stable.
+  sudo env OMARCHY_MIRROR="$channel" omarchy-apply-system --install-user "$USER" --first-install
 
   # System setup restores pacman.conf and can introduce repositories absent
   # from the starting image. Trust their keys and refresh with a full upgrade
@@ -297,6 +315,7 @@ snapshot_factory_baseline() {
 main() {
   check_preconditions
   ensure_utf8_locale
+  ensure_channel_tools
   ensure_arm_package_repo
   ensure_gum
   ensure_aur_helper

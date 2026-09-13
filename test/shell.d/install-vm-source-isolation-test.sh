@@ -59,10 +59,15 @@ unset OMARCHY_PKGS_PATH
 # the kernel's Landlock support from pacman's download sandbox.
 eval "$(sed -n '/^nspawn() {/,/^}/p' "$harness")"
 WORK="$test_tmp/work"
+FIXTURE="$WORK/channel-fixture"
+PUBLISHER="$test_tmp/publisher"
+FIXTURE_BIND=--bind-ro
 as_root() { printf '%s\n' "$@" >"$test_tmp/nspawn-args"; }
 nspawn /bin/true
 mapfile -t args <"$test_tmp/nspawn-args"
 [[ ${args[0]} == "systemd-nspawn" ]] || fail "wrapper must invoke nspawn"
+[[ " ${args[*]} " == *" --bind-ro=$FIXTURE:/opt/omarchy-ci-channel "* ]] || fail "fixture must be read-only during installation"
+[[ " ${args[*]} " == *" --bind-ro=$PUBLISHER:/opt/omarchy-channel-publisher "* ]] || fail "publisher tooling must never be guest-writable"
 filters=0
 for arg in "${args[@]}"; do
   if [[ $arg == --system-call-filter=* ]]; then
