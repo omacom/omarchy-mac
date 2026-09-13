@@ -8,8 +8,8 @@ set -euo pipefail
 # Same pinned installer as the install entry: it owns the uninstall path, so the
 # two stay in step. Bump both together.
 INSTALLER_REPO="joshuaswarren/mlx-omarchy"
-INSTALLER_REF="286ef7297b0db6576c70d9999c6f6b005ce1c8de"
-INSTALLER_SHA256="cdfa8a985d38984c68053c2765b50cc8875b7f894001c44d4c6732e47921ebf1"
+INSTALLER_REF="0545dc7f8678c9d25800d37f96ab7262cb07fc2b"
+INSTALLER_SHA256="993bf0222c998367c7a82732f03477723aa7d5b1a44e89edb56ee1fa977444e8"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
