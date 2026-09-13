@@ -4,7 +4,7 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
-install_script="$ROOT/install.sh"
+install_script="$ROOT/install/helpers/mac-install.sh"
 build_script="$ROOT/build-packages.sh"
 
 [[ -x $install_script ]] || fail "the Apple Silicon installer ships and is executable"
@@ -105,10 +105,11 @@ pass "refreshing limine no-ops on a machine without limine"
 # the install looks nothing like the rest of Omarchy until its last stretch.
 grep -qF 'ensure_gum' "$install_script" ||
   fail "the installer installs gum up front"
-gum_call=$(grep -n '^  ensure_gum$' "$install_script" | cut -d: -f1)
+gum_call=$(grep -n '^  ensure_gum$' "$install_script" | tail -1 | cut -d: -f1)
 set_call=$(grep -n '^  install_default_package_set$' "$install_script" | cut -d: -f1)
 [[ -n $gum_call && -n $set_call ]] || fail "the installer installs gum and the package set"
-(( gum_call < set_call )) || fail "gum is installed before the long package phase"
+finish_body=$(sed -n '/^finish_install() {/,/^}/p' "$install_script")
+[[ $finish_body == *ensure_gum*install_default_package_set* ]] || fail "gum is installed before the long package phase"
 grep -qF 'gum style' "$install_script" ||
   fail "the installer speaks through gum once it is available"
 pass "the installer styles its output with gum from the start"
@@ -134,7 +135,7 @@ pass "the installer bootstraps Asahi signing keys before refreshing ARM packages
 repo_call=$(sed -n '/^main() {/,/^}/p' "$install_script" | grep -n '^  ensure_arm_package_repo$' | cut -d: -f1)
 main_line=$(grep -n '^main() {$' "$install_script" | cut -d: -f1)
 repo_call=$(( main_line + repo_call - 1 ))
-build_call=$(grep -n '^  build_omarchy_packages$' "$install_script" | cut -d: -f1)
+build_call=$(grep -n '^    build_omarchy_packages$' "$install_script" | cut -d: -f1)
 [[ -n $repo_call && -n $build_call ]] || fail "the installer prepares repositories before package builds"
 (( repo_call < build_call && repo_call < gum_call )) || fail "the compatible stack transaction precedes package operations"
 grep -qF 'source "$checkout/install/helpers/arm-package-sources.sh"' "$install_script" || fail "the installer uses shared source policy"
@@ -161,6 +162,8 @@ for failing_stage in none system repositories; do
       [[ $* == "--first-install" ]]
       echo user
     }
+    selected_release=4.0.2-3
+    verify_installed_release() { :; }
     eval "$SETUP_BODY"
     run_system_setup
   ') || setup_status=$?

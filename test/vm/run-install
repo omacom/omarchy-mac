@@ -88,7 +88,7 @@ BOOTSTRAP
 log "running install.sh as $GUEST_USER (AUR builds take a while)"
 set +e
 nspawn --user="$GUEST_USER" --chdir=/src/omarchy \
-  /bin/bash -euo pipefail -c 'export LANG=en_US.UTF-8; bash install.sh' \
+  /bin/bash -euo pipefail -c 'export LANG=en_US.UTF-8; bash install.sh --from-source' \
   | tee "$WORK/logs/install.log"
 install_status=${PIPESTATUS[0]}
 set -e

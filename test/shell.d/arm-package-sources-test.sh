@@ -39,7 +39,7 @@ pass 'Aquamarine remains a regular-repository dependency'
 
 # Exercise the real default-package loop after the compatibility transaction.
 # The three selected packages must never reach yay as unqualified targets.
-eval "$(sed -n '/^install_default_package_set() {/,/^seed_user_defaults() {/p' "$ROOT/install.sh" | sed '$d')"
+eval "$(sed -n '/^install_default_package_set() {/,/^seed_user_defaults() {/p' "$ROOT/install/helpers/mac-install.sh" | sed '$d')"
 checkout=$ROOT
 log() { :; }
 warn() { :; }

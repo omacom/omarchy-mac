@@ -66,10 +66,7 @@ curl -LO https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/o
 bash omarchy-mac-setup --no-encrypt
 ```
 
-(`--repo <owner/repo>` installs from a fork the same way. `quattro` is the
-repository's default branch and the script installs from it by default; it
-checks the version it is about to install and stops rather than giving you
-Omarchy 3 by accident.)
+Normal installs use the published ARM packages. To build a fork or development branch, pass `--from-source --repo <owner/repo> --ref <branch>`. Custom repository or branch selections require `--from-source`, and the choice is saved across reboots and `--resume`. The bootstrap defaults to `quattro`, the repository's Omarchy 4 branch.
 
 It asks whether to encrypt (yes by default), then for a hostname, username and
 password, then carries the machine the rest of the way on its own — moving
@@ -124,6 +121,12 @@ here. A few packages have no ARM build at all and are reported at the end
 rather than failing the install; where building one would take hours and still
 fail, the installer asks before trying, and `OMARCHY_TRY_UNAVAILABLE=1 bash
 install.sh` forces the attempt.
+
+Normal installs also download the core `omarchy`, `omarchy-settings`, keyring, and font packages from `omarchy-aarch64`. The installer checks that `omarchy` and `omarchy-settings` have the same complete release version, including the package revision, and validates the downloaded release before installing it. Setup then runs the helper scripts and package lists shipped in that release.
+
+A release missing the Mac installer, required Snapper dependency, Apple boot configuration, or required keyboard brightness service is refused with an explanation. An unavailable or mismatched release does not trigger a source build. The currently published `4.0.2-2` packages are not compatible with this installer; a corrected release containing the packaged Mac installer must be published and validated before switching normal installations to this version.
+
+For development, `bash install.sh --from-source` explicitly builds the current checkout using the upstream package recipes and local Mac adjustments. This is also the mode used by the ARM installation CI job so it tests the proposed source changes. After building, setup uses the resulting installed package payload. An active development link must be disabled with `omarchy dev unlink` before package setup can continue.
 
 ---
 

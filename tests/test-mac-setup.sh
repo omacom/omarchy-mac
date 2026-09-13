@@ -707,7 +707,7 @@ fetch_self() { :; }
 load_conf() { :; }
 fail() { :; }
 exec() { printf 'EXEC: %s\n' "$*"; exit 0; }
-main --repo scottjones/omarchy-mac --ref feat/btrfs-encrypt-only
+main --from-source --repo scottjones/omarchy-mac --ref feat/btrfs-encrypt-only
 HARNESS
   output=$(TOOL="$TOOL" timeout 30 script -qec "bash '$harness'" /dev/null 2>/dev/null | tr -d '\r')
   rm -f "$harness"
@@ -907,7 +907,7 @@ finished_machine_run() {
     save_conf() { :; }
     install_self() { :; }
     run_step() { echo "RAN STEP: $1"; }
-    main
+    main --from-source
   ) 2>&1
 }
 
