@@ -15,6 +15,14 @@ printf 'drop:%s\n' "$*" >>"$TEST_LOG"
 SCRIPT
 chmod +x "$tmp_dir/bin/omarchy-pkg-drop"
 
+# omarchy-remove-ai-llmman stops the serve daemon before deleting its store; a
+# real pkill here would take the developer's own daemon with it.
+cat >"$tmp_dir/bin/pkill" <<'SCRIPT'
+#!/bin/bash
+printf 'pkill:%s\n' "$*" >>"$TEST_LOG"
+SCRIPT
+chmod +x "$tmp_dir/bin/pkill"
+
 export TEST_LOG="$tmp_dir/log"
 export PATH="$tmp_dir/bin:$PATH"
 
@@ -93,3 +101,44 @@ ollama_row=$(grep '^  "remove.ai.ollama":' "$ROOT/default/omarchy/omarchy-menu.j
 [[ $ollama_row == *'"when":"omarchy-pkg-present ollama"'* ]] ||
   fail "Ollama removal is offered only where the package is installed" "$ollama_row"
 pass "Ollama removal is offered only where the package is installed"
+
+# llmman keeps its store, config and the files it drops into other agents'
+# homes under its own name; the agents' own state next to them is not its to
+# take. The detached `llmman serve` daemon has no stop command, so pkill is how
+# it goes, and the stub above keeps that off the developer's own daemon.
+fresh_home
+mkdir -p "$HOME/.local/share/llmman/store" "$HOME/.config/llmman" "$HOME/.codex" \
+  "$HOME/.gemini/llmman/antigravity-cli" "$HOME/.gemini/config/skills" "$HOME/.hermes"
+touch "$HOME/.codex/llmman.config.toml" "$HOME/.codex/config.toml" \
+  "$HOME/.gemini/llmman/antigravity-cli/settings.json" "$HOME/.hermes/config.yaml"
+"$ROOT/bin/omarchy-remove-ai-llmman" >/dev/null
+
+for gone in .local/share/llmman .config/llmman .codex/llmman.config.toml .gemini/llmman; do
+  [[ ! -e $HOME/$gone ]] || fail "llmman removal deletes its store, config and the files it wrote under its own name" "$gone"
+done
+pass "llmman removal deletes its store, config and the files it wrote under its own name"
+
+for kept in .codex/config.toml .gemini/config/skills .hermes/config.yaml; do
+  [[ -e $HOME/$kept ]] || fail "llmman removal keeps the agents' own state" "$kept"
+done
+pass "llmman removal keeps the agents' own state"
+
+grep -qx 'drop:llmman-bin' "$TEST_LOG" || fail "llmman removal drops the llmman-bin package"
+pass "llmman removal drops the llmman-bin package"
+
+grep -qx "pkill:-TERM -f llmman serve" "$TEST_LOG" || fail "llmman removal stops the serve daemon before deleting its store"
+pass "llmman removal stops the serve daemon before deleting its store"
+
+# Without HOME the rm -rf paths would degrade to /-rooted ones; -u makes that a
+# refusal instead.
+if env -u HOME "$ROOT/bin/omarchy-remove-ai-llmman" >/dev/null 2>&1; then
+  fail "llmman removal refuses to run without HOME"
+fi
+pass "llmman removal refuses to run without HOME"
+
+# The command alone is also provided by a cargo or curl install that
+# omarchy-pkg-drop will not touch, so the package is what the remover keys on.
+llmman_row=$(grep '^  "remove.ai.llmman":' "$ROOT/default/omarchy/omarchy-menu.jsonc")
+[[ $llmman_row == *'"when":"omarchy-pkg-present llmman-bin"'* ]] ||
+  fail "llmman removal is offered only where the package is installed" "$llmman_row"
+pass "llmman removal is offered only where the package is installed"
