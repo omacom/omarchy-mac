@@ -21,6 +21,8 @@ limine
 limine-mkinitcpio-hook
 limine-snapper-sync
 linux
+linux-bcm43602
+linux-bcm43602-headers
 linux-firmware
 linux-headers
 linux-ptl
