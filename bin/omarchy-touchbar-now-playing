@@ -1,0 +1,864 @@
+#!/usr/bin/env python3
+
+# omarchy:summary=Now Playing on the Touch Bar: live spectrum, track, transport buttons
+# omarchy:args=[--preview <file.png>|--probe]
+# omarchy:examples=omarchy-touchbar-now-playing | omarchy-touchbar-now-playing --preview frame.png
+# omarchy:hidden=true
+"""omarchy-touchbar-now-playing: a "Now Playing" mini app for the Touch Bar.
+
+Draws a live audio spectrum (cava, any PipeWire source), the current track from
+the Omarchy shell's media service (MPRIS: Spotify web app, cliamp, mpv, ...),
+album art, and previous / play-pause / next buttons straight onto the Touch Bar
+of an Apple Silicon or T2 MacBook Pro running Omarchy.
+
+The Touch Bar normally belongs to tiny-dfr, the F-key daemon. This app borrows
+it through the omarchy-touchbar-handoff root helper (sudoers lets wheel run
+exactly two invocations of it without a password) and hands it back on exit.
+Running it while it is already running toggles it off.
+
+Usage:
+  omarchy-touchbar-now-playing                 toggle the app on the Touch Bar
+  omarchy-touchbar-now-playing --preview F.png render a sample frame to a PNG
+  omarchy-touchbar-now-playing --probe         show devices and struct sizes
+"""
+
+import ctypes
+import fcntl
+import io
+import json
+import math
+import mmap
+import os
+import select
+import signal
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+from ctypes import c_char, c_uint16, c_uint32, c_uint64
+
+import cairo
+
+# The root helper is /usr/bin/... when installed by the Omarchy package and
+# /usr/local/bin/... when installed by this repo's install.sh. The sudoers rule
+# names the exact path, so pick whichever exists.
+HELPER = next((p for p in ("/usr/bin/omarchy-touchbar-handoff", "/usr/local/bin/omarchy-touchbar-handoff") if os.path.exists(p)),
+              "/usr/local/bin/omarchy-touchbar-handoff")
+APP_NAME = "omarchy-touchbar-now-playing"
+FONT = "JetBrainsMono Nerd Font"
+BARS = 24
+FPS = 30
+IDLE_FPS = 8
+MEDIA_POLL_S = 0.5
+IDLE_DIM_S = 45
+DIM_LEVEL = 24
+WAKE_LEVEL = 140
+
+# --------------------------------------------------------------------------
+# DRM (kernel modesetting) through raw ioctls: one dumb buffer on the Touch
+# Bar's CRTC, drawn with cairo and pushed with a dirty-fb call per frame.
+# --------------------------------------------------------------------------
+
+DRM_IOCTL_BASE = 0x64
+
+
+def _ioc(direction, nr, size):
+    return (direction << 30) | (size << 16) | (DRM_IOCTL_BASE << 8) | nr
+
+
+class ModeInfo(ctypes.Structure):
+    _fields_ = [
+        ("clock", c_uint32),
+        ("hdisplay", c_uint16), ("hsync_start", c_uint16), ("hsync_end", c_uint16),
+        ("htotal", c_uint16), ("hskew", c_uint16),
+        ("vdisplay", c_uint16), ("vsync_start", c_uint16), ("vsync_end", c_uint16),
+        ("vtotal", c_uint16), ("vscan", c_uint16),
+        ("vrefresh", c_uint32), ("flags", c_uint32), ("type", c_uint32),
+        ("name", c_char * 32),
+    ]
+
+
+class CardRes(ctypes.Structure):
+    _fields_ = [
+        ("fb_id_ptr", c_uint64), ("crtc_id_ptr", c_uint64),
+        ("connector_id_ptr", c_uint64), ("encoder_id_ptr", c_uint64),
+        ("count_fbs", c_uint32), ("count_crtcs", c_uint32),
+        ("count_connectors", c_uint32), ("count_encoders", c_uint32),
+        ("min_width", c_uint32), ("max_width", c_uint32),
+        ("min_height", c_uint32), ("max_height", c_uint32),
+    ]
+
+
+class GetConnector(ctypes.Structure):
+    _fields_ = [
+        ("encoders_ptr", c_uint64), ("modes_ptr", c_uint64),
+        ("props_ptr", c_uint64), ("prop_values_ptr", c_uint64),
+        ("count_modes", c_uint32), ("count_props", c_uint32), ("count_encoders", c_uint32),
+        ("encoder_id", c_uint32), ("connector_id", c_uint32),
+        ("connector_type", c_uint32), ("connector_type_id", c_uint32),
+        ("connection", c_uint32), ("mm_width", c_uint32), ("mm_height", c_uint32),
+        ("subpixel", c_uint32), ("pad", c_uint32),
+    ]
+
+
+class GetEncoder(ctypes.Structure):
+    _fields_ = [("encoder_id", c_uint32), ("encoder_type", c_uint32), ("crtc_id", c_uint32),
+                ("possible_crtcs", c_uint32), ("possible_clones", c_uint32)]
+
+
+class CreateDumb(ctypes.Structure):
+    _fields_ = [("height", c_uint32), ("width", c_uint32), ("bpp", c_uint32), ("flags", c_uint32),
+                ("handle", c_uint32), ("pitch", c_uint32), ("size", c_uint64)]
+
+
+class MapDumb(ctypes.Structure):
+    _fields_ = [("handle", c_uint32), ("pad", c_uint32), ("offset", c_uint64)]
+
+
+class DestroyDumb(ctypes.Structure):
+    _fields_ = [("handle", c_uint32)]
+
+
+class FbCmd(ctypes.Structure):
+    _fields_ = [("fb_id", c_uint32), ("width", c_uint32), ("height", c_uint32), ("pitch", c_uint32),
+                ("bpp", c_uint32), ("depth", c_uint32), ("handle", c_uint32)]
+
+
+class Crtc(ctypes.Structure):
+    _fields_ = [("set_connectors_ptr", c_uint64), ("count_connectors", c_uint32),
+                ("crtc_id", c_uint32), ("fb_id", c_uint32), ("x", c_uint32), ("y", c_uint32),
+                ("gamma_size", c_uint32), ("mode_valid", c_uint32), ("mode", ModeInfo)]
+
+
+class ClipRect(ctypes.Structure):
+    _fields_ = [("x1", c_uint16), ("y1", c_uint16), ("x2", c_uint16), ("y2", c_uint16)]
+
+
+class DirtyFb(ctypes.Structure):
+    _fields_ = [("fb_id", c_uint32), ("flags", c_uint32), ("color", c_uint32),
+                ("num_clips", c_uint32), ("clips_ptr", c_uint64)]
+
+
+IOCTL_NR = {
+    "SET_MASTER": 0x1E, "DROP_MASTER": 0x1F,
+    "GETRESOURCES": 0xA0, "SETCRTC": 0xA2, "GETENCODER": 0xA6, "GETCONNECTOR": 0xA7,
+    "ADDFB": 0xAE, "RMFB": 0xAF, "DIRTYFB": 0xB1,
+    "CREATE_DUMB": 0xB2, "MAP_DUMB": 0xB3, "DESTROY_DUMB": 0xB4,
+}
+
+
+def drm_ioctl(fd, name, s):
+    """Round-trip a ctypes struct through a DRM IOWR ioctl."""
+    req = _ioc(3, IOCTL_NR[name], ctypes.sizeof(s))
+    buf = bytearray(bytes(s))
+    fcntl.ioctl(fd, req, buf, True)
+    ctypes.memmove(ctypes.addressof(s), bytes(buf), len(buf))
+
+
+class TouchBarDisplay:
+    """The Touch Bar as a DRM output: a 60x2008 portrait panel we draw rotated."""
+
+    def __init__(self, path):
+        self.fd = os.open(path, os.O_RDWR | os.O_CLOEXEC)
+        try:
+            fcntl.ioctl(self.fd, _ioc(0, IOCTL_NR["SET_MASTER"], 0))
+        except OSError:
+            pass  # first opener after tiny-dfr exits is master already
+        crtcs, connectors, _ = self._resources()
+        conn = None
+        for cid in connectors:
+            c, modes, encoders = self._connector(cid)
+            if c.connection == 1 and modes:
+                conn, self.mode, conn_encoders = c, modes[0], encoders
+                break
+        if conn is None:
+            raise RuntimeError("no connected connector on %s" % path)
+        self.connector_id = conn.connector_id
+        enc = GetEncoder(encoder_id=conn.encoder_id or conn_encoders[0])
+        drm_ioctl(self.fd, "GETENCODER", enc)
+        if enc.crtc_id:
+            self.crtc_id = enc.crtc_id
+        else:
+            self.crtc_id = next(crtcs[i] for i in range(len(crtcs)) if enc.possible_crtcs & (1 << i))
+        self.phys_w, self.phys_h = self.mode.hdisplay, self.mode.vdisplay
+        # Logical canvas: the long edge is the width, like tiny-dfr.
+        self.width, self.height = self.phys_h, self.phys_w
+
+        dumb = CreateDumb(width=max(64, (self.phys_w + 63) // 64 * 64), height=self.phys_h, bpp=32)
+        drm_ioctl(self.fd, "CREATE_DUMB", dumb)
+        self.handle, self.pitch, self.size = dumb.handle, dumb.pitch, dumb.size
+        fb = FbCmd(width=self.phys_w, height=self.phys_h, pitch=self.pitch, bpp=32, depth=24, handle=self.handle)
+        drm_ioctl(self.fd, "ADDFB", fb)
+        self.fb_id = fb.fb_id
+        m = MapDumb(handle=self.handle)
+        drm_ioctl(self.fd, "MAP_DUMB", m)
+        self.map = mmap.mmap(self.fd, self.size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=m.offset)
+
+        self.conn_arr = (c_uint32 * 1)(self.connector_id)
+        crtc = Crtc(set_connectors_ptr=ctypes.addressof(self.conn_arr), count_connectors=1,
+                    crtc_id=self.crtc_id, fb_id=self.fb_id, mode_valid=1, mode=self.mode)
+        drm_ioctl(self.fd, "SETCRTC", crtc)
+
+        self.data = bytearray(self.pitch * self.phys_h)
+        self.surface = cairo.ImageSurface.create_for_data(self.data, cairo.FORMAT_RGB24, self.phys_w, self.phys_h, self.pitch)
+        self.clip = ClipRect(0, 0, self.phys_w, self.phys_h)
+        self.dirty = DirtyFb(fb_id=self.fb_id, num_clips=1, clips_ptr=ctypes.addressof(self.clip))
+
+    def _resources(self):
+        res = CardRes()
+        drm_ioctl(self.fd, "GETRESOURCES", res)
+        crtcs = (c_uint32 * max(1, res.count_crtcs))()
+        conns = (c_uint32 * max(1, res.count_connectors))()
+        encs = (c_uint32 * max(1, res.count_encoders))()
+        res.crtc_id_ptr, res.connector_id_ptr, res.encoder_id_ptr = map(ctypes.addressof, (crtcs, conns, encs))
+        res.fb_id_ptr, res.count_fbs = 0, 0
+        drm_ioctl(self.fd, "GETRESOURCES", res)
+        return list(crtcs[:res.count_crtcs]), list(conns[:res.count_connectors]), list(encs[:res.count_encoders])
+
+    def _connector(self, cid):
+        c = GetConnector(connector_id=cid)
+        drm_ioctl(self.fd, "GETCONNECTOR", c)
+        modes = (ModeInfo * max(1, c.count_modes))()
+        encs = (c_uint32 * max(1, c.count_encoders))()
+        c.modes_ptr, c.encoders_ptr = ctypes.addressof(modes), ctypes.addressof(encs)
+        c.props_ptr = c.prop_values_ptr = 0
+        c.count_props = 0
+        drm_ioctl(self.fd, "GETCONNECTOR", c)
+        return c, list(modes[:c.count_modes]), list(encs[:c.count_encoders])
+
+    def context(self):
+        """A cairo context in logical (landscape) coordinates."""
+        ctx = cairo.Context(self.surface)
+        ctx.translate(self.phys_w, 0)
+        ctx.rotate(math.pi / 2)
+        return ctx
+
+    def present(self):
+        self.surface.flush()
+        self.map[0:len(self.data)] = self.data
+        try:
+            drm_ioctl(self.fd, "DIRTYFB", self.dirty)
+        except OSError:
+            pass  # scanout drivers without damage support update on their own
+
+    def close(self):
+        try:
+            self.map.close()
+            fcntl.ioctl(self.fd, _ioc(3, IOCTL_NR["RMFB"], 4), bytearray(struct.pack("I", self.fb_id)), True)
+            drm_ioctl(self.fd, "DESTROY_DUMB", DestroyDumb(handle=self.handle))
+        finally:
+            os.close(self.fd)
+
+
+# --------------------------------------------------------------------------
+# Touch input: the Touch Bar digitizer speaks evdev multitouch protocol B.
+# --------------------------------------------------------------------------
+
+EV_SYN, EV_ABS = 0, 3
+ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
+EVENT_FMT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_FMT)
+
+
+class TouchBarInput:
+    def __init__(self, path, width, height):
+        self.fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+        xr = self._absinfo(ABS_MT_POSITION_X)
+        yr = self._absinfo(ABS_MT_POSITION_Y)
+        self.swap = (xr[1] - xr[0]) < (yr[1] - yr[0])  # long axis should map to width
+        self.xr, self.yr = (yr, xr) if self.swap else (xr, yr)
+        self.width, self.height = width, height
+        self.slot = 0
+        self.slots = {}   # slot -> [tracking_id, x, y]
+        self.pending = {}  # slot -> "down"|"move"|"up"
+        self.buf = b""
+
+    def _absinfo(self, code):
+        buf = bytearray(24)
+        fcntl.ioctl(self.fd, (2 << 30) | (24 << 16) | (0x45 << 8) | (0x40 + code), buf, True)
+        _, lo, hi, _, _, _ = struct.unpack("iiiiii", buf)
+        return lo, max(hi, lo + 1)
+
+    def _logical(self, x, y):
+        if self.swap:
+            x, y = y, x
+        lx = (x - self.xr[0]) / (self.xr[1] - self.xr[0]) * self.width
+        ly = (y - self.yr[0]) / (self.yr[1] - self.yr[0]) * self.height
+        return lx, ly
+
+    def read(self):
+        """Return a list of (kind, slot, x, y) touch events in logical coordinates."""
+        try:
+            self.buf += os.read(self.fd, EVENT_SIZE * 64)
+        except BlockingIOError:
+            return []
+        events = []
+        while len(self.buf) >= EVENT_SIZE:
+            _, _, etype, code, value = struct.unpack(EVENT_FMT, self.buf[:EVENT_SIZE])
+            self.buf = self.buf[EVENT_SIZE:]
+            if etype == EV_ABS:
+                if code == ABS_MT_SLOT:
+                    self.slot = value
+                    continue
+                st = self.slots.setdefault(self.slot, [-1, 0, 0])
+                if code == ABS_MT_TRACKING_ID:
+                    if value >= 0 and st[0] < 0:
+                        self.pending[self.slot] = "down"
+                    elif value < 0 and st[0] >= 0:
+                        self.pending[self.slot] = "up"
+                    st[0] = value
+                elif code == ABS_MT_POSITION_X:
+                    st[1] = value
+                    self.pending.setdefault(self.slot, "move")
+                elif code == ABS_MT_POSITION_Y:
+                    st[2] = value
+                    self.pending.setdefault(self.slot, "move")
+            elif etype == EV_SYN:
+                for slot, kind in self.pending.items():
+                    st = self.slots.get(slot, [-1, 0, 0])
+                    if kind == "move" and st[0] < 0:
+                        continue
+                    x, y = self._logical(st[1], st[2])
+                    events.append((kind, slot, x, y))
+                self.pending.clear()
+        return events
+
+    def close(self):
+        os.close(self.fd)
+
+
+# --------------------------------------------------------------------------
+# Data sources: cava for the spectrum, the Omarchy shell for the track.
+# --------------------------------------------------------------------------
+
+class Spectrum:
+    """Bar heights (0..1) from cava's raw ascii output; flat if cava is missing."""
+
+    def __init__(self, bars):
+        self.bars = bars
+        self.levels = [0.0] * bars
+        self.proc = None
+        self.buf = b""
+        self.dir = tempfile.mkdtemp(prefix="omarchy-touchbar-")
+        cfg = os.path.join(self.dir, "cava.conf")
+        with open(cfg, "w") as f:
+            f.write("[general]\nbars = %d\nframerate = %d\nautosens = 1\nsensitivity = 100\n"
+                    "[input]\nmethod = pipewire\nsource = auto\n"
+                    "[output]\nmethod = raw\nraw_target = /dev/stdout\ndata_format = ascii\n"
+                    "ascii_max_range = 100\nbar_delimiter = 59\nframe_delimiter = 10\n"
+                    "[smoothing]\nnoise_reduction = 55\nmonstercat = 1\n" % (bars, FPS))
+        try:
+            self.proc = subprocess.Popen(["cava", "-p", cfg], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            os.set_blocking(self.proc.stdout.fileno(), False)
+        except FileNotFoundError:
+            print("cava not installed; spectrum disabled (pacman -S cava)", file=sys.stderr)
+
+    def fileno(self):
+        return self.proc.stdout.fileno() if self.proc else None
+
+    def read(self):
+        if not self.proc:
+            return False
+        try:
+            chunk = os.read(self.fileno(), 65536)
+        except BlockingIOError:
+            return False
+        if not chunk:
+            return False
+        self.buf += chunk
+        lines = self.buf.split(b"\n")
+        self.buf = lines[-1]
+        for line in reversed(lines[:-1]):
+            parts = line.split(b";")
+            vals = [p for p in parts if p]
+            if len(vals) >= self.bars:
+                try:
+                    self.levels = [min(1.0, int(v) / 100.0) for v in vals[:self.bars]]
+                    return True
+                except ValueError:
+                    continue
+        return False
+
+    def close(self):
+        if self.proc:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        try:
+            os.remove(os.path.join(self.dir, "cava.conf"))
+            os.rmdir(self.dir)
+        except OSError:
+            pass
+
+
+class Media:
+    """Track state and transport controls via `omarchy-shell media`."""
+
+    IDLE = {"hasPlayer": False, "hasMedia": False, "playing": False, "title": "", "artist": "",
+            "album": "", "artUrl": "", "canGoNext": False, "canGoPrevious": False, "canTogglePlaying": False}
+
+    def __init__(self):
+        self.state = dict(self.IDLE)
+        self.next_poll = 0.0
+
+    def poll(self, now):
+        if now < self.next_poll:
+            return False
+        self.next_poll = now + MEDIA_POLL_S
+        try:
+            out = subprocess.run(["omarchy-shell", "media", "status"], capture_output=True, text=True, timeout=2).stdout
+            new = json.loads(out.strip() or "{}")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return False
+        if not isinstance(new, dict):
+            return False
+        merged = dict(self.IDLE)
+        merged.update({k: v for k, v in new.items() if v is not None})
+        changed = merged != self.state
+        self.state = merged
+        return changed
+
+    # Button names map onto the media service's IPC methods.
+    IPC_METHODS = {"playpause": "playPause", "prev": "previous", "next": "next"}
+
+    def action(self, name):
+        method = self.IPC_METHODS.get(name, name)
+        subprocess.Popen(["omarchy-shell", "media", method], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.next_poll = time.monotonic() + 0.35
+
+
+class ArtCache:
+    """Album art as a cairo surface, scaled once per URL (GdkPixbuf decodes JPEG/PNG)."""
+
+    def __init__(self, size):
+        self.size = size
+        self.url = None
+        self.surface = None
+
+    def get(self, url):
+        if url == self.url:
+            return self.surface
+        self.url, self.surface = url, None
+        if not url or not url.startswith("file://"):
+            return None
+        try:
+            import gi
+            gi.require_version("GdkPixbuf", "2.0")
+            from gi.repository import GdkPixbuf
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(url[len("file://"):], self.size, self.size, True)
+            ok, png = pb.save_to_bufferv("png", [], [])
+            if ok:
+                self.surface = cairo.ImageSurface.create_from_png(io.BytesIO(bytes(png)))
+        except Exception as exc:  # art is decoration; never let it take the app down
+            print("album art unavailable: %s" % exc, file=sys.stderr)
+        return self.surface
+
+
+# --------------------------------------------------------------------------
+# Theme: colours from the active Omarchy theme.
+# --------------------------------------------------------------------------
+
+FALLBACK = {"accent": "#f7a623", "foreground": "#e6e6e6", "dark_foreground": "#8a8a8a",
+            "lighter_background": "#2a2a2a", "muted": "#555555"}
+
+
+def load_theme():
+    colors = dict(FALLBACK)
+    try:
+        import tomllib
+        name = open(os.path.expanduser("~/.local/state/omarchy/current/theme.name")).read().strip()
+        for base in (os.environ.get("OMARCHY_PATH", "/usr/share/omarchy") + "/themes", os.path.expanduser("~/.config/omarchy/themes")):
+            path = os.path.join(base, name, "colors.toml")
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    colors.update({k: v for k, v in tomllib.load(f).items() if isinstance(v, str) and v.startswith("#")})
+                break
+    except (OSError, ValueError):
+        pass
+    return {k: rgb(v) for k, v in colors.items()}
+
+
+def rgb(hex_color):
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+# --------------------------------------------------------------------------
+# The app: layout, rendering, touch handling, main loop.
+# --------------------------------------------------------------------------
+
+class NowPlaying:
+    def __init__(self, width, height, theme):
+        self.w, self.h = width, height
+        self.theme = theme
+        self.art = ArtCache(height - 16)
+        self.fit_cache = {}
+        m = 12
+        eq_w = int(width * 0.31)
+        btn_w, gap = 96, 14
+        self.eq_box = (m, 8, eq_w, height - 16)
+        x = width - m
+        self.buttons = []
+        for name, w in (("keys", 118), ("next", btn_w), ("playpause", btn_w), ("prev", btn_w)):
+            x -= w
+            self.buttons.append((name, x, 8, w, height - 16))
+            x -= gap
+        self.text_box = (m + eq_w + 20, 8, x - (m + eq_w + 20), height - 16)
+        self.pressed = None
+        self.touch_start = {}
+
+    # -- rendering -----------------------------------------------------------
+
+    def render(self, ctx, levels, state, t):
+        th = self.theme
+        ctx.set_source_rgb(0, 0, 0)
+        ctx.paint()
+        self._spectrum(ctx, levels, state.get("playing"), t)
+        self._track(ctx, state)
+        for btn in self.buttons:
+            self._button(ctx, btn, state)
+
+    def _spectrum(self, ctx, levels, playing, t):
+        x0, y0, w, h = self.eq_box
+        n = len(levels)
+        gap = 5
+        bw = (w - gap * (n - 1)) / n
+        base = y0 + h
+        ar, ag, ab = self.theme["accent"]
+        for i, lv in enumerate(levels):
+            if not playing:
+                lv = 0.04 + 0.03 * (1 + math.sin(t * 1.5 + i * 0.45))
+            bh = max(2.0, lv * h)
+            x = x0 + i * (bw + gap)
+            grad = cairo.LinearGradient(0, base, 0, base - h)
+            grad.add_color_stop_rgba(0, ar, ag, ab, 0.55)
+            grad.add_color_stop_rgba(1, ar, ag, ab, 1.0)
+            ctx.set_source(grad)
+            self._round_rect(ctx, x, base - bh, bw, bh, 2.5)
+            ctx.fill()
+
+    def _track(self, ctx, state):
+        x, y, w, h = self.text_box
+        # Players hand out a placeholder (Chromium's logo) when nothing is
+        # loaded, so only show art alongside a real track.
+        art = self.art.get(state.get("artUrl", "")) if state.get("hasMedia") else None
+        if art is not None:
+            self._round_rect(ctx, x, y, h, h, 6)
+            ctx.save()
+            ctx.clip()
+            ctx.set_source_surface(art, x, y)
+            ctx.paint()
+            ctx.restore()
+            x += h + 14
+            w -= h + 14
+        fg, dim = self.theme["foreground"], self.theme["dark_foreground"]
+        if state.get("hasMedia") and (state.get("title") or state.get("artist")):
+            title, artist = state.get("title") or "", state.get("artist") or ""
+        elif state.get("hasPlayer"):
+            title, artist = "Nothing playing", "Press play in Spotify, or Super+Shift+M to open it"
+        else:
+            title, artist = "No player", "Super+Shift+M opens Spotify"
+        ctx.select_font_face(FONT, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        ctx.set_font_size(21)
+        ctx.set_source_rgb(*fg)
+        ctx.move_to(x, y + 21)
+        ctx.show_text(self._fit(ctx, title, w, "b21"))
+        ctx.select_font_face(FONT, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        ctx.set_font_size(16)
+        ctx.set_source_rgb(*dim)
+        ctx.move_to(x, y + h - 4)
+        ctx.show_text(self._fit(ctx, artist, w, "n16"))
+
+    def _button(self, ctx, btn, state):
+        name, x, y, w, h = btn
+        active = self.pressed == name
+        line = self.theme["accent"] if active else self.theme["muted"]
+        ctx.set_source_rgb(*line)
+        ctx.set_line_width(2)
+        self._round_rect(ctx, x + 1, y + 1, w - 2, h - 2, 8)
+        ctx.stroke()
+        ctx.set_source_rgb(*(self.theme["accent"] if active else self.theme["foreground"]))
+        cx, cy = x + w / 2, y + h / 2
+        s = 9  # icon half-size
+        if name == "prev":
+            ctx.rectangle(cx - s - 4, cy - s, 3, 2 * s)
+            ctx.fill()
+            ctx.move_to(cx + s - 2, cy - s)
+            ctx.line_to(cx - s + 2, cy)
+            ctx.line_to(cx + s - 2, cy + s)
+            ctx.close_path()
+            ctx.fill()
+        elif name == "next":
+            ctx.move_to(cx - s + 2, cy - s)
+            ctx.line_to(cx + s - 2, cy)
+            ctx.line_to(cx - s + 2, cy + s)
+            ctx.close_path()
+            ctx.fill()
+            ctx.rectangle(cx + s + 1, cy - s, 3, 2 * s)
+            ctx.fill()
+        elif name == "playpause":
+            if state.get("playing"):
+                ctx.rectangle(cx - s + 1, cy - s, 6, 2 * s)
+                ctx.rectangle(cx + s - 7, cy - s, 6, 2 * s)
+                ctx.fill()
+            else:
+                ctx.move_to(cx - s + 3, cy - s)
+                ctx.line_to(cx + s, cy)
+                ctx.line_to(cx - s + 3, cy + s)
+                ctx.close_path()
+                ctx.fill()
+        else:  # keys: back to the F-key row
+            ctx.select_font_face(FONT, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+            ctx.set_font_size(15)
+            label = "F1–F12"
+            ext = ctx.text_extents(label)
+            ctx.move_to(cx - ext.x_advance / 2, cy + 5)
+            ctx.show_text(label)
+
+    def _fit(self, ctx, text, max_w, key):
+        cache_key = (key, text, int(max_w))
+        if cache_key in self.fit_cache:
+            return self.fit_cache[cache_key]
+        out = text
+        if ctx.text_extents(out).x_advance > max_w:
+            while len(out) > 1 and ctx.text_extents(out + "…").x_advance > max_w:
+                out = out[:-1]
+            out = out.rstrip() + "…"
+        self.fit_cache[cache_key] = out
+        return out
+
+    @staticmethod
+    def _round_rect(ctx, x, y, w, h, r):
+        r = min(r, w / 2, h / 2)
+        ctx.new_sub_path()
+        ctx.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+        ctx.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+        ctx.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+        ctx.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+        ctx.close_path()
+
+    # -- touch ---------------------------------------------------------------
+
+    def hit(self, x, y):
+        for name, bx, by, bw, bh in self.buttons:
+            if bx <= x <= bx + bw and 0 <= y <= self.h:
+                return name
+        ex, ey, ew, eh = self.eq_box
+        if ex <= x <= ex + ew:
+            return "playpause"
+        return None
+
+    def touch(self, kind, slot, x, y):
+        """Returns an action name on a completed tap, else None."""
+        if kind == "down":
+            self.touch_start[slot] = (self.hit(x, y), time.monotonic())
+            self.pressed = self.touch_start[slot][0]
+        elif kind == "up":
+            start = self.touch_start.pop(slot, None)
+            self.pressed = None
+            if start and start[0] and start[0] == self.hit(x, y) and time.monotonic() - start[1] < 0.8:
+                return start[0]
+        return None
+
+
+# --------------------------------------------------------------------------
+# Process plumbing: handoff, pidfile toggle, backlight, main loop.
+# --------------------------------------------------------------------------
+
+def runtime_dir():
+    return os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+
+
+def pidfile():
+    return os.path.join(runtime_dir(), APP_NAME + ".pid")
+
+
+def other_instance():
+    try:
+        pid = int(open(pidfile()).read().strip())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        return None
+
+
+def handoff(verb):
+    r = subprocess.run(["sudo", "-n", HELPER, verb], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("handoff '%s' failed: %s" % (verb, (r.stderr or r.stdout).strip() or "not installed? run install.sh"))
+    return dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
+
+
+class Backlight:
+    def __init__(self, path):
+        self.path = path
+        self.initial = self.read()
+        self.dimmed = False
+        if self.initial is not None and self.initial < 8:
+            self.write(WAKE_LEVEL)
+            self.initial = WAKE_LEVEL
+
+    def read(self):
+        try:
+            return int(open(self.path).read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def write(self, value):
+        try:
+            with open(self.path, "w") as f:
+                f.write(str(value))
+        except OSError:
+            pass
+
+    def set_dimmed(self, dimmed):
+        if dimmed != self.dimmed and self.initial is not None:
+            self.write(DIM_LEVEL if dimmed else self.initial)
+            self.dimmed = dimmed
+
+
+def run():
+    pid = other_instance()
+    if pid:
+        os.kill(pid, signal.SIGTERM)
+        print("stopping running instance (pid %d)" % pid)
+        return 0
+
+    try:
+        devices = handoff("app")
+    except RuntimeError:
+        # The helper may have stopped tiny-dfr before failing; never leave the
+        # Touch Bar dark and keyless.
+        try:
+            handoff("keys")
+        except RuntimeError:
+            pass
+        raise
+    theme = load_theme()
+    display = touch = spectrum = backlight = None
+    stop = []
+    snapshot = []
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, lambda *_: stop.append(True))
+    # SIGUSR1 writes the current frame (logical orientation) next to the pidfile,
+    # so a frame can be inspected without looking at the panel.
+    signal.signal(signal.SIGUSR1, lambda *_: snapshot.append(True))
+    try:
+        with open(pidfile(), "w") as f:
+            f.write(str(os.getpid()))
+        display = TouchBarDisplay(devices["drm"])
+        touch = TouchBarInput(devices["touch"], display.width, display.height)
+        if devices.get("backlight"):
+            backlight = Backlight(devices["backlight"])
+        spectrum = Spectrum(BARS)
+        media = Media()
+        app = NowPlaying(display.width, display.height, theme)
+        fds = [touch.fd] + ([spectrum.fileno()] if spectrum.fileno() else [])
+        debug = bool(os.environ.get("OMARCHY_TOUCHBAR_DEBUG"))
+        frame = 1.0 / FPS
+        next_frame = time.monotonic()
+        last_activity = time.monotonic()
+        while not stop:
+            now = time.monotonic()
+            timeout = max(0.0, next_frame - now)
+            try:
+                ready, _, _ = select.select(fds, [], [], timeout)
+            except InterruptedError:
+                continue
+            if touch.fd in ready:
+                for ev in touch.read():
+                    last_activity = time.monotonic()
+                    action = app.touch(*ev)
+                    if debug:
+                        print("touch %s slot=%d x=%.0f y=%.0f -> %s" % (ev[0], ev[1], ev[2], ev[3], action), file=sys.stderr, flush=True)
+                    if action == "keys":
+                        stop.append(True)
+                    elif action:
+                        media.action(action)
+            if spectrum.fileno() in ready:
+                spectrum.read()
+            now = time.monotonic()
+            media.poll(now)
+            if media.state.get("playing"):
+                last_activity = now
+            if backlight:
+                backlight.set_dimmed(now - last_activity > IDLE_DIM_S)
+            if now >= next_frame:
+                app.render(display.context(), spectrum.levels, media.state, now)
+                display.present()
+                # Full rate only while the spectrum moves; idle animation is slow.
+                next_frame = now + (frame if media.state.get("playing") else 1.0 / IDLE_FPS)
+                if snapshot:
+                    snapshot.clear()
+                    shot = cairo.ImageSurface(cairo.FORMAT_RGB24, display.width, display.height)
+                    app.render(cairo.Context(shot), spectrum.levels, media.state, now)
+                    shot.write_to_png(os.path.join(runtime_dir(), APP_NAME + ".png"))
+    finally:
+        for closer in (spectrum, touch, display):
+            if closer:
+                try:
+                    closer.close()
+                except Exception:
+                    pass
+        try:
+            os.remove(pidfile())
+        except OSError:
+            pass
+        try:
+            handoff("keys")
+        except RuntimeError as exc:
+            print(exc, file=sys.stderr)
+    return 0
+
+
+def preview(path):
+    w, h = 2008, 60
+    surface = cairo.ImageSurface(cairo.FORMAT_RGB24, w, h)
+    app = NowPlaying(w, h, load_theme())
+    levels = [0.5 + 0.45 * math.sin(i * 0.7) * math.cos(i * 0.3) for i in range(BARS)]
+    state = {"hasPlayer": True, "hasMedia": True, "playing": True, "title": "We Can Fix Everything",
+             "artist": "Ryan R. Hughes", "artUrl": ""}
+    app.render(cairo.Context(surface), levels, state, 0.0)
+    surface.write_to_png(path)
+    print("wrote", path)
+
+
+def probe():
+    for name, cls in (("modeinfo", ModeInfo), ("card_res", CardRes), ("get_connector", GetConnector),
+                      ("get_encoder", GetEncoder), ("create_dumb", CreateDumb), ("map_dumb", MapDumb),
+                      ("fb_cmd", FbCmd), ("crtc", Crtc), ("dirty_fb", DirtyFb)):
+        print("%-14s %3d bytes" % (name, ctypes.sizeof(cls)))
+    print("input_event    %3d bytes" % EVENT_SIZE)
+    for card in sorted(os.listdir("/sys/class/drm")):
+        drv = os.path.join("/sys/class/drm", card, "device", "driver")
+        if card.startswith("card") and "-" not in card and os.path.exists(drv):
+            print("/dev/dri/%s driver=%s" % (card, os.path.basename(os.path.realpath(drv))))
+    for ev in sorted(os.listdir("/sys/class/input")):
+        if ev.startswith("event"):
+            try:
+                name = open("/sys/class/input/%s/device/name" % ev).read().strip()
+            except OSError:
+                continue
+            if "Touch Bar" in name:
+                print("/dev/input/%s name=%s" % (ev, name))
+    print("theme:", load_theme())
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args[:1] == ["--preview"] and len(args) == 2:
+        preview(args[1])
+    elif args == ["--probe"]:
+        probe()
+    elif not args:
+        try:
+            sys.exit(run())
+        except RuntimeError as exc:
+            print("%s: %s" % (APP_NAME, exc), file=sys.stderr)
+            sys.exit(1)
+    else:
+        print(__doc__)
+        sys.exit(2)
