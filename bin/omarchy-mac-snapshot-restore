@@ -180,9 +180,10 @@ main() {
   read -rp "Type 'restore' to continue: " typed
   [[ $typed == "restore" ]] || fail "not confirmed"
 
-  btrfs subvolume snapshot "$TOP/$source_path" "$TOP/@new" >/dev/null
-  mv "$TOP/@" "$TOP/@old-$stamp"
-  mv "$TOP/@new" "$TOP/@"
+  warn "Do not start other Snapper or Btrfs writers during recovery."
+  local backend_helper
+  backend_helper="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/omarchy-mac-snapper-backend"
+  bash "$backend_helper" restore "$source_path" "$stamp"
 
   # /boot is the ESP and outside every snapshot, so the restored root is now
   # paired with whatever kernel is on it. If the install updated linux-asahi
@@ -202,7 +203,10 @@ main() {
   log "Restored. Reboot to run from it."
   log "If it is not what you wanted, from a shell on the restored system:"
   log "  sudo mount -o subvolid=5 $root_source /mnt"
-  log "  sudo mv /mnt/@ /mnt/@discard && sudo mv /mnt/@old-$stamp /mnt/@ && sudo reboot"
+  log "  sudo bash /mnt/@old-$stamp/usr/share/omarchy/bin/omarchy-mac-snapper-backend restore @old-$stamp \$(date +%s)"
+  log "  sudo umount /mnt && sudo reboot"
+  warn "The undo uses the retained recovery helper; it also preserves snapshot history."
+  warn "After restoring older software, update before another recovery operation."
 }
 
 # Sourcing the script exposes its functions to the tests without running

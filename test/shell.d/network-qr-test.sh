@@ -8,6 +8,13 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 
+cat >"$tmp/bin/ip" <<'EOF'
+#!/bin/bash
+[[ $* == 'route get 1.1.1.1' ]] || exit 1
+(( ${QR_ROUTE_STATUS:-0} == 0 )) || exit "$QR_ROUTE_STATUS"
+echo '1.1.1.1 dev omarchy-test-no-wireless'
+EOF
+
 cat >"$tmp/bin/nmcli" <<'EOF'
 #!/bin/bash
 if [[ $* == *"DEVICE,TYPE,STATE"* ]]; then
@@ -28,13 +35,13 @@ payload=$(</dev/stdin)
 printf '%s' "$payload" >"$QR_PAYLOAD_FILE"
 printf '##    \n  ##  \n    ##\n'
 EOF
-chmod +x "$tmp/bin/nmcli" "$tmp/bin/qrencode"
+chmod +x "$tmp/bin/ip" "$tmp/bin/nmcli" "$tmp/bin/qrencode"
 
 run_success_case() {
   local description=$1 fields=$2 expected_payload=$3
   shift 3
   local output meta matrix payload arg with_meta=false
-  local expected_matrix expected_security expected_ssid expected_iface="*"
+  local expected_matrix expected_security expected_ssid expected_iface="wlan0"
 
   for arg in "$@"; do
     [[ $arg == "--meta" ]] && with_meta=true || expected_iface=$arg
@@ -50,8 +57,7 @@ run_success_case() {
     matrix=$(tail -n +2 <<<"$output")
 
     # The meta line leads with the shared interface, security, and SSID. With
-    # no interface argument the helper detects one from the live host, so that
-    # field is only pinned when the case pinned it.
+    # no interface argument the isolated NetworkManager fixture supplies wlan0.
     expected_security=${expected_payload#WIFI:T:}
     expected_security=${expected_security%%;*}
     expected_ssid=$(head -n1 <<<"$fields")
@@ -86,6 +92,14 @@ run_success_case \
   "network QR helper detects the Wi-Fi interface" \
   $'Cafe Detected\nwpa-psk\nsecret\nno\n' \
   'WIFI:T:WPA;S:Cafe Detected;P:secret;;' \
+  --meta
+
+# A local-only connection can still be shared without a route to the Internet.
+# ip returns non-zero for that state; the documented nmcli fallback must run.
+QR_ROUTE_STATUS=2 run_success_case \
+  "network QR helper shares connected Wi-Fi without an Internet route" \
+  $'Local Network\nwpa-psk\nsecret\nno\n' \
+  'WIFI:T:WPA;S:Local Network;P:secret;;' \
   --meta
 
 run_success_case \

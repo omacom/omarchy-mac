@@ -11,4 +11,6 @@ hl.on("hyprland.start", function()
 
   -- Run post-boot hooks after startup config has loaded.
   hl.exec_cmd("sleep 2 && omarchy-hook post-boot")
+  -- Asahi's beamformed mic is AUX0; remap it to a stereo source for recorders.
+  hl.exec_cmd("systemctl --user start omarchy-asahi-mic.service")
 end)

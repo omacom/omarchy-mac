@@ -738,6 +738,12 @@ chmod +x "$TMPDIR/omarchy-partial-meta-test"
 } >"$TMPDIR/omarchy-body-metadata-test"
 chmod +x "$TMPDIR/omarchy-body-metadata-test"
 
+{
+  printf '#!/bin/bash\n\n'
+  printf 'echo legacy-ok\n'
+} >"$TMPDIR/omarchy-legacy-test"
+chmod +x "$TMPDIR/omarchy-legacy-test"
+
 "$TMPDIR/omarchy" commands --all --json | jq -e '.commands[] | select(.route == "omarchy weird test" and .summary == "Survives malformed metadata comments")' >/dev/null
 pass "unknown metadata values are non-fatal"
 
@@ -747,6 +753,13 @@ pass "partial metadata keeps inferred fallback route"
 "$TMPDIR/omarchy" commands --all --json | jq -e '.commands[] | select(.route == "omarchy body metadata test" and .summary == "Run the body metadata test command")' >/dev/null
 pass "metadata-looking comments after script body are ignored"
 
+output=$("$TMPDIR/omarchy" commands --check 2>&1)
+assert_output_contains "summary-less legacy commands without metadata pass commands --check" "$output" "Command metadata check passed"
+if [[ $output == *"Missing metadata summary: omarchy-legacy-test"* ]]; then
+  fail "summary-less legacy commands without metadata do not report a missing summary"
+fi
+pass "summary-less legacy commands without metadata do not report a missing summary"
+
 output=$("$TMPDIR/omarchy" weird test)
 assert_output_contains "temporary metadata command dispatches" "$output" "weird-ok"
 
@@ -755,6 +768,9 @@ assert_output_contains "partial metadata command dispatches" "$output" "partial-
 
 output=$("$TMPDIR/omarchy" body metadata test)
 assert_output_contains "body metadata command dispatches by filename" "$output" "body-metadata-ok"
+
+output=$("$TMPDIR/omarchy" legacy test)
+assert_output_contains "legacy command without metadata still dispatches by filename" "$output" "legacy-ok"
 
 # A trailing --help must render help even when the route only partially
 # resolves, leaving unresolved words ahead of the flag (e.g. `update aur --help`

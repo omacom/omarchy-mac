@@ -9,6 +9,11 @@ trap 'rm -rf "$test_tmp"' EXIT
 
 stub_bin="$test_tmp/bin"
 mkdir -p "$stub_bin"
+mkdir -p "$test_tmp/home" "$test_tmp/packaged"
+ln -s "$stub_bin" "$test_tmp/packaged/bin"
+# The installed-path reset must resolve to fixture helpers too. Keep the
+# updater logic unchanged and substitute only its package root in this copy.
+sed "s|/usr/share/omarchy|$test_tmp/packaged|g" "$ROOT/bin/omarchy-update" >"$test_tmp/channel-update"
 
 # Every step omarchy-update runs, recorded in order with the unattended flag it
 # was handed. One of them can be told to fail.
@@ -30,6 +35,8 @@ steps=(
   omarchy-update-analyze-logs
   omarchy-update-status
   omarchy-update-restart
+  omarchy-dev-unlink
+  omarchy-state
 )
 
 for step in "${steps[@]}"; do
@@ -48,8 +55,9 @@ run_update() {
   STEP_LOG="$test_tmp/steps" \
     FAILING_STEP="${FAILING_STEP:-}" \
     OMARCHY_UPDATE_LOGGED=1 \
+    HOME="$test_tmp/home" \
     PATH="$stub_bin:$PATH" \
-    bash "$ROOT/bin/omarchy-update" "$@" >"$test_tmp/out" 2>"$test_tmp/err"
+    bash "${UPDATE_TEST_SCRIPT:-$ROOT/bin/omarchy-update}" "$@" >"$test_tmp/out" 2>"$test_tmp/err"
 }
 
 steps_run() {
@@ -106,3 +114,21 @@ for step in omarchy-migrate omarchy-hook omarchy-update-aur-pkgs omarchy-update-
   fi
 done
 pass "a blocked package upgrade stops the update before it migrates"
+
+# A channel update uses one system transaction under the same snapshot/lock
+# boundary; it must not first install keyrings or update an old dev checkout.
+UPDATE_TEST_SCRIPT="$test_tmp/channel-update" OMARCHY_PATH="$ROOT" OMARCHY_UPDATE_CHANNEL=rc run_update -y || fail "channel update succeeds"
+[[ $(grep -c '^omarchy-update-system-pkgs ' "$test_tmp/steps") == 1 ]] || fail "channel update has one system package transaction"
+! grep -Eq '^omarchy-update-(dev|keyring) ' "$test_tmp/steps" || fail "channel update does not mutate sources or install keyrings before staging"
+[[ $(steps_run | awk '/omarchy-update-system-pkgs/,/omarchy-migrate/') == $'omarchy-update-system-pkgs\nomarchy-dev-unlink\nomarchy-state\nomarchy-migrate' ]] || fail "channel migration follows transaction and package-backed path restoration"
+pass "channel update retains lock and snapshot orchestration around a single system transaction"
+
+if UPDATE_TEST_SCRIPT="$test_tmp/channel-update" OMARCHY_PATH="$ROOT" OMARCHY_UPDATE_CHANNEL=rc FAILING_STEP=omarchy-update-system-pkgs run_update -y; then
+  fail "failed channel transaction cannot complete its update"
+fi
+! grep -Eq '^(omarchy-dev-unlink|omarchy-migrate) ' "$test_tmp/steps" || fail "failed channel transaction cannot change runtime path or run migrations"
+if UPDATE_TEST_SCRIPT="$test_tmp/channel-update" OMARCHY_PATH="$ROOT" OMARCHY_UPDATE_CHANNEL=rc FAILING_STEP=omarchy-migrate run_update -y; then
+  fail "failed channel migration cannot pass for a complete update"
+fi
+! grep -Eq '^(omarchy-hook|omarchy-update-restart) ' "$test_tmp/steps" || fail "failed channel migration stops downstream work"
+pass "channel transaction and migration failures propagate without downstream success"

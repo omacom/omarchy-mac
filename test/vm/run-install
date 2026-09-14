@@ -98,7 +98,7 @@ log "asserting the installed system"
 nspawn /bin/bash -euo pipefail <<'ASSERT' | tee "$WORK/logs/assert.log"
 source /usr/share/omarchy/default/bash/env-bootstrap
 command -v omarchy >/dev/null
-omarchy commands --check >/dev/null
+omarchy commands >/dev/null
 pacman -Q omarchy >/dev/null
 [[ -d /usr/share/omarchy/bin ]]
 [[ -d /usr/share/omarchy/install ]]

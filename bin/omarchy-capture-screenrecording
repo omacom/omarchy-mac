@@ -49,9 +49,6 @@ RECORDING_FILE="/tmp/omarchy-screenrecord-filename"
 REGION_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy-screenrecord-region"
 LOG_FILE=$([[ ${OMARCHY_SCREENRECORD_DEBUG:-false} == "true" ]] && echo "/tmp/omarchy-screenrecord.log" || echo "/dev/null")
 
-# Matches whichever recorder backend is running, so stop/toggle/active checks
-# work regardless of which one started the recording.
-RECORDER_PROCESS_RE="^(gpu-screen-recorder|wf-recorder)"
 # Records the PulseAudio module ids of a combined-audio null sink for cleanup.
 PA_MODULES_FILE="/tmp/omarchy-screenrecord-pa-modules"
 REC_PID=""
@@ -117,7 +114,14 @@ start_webcam_overlay() {
     fi
   done
 
-  mpv "av://v4l2:$WEBCAM_DEVICE" \
+  local renderer_options=()
+  if omarchy-hw-apple; then
+    # gpu-next crashes while releasing live camera frames on Asahi with both
+    # Vulkan and OpenGL. The older OpenGL renderer avoids that upload path.
+    renderer_options=(--vo=gpu --gpu-api=opengl)
+  fi
+
+  mpv "av://v4l2:$WEBCAM_DEVICE" "${renderer_options[@]}" \
     --profile=low-latency --untimed --no-cache \
     --demuxer-lavf-o="$capture_options" \
     '--vf=lavfi=[crop=ih*8/9:ih]' \
@@ -240,7 +244,11 @@ launch_wf_recorder() {
   # -r 60 caps the framerate: capturing a 120 Hz panel at its native rate makes
   # needlessly large files. wf-recorder's default libx264 is CPU-encoded, which
   # is the only option on Asahi (no supported hardware encoder).
-  wf-recorder "${geom_args[@]}" -r 60 "${audio_args[@]}" -f "$filename" 2>>"$LOG_FILE" &
+  #
+  # -R 48000 keeps the AAC track at 48 kHz. Asahi speaker DSP advertises 96 kHz,
+  # and wf-recorder will follow that into a 96 kHz file that this PipeWire graph
+  # (and many players) play as silence.
+  wf-recorder "${geom_args[@]}" -r 60 -R 48000 "${audio_args[@]}" -f "$filename" 2>>"$LOG_FILE" &
   REC_PID=$!
 }
 
@@ -311,11 +319,11 @@ start_screenrecording() {
 }
 
 stop_screenrecording() {
-  pkill -SIGINT -f "$RECORDER_PROCESS_RE" # SIGINT required to save video properly
+  omarchy-capture-screenrecording-process --signal INT # SIGINT required to save video properly
 
   # Wait a maximum of 5 seconds to finish before hard killing
   local count=0
-  while pgrep -f "$RECORDER_PROCESS_RE" >/dev/null && ((count < 50)); do
+  while omarchy-capture-screenrecording-process && ((count < 50)); do
     sleep 0.1
     count=$((count + 1))
   done
@@ -324,8 +332,8 @@ stop_screenrecording() {
   cleanup_webcam
   wf_audio_cleanup
 
-  if pgrep -f "$RECORDER_PROCESS_RE" >/dev/null; then
-    pkill -9 -f "$RECORDER_PROCESS_RE"
+  if omarchy-capture-screenrecording-process; then
+    omarchy-capture-screenrecording-process --signal KILL
     omarchy-notification-send -u critical -t 5000 "Screen recording error" "Recording process had to be force-killed. Video may be corrupted."
   else
     finalize_recording
@@ -357,7 +365,7 @@ toggle_screenrecording_indicator() {
 }
 
 screenrecording_active() {
-  pgrep -f "$RECORDER_PROCESS_RE" >/dev/null
+  omarchy-capture-screenrecording-process
 }
 
 finalize_recording() {

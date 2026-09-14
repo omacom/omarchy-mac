@@ -55,16 +55,32 @@ for config in "$ROOT"/default/pacman/pacman*.conf; do
 done
 pass "every shipped pacman config offers the Omarchy ARM repo"
 
-# The shipped config only reaches /etc during post-install, which runs after the
-# package set. Adding the repo any later leaves herdr building zig from source
-# for two hours, so the order in main() is the whole point of the fix.
-install_main=$(sed -n '/^main() {/,/^}/p' "$ROOT/install.sh")
-repo_call=$(grep -n '^  ensure_arm_package_repo$' <<<"$install_main" | cut -d: -f1)
-set_call=$(grep -n '^  install_default_package_set$' <<<"$install_main" | cut -d: -f1)
-[[ -n $repo_call && -n $set_call ]] || fail "the installer adds the ARM repo and installs the set"
-(( repo_call < set_call )) ||
-  fail "the ARM repo is added before the default package set is installed"
-pass "the ARM repo is added before the default package set is installed"
+# Both installer paths must establish a usable ARM repository before defaults
+# can accidentally fall through to AUR builds. Exercise the real branching
+# orchestration instead of matching source indentation.
+test_tmp=$(mktemp -d)
+trap 'rm -rf "$test_tmp"' EXIT
+work="$test_tmp/installer"
+mkdir "$work"
+source "$ROOT/test/shell.d/helpers/install-orchestration.sh"
+for path in source channel; do
+  options=() repo_step=repositories
+  if [[ $path == "channel" ]]; then
+    options=(--channel rc)
+    repo_step=apply
+  fi
+  CHANNEL="" run_case "${options[@]}" || fail "$path installer orchestration"
+  awk -v repo_step="$repo_step" '
+    $0 == repo_step { ready = 1 }
+    $0 == "defaults" { if (!ready) exit 1; defaults++ }
+    END { if (defaults != 1) exit 1 }
+  ' "$CALLS" || fail "$path installer establishes ARM packages before defaults" "$(cat "$CALLS")"
+  if CHANNEL="" FAIL_AT="$repo_step" run_case "${options[@]}"; then
+    fail "$path installer must stop when repository preparation fails"
+  fi
+  ! grep -qx defaults "$CALLS" || fail "$path repository failure cannot fall through to AUR defaults"
+  pass "$path installer establishes ARM packages before defaults and stops on repository failure"
+done
 
 # The Quattro upgrade has the same trap with a twist: a 3.x machine's
 # /etc/pacman.conf predates the ARM repo entirely, and installing packages

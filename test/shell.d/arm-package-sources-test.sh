@@ -37,8 +37,8 @@ mapfile -t targets < <(omarchy_arm_package_targets)
 [[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'only approved packages selected'
 [[ $(omarchy_arm_sysupgrade_ignore) == "hyprland,hyprtoolkit,hyprland-guiutils" ]] ||
   fail 'sysupgrade ignore list matches the selected stack'
-grep -qF -- '--ignore "$(omarchy_arm_sysupgrade_ignore)"' "$ROOT/install.sh" ||
-  fail 'installer sysupgrade ignores the selected stack'
+grep -qF 'omarchy_arm_package_upgrade_args' "$ROOT/install.sh" ||
+  fail 'installer sysupgrade uses the protected upgrade args'
 pass 'Aquamarine remains a regular-repository dependency'
 
 # Exercise the real default-package loop after the compatibility transaction.
@@ -60,7 +60,12 @@ for package in hyprland hyprtoolkit hyprland-guiutils; do
   ! grep -qE "(^| )$package( |$)" "$test_tmp/yay" || fail "$package must not be downgraded by yay"
 done
 grep -q 'wf-recorder' "$test_tmp/yay" || fail 'regular package path still runs'
-pass 'default package loop preserves the compatibility transaction selection'
+for package in asdcontrol tobi-try; do
+  grep -q -- "-S --needed --noconfirm omarchy/$package" "$test_tmp/yay" || fail "$package is explicitly sourced from the only available repository"
+done
+grep -q -- '-S --needed --noconfirm neovim' "$test_tmp/yay" || fail 'ARM nvim default uses its real package name'
+! grep -q -- '-S --needed --noconfirm nvim$' "$test_tmp/yay" || fail 'invalid nvim package name is not requested'
+pass 'default package loop preserves the compatibility transaction selection and delivers ARM-only defaults'
 
 for config in "$ROOT"/default/pacman/pacman*.conf; do
   section=$(sed -n '/^\[omarchy\]$/,/^$/p' "$config")

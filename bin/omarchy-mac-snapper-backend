@@ -1,0 +1,372 @@
+#!/bin/bash
+# omarchy:summary=Maintain nested Snapper history during Apple Silicon recovery
+# omarchy:group=system
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# Internal recovery helper. The same file can be run with bash from a retained
+# root, including after restoring a baseline without Omarchy or Python.
+# Administrators must not start direct --no-dbus/Btrfs writers during this
+# maintenance window: those tools do not participate in our operation lock.
+set -euo pipefail
+
+backend_error() { echo "Error: $*" >&2; return 1; }
+backend_info() {
+  local output
+  output=$(LC_ALL=C btrfs subvolume show "$1") || return $?
+  awk -v key="$2" 'index($0, ":") { n=$0; sub(/^[ \t]+/, "", n); k=n; sub(/:.*/, "", k); if(k==key) {sub(/^[^:]*:[ \t]*/, "", n); print n; exit}}' <<<"$output"
+}
+backend_uuid() { backend_info "$1" UUID; }
+backend_require_uuid() {
+  local identity
+  identity=$(backend_uuid "$1") || return $?
+  [[ $identity =~ ^[a-fA-F0-9-]{36}$ ]] || { backend_error "Cannot identify subvolume $1"; return 1; }
+  printf '%s\n' "$identity"
+}
+backend_is_volume() { btrfs subvolume show "$1" >/dev/null 2>&1; }
+backend_plain_dir() { [[ ! -L $1 && -d $1 ]]; }
+backend_empty_dir() {
+  local contents
+  backend_plain_dir "$1" || return 1
+  contents=$(find "$1" -mindepth 1 -maxdepth 1 -print -quit) || return $?
+  [[ -z $contents ]]
+}
+backend_config_valid() {
+  local root=$1 path="$1/etc/snapper/configs/root"
+  [[ ! -L $root/etc && ! -L $root/etc/snapper && ! -L $root/etc/snapper/configs && ! -L $path ]] ||
+    { backend_error "Symlinked Snapper configuration in $root; preserving it"; return 1; }
+  [[ -e $path ]] || return 0 # @fresh may not have Snapper at all.
+  [[ -f $path ]] && awk '
+    /^[ \t]*(SUBVOLUME|FSTYPE)[ \t]*=/ {
+      key=$0; sub(/^[ \t]*/, "", key); sub(/[ \t]*=.*/, "", key)
+      value=$0; sub(/^[^=]*=[ \t]*/, "", value); sub(/[ \t]*#.*/, "", value); sub(/[ \t]*$/, "", value)
+      if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) value=substr(value, 2, length(value)-2)
+      count[key]++; values[key]=value
+    }
+    END {exit !(count["SUBVOLUME"]==1 && values["SUBVOLUME"]=="/" && count["FSTYPE"]==1 && values["FSTYPE"]=="btrfs")}
+  ' "$path" || { backend_error "Unsupported Snapper root configuration in $root"; return 1; }
+}
+backend_no_mount_entry() {
+  local root=$1 count
+  [[ ! -L $root/etc && ! -L $root/etc/fstab && -f $root/etc/fstab ]] ||
+    { backend_error "Missing regular fstab in $root"; return 1; }
+  count=$(awk '!/^[ \t]*#/ && $2=="/.snapshots" {found++} END {print found+0}' "$root/etc/fstab") || return $?
+  if (( count )); then
+    backend_error "A separate /.snapshots mount is configured in $root; preserve this custom layout and recover manually"
+    return 1
+  fi
+}
+backend_busy() {
+  local unit state
+  for unit in snapper-cleanup.service snapper-timeline.service snapper-boot.service snapper-backup.service; do
+    state=$(systemctl show "$unit" --property=ActiveState --value) || return 0
+    [[ $state == inactive || $state == failed || -z $state ]] || return 0
+  done
+  # These names exclude this bash helper and snapperd. Never stop a running
+  # cleanup/snapshot/backup job; wait for completion or leave maintenance failed.
+  local status=0
+  pgrep -x 'snapper|snbk|systemd-helper' >/dev/null || status=$?
+  # Only 1 proves there were no matches; errors are not evidence of quiescence.
+  (( status != 1 ))
+}
+backend_service_intent() {
+  [[ -z ${BACKEND_SERVICE_RECEIPT:-} ]] && return 0 # sourced unit fixtures
+  printf '%s %s\n' "$1" "$2" >>"$BACKEND_SERVICE_RECEIPT" || return $?
+  sync -f "$BACKEND_SERVICE_RECEIPT"
+}
+backend_service_load() {
+  [[ -e $BACKEND_SERVICE_RECEIPT || -L $BACKEND_SERVICE_RECEIPT ]] || return 0
+  [[ -f $BACKEND_SERVICE_RECEIPT && ! -L $BACKEND_SERVICE_RECEIPT && $(stat -c %u "$BACKEND_SERVICE_RECEIPT") == 0 && $(stat -c %a "$BACKEND_SERVICE_RECEIPT") == 600 ]] || return 1
+  local kind unit extra daemon=0
+  local -a masks=() timers=()
+  while read -r kind unit extra; do
+    [[ -z $extra ]] || return 1
+    case "$kind $unit" in
+      'mask snapper-cleanup.service'|'mask snapper-timeline.service'|'mask snapper-boot.service'|'mask snapper-backup.service'|'mask snapperd.service') masks+=("$unit");;
+      'timer snapper-cleanup.timer'|'timer snapper-timeline.timer'|'timer snapper-backup.timer') timers+=("$unit");;
+      'daemon snapperd.service') daemon=1;;
+      *) backend_error "Ambiguous service maintenance receipt; inspect $BACKEND_SERVICE_RECEIPT"; return 1;;
+    esac
+  done <"$BACKEND_SERVICE_RECEIPT"
+  BACKEND_MASKED=("${masks[@]}") BACKEND_TIMERS=("${timers[@]}") BACKEND_DAEMON=$daemon
+}
+backend_service_recover() {
+  backend_service_load || return $?
+  backend_resume_services || return $?
+  BACKEND_MASKED=() BACKEND_TIMERS=() BACKEND_DAEMON=0
+}
+backend_quiesce() {
+  local unit state deadline=$((SECONDS + 30))
+  for unit in snapper-cleanup.service snapper-timeline.service snapper-boot.service snapper-backup.service snapperd.service; do
+    state=$(systemctl show "$unit" --property=LoadState --value) || return $?
+    [[ $state != not-found ]] || continue
+    state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+    if [[ $state != masked* ]]; then
+      backend_service_intent mask "$unit" || return $?
+      BACKEND_MASKED+=("$unit")
+      systemctl mask --runtime "$unit" || return $?
+    fi
+  done
+  for unit in snapper-cleanup.timer snapper-timeline.timer snapper-backup.timer; do
+    if systemctl is-active --quiet "$unit"; then
+      backend_service_intent timer "$unit" || return $?
+      BACKEND_TIMERS+=("$unit")
+      systemctl stop "$unit" || return $?
+    fi
+  done
+  while backend_busy; do
+    (( SECONDS < deadline )) || { backend_error "Snapper writers are busy; finish their work and retry"; return 1; }
+    sleep 0.2
+  done
+  if systemctl is-active --quiet snapperd.service; then
+    backend_service_intent daemon snapperd.service || return $?
+    BACKEND_DAEMON=1
+    systemctl stop snapperd.service || return $?
+  fi
+  ! backend_busy || { backend_error "A writer started during maintenance; retry with exclusive access"; return 1; }
+}
+backend_resume_services() {
+  local unit failed=0
+  for unit in "${BACKEND_MASKED[@]}"; do systemctl unmask --runtime "$unit" || failed=1; done
+  for unit in "${BACKEND_TIMERS[@]}"; do systemctl start "$unit" || failed=1; done
+  if (( BACKEND_DAEMON )); then systemctl start snapperd.service || failed=1; fi
+  (( ! failed )) || { backend_error "Filesystem state retained; restore the reported Snapper services manually"; return 1; }
+  [[ -z ${BACKEND_SERVICE_RECEIPT:-} ]] || rm -f -- "$BACKEND_SERVICE_RECEIPT"
+}
+backend_receipt_write() {
+  [[ ! -e $BACKEND_RECEIPT && ! -L $BACKEND_RECEIPT ]] || { backend_error "An unfinished recovery receipt exists"; return 1; }
+  (umask 077; set -o noclobber; printf '%s\n' "$BACKEND_ROOT_UUID" "$BACKEND_NEW_UUID" "$BACKEND_HISTORY_UUID" "$BACKEND_STAMP" "$BACKEND_HISTORY_MODE" >"$BACKEND_RECEIPT") || return $?
+  sync -f "$BACKEND_RECEIPT"
+}
+backend_receipt_read() {
+  local -a fields
+  [[ -f $BACKEND_RECEIPT && ! -L $BACKEND_RECEIPT && $(stat -c %u "$BACKEND_RECEIPT") == 0 && $(stat -c %a "$BACKEND_RECEIPT") == 600 ]] ||
+    { backend_error "Unexpected recovery receipt; preserve it for manual inspection"; return 1; }
+  mapfile -t fields <"$BACKEND_RECEIPT"
+  (( ${#fields[@]} == 5 )) && [[ ${fields[0]} =~ ^[a-fA-F0-9-]{36}$ && ${fields[1]} =~ ^[a-fA-F0-9-]{36}$ && (${fields[2]} =~ ^[a-fA-F0-9-]{36}$ || ${fields[2]} == none) && ${fields[3]} =~ ^[0-9]+$ && ${fields[4]} =~ ^(existing|created|absent)$ ]] ||
+    { backend_error "Malformed recovery receipt; no state changed"; return 1; }
+  BACKEND_ROOT_UUID=${fields[0]} BACKEND_NEW_UUID=${fields[1]} BACKEND_HISTORY_UUID=${fields[2]} BACKEND_STAMP=${fields[3]} BACKEND_HISTORY_MODE=${fields[4]}
+  [[ ($BACKEND_HISTORY_MODE == absent && $BACKEND_HISTORY_UUID == none) || ($BACKEND_HISTORY_MODE != absent && $BACKEND_HISTORY_UUID != none) ]]
+}
+backend_recover_transaction() {
+  [[ -e $BACKEND_RECEIPT || -L $BACKEND_RECEIPT ]] || return 0
+  backend_receipt_read || return $?
+  local current staged old history running
+  current=$(backend_uuid "$BACKEND_TOP/@" 2>/dev/null || true)
+  staged=$(backend_uuid "$BACKEND_TOP/@new" 2>/dev/null || true)
+  old=$(backend_uuid "$BACKEND_TOP/@old-$BACKEND_STAMP" 2>/dev/null || true)
+  # A completed exchange is recognized only by all three identities. No root
+  # is selected by time/name alone, including after a power loss and reboot.
+  if [[ $current == "$BACKEND_NEW_UUID" && $old == "$BACKEND_ROOT_UUID" && -z $staged ]]; then
+    [[ $BACKEND_HISTORY_MODE == absent || $(backend_require_uuid "$BACKEND_TOP/@/.snapshots") == "$BACKEND_HISTORY_UUID" ]] || return 1
+    running=$(backend_uuid /) || return $?
+    if [[ $running == "$BACKEND_NEW_UUID" || $BACKEND_HISTORY_MODE != existing || $(backend_uuid /.snapshots 2>/dev/null || true) == "$BACKEND_HISTORY_UUID" ]]; then
+      rm -- "$BACKEND_RECEIPT"
+      sync -f "$BACKEND_TOP"
+      return 0
+    fi
+    [[ $running == "$BACKEND_ROOT_UUID" ]] || return 1
+    # Attachment failed before reboot. Put both root names and the backend
+    # back, rather than leave the running root unable to make snapshots.
+    mv -T -- "$BACKEND_TOP/@" "$BACKEND_TOP/@new" || return $?
+    mv -T -- "$BACKEND_TOP/@old-$BACKEND_STAMP" "$BACKEND_TOP/@" || return $?
+    current=$BACKEND_ROOT_UUID staged=$BACKEND_NEW_UUID old=""
+  fi
+  [[ $staged == "$BACKEND_NEW_UUID" ]] || { backend_error "Staged root identity differs from receipt; inspect recovery manually"; return 1; }
+  if [[ -z $current && $old == "$BACKEND_ROOT_UUID" ]]; then
+    mv -T -- "$BACKEND_TOP/@old-$BACKEND_STAMP" "$BACKEND_TOP/@" || return $?
+    current=$BACKEND_ROOT_UUID
+  fi
+  [[ $current == "$BACKEND_ROOT_UUID" && ! -e $BACKEND_TOP/@old-$BACKEND_STAMP ]] ||
+    { backend_error "Root identities differ from receipt; no automatic rollback"; return 1; }
+  if [[ $BACKEND_HISTORY_MODE == existing ]]; then
+    history=$(backend_uuid "$BACKEND_TOP/@/.snapshots" 2>/dev/null || true)
+    if [[ $history != "$BACKEND_HISTORY_UUID" ]]; then
+      [[ $(backend_require_uuid "$BACKEND_TOP/@new/.snapshots") == "$BACKEND_HISTORY_UUID" ]] &&
+        { [[ ! -e $BACKEND_TOP/@/.snapshots ]] || backend_empty_dir "$BACKEND_TOP/@/.snapshots"; } || return 1
+      [[ ! -e $BACKEND_TOP/@/.snapshots ]] || rmdir -- "$BACKEND_TOP/@/.snapshots" || return $?
+      mv -T -- "$BACKEND_TOP/@new/.snapshots" "$BACKEND_TOP/@/.snapshots" || return $?
+    fi
+    [[ $(backend_require_uuid "$BACKEND_TOP/@/.snapshots") == "$BACKEND_HISTORY_UUID" ]] || return 1
+  elif [[ $BACKEND_HISTORY_MODE == created ]]; then
+    [[ $(backend_require_uuid "$BACKEND_TOP/@new/.snapshots") == "$BACKEND_HISTORY_UUID" ]] &&
+      backend_empty_dir "$BACKEND_TOP/@new/.snapshots" || return 1
+    btrfs subvolume delete "$BACKEND_TOP/@new/.snapshots" || return $?
+  fi
+  # Only our UUID-bound staged snapshot is removed, nonrecursively. Unknown
+  # nested subvolumes make btrfs refuse; history is already back in the live @.
+  btrfs subvolume delete "$BACKEND_TOP/@new" || return $?
+  rm -- "$BACKEND_RECEIPT"
+  sync -f "$BACKEND_TOP"
+}
+backend_repair() {
+  local parent candidate detail identity match=""
+  backend_plain_dir "$BACKEND_TOP/@/.snapshots" && backend_is_volume "$BACKEND_TOP/@/.snapshots" && return 0
+  [[ ! -e $BACKEND_TOP/@/.snapshots && ! -L $BACKEND_TOP/@/.snapshots ]] || backend_empty_dir "$BACKEND_TOP/@/.snapshots" ||
+    { backend_error "Incomplete snapshot path is not an empty directory; preserving it"; return 1; }
+  parent=$(backend_info "$BACKEND_TOP/@" 'Parent UUID') || return $?
+  [[ $parent =~ ^[a-fA-F0-9-]{36}$ ]] || { backend_error "Missing backend with no source snapshot identity; inspect retained roots manually"; return 1; }
+  local -A matches=()
+  for candidate in "$BACKEND_TOP"/@old-*/.snapshots; do
+    backend_plain_dir "${candidate%/.snapshots}" && backend_is_volume "${candidate%/.snapshots}" &&
+      backend_plain_dir "$candidate" && backend_is_volume "$candidate" || continue
+    identity=$(backend_require_uuid "$candidate") || return $?
+    for detail in "$candidate"/[0-9]*/snapshot; do
+      backend_plain_dir "${detail%/snapshot}" && backend_plain_dir "$detail" || continue
+      if [[ $(backend_uuid "$detail" 2>/dev/null || true) == "$parent" ]]; then matches[$identity]=$candidate; fi
+    done
+  done
+  (( ${#matches[@]} == 1 )) || { backend_error "Cannot prove exactly one retained backend belongs to this root. Inspect Btrfs UUIDs; all history was preserved"; return 1; }
+  for identity in "${!matches[@]}"; do match=${matches[$identity]}; done
+  [[ ! -e $BACKEND_TOP/@/.snapshots ]] || rmdir -- "$BACKEND_TOP/@/.snapshots" || return $?
+  mv -T -- "$match" "$BACKEND_TOP/@/.snapshots" || { mkdir -p "$BACKEND_TOP/@/.snapshots"; return 1; }
+  mkdir -- "$match" || return $?
+  [[ $(backend_uuid "$BACKEND_TOP/@/.snapshots") == "$identity" ]] || return 1
+  sync -f "$BACKEND_TOP"
+}
+backend_restore_preflight() {
+  local source=$1 stamp=$2 selected
+  [[ $stamp =~ ^[0-9]+$ ]] || return 1
+  [[ $source =~ ^(@fresh|@factory|@old-[0-9]+|@/\.snapshots/[0-9]+/snapshot)$ ]] ||
+    { backend_error "Unsupported restore source"; return 1; }
+  selected="$BACKEND_TOP/$source"
+  local component="$selected"
+  while [[ $component != "$BACKEND_TOP" ]]; do [[ ! -L $component ]] || return 1; component=${component%/*}; done
+  backend_is_volume "$selected" || { backend_error "Selected source is not a subvolume"; return 1; }
+  backend_config_valid "$selected" && backend_no_mount_entry "$selected" || return $?
+  if [[ -e $selected/.snapshots || -L $selected/.snapshots ]]; then
+    backend_empty_dir "$selected/.snapshots" || { backend_error "Selected root has an independent nonempty backend; preserving it"; return 1; }
+  fi
+  [[ ! -e $BACKEND_TOP/@new && ! -L $BACKEND_TOP/@new && ! -e $BACKEND_TOP/@old-$stamp && ! -L $BACKEND_TOP/@old-$stamp ]] ||
+    { backend_error "@new or @old-$stamp exists; inspect it before retrying"; return 1; }
+  [[ ! -L $BACKEND_RECEIPT && ! -e $BACKEND_RECEIPT ]] || { backend_error "Recovery transaction is unfinished"; return 1; }
+}
+backend_restore() {
+  local source=$1 stamp=$2 selected="$BACKEND_TOP/$1"
+  backend_restore_preflight "$source" "$stamp" || return $?
+  BACKEND_ROOT_UUID=$(backend_require_uuid "$BACKEND_TOP/@") || return $?
+  BACKEND_HISTORY_MODE=existing
+  if (( ${BACKEND_NO_HISTORY:-0} )); then
+    BACKEND_HISTORY_UUID=none BACKEND_HISTORY_MODE=absent
+  else
+    BACKEND_HISTORY_UUID=$(backend_require_uuid "$BACKEND_TOP/@/.snapshots") || return $?
+  fi
+  BACKEND_STAMP=$stamp
+  btrfs subvolume snapshot "$selected" "$BACKEND_TOP/@new" || return $?
+  BACKEND_NEW_UUID=$(backend_require_uuid "$BACKEND_TOP/@new") || return $?
+  if [[ $BACKEND_HISTORY_MODE == absent && -f $selected/etc/snapper/configs/root ]]; then
+    [[ ! -e $BACKEND_TOP/@new/.snapshots ]] || rmdir -- "$BACKEND_TOP/@new/.snapshots" || return $?
+    btrfs subvolume create "$BACKEND_TOP/@new/.snapshots" || return $?
+    chmod 750 "$BACKEND_TOP/@new/.snapshots" || return $?
+    BACKEND_HISTORY_UUID=$(backend_require_uuid "$BACKEND_TOP/@new/.snapshots") || return $?
+    BACKEND_HISTORY_MODE=created
+  fi
+  backend_receipt_write || return $?
+  if [[ $BACKEND_HISTORY_MODE == existing ]]; then
+    [[ ! -e $BACKEND_TOP/@new/.snapshots ]] || rmdir -- "$BACKEND_TOP/@new/.snapshots" || return $?
+    mv -T -- "$BACKEND_TOP/@/.snapshots" "$BACKEND_TOP/@new/.snapshots" || return $?
+    mkdir -- "$BACKEND_TOP/@/.snapshots" || return $?
+  fi
+  mv -T -- "$BACKEND_TOP/@" "$BACKEND_TOP/@old-$stamp" || return $?
+  mv -T -- "$BACKEND_TOP/@new" "$BACKEND_TOP/@" || return $?
+  [[ $BACKEND_HISTORY_MODE == absent || $(backend_require_uuid "$BACKEND_TOP/@/.snapshots") == "$BACKEND_HISTORY_UUID" ]] || return 1
+  # This is a transient mount only in the running displaced root. On reboot
+  # the selected @ contains the original nested backend, with no fstab change.
+  local id
+  if [[ $BACKEND_HISTORY_MODE == existing ]]; then
+    id=$(backend_info "$BACKEND_TOP/@/.snapshots" 'Subvolume ID') || return $?
+    [[ $id =~ ^[0-9]+$ ]] || return 1
+    mount -t btrfs -o "subvolid=$id" "$BACKEND_DEVICE" /.snapshots || return $?
+    [[ $(backend_require_uuid /.snapshots) == "$BACKEND_HISTORY_UUID" ]] || return 1
+  fi
+  sync -f "$BACKEND_TOP"
+  rm -- "$BACKEND_RECEIPT"
+  echo "Root restored. Reboot before another restore."
+}
+backend_cleanup() {
+  local status=$? cleanup_status=0
+  trap - EXIT
+  if [[ -n ${BACKEND_TOP:-} ]] && [[ -e ${BACKEND_RECEIPT:-/nonexistent} || -L ${BACKEND_RECEIPT:-/nonexistent} ]]; then
+    if (( ${BACKEND_QUIESCED:-0} )); then
+      backend_recover_transaction || cleanup_status=1
+    else
+      cleanup_status=1 # Never repair under writers that failed quiescence.
+    fi
+  elif (( ! ${BACKEND_MOUNT_READY:-0} )) &&
+    (( ${#BACKEND_MASKED[@]} || ${#BACKEND_TIMERS[@]} || BACKEND_DAEMON )); then
+    cleanup_status=1 # Previous intent cannot be resolved without its filesystem.
+  fi
+  if (( ! cleanup_status )); then
+    backend_resume_services || cleanup_status=1
+  else
+    backend_error "Recovery needs inspection; owned writer masks and service receipt retained until repair" || true
+  fi
+  if [[ -n ${BACKEND_TOP:-} ]]; then
+    umount "$BACKEND_TOP" || cleanup_status=1
+    # Never recursively remove a mountpoint, including when unmount failed.
+    rmdir "$BACKEND_TOP" 2>/dev/null || true
+  fi
+  (( status || cleanup_status )) && exit 1
+  exit 0
+}
+backend_main() {
+  (( EUID == 0 )) || { backend_error "Run as root"; return 1; }
+  [[ ${1:-} == repair || ${1:-} == restore ]] || { backend_error "Usage: $0 repair | restore SOURCE TIMESTAMP"; return 1; }
+  local mode=$1 required
+  for required in btrfs findmnt mount umount systemctl pgrep flock awk find stat sync mktemp; do
+    type -P "$required" >/dev/null || { backend_error "Recovery requires $required; install its package before retrying"; return 127; }
+  done
+  local root_path
+  root_path=$(findmnt -no FSROOT /) || return $?
+  [[ $(findmnt -no FSTYPE /) == btrfs && ($root_path == /@ || ($mode == repair && $root_path =~ ^/@old-[0-9]+$)) ]] ||
+    { backend_error "Recovery requires root mounted from /@. Reboot after a restore before trying again"; return 1; }
+  [[ ! -e /var/lib/omarchy/provisioning/wipe-pending ]] || { backend_error "Factory reset is pending; finish it before recovery"; return 1; }
+  backend_no_mount_entry / && backend_config_valid / || return $?
+  local snapshot_mount
+  if [[ -e /.snapshots || -L /.snapshots ]]; then
+    snapshot_mount=$(findmnt -no TARGET -T /.snapshots) || return $?
+    [[ $snapshot_mount != /.snapshots ]] || { backend_error "Custom snapshot mount is active; preserving it"; return 1; }
+  fi
+  BACKEND_DEVICE=$(findmnt -no SOURCE / | sed 's/\[.*\]//') || return $?
+  [[ $BACKEND_DEVICE == /* ]] || { backend_error "Cannot identify root device"; return 1; }
+  exec 9>/run/omarchy-snapper-layout.lock
+  flock -n 9 || { backend_error "Another recovery operation is active"; return 1; }
+  BACKEND_MASKED=() BACKEND_TIMERS=() BACKEND_DAEMON=0 BACKEND_TOP="" BACKEND_MOUNT_READY=0 BACKEND_QUIESCED=0
+  BACKEND_SERVICE_RECEIPT=/run/omarchy-snapper-services
+  # Load unfinished owned service intent, but keep its writers stopped until
+  # the filesystem receipt has been reconciled. Never resume them first.
+  backend_service_load || return $?
+  if [[ ! -e $BACKEND_SERVICE_RECEIPT ]]; then
+    (umask 077; set -o noclobber; : >"$BACKEND_SERVICE_RECEIPT") || return $?
+  fi
+  trap backend_cleanup EXIT
+  BACKEND_TOP=$(mktemp -d -t omarchy-snapper.XXXXXXXX) || return $?
+  mount -t btrfs -o subvolid=5 "$BACKEND_DEVICE" "$BACKEND_TOP" || return $?
+  BACKEND_MOUNT_READY=1
+  BACKEND_RECEIPT="$BACKEND_TOP/.omarchy-snapper-restore"
+  [[ $root_path == /@ || -f $BACKEND_RECEIPT ]] || { backend_error "No interrupted transaction proves this displaced root; reboot first"; return 1; }
+  backend_quiesce || return $?
+  BACKEND_QUIESCED=1
+  backend_recover_transaction || return $?
+  if [[ $mode == restore ]]; then
+    (( $# == 3 )) || { backend_error "restore requires a source and timestamp"; return 1; }
+    backend_restore_preflight "$2" "$3" || return $?
+  fi
+  BACKEND_NO_HISTORY=0
+  if [[ $mode == restore && ! -e /etc/snapper/configs/root && ! -L /etc/snapper/configs/root ]] &&
+    { [[ ! -e $BACKEND_TOP/@/.snapshots && ! -L $BACKEND_TOP/@/.snapshots ]] || backend_empty_dir "$BACKEND_TOP/@/.snapshots"; }; then
+    local candidate
+    for candidate in "$BACKEND_TOP"/@old-*/.snapshots; do
+      [[ ! -e $candidate && ! -L $candidate ]] || { backend_error "Retained snapshot state exists; inspect it before a restore without a root config"; return 1; }
+    done
+    BACKEND_NO_HISTORY=1
+  else
+    backend_repair || return $?
+  fi
+  if [[ $mode == restore ]]; then
+    (( $# == 3 )) || { backend_error "restore requires a source and timestamp"; return 1; }
+    backend_restore "$2" "$3" || return $?
+  fi
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then backend_main "$@"; fi

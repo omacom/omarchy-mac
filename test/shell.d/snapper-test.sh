@@ -55,23 +55,7 @@ grep -Fx 'systemctl --user daemon-reload' "$test_tmp/calls.log" >/dev/null || fa
 grep -Fx 'systemctl --user stop app-limine\x2dsnapper\x2dnotify@autostart.service' "$test_tmp/calls.log" >/dev/null || fail "Limine Snapper warning notifier migration stops active watcher"
 pass "Limine Snapper warning notifier migration disables existing user autostart"
 
-: >"$test_tmp/calls.log"
-
-TEST_LOG="$test_tmp/calls.log" \
-PATH="$fake_bin:$PATH" \
-OMARCHY_SNAPPER_CONFIGURE_TEST=1 \
-OMARCHY_PATH="$ROOT" \
-OMARCHY_SNAPPER_CONFIG_PATH="$test_tmp/etc/snapper/configs/root" \
-OMARCHY_SNAPPER_CONF_PATH="$test_tmp/etc/conf.d/snapper" \
-  bash -euo pipefail "$ROOT/install/config/snapper.sh" >/dev/null
-
-cmp -s "$template" "$test_tmp/etc/snapper/configs/root" || fail "snapshot configure installs the Omarchy Snapper template"
-grep -Fx 'SNAPPER_CONFIGS="root"' "$test_tmp/etc/conf.d/snapper" >/dev/null || fail "snapshot configure writes /etc/conf.d/snapper"
-grep -Fx 'systemctl disable --now snapper-timeline.timer' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure disables timeline snapshots"
-grep -Fx 'systemctl enable --now snapper-cleanup.timer' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure enables cleanup"
-grep -Fx 'systemctl cat limine-snapper-sync.service' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure checks for Limine snapshot sync"
-grep -Fx 'systemctl enable --now limine-snapper-sync.service' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure enables Limine snapshot sync"
-pass "snapshot configure normalizes Snapper policy and services"
+# Backend creation and preservation are exercised by snapper-configure-test.sh.
 
 setup_system="$ROOT/bin/omarchy-apply-system"
 grep -F 'config/all.sh' "$setup_system" >/dev/null ||
@@ -112,8 +96,8 @@ find_omarchy_pks_root() {
 # Packaging coverage lives in the sibling omarchy-pkgs checkout, which is present
 # in CI/dev but not on an installed machine. Skip (don't fail) when it's absent.
 if pkgs_root=$(find_omarchy_pks_root); then
-  settings_pkgbuild="$pkgs_root/omarchy-settings-dev/PKGBUILD"
-  omarchy_pkgbuild="$pkgs_root/omarchy-dev/PKGBUILD"
+  settings_pkgbuild="$pkgs_root/omarchy-settings/PKGBUILD"
+  omarchy_pkgbuild="$pkgs_root/omarchy/PKGBUILD"
 
   grep -F 'cp -a default/. "$pkgdir/usr/share/omarchy/default/"' "$settings_pkgbuild" >/dev/null || fail "omarchy-settings package bundles default/"
   grep -F 'install -Dm644 default/snapper/root \' "$settings_pkgbuild" >/dev/null || fail "omarchy-settings package installs Snapper template source"
@@ -167,15 +151,15 @@ else
   pass "omarchy-iso checkout absent; skipping installer coverage"
 fi
 
-# Snapper needs a snapshot-capable root and Asahi installs land on ext4, where
-# create-config fails. config/all.sh runs early, so a non-zero exit here aborts
-# system setup before services are ever enabled.
+# Older installs may have an ext4 root; detect that filesystem independently
+# of Snapper's command status, which can also mean missing/broken packages.
 unsupported_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp" "$unsupported_tmp"' EXIT
 mkdir -p "$unsupported_tmp/bin"
 
 cat >"$unsupported_tmp/bin/snapper" <<'STUB'
 #!/bin/bash
+echo 'Snapper must not run on this ext4 fixture' >&2
 exit 1
 STUB
 chmod +x "$unsupported_tmp/bin/snapper"
@@ -185,6 +169,12 @@ cat >"$unsupported_tmp/bin/systemctl" <<'STUB'
 exit 0
 STUB
 chmod +x "$unsupported_tmp/bin/systemctl"
+
+cat >"$unsupported_tmp/bin/stat" <<'STUB'
+#!/bin/bash
+echo ext2/ext3
+STUB
+chmod +x "$unsupported_tmp/bin/stat"
 
 unsupported_output=$(
   PATH="$unsupported_tmp/bin:$PATH" \

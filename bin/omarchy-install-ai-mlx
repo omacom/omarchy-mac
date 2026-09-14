@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# omarchy:summary=Install mlx-omarchy: Apple's MLX running on the Apple GPU through Honeykrisp Vulkan
+# omarchy:requires-sudo=true
+
+set -euo pipefail
+
+# The wheel is built for the M1 (t8103) only. Newer Apple GPUs need driver work
+# that is not done yet, so refuse rather than install something that cannot run.
+if ! omarchy-hw-apple; then
+  echo "Skipping: mlx-omarchy runs on Apple Silicon only."
+  exit 0
+fi
+
+compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
+if ! grep -Faiq 'apple,t8103' "$compatible"; then
+  echo "Skipping: mlx-omarchy currently supports the M1 (t8103) only."
+  echo "This machine reports: $(tr '\0' '\n' <"$compatible" 2>/dev/null | paste -sd' ' - || echo unknown)"
+  exit 0
+fi
+
+# The artifacts the pinned installer creates, and the ones its --uninstall
+# deletes. Kept in step with it by hand; MLX_OMARCHY_HOME is honoured the same
+# way so this entry and the installer always agree on where things live.
+PREFIX="${MLX_OMARCHY_HOME:-$HOME/.local/share/mlx-omarchy}"
+BIN="$HOME/.local/bin"
+APPS="$HOME/.local/share/applications"
+
+# Refuse before touching anything if an installation is already there. The
+# failure path below runs the installer's --uninstall, which deletes all of
+# these unconditionally, so a failed install over an existing one would take
+# the existing one with it. Checking first is what makes that impossible.
+existing=()
+for artifact in \
+  "$PREFIX" \
+  "$BIN/mlx-omarchy" \
+  "$BIN/mlx-omarchy-demo" \
+  "$APPS/mlx-omarchy-demo.desktop"; do
+  [ -e "$artifact" ] && existing+=("$artifact")
+done
+
+if [ ${#existing[@]} -gt 0 ]; then
+  echo "mlx-omarchy is already installed, or a previous attempt left files behind:" >&2
+  printf '  %s\n' "${existing[@]}" >&2
+  echo "" >&2
+  echo "Refusing to install over it, because cleaning up after a failure here" >&2
+  echo "would delete what is already there." >&2
+  echo "Remove it first with 'omarchy-remove-ai-mlx' (or the Remove > AI > MLX" >&2
+  echo "menu entry), then run this again. Model downloads in ~/.cache/huggingface" >&2
+  echo "are kept either way." >&2
+  exit 1
+fi
+
+# Pinned installer commit and its checksum. Bump both together; never point at a
+# moving branch, because this menu entry runs on other people's machines.
+INSTALLER_REPO="joshuaswarren/mlx-omarchy"
+INSTALLER_REF="286ef7297b0db6576c70d9999c6f6b005ce1c8de"
+INSTALLER_SHA256="cdfa8a985d38984c68053c2765b50cc8875b7f894001c44d4c6732e47921ebf1"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+echo "Fetching the mlx-omarchy installer (${INSTALLER_REF:0:12})..."
+curl -fsSL "https://raw.githubusercontent.com/$INSTALLER_REPO/$INSTALLER_REF/install.sh" -o "$tmp/install.sh"
+
+echo "$INSTALLER_SHA256  $tmp/install.sh" | sha256sum -c --quiet - || {
+  echo "Checksum mismatch on the mlx-omarchy installer. Refusing to run it." >&2
+  exit 1
+}
+
+# Installs the verified release wheel and a chat demo into a private venv under
+# ~/.local/share/mlx-omarchy. Installs lapack, blas, and openblas through
+# omarchy-pkg-add; does not replace Mesa or change any Omarchy file.
+echo "Installing mlx-omarchy..."
+# Capture the installer's own status. `if ! cmd; then status=$?` would record the
+# negation's status (always 0) and report a failure as a success, which is the
+# bug this entry is meant to avoid.
+set +e
+bash "$tmp/install.sh"
+status=$?
+set -e
+
+if [ "$status" -ne 0 ]; then
+  echo "" >&2
+  echo "mlx-omarchy installation failed (exit $status). The output above is the error." >&2
+  echo "Cleaning up the partial install..." >&2
+  # Only this attempt's files can be here: the guard above refused to start if
+  # anything already existed. Say what actually happened rather than asserting
+  # a clean machine, because a cleanup that failed leaves files to remove.
+  if bash "$tmp/install.sh" --uninstall >/dev/null 2>&1; then
+    echo "Nothing from mlx-omarchy is left installed. Re-run this entry to try again." >&2
+  else
+    echo "Cleanup did not finish. Files may remain in:" >&2
+    echo "  $PREFIX" >&2
+    echo "  $BIN/mlx-omarchy, $BIN/mlx-omarchy-demo" >&2
+    echo "  $APPS/mlx-omarchy-demo.desktop" >&2
+    echo "Run 'omarchy-remove-ai-mlx' before trying again." >&2
+  fi
+  exit "$status"
+fi
+
+echo ""
+echo "mlx-omarchy has been installed. Run 'mlx-omarchy-demo' or open 'MLX Chat (Apple GPU)' from the launcher."

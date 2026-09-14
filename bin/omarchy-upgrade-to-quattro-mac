@@ -173,8 +173,8 @@ ensure_arm_package_repo() {
   if ! grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf; then
     local block
     block=$(sed -n '/^\[omarchy-aarch64\]/,/^Server[[:space:]]*=/p' \
-      "$checkout/default/pacman/pacman-stable.conf")
-    [[ -n $block ]] || fail "default/pacman/pacman-stable.conf has no [omarchy-aarch64] section."
+      "$checkout/default/pacman/pacman-edge.conf")
+    [[ -n $block ]] || fail "default/pacman/pacman-edge.conf has no [omarchy-aarch64] section."
 
     log "Adding the Omarchy ARM package repo"
     printf '\n%s\n' "$block" | sudo tee -a /etc/pacman.conf >/dev/null
@@ -217,8 +217,8 @@ install_quattro_packages() {
 
   log "Installing the Quattro package set (this builds AUR packages and takes a while)"
   while read -r package; do
-    # OMARCHY_TRY_UNAVAILABLE=1 attempts them anyway: an AUR package can gain
-    # aarch64 support at any time, so a stale entry costs a flag, not a release.
+    # Preserve exclusions pending ARM qualification. The explicit opt-in may
+    # attempt currently available packages or providers despite that default.
     if [[ ${OMARCHY_TRY_UNAVAILABLE:-0} != "1" ]] && package_is_unavailable_here "$package"; then
       unbuildable+=("$package")
       continue
@@ -234,11 +234,11 @@ install_quattro_packages() {
   yay -S --needed --noconfirm wf-recorder </dev/null || skipped+=("wf-recorder")
 
   if (( ${#unbuildable[@]} )); then
-    log "No aarch64 build is known, so these were not attempted: ${unbuildable[*]}"
+    log "Not attempted (excluded pending ARM qualification): ${unbuildable[*]}"
   fi
 
   if (( ${#skipped[@]} )); then
-    warn "Skipped packages that would not install on aarch64: ${skipped[*]}"
+    warn "Could not install: ${skipped[*]}"
   fi
 }
 

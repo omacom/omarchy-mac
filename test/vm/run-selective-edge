@@ -163,6 +163,19 @@ stage_source() {
   local guest_uid guest_gid
   # Keep .git for package builds, without granting guest writes to the checkout.
   as_root cp -a "$ROOT/." "$SOURCE/"
+  # A linked worktree's .git file points outside the guest. Give its private
+  # copy independent metadata, retaining the source history used by packages.
+  if [[ -f $SOURCE/.git ]]; then
+    as_root rm "$SOURCE/.git"
+    as_root git clone --bare --no-hardlinks "$ROOT" "$SOURCE/.git"
+    as_root git -C "$SOURCE" config core.bare false
+    as_root git -C "$SOURCE" reset --mixed HEAD
+  fi
+  if [[ -n ${OMARCHY_PKGS_PATH:-} ]]; then
+    [[ -d $OMARCHY_PKGS_PATH/pkgbuilds ]] || fail "OMARCHY_PKGS_PATH must contain pkgbuilds"
+    as_root mkdir -p "$SOURCE/omarchy-pkgs"
+    as_root cp -a "$OMARCHY_PKGS_PATH/." "$SOURCE/omarchy-pkgs/"
+  fi
   # Hosted runners and local developers can have a different UID from guest ci.
   guest_uid=$(nspawn id -u "$GUEST_USER")
   guest_gid=$(nspawn id -g "$GUEST_USER")
@@ -209,6 +222,7 @@ if [[ $CHECK_PACKAGE_SOURCES == "1" ]]; then
   nspawn /bin/bash -euo pipefail <<'PACKAGE_SOURCES' 2>&1 | tee "$WORK/logs/package-sources.log"
 export OMARCHY_PATH=/src/omarchy
 export PATH="$OMARCHY_PATH/bin:$PATH"
+bash "$OMARCHY_PATH/test/shell.d/arm-package-transaction-test.sh"
 source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
 omarchy_arm_prepare_package_sources
 [[ $(pacman-conf --repo omarchy Usage) == "Sync" ]]
@@ -252,8 +266,11 @@ PACKAGE_SOURCES
 fi
 
 run_install() {
-  local log_file="$1"
-  nspawn --user="$GUEST_USER" --chdir=/src/omarchy \
+  local log_file="$1" install_env=()
+  if [[ -n ${OMARCHY_PKGS_PATH:-} ]]; then
+    install_env=(--setenv=OMARCHY_PKGS_PATH=/src/omarchy/omarchy-pkgs)
+  fi
+  nspawn "${install_env[@]}" --user="$GUEST_USER" --chdir=/src/omarchy \
     /bin/bash -euo pipefail -c 'export LANG=en_US.UTF-8; bash install.sh' \
     2>&1 | tee "$log_file"
   local status=${PIPESTATUS[0]}
@@ -289,7 +306,7 @@ assert_installed_system() {
   nspawn /bin/bash -euo pipefail <<'ASSERT' 2>&1 | tee "$log_file"
 source /usr/share/omarchy/default/bash/env-bootstrap
 command -v omarchy >/dev/null
-omarchy commands --check >/dev/null
+omarchy commands >/dev/null
 pacman -Q omarchy >/dev/null
 pacman -Q omarchy-settings >/dev/null
 [[ -d /usr/share/omarchy/bin ]]

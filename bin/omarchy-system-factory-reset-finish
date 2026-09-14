@@ -19,6 +19,8 @@ set -uo pipefail
 
 PROVISIONING_DIR=/var/lib/omarchy/provisioning
 TOP_MNT=/run/omarchy-system-factory-reset-finish-top
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+source "$OMARCHY_PATH/install/helpers/factory-reset.sh"
 
 [[ -f $PROVISIONING_DIR/wipe-pending ]] || exit 0
 
@@ -113,12 +115,34 @@ repair_snapshots_dir() {
   # (nested subvolumes are not part of snapshots). Snapper needs it to be a
   # subvolume again.
   if [[ -d /.snapshots ]] && ! btrfs subvolume show /.snapshots >/dev/null 2>&1; then
-    rm -rf /.snapshots
+    rmdir /.snapshots || return $?
   fi
   if [[ ! -d /.snapshots ]]; then
     btrfs subvolume create /.snapshots
     chmod 750 /.snapshots
   fi
+}
+
+finish_confirmed_inventory() {
+  local filesystem_uuid current_uuid factory_uuid extra state="$PROVISIONING_DIR/reset-cleanup" journal="$TOP_MNT/.omarchy-factory-reset"
+  reset_private_file "$PROVISIONING_DIR/reset-identities" || abort "missing or unsafe reset identity receipt"
+  read -r filesystem_uuid current_uuid factory_uuid extra <"$PROVISIONING_DIR/reset-identities"
+  [[ -z $extra && $filesystem_uuid =~ ^[a-fA-F0-9-]{36}$ && $current_uuid =~ ^[a-fA-F0-9-]{36}$ && $factory_uuid =~ ^[a-fA-F0-9-]{36}$ ]] || abort "malformed reset identities"
+  [[ $(findmnt -rn -T / -o UUID) == "$filesystem_uuid" && $(reset_uuid "$TOP_MNT/@") == "$current_uuid" && $(reset_uuid "$TOP_MNT/@factory") == "$factory_uuid" && $(reset_uuid /) == "$current_uuid" ]] || abort "reset root or factory identity changed"
+  reset_private_file "$PROVISIONING_DIR/reset-closure.sha256" || abort "missing reset closure manifest"
+  (cd / && sha256sum -c "$PROVISIONING_DIR/reset-closure.sha256") || abort "current reset worker closure changed"
+  reset_cleanup_inventory "$TOP_MNT" "$PROVISIONING_DIR/reset-inventory" "$state" "$filesystem_uuid" || abort "confirmed cleanup remains incomplete"
+  reset_recreate_clean_subvolume "$TOP_MNT" @home "$state" || abort "could not recreate confirmed home"
+  reset_recreate_clean_subvolume "$TOP_MNT" @log "$state" || abort "could not recreate confirmed log"
+  repair_snapshots_dir || abort "snapshot backend has unexpected state"
+  if [[ -e $journal || -L $journal ]]; then
+    reset_transaction_read "$journal" || abort "reset staging journal is unsafe"
+    [[ $RESET_TXN_FS == "$filesystem_uuid" && $RESET_TXN_NEXT == "$current_uuid" && $RESET_TXN_CLEAN == "$factory_uuid" ]] || abort "staging journal belongs to another operation"
+    # Boot backups and generated provisioning images can contain auto-unlock
+    # material. They are operation-owned data, not a persistent recovery copy.
+    rm -rf -- "$journal" || abort "could not erase reset staging material"
+  fi
+  sync -f "$PROVISIONING_DIR" || abort "could not persist wipe completion"
 }
 
 main() {
@@ -135,7 +159,16 @@ main() {
     exit 1
   fi
 
-  [[ -f $PROVISIONING_DIR/wipe-degraded ]] && scrub_legacy_degraded_state
+  if [[ -e $PROVISIONING_DIR/reset-inventory || -L $PROVISIONING_DIR/reset-inventory ]]; then
+    finish_confirmed_inventory
+  else
+    # An already-staged legacy reset has no authorization for newly covered
+    # history. Preserve it visibly rather than claiming an incomplete erase.
+    local retained
+    for retained in "$TOP_MNT"/@old-* "$TOP_MNT"/@fresh; do
+      [[ ! -e $retained && ! -L $retained ]] || abort "legacy reset has unconfirmed retained history at $retained; re-stage with the current reset command and explicit inventory"
+    done
+    [[ -f $PROVISIONING_DIR/wipe-degraded ]] && scrub_legacy_degraded_state
 
   local old
   for old in "$TOP_MNT"/@omarchy-old-*; do
@@ -150,13 +183,15 @@ main() {
   recreate_subvolume @home || abort "could not recreate @home"
   recreate_subvolume @log || abort "could not recreate @log"
 
-  repair_snapshots_dir
+  repair_snapshots_dir || abort "could not prepare snapshot backend"
+  fi
 
   umount "$TOP_MNT"
   rmdir "$TOP_MNT" 2>/dev/null || true
 
-  log "trimming free space"
-  fstrim -a 2>/dev/null || true
+  [[ ! -L /var/lib/omarchy/factory-reset.lock ]] || abort "unsafe maintenance lock"
+  : >/var/lib/omarchy/factory-reset.lock
+  chmod 644 /var/lib/omarchy/factory-reset.lock
 
   rm -f "$PROVISIONING_DIR/wipe-pending" "$PROVISIONING_DIR/wipe-degraded"
   rm -f /etc/systemd/system/sysinit.target.wants/omarchy-system-factory-reset-finish.service

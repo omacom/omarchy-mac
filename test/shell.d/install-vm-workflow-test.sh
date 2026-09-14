@@ -18,7 +18,7 @@ workflow = yaml.load((root / '.github/workflows/install-vm.yml').read_text(), Lo
 events = workflow['on']
 assert set(events) == {'pull_request', 'push', 'workflow_dispatch', 'schedule'}
 assert not events['pull_request'], 'PR coverage must have no branch, path, or type filters'
-assert events['push'] == {'branches': ['quattro']}
+assert events['push'] == {'branches': ['quattro', 'integration/4.0.3rc1-green']}, 'integration pushes must qualify the same ARM install as quattro'
 assert events['schedule'], 'retain scheduled coverage'
 job = workflow['jobs']['install']
 assert 'if' not in job, 'every PR must reach the install job'
