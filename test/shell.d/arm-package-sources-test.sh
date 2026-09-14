@@ -37,8 +37,14 @@ mapfile -t targets < <(omarchy_arm_package_targets)
 [[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'only approved packages selected'
 [[ $(omarchy_arm_sysupgrade_ignore) == "hyprland,hyprtoolkit,hyprland-guiutils" ]] ||
   fail 'sysupgrade ignore list matches the selected stack'
+# Host pacman (if any) must not add optional-app pins to this fixture.
+pacman() { return 1; }
+mapfile -t upgrade_args < <(omarchy_arm_package_upgrade_args)
+unset -f pacman
+[[ ${upgrade_args[*]} == "--ignore hyprland,hyprtoolkit,hyprland-guiutils omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] ||
+  fail 'upgrade args ignore the selected stack and keep explicit omarchy pins'
 grep -qF 'omarchy_arm_package_upgrade_args' "$ROOT/install.sh" ||
-  fail 'installer sysupgrade uses the protected upgrade args'
+  fail 'installer uses the protected ARM upgrade args'
 pass 'Aquamarine remains a regular-repository dependency'
 
 # Exercise the real default-package loop after the compatibility transaction.
