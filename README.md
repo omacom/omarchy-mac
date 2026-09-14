@@ -15,7 +15,8 @@ place, see [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md).
 ## Before you begin
 
 - A recent backup of macOS (Time Machine or similar).
-- An Apple Silicon Mac (M1/M2 family). Verify compatibility: https://asahilinux.org/fedora/#device-support
+- An Apple Silicon Mac. M1 and M2 families are supported by Asahi: https://asahilinux.org/fedora/#device-support
+- **M3 family (M3, M3 Pro, M3 Max, M3 Ultra): experimental.** Asahi boots it but has released no display or GPU driver, so the desktop renders in software with no brightness control and no external displays. The stock installer refuses M3; step 1 below has an M3 variant. Read [docs/apple-m3.md](docs/apple-m3.md) first.
 - At least 50 GB free on the internal SSD (100 GB recommended).
 - Internet access.
 
@@ -27,6 +28,12 @@ place, see [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md).
 
 ```bash
 curl https://asahi-alarm.org/installer-bootstrap.sh | sh
+```
+
+On an **M3-family Mac** run this instead. It uses the same Asahi Alarm images, swaps in Asahi's own installer package when Asahi Alarm's does not list M3 yet, adds the one line of installer data the M3 needs (firmware 14.8.3), and turns on the expert-mode question; answer yes to it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/omarchy-mac-asahi-install | bash
 ```
 
 Choose `Asahi Alarm Minimal (BTRFS)` and allocate at least 50 GB for Linux.
@@ -199,6 +206,7 @@ Consider supporting the project: [![Buy Me A Coffee](https://img.shields.io/badg
 
 - The Omarchy manual — [manual/](manual/)
 - Btrfs snapshots and disk encryption — [docs/btrfs.md](docs/btrfs.md)
+- M3-family Macs: what works, installing, trying newer kernels — [docs/apple-m3.md](docs/apple-m3.md)
 - Upgrading from 3.x to Quattro — [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md)
 
 ---

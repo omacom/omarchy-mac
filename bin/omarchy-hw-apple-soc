@@ -1,0 +1,99 @@
+#!/bin/bash
+
+# omarchy:summary=Identify the Apple Silicon generation and whether its GPU driver is bound
+# omarchy:args=[--gen|--codename|--is <m1|m2|m3|m4>|--gpu]
+# omarchy:examples=omarchy hw apple-soc | omarchy hw apple-soc --is m3 | omarchy hw apple-soc --gpu
+# omarchy:hidden=true
+
+# The kernel names the SoC in the device tree's compatible list, as
+# "apple,<machine>", "apple,<soc>", "apple,arm-platform". The SoC id is what
+# decides which Asahi drivers exist for the machine, so it is what everything
+# else keys off. Generation rows follow the pinned Asahi SoC table
+# (soc-codenames.md) and the better-sourced mappings from omarchy-mac#326:
+# t6032 is M3 Ultra (J575d); t8132 is the only confirmed M4. M4 Pro/Max
+# (t6040/t6041) stay unmapped until a root DTS or live device tree exists;
+# t6050 is M5, not M4.
+#
+# With no flag it prints the generation (m1, m2, m3, m4) and exits 0, or exits
+# 1 when this is not an Apple Silicon machine. --is <gen> is the conditional
+# form. --gpu asks a different question: whether the Asahi GPU driver has bound
+# to the hardware, which on a generation the driver does not know is false no
+# matter what the generation is.
+
+compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
+drm_path="${OMARCHY_DRM_SYSFS_PATH:-/sys/class/drm}"
+
+soc_generation() {
+  case $1 in
+    t8103 | t6000 | t6001 | t6002) echo m1 ;;
+    t8112 | t6020 | t6021 | t6022) echo m2 ;;
+    t8122 | t6030 | t6031 | t6032 | t6034) echo m3 ;;
+    t8132) echo m4 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The compatible file is NUL-separated strings; read them one at a time.
+read_compatible() {
+  [[ -f $compatible ]] || return 1
+  tr '\0' '\n' <"$compatible"
+}
+
+detect() {
+  local entry soc
+  gen=""
+  codename=""
+  while read -r entry; do
+    case $entry in
+      apple,arm-platform) ;;
+      apple,*)
+        soc=${entry#apple,}
+        if [[ -z $gen ]] && gen=$(soc_generation "$soc"); then
+          continue
+        fi
+        # Not a known SoC id, so it is the machine codename (apple,j516s).
+        [[ -n $codename ]] || codename=$soc
+        ;;
+    esac
+  done < <(read_compatible)
+  [[ -n $gen ]]
+}
+
+# The GPU driver registers as "asahi" on the platform bus and exposes the DRM
+# render node through it. Either sysfs view is enough; both are checked so a
+# kernel that renamed one still answers.
+gpu_bound() {
+  local card driver
+  shopt -s nullglob
+  for card in "$drm_path"/card[0-9]*; do
+    driver=$(readlink -f "$card/device/driver" 2>/dev/null) || continue
+    [[ ${driver##*/} == "asahi" ]] && return 0
+  done
+  for card in "${OMARCHY_PLATFORM_DRIVERS_PATH:-/sys/bus/platform/drivers}"/asahi/*.gpu; do
+    [[ -e $card ]] && return 0
+  done
+  return 1
+}
+
+case ${1:-} in
+  --gpu)
+    detect || exit 1
+    gpu_bound
+    ;;
+  --is)
+    [[ -n ${2:-} ]] || { echo "usage: omarchy-hw-apple-soc --is <m1|m2|m3|m4>" >&2; exit 2; }
+    detect && [[ $gen == "$2" ]]
+    ;;
+  --codename)
+    detect || exit 1
+    echo "$codename"
+    ;;
+  "" | --gen)
+    detect || exit 1
+    echo "$gen"
+    ;;
+  *)
+    echo "usage: omarchy-hw-apple-soc [--gen|--codename|--is <gen>|--gpu]" >&2
+    exit 2
+    ;;
+esac
