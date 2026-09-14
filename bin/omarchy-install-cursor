@@ -3,10 +3,11 @@
 
 set -euo pipefail
 
-VERSION="2.6.20"
 ARCH="$(uname -m)"
 CURSOR_DIR="/opt/cursor"
 CURSOR_APPIMAGE="$CURSOR_DIR/cursor.AppImage"
+CURSOR_VERSION_FILE="$CURSOR_DIR/version"
+CURSOR_RELEASE_API="https://www.cursor.com/api/download?platform=linux-arm64&releaseTrack=latest"
 CURSOR_BIN="/usr/local/bin/cursor"
 CURSOR_DESKTOP="/usr/share/applications/cursor.desktop"
 CURSOR_URL_HANDLER_DESKTOP="/usr/share/applications/cursor-url-handler.desktop"
@@ -44,7 +45,7 @@ EOF
 }
 
 install_cursor_aarch64() {
-  local tmp_dir appimage_url wrapper_path desktop_template url_handler_template icon_size icon_source
+  local tmp_dir metadata version appimage_url wrapper_path desktop_template url_handler_template icon_size icon_source
 
   if [[ -x $CURSOR_BIN && -f $CURSOR_APPIMAGE ]]; then
     echo "Cursor is already installed at $CURSOR_APPIMAGE"
@@ -54,10 +55,12 @@ install_cursor_aarch64() {
   tmp_dir=$(mktemp -d)
   trap 'rm -rf "$tmp_dir"' RETURN
 
-  appimage_url="https://api2.cursor.sh/updates/download/golden/linux-arm64/cursor/$VERSION"
+  metadata=$(curl -fsSL "$CURSOR_RELEASE_API")
+  version=$(jq -er '.version' <<<"$metadata")
+  appimage_url=$(jq -er '.downloadUrl' <<<"$metadata")
   wrapper_path="$tmp_dir/cursor"
 
-  echo "Downloading Cursor $VERSION for aarch64..."
+  echo "Downloading Cursor $version for aarch64..."
   curl -L --fail --output "$tmp_dir/cursor.AppImage" "$appimage_url"
   chmod +x "$tmp_dir/cursor.AppImage"
 
@@ -78,6 +81,7 @@ EOF
   sudo mkdir -p "$CURSOR_DIR"
   sudo install -m 755 "$tmp_dir/cursor.AppImage" "$CURSOR_APPIMAGE"
   sudo install -m 755 "$wrapper_path" "$CURSOR_BIN"
+  printf '%s\n' "$version" | sudo tee "$CURSOR_VERSION_FILE" >/dev/null
 
   desktop_template="$tmp_dir/squashfs-root/usr/share/applications/cursor.desktop"
   url_handler_template="$tmp_dir/squashfs-root/usr/share/applications/cursor-url-handler.desktop"
