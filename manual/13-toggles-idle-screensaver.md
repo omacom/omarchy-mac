@@ -17,11 +17,12 @@ From the terminal, the same switches are `omarchy toggle <thing>`. Run `omarchy 
 | Screensaver | — | `omarchy toggle screensaver` |
 | Menu bar | `Super + Shift + Space` | `omarchy toggle bar` |
 | Touchpad | `XF86TouchpadToggle` | `omarchy toggle touchpad` |
+| Touchpad gestures | — | `omarchy toggle touchpad gestures` |
 | Touchscreen | — | `omarchy toggle touchscreen` |
 | Suspend | — | `omarchy toggle suspend` |
 | Hybrid GPU | — | `omarchy toggle hybrid gpu` |
 
-The touchpad, touchscreen, and hybrid GPU switches live under _Trigger > Hardware_ (`Super + Ctrl + H`) rather than under Toggle, since they only show up when you actually have that hardware. The touchpad and touchscreen ones survive a Hyprland reload — the disabled device's name is saved to a small state file that Hyprland reads on startup to disable it again.
+The touchpad, touchpad gestures, touchscreen, and hybrid GPU switches live under _Trigger > Hardware_ (`Super + Ctrl + H`) rather than under Toggle, since they only show up when you actually have that hardware. The touchpad and touchscreen ones survive a Hyprland reload — the disabled device's name is saved to a small state file that Hyprland reads on startup to disable it again.
 
 The Toggle menu also carries a few things that aren't `omarchy toggle` commands but behave the same: battery percentage in the bar, workspace layout (`Super + L`), window gaps (`Super + Shift + Backspace`), and the 1-window square aspect (`Super + Ctrl + Backspace`).
 
