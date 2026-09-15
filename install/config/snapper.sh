@@ -5,6 +5,7 @@ configure_snapper_root() {
   local config_path=${OMARCHY_SNAPPER_CONFIG_PATH:-/etc/snapper/configs/root}
   local template=${OMARCHY_SNAPPER_TEMPLATE:-/etc/snapper/config-templates/omarchy}
   local snapshots_path=${OMARCHY_SNAPPER_SNAPSHOTS_PATH:-/.snapshots}
+  local conf_d_path=${OMARCHY_SNAPPER_CONF_PATH:-/etc/conf.d/snapper}
 
   filesystem=$(stat -f -c %T /) || return $?
   if [[ $filesystem != "btrfs" ]]; then
@@ -24,6 +25,35 @@ configure_snapper_root() {
       other_root=1
     fi
   done <<<"$configs"
+
+  # If a valid root configuration already exists on disk but was not registered in
+  # Snapper's global conf.d (e.g. following a fresh package install on an existing setup),
+  # register root in conf.d and re-probe so it is recognized instead of treated as a conflict.
+  if (( registered == 0 && ! other_root )) && [[ -f $config_path && ! -L $config_path ]]; then
+    if settings=$(snapper --no-dbus --csvout -c root get-config --columns key,value 2>/dev/null) &&
+      grep -qFx 'FSTYPE,btrfs' <<<"$settings" && grep -qFx 'SUBVOLUME,/' <<<"$settings"; then
+      if [[ -f $conf_d_path && ! -L $conf_d_path ]]; then
+        if grep -qE '^[[:space:]]*SNAPPER_CONFIGS=' "$conf_d_path"; then
+          if ! grep -qE '^[[:space:]]*SNAPPER_CONFIGS=.*(^|[[:space:]"]|\\")root([[:space:]"]|\\"|$)' "$conf_d_path"; then
+            sed -i -E 's/^(SNAPPER_CONFIGS="?)([^"]*)("?)/\1\2 root\3/; s/  / /g; s/" root"/"root"/' "$conf_d_path"
+          fi
+        else
+          echo 'SNAPPER_CONFIGS="root"' >> "$conf_d_path"
+        fi
+      elif [[ ! -e $conf_d_path && -d $(dirname "$conf_d_path") ]]; then
+        echo 'SNAPPER_CONFIGS="root"' > "$conf_d_path"
+      fi
+      configs=$(snapper --no-dbus --csvout list-configs --columns config,subvolume 2>/dev/null) || configs=""
+      while IFS=, read -r name subvolume extra; do
+        if [[ $name == "root" && $subvolume == "/" && -z $extra ]]; then
+          registered=$((registered + 1))
+        fi
+      done <<<"$configs"
+      if (( registered == 0 )) && [[ -e $snapshots_path ]]; then
+        registered=1
+      fi
+    fi
+  fi
 
   if (( registered == 1 && ! other_root )) && [[ -f $config_path && ! -L $config_path ]]; then
     settings=$(snapper --no-dbus --csvout -c root get-config --columns key,value) || return $?
