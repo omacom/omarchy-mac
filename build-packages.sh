@@ -122,14 +122,53 @@ ensure_snapper_dependency() {
 }
 
 ensure_omarchy_mac_keyring_dependency() {
-  local pkgbuild="$1"
+  local pkgbuild="$1" minimum="20260914-2"
+  local index in_depends=0 found=0 insert_index=0 line scan token suffix operator version replacement
+  local pattern="['\"]omarchy-mac-keyring((>=|<=|=|>|<)([^'\"]+))?['\"]"
+  local -a lines=()
 
   grep -qx 'depends=(' "$pkgbuild" ||
     fail "omarchy PKGBUILD no longer has the expected depends array: $pkgbuild"
-  if ! sed -n '/^depends=(/,/^)/p' "$pkgbuild" |
-    grep -qE "^[[:space:]]*['\"]omarchy-mac-keyring([<>=][^'\"]*)?['\"]([[:space:]]|$)"; then
-    sed -i "/^depends=(/a\\  'omarchy-mac-keyring'" "$pkgbuild"
+  mapfile -t lines <"$pkgbuild"
+  for index in "${!lines[@]}"; do
+    line=${lines[$index]}
+    if [[ $line == 'depends=(' ]]; then
+      in_depends=1
+      insert_index=$index
+    elif [[ $line == ')' ]]; then
+      in_depends=0
+    elif (( in_depends )); then
+      scan=${line%%#*}
+      while [[ $scan =~ $pattern ]]; do
+        token=${BASH_REMATCH[0]}
+        suffix=${BASH_REMATCH[1]}
+        operator=${BASH_REMATCH[2]}
+        version=${BASH_REMATCH[3]}
+        replacement="'omarchy-mac-keyring>=$minimum'"
+        if [[ -n $suffix ]]; then
+          case "$operator" in
+            '>='|'>'|'=')
+              if (( $(vercmp "$version" "$minimum") >= 0 )); then
+                replacement=$token
+              elif [[ $operator == '=' ]]; then
+                fail "Keyring pin predates the required trust transition: $token"
+              fi
+              ;;
+            *) fail "Keyring upper bound needs review for the trust transition: $token" ;;
+          esac
+        fi
+        # Replace only this dependency token, preserving adjacent dependencies.
+        line=${line//"$token"/"$replacement"}
+        scan=${scan#*"$token"}
+        found=1
+      done
+      lines[$index]=$line
+    fi
+  done
+  if (( ! found )); then
+    lines[$insert_index]+=$'\n'"  'omarchy-mac-keyring>=$minimum'"
   fi
+  printf '%s\n' "${lines[@]}" >"$pkgbuild"
 }
 
 # Upstream's package() deletes /etc/mkinitcpio.conf.d wholesale on aarch64,
