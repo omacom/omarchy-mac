@@ -143,6 +143,16 @@ if OMARCHY_SNAPPER_TEMPLATE="$FIXTURE/absent" run_leaf direct; then fail 'missin
 ! grep -E 'create-config|systemctl' "$TEST_LOG" || fail 'template checked before mutations'
 pass 'missing template fails before changing services or backend'
 
+new_fixture conf-d-registration
+cp "$ROOT/default/snapper/root" "$FIXTURE/root"
+mkdir "$FIXTURE/snapshots"
+conf_d="$FIXTURE/conf.d.snapper"
+printf 'SNAPPER_CONFIGS=""\n' >"$conf_d"
+OMARCHY_SNAPPER_CONF_PATH="$conf_d" run_leaf direct
+[[ -f $FIXTURE/cleanup-active ]] || fail 'unregistered root activates cleanup'
+grep -qE '^SNAPPER_CONFIGS="root"' "$conf_d" || fail 'unregistered root registers in conf.d'
+pass 'unregistered complete root registers in conf.d and activates cleanup'
+
 migration=$(rg -l '^echo "Repair missing Snapper root setup after the required dependency update"' "$ROOT/migrations")
 [[ -n $migration ]] || fail 'new repair migration exists'
 mkdir -p "$test_tmp/repo/migrations" "$test_tmp/repo/install/config"
