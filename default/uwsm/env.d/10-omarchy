@@ -15,5 +15,12 @@ fi
 # Optional user overrides kept for compatibility with older installs.
 [ -f "$HOME/.config/uwsm/default" ] && . "$HOME/.config/uwsm/default"
 
+# Aquamarine reads AQ_NO_MODIFIERS at process start. Setting it from Hyprland
+# config (apple.lua) is too late — Aquamarine has already initialized.
+apple_soc="${OMARCHY_PATH%/}/bin/omarchy-hw-apple-soc"
+if [ -x "$apple_soc" ] && "$apple_soc" >/dev/null 2>&1 && ! "$apple_soc" --gpu; then
+  export AQ_NO_MODIFIERS=1
+fi
+
 # Activate mise if present on the system
 omarchy-cmd-present mise && eval "$(mise activate bash --shims)"
