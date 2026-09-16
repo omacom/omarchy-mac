@@ -84,11 +84,10 @@ grep -F 'Automatic control pauses while the screen is locked or the lid is close
   fail "manual does not describe lock and lid-close as a pause"
 pass "manual describes lock and lid-close as pausing automatic control"
 
-migration=$(ls "$ROOT"/migrations/*keyboard*als* "$ROOT"/migrations/*als*keyboard* 2>/dev/null | tail -n 1 || true)
-if [[ -z $migration ]]; then
-  migration=$(grep -l omarchy-brightness-keyboard-auto.service "$ROOT"/migrations/*.sh | tail -n 1 || true)
-fi
-[[ -n $migration ]] || fail "a migration enables the ALS keyboard backlight unit"
+# These checks cover the original rollout. Later repairs have their own
+# behavioral tests and need not use the original migration's literal syntax.
+migration="$ROOT/migrations/1788139121.sh"
+[[ -f $migration ]] || fail "the original migration enables the ALS keyboard backlight unit"
 grep -F 'omarchy-brightness-keyboard-auto.service' "$migration" >/dev/null
 grep -F 'systemctl --user enable' "$migration" >/dev/null
 grep -F '/usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service' "$migration" >/dev/null ||
