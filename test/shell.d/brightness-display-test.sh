@@ -30,9 +30,22 @@ SH
 cat >"$mock_bin/brightnessctl" <<'SH'
 #!/bin/bash
 printf 'brightnessctl %s\n' "$*" >>"$CALL_LOG"
+if [[ $* == *" set "* && ${BRIGHTNESS_SET_FAIL:-0} == "1" ]]; then
+  exit 1
+fi
 if [[ $* == *" -m"* ]]; then
   printf 'mock_backlight,backlight,40,40%%\n'
 fi
+SH
+
+cat >"$mock_bin/omarchy-osd" <<'SH'
+#!/bin/bash
+printf 'omarchy-osd %s\n' "$*" >>"$CALL_LOG"
+SH
+
+cat >"$mock_bin/flock" <<'SH'
+#!/bin/bash
+exit 0
 SH
 
 cat >"$mock_bin/ddcutil" <<'SH'
@@ -55,7 +68,7 @@ chmod +x "$mock_bin"/*
 
 run_brightness() {
   CALL_LOG="$call_log" XDG_RUNTIME_DIR="$runtime_dir" PATH="$mock_bin:$ROOT/bin:$PATH" \
-    "$ROOT/bin/omarchy-brightness-display" "$@"
+    bash "$ROOT/bin/omarchy-brightness-display" "$@"
 }
 
 brightness=$(run_brightness --monitor DP-1)
@@ -85,6 +98,28 @@ brightness=$(run_brightness --monitor eDP-1)
 grep -F 'brightnessctl -d mock_backlight -m' "$call_log" >/dev/null || \
   fail "internal monitor queries brightnessctl"
 pass "internal monitor uses the kernel backlight"
+
+osd_count=$(grep -c '^omarchy-osd ' "$call_log" || true)
+if BRIGHTNESS_SET_FAIL=1 run_brightness --no-osd --monitor eDP-1 50% >/dev/null 2>&1; then
+  fail "failed internal brightness update is reported with no OSD"
+fi
+(( $(grep -c '^omarchy-osd ' "$call_log" || true) == osd_count )) || \
+  fail "failed internal brightness update with no OSD does not show success OSD"
+pass "failed internal brightness update is reported with no OSD"
+
+if BRIGHTNESS_SET_FAIL=1 run_brightness --monitor eDP-1 50% >/dev/null 2>&1; then
+  fail "failed internal brightness update is reported with OSD"
+fi
+(( $(grep -c '^omarchy-osd ' "$call_log" || true) == osd_count )) || \
+  fail "failed internal brightness update with OSD does not show success OSD"
+pass "failed internal brightness update is reported with OSD"
+
+run_brightness --monitor eDP-1 50%
+grep -F 'brightnessctl -d mock_backlight set 50%' "$call_log" >/dev/null || \
+  fail "internal brightness update is applied"
+grep -F 'omarchy-osd -i brightness -p 40' "$call_log" >/dev/null || \
+  fail "successful internal brightness update shows OSD"
+pass "successful internal brightness update keeps OSD behavior"
 
 brightness=$(FOCUSED_MONITOR=DP-1 run_brightness)
 [[ $brightness == "50" ]] || fail "brightness follows the focused external monitor" "actual: $brightness"
