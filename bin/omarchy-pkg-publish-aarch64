@@ -67,6 +67,59 @@ github_asset_name() {
   printf '%s\n' "${1//:/.}"
 }
 
+# Return values from a package archive's .PKGINFO.  The publisher already
+# needs repo-add (from pacman), so bsdtar and vercmp are available alongside
+# it.  Reading the built archive rather than its PKGBUILD makes this check
+# cover precisely what will be published.
+package_info_values() {
+  local package="$1" field="$2"
+
+  bsdtar -xOf "$package" .PKGINFO 2>/dev/null |
+    sed -n "s/^${field} = //p"
+}
+
+repository_package_version() {
+  local database="$1" package="$2" entry description name version
+
+  while IFS= read -r entry; do
+    description=$(bsdtar -xOf "$database" "$entry") || return 1
+    name=$(sed -n '/^%NAME%$/{n;p;q;}' <<<"$description")
+    [[ $name == "$package" ]] || continue
+    version=$(sed -n '/^%VERSION%$/{n;p;q;}' <<<"$description")
+    [[ -n $version ]] || return 1
+    printf '%s\n' "$version"
+    return 0
+  done < <(bsdtar -tf "$database" | grep '/desc$')
+
+  return 1
+}
+
+# The omarchy package carries migrations.  A migration that needs the fork
+# keyring must never be published to a lane whose database cannot first
+# install that exact keyring version.  Check the final staged database, which
+# includes both existing release assets and this invocation's packages.
+verify_omarchy_keyring_publication() {
+  local database="$1" package package_name requirement required_version published_version database_name
+
+  shift
+  database_name=${database##*/}
+  for package in "$@"; do
+    package_name=$(package_info_values "$package" pkgname | head -1) || return 1
+    [[ $package_name == "omarchy" ]] || continue
+
+    requirement=$(package_info_values "$package" depend |
+      sed -n 's/^omarchy-mac-keyring>=//p' | head -1)
+    [[ -n $requirement ]] ||
+      fail "omarchy package has no minimum omarchy-mac-keyring dependency; refusing to publish migrations"
+    required_version=$requirement
+    published_version=$(repository_package_version "$database" omarchy-mac-keyring) ||
+      fail "omarchy requires omarchy-mac-keyring>=$required_version, but $database_name does not publish omarchy-mac-keyring"
+    if (( $(vercmp "$published_version" "$required_version") < 0 )); then
+      fail "omarchy requires omarchy-mac-keyring>=$required_version, but $database_name only publishes $published_version"
+    fi
+  done
+}
+
 parse_repo_server() {
   local url="$1" rest
 
@@ -169,6 +222,8 @@ main() {
   printf '  %s\n' "${built[@]##*/}"
 
   command -v repo-add >/dev/null || fail "repo-add is required (it ships with pacman)"
+  command -v bsdtar >/dev/null || fail "bsdtar is required (it ships with pacman)"
+  command -v vercmp >/dev/null || fail "vercmp is required (it ships with pacman)"
   command -v gh >/dev/null || fail "gh is required, logged in to the account owning $owner_repo"
 
   local db_dir="$work_root/db"
@@ -204,6 +259,8 @@ main() {
     # exactly what gets uploaded next.
     repo-add "$repo_name.db.tar.zst" ./*.pkg.tar.*
   )
+
+  verify_omarchy_keyring_publication "$db_dir/$repo_name.db.tar.zst" "${built[@]}"
 
   # repo-add leaves .db and .files as symlinks to the tarballs; pacman fetches
   # them by those names, and a GitHub asset cannot be a symlink. The symlink has
