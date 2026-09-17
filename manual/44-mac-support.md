@@ -35,7 +35,7 @@ It is necessary to disable Apple's Secure Boot in order to boot the bootable USB
 3. Select the orange EFI Boot device
 4. Proceed with the [install as normal](02-getting-started.md)
 
-The installer detects Mac hardware and applies the needed fixes automatically: Broadcom Wi-Fi drivers and firmware, the SPI keyboard driver on the MacBook models that need it, and an NVMe suspend fix for those same models.
+The installer detects Mac hardware and applies the needed fixes automatically: Broadcom Wi-Fi drivers and firmware, the SPI keyboard driver on the MacBook models that need it, an NVMe suspend fix for those same models, and on Apple Silicon machines with a Touch Bar, an Omarchy `tiny-dfr` layout (menu, terminal, lock, screenshot, media keys without holding Fn). Customize that strip by copying `layout.json` from the `omarchy.touchbar` plugin to `~/.config/omarchy/touchbar.json`.
 
 ### Known Limitations
 
