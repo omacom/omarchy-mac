@@ -46,11 +46,13 @@ run_migration() {
 }
 
 # A running Chromium-family browser marks its profile root with a SingletonLock
-# symlink to <hostname>-<pid>, a target that never exists on disk. That lock —
-# not the mere presence of a browser process — is what the migration waits on.
+# symlink to <hostname>-<pid>, a target that never exists on disk. Only a lock
+# naming a live pid on this host means a browser is attached, so an open
+# profile points its lock at this test's own pid.
+export LIVE_LOCK_TARGET="$HOSTNAME-$$"
 open_browser() {
   mkdir -p "$profile_root"
-  ln -sfn "test-host-1234" "$profile_root/SingletonLock"
+  ln -sfn "$LIVE_LOCK_TARGET" "$profile_root/SingletonLock"
 }
 close_browser() {
   rm -f "$profile_root/SingletonLock"
@@ -90,7 +92,7 @@ pass "migration keeps the browser prompt visible"
 # prompt, which the still-declining gum stub would otherwise fail.
 close_browser
 mkdir -p "$home/.config/google-chrome"
-ln -sfn "test-host-1234" "$home/.config/google-chrome/SingletonLock"
+ln -sfn "$LIVE_LOCK_TARGET" "$home/.config/google-chrome/SingletonLock"
 write_stale_preferences
 run_migration || fail "migration repairs while a different profile root is open"
 jq -e --arg pinned "$pinned_id" '.extensions.commands["linux:Alt+Shift+L"].extension == $pinned' "$preferences" >/dev/null ||
@@ -148,6 +150,26 @@ run_migration || fail "migration reruns cleanly after the repair"
 pass "migration is idempotent after the repair"
 close_browser
 
+# A SingletonLock left behind by a browser that died without cleanup — a
+# crash, a reboot, a kill — names a pid that no longer exists. It is residue,
+# not an open profile, and must not hold the update forever.
+write_stale_preferences
+sleep 60 & dead_pid=$!
+kill "$dead_pid" 2>/dev/null; wait "$dead_pid" 2>/dev/null || true
+ln -sfn "$HOSTNAME-$dead_pid" "$profile_root/SingletonLock"
+run_migration || fail "migration defers on a lock left by a dead browser"
+jq -e --arg pinned "$pinned_id" '.extensions.commands["linux:Alt+Shift+L"].extension == $pinned' "$preferences" >/dev/null ||
+  fail "migration does not repair past a stale SingletonLock"
+pass "migration treats a dead-pid SingletonLock as a closed profile"
+rm -f "$preferences.omarchy-copy-url-repair.bak" "$profile_root/SingletonLock"
+
+# A lock written under a different hostname cannot name a pid on this machine.
+write_stale_preferences
+ln -sfn "otherhost-$$" "$profile_root/SingletonLock"
+run_migration || fail "migration defers on a foreign-host lock"
+pass "migration treats a foreign-host SingletonLock as a closed profile"
+rm -f "$preferences.omarchy-copy-url-repair.bak" "$profile_root/SingletonLock"
+
 # A remapped shortcut keeps the user's chosen key while moving to the pinned id.
 jq -n --arg ghost "$ghost_id" '{extensions: {commands: {"linux:Ctrl+Alt+P": {command_name: "copy-url", extension: $ghost, global: false}}, settings: {}}}' >"$preferences"
 run_migration || fail "migration repairs remapped shortcuts"
@@ -177,7 +199,7 @@ cat >"$stub_bin/python3" <<'STUB'
 # the check calls report a surviving ghost through their exit status.
 "${REAL_PYTHON}" "$@"
 status=$?
-[[ ${5:-} == "repair" ]] && ln -sfn "test-host-1234" "$HOME/.config/chromium/SingletonLock"
+[[ ${5:-} == "repair" ]] && ln -sfn "${LIVE_LOCK_TARGET:?}" "$HOME/.config/chromium/SingletonLock"
 exit $status
 STUB
 chmod +x "$stub_bin/python3"
