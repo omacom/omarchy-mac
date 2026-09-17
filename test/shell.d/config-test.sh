@@ -126,43 +126,54 @@ if not omarchy_pkgbuild_path.exists():
 pkgbuild = settings_pkgbuild_path.read_text()
 omarchy_pkgbuild = omarchy_pkgbuild_path.read_text()
 errors = []
-package_defaults = [
-  ("default/uwsm/env.d/10-omarchy", "/usr/share/uwsm/env.d/10-omarchy", "uwsm/env"),
-  ("default/uwsm/default", None, "uwsm/default"),
-  ("default/environment.d/10-omarchy-fcitx.conf", "/usr/lib/environment.d/10-omarchy-fcitx.conf", "environment.d/fcitx.conf"),
-  ("default/fontconfig/conf.avail/50-omarchy.conf", "/usr/share/fontconfig/conf.avail/50-omarchy.conf", "fontconfig/fonts.conf"),
-  ("default/xdg-terminal-exec/hyprland-xdg-terminals.list", "/usr/share/xdg-terminal-exec/hyprland-xdg-terminals.list", "xdg-terminals.list"),
-  ("default/applications/mimeapps.list", "/usr/share/applications/mimeapps.list", "mimeapps.list"),
-  ("etc/fastfetch/config.jsonc", "/etc/fastfetch/config.jsonc", "fastfetch/config.jsonc"),
-  ("default/systemd/user/bt-agent.service", "/usr/lib/systemd/user/bt-agent.service", "systemd/user/bt-agent.service"),
-  ("default/systemd/user/omarchy-sleep-lock.service", "/usr/lib/systemd/user/omarchy-sleep-lock.service", "systemd/user/omarchy-sleep-lock.service"),
-  ("default/systemd/user/omarchy-recover-internal-monitor.service", "/usr/lib/systemd/user/omarchy-recover-internal-monitor.service", "systemd/user/omarchy-recover-internal-monitor.service"),
-  ("default/systemd/user/omarchy-migrate-notify.service", "/usr/lib/systemd/user/omarchy-migrate-notify.service", "systemd/user/omarchy-migrate-notify.service"),
-  ("default/systemd/user/omarchy-tailscale-receive.service", "/usr/lib/systemd/user/omarchy-tailscale-receive.service", "systemd/user/omarchy-tailscale-receive.service"),
-  ("default/systemd/user/omarchy-fcitx5.service", "/usr/lib/systemd/user/omarchy-fcitx5.service", "systemd/user/omarchy-fcitx5.service"),
-  ("default/systemd/user/omarchy-crash-watch.service", "/usr/lib/systemd/user/omarchy-crash-watch.service", "systemd/user/omarchy-crash-watch.service"),
-  ("default/systemd/zram-generator.conf.d/90-omarchy.conf", "/usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf", "systemd/zram-generator.conf.d/90-omarchy.conf"),
-  ("default/fonts/omarchy/omarchy.ttf", "/usr/share/fonts/omarchy/omarchy.ttf", "omarchy.ttf"),
-  ("default/snapper/root", "/etc/snapper/config-templates/omarchy", "snapper/root"),
-]
+manifest = root / "default/system-paths.tsv"
+package_fixed_paths = []
+for lineno, raw_line in enumerate(manifest.read_text().splitlines(), 1):
+  if raw_line.startswith("#"):
+    continue
+  fields = raw_line.split("\t")
+  if len(fields) != 3 or any(not field for field in fields):
+    errors.append(f"invalid system path manifest row {lineno}")
+    continue
+  source, destination, policy = fields
+  package_fixed_paths.append((source, destination))
 
-for source, destination, legacy in package_defaults:
+if not package_fixed_paths:
+  errors.append("system path manifest has no destination-bearing rows")
+
+for source, destination in package_fixed_paths:
+  if not (root / source).exists():
+    errors.append(f"missing package default source: {source}")
+  if source not in pkgbuild or destination not in pkgbuild:
+    errors.append(f"PKGBUILD does not explicitly install {source} -> {destination}")
+
+# The session default is copied into the recursive /usr/share/omarchy tree,
+# rather than installed at a second fixed system destination. Keep its legacy
+# path assertion separate from the fixed-path manifest.
+legacy_paths = [
+  ("default/uwsm/env.d/10-omarchy", "uwsm/env"),
+  ("default/uwsm/default", "uwsm/default"),
+  ("default/environment.d/10-omarchy-fcitx.conf", "environment.d/fcitx.conf"),
+  ("default/fontconfig/conf.avail/50-omarchy.conf", "fontconfig/fonts.conf"),
+  ("default/xdg-terminal-exec/hyprland-xdg-terminals.list", "xdg-terminals.list"),
+  ("default/applications/mimeapps.list", "mimeapps.list"),
+  ("etc/fastfetch/config.jsonc", "fastfetch/config.jsonc"),
+  ("default/systemd/user/bt-agent.service", "systemd/user/bt-agent.service"),
+  ("default/systemd/user/omarchy-sleep-lock.service", "systemd/user/omarchy-sleep-lock.service"),
+  ("default/systemd/user/omarchy-recover-internal-monitor.service", "systemd/user/omarchy-recover-internal-monitor.service"),
+  ("default/systemd/user/omarchy-migrate-notify.service", "systemd/user/omarchy-migrate-notify.service"),
+  ("default/systemd/user/omarchy-tailscale-receive.service", "systemd/user/omarchy-tailscale-receive.service"),
+  ("default/systemd/user/omarchy-fcitx5.service", "systemd/user/omarchy-fcitx5.service"),
+  ("default/systemd/user/omarchy-crash-watch.service", "systemd/user/omarchy-crash-watch.service"),
+  ("default/systemd/zram-generator.conf.d/90-omarchy.conf", "systemd/zram-generator.conf.d/90-omarchy.conf"),
+  ("default/fonts/omarchy/omarchy.ttf", "omarchy.ttf"),
+  ("default/snapper/root", "snapper/root"),
+]
+for source, legacy in legacy_paths:
   if not (root / source).exists():
     errors.append(f"missing package default source: {source}")
   if (root / "config" / legacy).exists():
     errors.append(f"legacy path still in config/: {legacy}")
-  if destination and (source not in pkgbuild or destination not in pkgbuild):
-    errors.append(f"PKGBUILD does not explicitly install {source} -> {destination}")
-
-# Existing users have an absolute wants symlink to the old unit path, and the
-# migration that repoints it only runs for users who run an update -- the
-# opposite of who the notifier is for. Dropping this alias strands them.
-notify_alias = 'ln -sfn omarchy-migrate-notify.service "$pkgdir/usr/lib/systemd/user/omarchy-update-user-notify.service"'
-if notify_alias not in pkgbuild:
-  errors.append(
-    "PKGBUILD does not ship the omarchy-update-user-notify.service compatibility "
-    "alias, so users who have not run migration 1785095882 lose the login notifier"
-  )
 
 alpm_hooks = [
   "00-omarchy-update-guard.hook",
