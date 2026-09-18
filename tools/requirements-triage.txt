@@ -1,0 +1,1 @@
+typesafe-sdk @ git+https://github.com/typesafe-ai/typesafe-sdk-python.git
