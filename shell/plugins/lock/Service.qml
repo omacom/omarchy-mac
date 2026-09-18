@@ -15,6 +15,7 @@ Item {
   readonly property string stateHome: home + "/.local/state"
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property string currentBackgroundLink: stateHome + "/omarchy/current/background"
+  readonly property string screensaverPath: home + "/.config/omarchy/branding/screensaver.txt"
 
   property bool lockRequested: false
   property bool pendingSessionLock: false
@@ -23,6 +24,7 @@ Item {
   property bool passwordPamConfigured: false
   property bool fingerprintConfigured: false
   property bool previewVisible: false
+  property bool authenticationVisible: false
   property string enteredPassword: ""
   property string pendingPassword: ""
   property string failureMessage: ""
@@ -125,6 +127,12 @@ Item {
     if (fingerprintPam.active) fingerprintPam.abort()
   }
 
+  function revealAuthentication() {
+    if (!lockRequested || authenticationVisible) return
+    authenticationVisible = true
+    runWake()
+  }
+
   function beginLock() {
     if (!passwordPamConfigured) {
       logEvent("lock-denied: missing-pam")
@@ -132,8 +140,9 @@ Item {
     }
 
     resetAuthenticationState()
+    authenticationVisible = false
+    idleBlankTimer.stop()
     lockRequested = true
-    armBlankTimer()
     logEvent("lock-requested")
     queueSessionLock()
 
@@ -149,6 +158,7 @@ Item {
     if (!root.locked && !lockRequested) return
 
     lockRequested = false
+    authenticationVisible = false
     pendingSessionLock = false
     sessionLockStabilizeTimer.stop()
     pendingSessionLockTimer.stop()
@@ -166,7 +176,7 @@ Item {
 
   function runWake() {
     if (!wakeProcess.running) wakeProcess.running = true
-    if (lockRequested) armBlankTimer()
+    if (lockRequested && authenticationVisible) armBlankTimer()
   }
 
   function runBlank() {
@@ -253,6 +263,7 @@ Item {
 
       if (!locked && root.lockRequested) {
         root.lockRequested = false
+        root.authenticationVisible = false
         root.pendingSessionLock = false
         sessionLockStabilizeTimer.stop()
         pendingSessionLockTimer.stop()
@@ -269,6 +280,8 @@ Item {
         id: lockView
         anchors.fill: parent
         backgroundPath: root.backgroundPath
+        authenticationVisible: root.authenticationVisible
+        screensaverPath: root.screensaverPath
         backgroundVersion: root.backgroundVersion
         fingerprintConfigured: root.fingerprintConfigured
         authenticatingPassword: root.authenticatingPassword
@@ -281,6 +294,7 @@ Item {
         onSubmitPassword: function(password) { root.submitPassword(password) }
         onClearFailureRequested: root.failureMessage = ""
         onWakeRequested: root.runWake()
+        onAuthenticationRevealRequested: root.revealAuthentication()
       }
 
     }
@@ -301,11 +315,13 @@ Item {
       backgroundPath: root.backgroundPath
       backgroundVersion: root.backgroundVersion
       fingerprintConfigured: root.fingerprintConfigured
+      authenticationVisible: true
       authenticatingPassword: false
       failureMessage: ""
       failedAttempts: 0
       inputEnabled: false
       loadBackground: root.previewVisible
+      screensaverPath: root.screensaverPath
       passwordText: ""
     }
 
@@ -478,7 +494,7 @@ Item {
   onAuthenticatingPasswordChanged: {
     if (!lockRequested) return
     if (authenticatingPassword) idleBlankTimer.stop()
-    else armBlankTimer()
+    else if (authenticationVisible) armBlankTimer()
   }
 
   FileView {
@@ -530,6 +546,7 @@ Item {
         realScreens: root.realScreenCount(),
         passwordPam: root.passwordPamConfigured,
         fingerprint: root.fingerprintConfigured,
+        authenticationVisible: root.authenticationVisible,
         authenticating: root.authenticating,
         lastEvent: root.lastEvent,
         lastEventAt: root.lastEventAt
