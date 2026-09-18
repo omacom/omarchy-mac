@@ -1339,7 +1339,6 @@ install_self_to_disk() {
   local self="${BASH_SOURCE[0]:-}"
   if [[ -n "$self" && -f "$self" ]]; then
     install -Dm755 "$self" "$dest"
-    ln -sfn "$dest" /usr/local/bin/omarchy-mac-e2e-capture
     return 0
   fi
   local tmp
@@ -1349,7 +1348,6 @@ install_self_to_disk() {
     || fetch_url "https://cdn.jsdelivr.net/gh/omacom/omarchy-mac@quattro/bin/omarchy-mac-e2e-collect" "$tmp" \
     || { rm -f "$tmp"; echo "e2e-capture: could not install myself to $dest" >&2; return 1; }
   install -Dm755 "$tmp" "$dest"
-  ln -sfn "$dest" /usr/local/bin/omarchy-mac-e2e-capture
   rm -f "$tmp"
 }
 
