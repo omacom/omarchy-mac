@@ -185,8 +185,9 @@ run_leaf() {
     bash -eE -o pipefail -c 'source "$1"' bash "$sandboxed_leaf" </dev/null
 }
 
-# Both wedging parts: BCM4378 in M1-era Macs, BCM4387 in M2-era ones.
-for wifi_id in 4425 4433; do
+# All wedging parts: BCM4378 in M1-era Macs, BCM4387 and BCM4388 in M2-era
+# ones (BCM4388 wedges on real lid-close suspend, see #10857).
+for wifi_id in 4425 4433 4434; do
   run_leaf aarch64 "$wifi_id" >/dev/null
   [[ -f $service ]] ||
     fail "an Apple Silicon Mac gets the recovery service" "14e4:$wifi_id"
@@ -212,16 +213,16 @@ exec_start=$(sed -n 's|^ExecStart=/usr/bin/||p' "$service")
   fail "the unit starts a command this repo ships" "ExecStart resolves to: $exec_start"
 pass "the unit starts a command this repo ships"
 
-# BCM4388 (14e4:4434) does not wedge: an M2 Max carrying it rode out a
-# six-minute s2idle with no ASSOC-REJECT events (PR #255 review), so the
-# exclusion is deliberate and reloading its driver would be pure disruption.
+# BCM4388 (14e4:4434) wedges on real lid-close suspend (#10857: an M2 Pro
+# wedges reliably), so it gets the recovery service like the other parts.
 run_leaf aarch64 4434 >/dev/null
-[[ ! -f $service ]] || fail "BCM4388 is left alone"
-[[ ! -s $calls ]] || fail "nothing is enabled on BCM4388" "$(cat "$calls")"
-pass "BCM4388, whose firmware does not wedge, is left alone"
+[[ -f $service ]] || fail "BCM4388 gets the recovery service" "14e4:4434"
+grep -Fq $'systemctl\tenable\tomarchy-wifi-resume-fix.service' "$calls" ||
+  fail "the recovery service is enabled for BCM4388" "$(cat "$calls")"
+pass "BCM4388, which wedges on lid-close suspend, gets the recovery service"
 
 # The same PCI IDs appear in T2 Intel Macs, where suspend takes another path.
-for wifi_id in 4425 4433; do
+for wifi_id in 4425 4433 4434; do
   run_leaf x86_64 "$wifi_id" >/dev/null
   [[ ! -f $service ]] || fail "a T2 Intel Mac is left alone" "14e4:$wifi_id"
 done
@@ -265,8 +266,11 @@ pass "the migration is idempotent"
 
 run_migration x86_64 4433
 [[ ! -f $service ]] || fail "the migration skips a T2 Intel Mac"
+run_migration x86_64 4434
+[[ ! -f $service ]] || fail "the migration skips BCM4388 on a T2 Intel Mac"
 run_migration aarch64 4434
-[[ ! -f $service ]] || fail "the migration skips BCM4388"
+[[ -f $service ]] ||
+  fail "the migration installs the recovery for BCM4388" "$(cat "$calls")"
 pass "the migration skips machines the leaf would skip"
 
 # The recovery command itself: wedge detection and the decision to reload.
