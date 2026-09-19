@@ -17,6 +17,19 @@ announce_browser_installed() {
   echo "$1 browser installed. Make it the default via Setup > Defaults > Browser."
 }
 
+register_widevine() {
+  # The widevine package registers its CDM for Chromium and Firefox only. Other
+  # Chromium-family browsers look for the CDM inside their own install
+  # directory, so link the system one in; without it DRM sites (Netflix, Apple
+  # TV+, Spotify) fail with no useful error. No-op when the widevine package is
+  # not installed, which is the case wherever the browser ships its own CDM.
+  local install_dir=$1
+
+  if [[ -d /opt/WidevineCdm/chromium ]] && [[ -d $install_dir ]] && [[ ! -e $install_dir/WidevineCdm ]]; then
+    sudo ln -sfn /opt/WidevineCdm/chromium "$install_dir/WidevineCdm"
+  fi
+}
+
 copy_chromium_flags() {
   mkdir -p ~/.config
   cp -f "$OMARCHY_PATH/config/chromium-flags.conf" "$1"
@@ -63,6 +76,7 @@ brave)
 
   setup_chromium_policy_directory /etc/brave/policies/managed
   copy_chromium_flags ~/.config/brave-flags.conf
+  register_widevine /opt/brave-bin
   omarchy-theme-set-browser
   announce_browser_installed "Brave"
   ;;
