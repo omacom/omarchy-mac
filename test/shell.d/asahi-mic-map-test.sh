@@ -129,6 +129,16 @@ with tempfile.TemporaryDirectory() as temporary:
         assert not any('volume' in call[1] or 'mute' in call[1] for call in audio.calls)
         assert audio.default == (m.MONITOR if selected == DSP else selected)
         assert sum(call[1] == 'set-default-source' for call in audio.calls) == (1 if selected == DSP else 0)
+    # The fallback hands its selection to native DSP before the outer mapper
+    # runs; that same pass must finish selecting the usable stereo monitor.
+    class NativeHandoff:
+        def reconcile(self, audio, sources, dsp):
+            assert dsp == DSP
+            audio.default = DSP
+            return False
+    audio = Audio(default=m.J456_SOURCE)
+    m.reconcile(audio, state(), fallback=NativeHandoff())
+    assert audio.default == m.MONITOR
     audio = Audio(default='usb-mic'); audio.no_dsp = True
     try: m.reconcile(audio, state())
     except m.Deferred: pass
