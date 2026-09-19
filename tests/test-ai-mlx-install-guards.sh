@@ -41,6 +41,9 @@ mkdir -p "$stub_dir"
 # The entry gates on Apple hardware first; say yes, and present an M1 device
 # tree, so the paths under test are the ones that run on a real M1.
 printf '#!/bin/bash\nexit 0\n' >"$stub_dir/omarchy-hw-apple"
+# The real pinned installer reaches omarchy-pkg-add on Apple hardware; stub
+# it so a passing gate can never trigger a system-wide pacman transaction.
+printf '#!/bin/bash\necho "omarchy-pkg-add $*" >>"$work/pkg-add.log"\nexit 0\n' >"$stub_dir/omarchy-pkg-add"
 chmod +x "$stub_dir/omarchy-hw-apple"
 printf 'apple,j313\0apple,t8103\0' >"$work/compatible"
 
@@ -80,10 +83,11 @@ run_entry() {
 echo
 echo "=== it refuses when an installation already exists ==="
 
-# Each artifact on its own, because the installer's --uninstall deletes all four
-# and any one of them means something is already there.
+# Each artifact on its own, because the installer's --uninstall deletes all
+# five and any one of them means something is already there. bin-info is the
+# installed-state key the menu keys on, so it guards like the rest.
 i=0
-for artifact in prefix bin-launcher bin-demo desktop-entry; do
+for artifact in prefix bin-launcher bin-demo bin-info desktop-entry; do
   i=$((i + 1))
   home="$work/home$i"
   prefix="$home/.local/share/mlx-omarchy"
@@ -92,6 +96,7 @@ for artifact in prefix bin-launcher bin-demo desktop-entry; do
     prefix) mkdir -p "$prefix" && echo keep >"$prefix/marker" ;;
     bin-launcher) echo keep >"$home/.local/bin/mlx-omarchy" ;;
     bin-demo) echo keep >"$home/.local/bin/mlx-omarchy-demo" ;;
+    bin-info) echo keep >"$home/.local/bin/mlx-omarchy-info" ;;
     desktop-entry) echo keep >"$home/.local/share/applications/mlx-omarchy-demo.desktop" ;;
   esac
 
@@ -109,6 +114,7 @@ for artifact in prefix bin-launcher bin-demo desktop-entry; do
     prefix) [[ -f "$prefix/marker" ]] || fail "the existing installation was deleted" ;;
     bin-launcher) [[ -f "$home/.local/bin/mlx-omarchy" ]] || fail "the existing launcher was deleted" ;;
     bin-demo) [[ -f "$home/.local/bin/mlx-omarchy-demo" ]] || fail "the existing demo launcher was deleted" ;;
+    bin-info) [[ -f "$home/.local/bin/mlx-omarchy-info" ]] || fail "the existing info launcher was deleted" ;;
     desktop-entry) [[ -f "$home/.local/share/applications/mlx-omarchy-demo.desktop" ]] || fail "the existing desktop entry was deleted" ;;
   esac
   pass "$artifact present: refuses before any change, and keeps it"

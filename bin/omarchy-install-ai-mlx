@@ -35,6 +35,7 @@ for artifact in \
   "$PREFIX" \
   "$BIN/mlx-omarchy" \
   "$BIN/mlx-omarchy-demo" \
+  "$BIN/mlx-omarchy-info" \
   "$APPS/mlx-omarchy-demo.desktop"; do
   [ -e "$artifact" ] && existing+=("$artifact")
 done
@@ -54,8 +55,8 @@ fi
 # Pinned installer commit and its checksum. Bump both together; never point at a
 # moving branch, because this menu entry runs on other people's machines.
 INSTALLER_REPO="joshuaswarren/mlx-omarchy"
-INSTALLER_REF="286ef7297b0db6576c70d9999c6f6b005ce1c8de"
-INSTALLER_SHA256="cdfa8a985d38984c68053c2765b50cc8875b7f894001c44d4c6732e47921ebf1"
+INSTALLER_REF="50eeb2905ba0b7b382f44a55cd158847aedea8f8"
+INSTALLER_SHA256="19674dc53f4bbf2a05f994be939c7ef87c2d61a8f00ae5fae887e5ca03573c22"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -76,7 +77,9 @@ echo "Installing mlx-omarchy..."
 # negation's status (always 0) and report a failure as a success, which is the
 # bug this entry is meant to avoid.
 set +e
-bash "$tmp/install.sh"
+# Pin the release: the installer's built-in default is stale (v0.4.2); this
+# override selects the current mlx-omarchy release assets.
+MLX_OMARCHY_VERSION="v0.7.1" bash "$tmp/install.sh"
 status=$?
 set -e
 
@@ -92,7 +95,7 @@ if [ "$status" -ne 0 ]; then
   else
     echo "Cleanup did not finish. Files may remain in:" >&2
     echo "  $PREFIX" >&2
-    echo "  $BIN/mlx-omarchy, $BIN/mlx-omarchy-demo" >&2
+    echo "  $BIN/mlx-omarchy, $BIN/mlx-omarchy-demo, $BIN/mlx-omarchy-info" >&2
     echo "  $APPS/mlx-omarchy-demo.desktop" >&2
     echo "Run 'omarchy-remove-ai-mlx' before trying again." >&2
   fi
