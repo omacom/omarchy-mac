@@ -34,7 +34,8 @@ validate_dev_checkout() {
 
 link_dev_checkout() {
   local checkout="$1"
-  [[ -d $checkout/.git ]] || git clone https://github.com/basecamp/omarchy.git "$checkout"
+  local repository="${2:-https://github.com/basecamp/omarchy.git}"
+  [[ -d $checkout/.git ]] || git clone "$repository" "$checkout"
 
   omarchy-dev-link "$checkout" --no-reboot
 }
@@ -74,6 +75,18 @@ esac
 
 if [[ -z $dev_checkout && $OMARCHY_PATH != "/usr/share/omarchy" ]]; then
   leaving_dev=1
+fi
+
+if [[ $(uname -m) == "aarch64" ]]; then
+  # ARM lanes all ship omarchy + omarchy-settings. The normal update owns the
+  # lock, snapshot, staged transaction and post-package migrations. A missing
+  # lane fails before either pacman.conf or a development link is changed.
+  OMARCHY_UPDATE_CHANNEL="$pacman_channel" omarchy-update -y
+  if [[ -n $dev_checkout ]]; then
+    link_dev_checkout "$dev_checkout" https://github.com/omacom/omarchy-mac.git
+    omarchy-state set reboot-required
+  fi
+  exit 0
 fi
 
 if [[ -n $dev_checkout ]]; then

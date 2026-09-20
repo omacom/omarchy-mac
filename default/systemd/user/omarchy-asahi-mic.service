@@ -1,0 +1,15 @@
+[Unit]
+Description=Reconcile the Asahi microphone stereo mapping
+After=pipewire.service pipewire-pulse.service wireplumber.service
+PartOf=graphical-session.target
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+
+[Service]
+Type=simple
+ExecCondition=/usr/bin/omarchy-hw-apple
+ExecStart=/usr/bin/omarchy-audio-asahi-mic-map --watch
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

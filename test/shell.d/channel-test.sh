@@ -11,6 +11,10 @@ stub_bin="$test_tmp/bin"
 log_file="$test_tmp/channel.log"
 mkdir -p "$stub_bin" "$test_tmp/home"
 
+# Preserve coverage for the existing x86 channel path on an ARM test host.
+printf '#!/bin/bash\necho x86_64\n' >"$stub_bin/uname"
+chmod +x "$stub_bin/uname"
+
 write_stub() {
   local name="$1"
   local body="$2"

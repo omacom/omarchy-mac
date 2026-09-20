@@ -1,0 +1,19 @@
+# Maintainer: Omarchy Mac
+
+pkgname=omarchy-mac-keyring
+pkgver=20260913
+pkgrel=1
+pkgdesc='Omarchy Mac package signing keyring'
+arch=(any)
+url='https://github.com/omarchy-mac/omarchy-mac'
+license=('GPL-3.0-or-later')
+install=$pkgname.install
+source=('omarchy-mac.gpg' 'omarchy-mac-trusted' 'omarchy-mac-revoked')
+sha512sums=('0e411148bf58cb1cf3c1ef544ea0936d82b0d7b3996c3ef3d20ac909959129c1d7cb58dc84ac466cd3e2d75db228aff896640899b4bbbef19e7636f3033a7ea8'
+            '2fb4497f96fd9f446e0177f9dbf8eb34f0ad3dce5fc7fb687312c5e20a1127ceb68f0d6022424f35b37e2a6a91fb097b2212595375fa4d37d7547697b17de86e'
+            'cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e')
+
+package() {
+  install -D -m0644 -t "$pkgdir/usr/share/pacman/keyrings/" \
+    omarchy-mac.gpg omarchy-mac-trusted omarchy-mac-revoked
+}

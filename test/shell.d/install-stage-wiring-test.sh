@@ -79,6 +79,10 @@ grep -qF 'user/hardware/apple/obsidian.sh' "$ROOT/install/user/all.sh" ||
   fail "the Apple Obsidian substitution runs in the per-user stage"
 pass "the Apple Obsidian substitution runs in the per-user stage"
 
+grep -qF 'user/hardware/apple/mic.sh' "$ROOT/install/user/all.sh" ||
+  fail "the Apple Silicon mic mapping runs in the per-user stage"
+pass "the Apple Silicon mic mapping runs in the per-user stage"
+
 # Asking for the pkgbase again would reproduce the bug it exists to fix.
 grep -qF 'obsidian-appimage' "$ROOT/install/user/hardware/apple/obsidian.sh" ||
   fail "the substitution asks for obsidian-appimage by name"

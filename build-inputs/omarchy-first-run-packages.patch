@@ -1,0 +1,93 @@
+diff --git a/pkgbuilds/omarchy-dev/PKGBUILD b/pkgbuilds/omarchy-dev/PKGBUILD
+index 58630ed..e79935f 100644
+--- a/pkgbuilds/omarchy-dev/PKGBUILD
++++ b/pkgbuilds/omarchy-dev/PKGBUILD
+@@ -44,6 +44,7 @@ depends=(
+
+   # System font (UI assumes it)
+   'ttf-jetbrains-mono-nerd-basic'
++  'snapper' # Root snapshots also apply to btrfs installations on Apple Silicon.
+ )
+
+ # Bootloader stack. Lives here rather than on omarchy-settings because
+@@ -57,11 +58,10 @@ depends_x86_64=(
+   'limine'
+   'limine-mkinitcpio-hook'
+   'limine-snapper-sync'
+-  'snapper'
+ )
+
+ # Apple Silicon boots through m1n1 + GRUB from the Asahi packages and keeps
+-# Arch Linux ARM's kernel and boot layout, so the Limine/Snapper stack does not
++# Arch Linux ARM's kernel and boot layout, so the Limine stack does not
+ # apply. Wi-Fi on the Broadcom parts only scans reliably through the iwd
+ # backend, which install/hardware/network.sh selects on Apple Silicon.
+ depends_aarch64=(
+diff --git a/pkgbuilds/omarchy-settings-dev/PKGBUILD b/pkgbuilds/omarchy-settings-dev/PKGBUILD
+index 8cda17b..4158b1c 100644
+--- a/pkgbuilds/omarchy-settings-dev/PKGBUILD
++++ b/pkgbuilds/omarchy-settings-dev/PKGBUILD
+@@ -193,6 +193,11 @@ package() {
+   install -Dm644 default/systemd/user/omarchy-tailscale-receive.service "$pkgdir/usr/lib/systemd/user/omarchy-tailscale-receive.service"
+   install -Dm644 default/systemd/user/omarchy-fcitx5.service "$pkgdir/usr/lib/systemd/user/omarchy-fcitx5.service"
+   install -Dm644 default/systemd/user/omarchy-crash-watch.service "$pkgdir/usr/lib/systemd/user/omarchy-crash-watch.service"
++  # Newer source trees enable this at first login; older pinned releases do
++  # not contain or request the unit. Keep both source layouts buildable.
++  if [[ -f default/systemd/user/omarchy-brightness-keyboard-auto.service ]]; then
++    install -Dm644 default/systemd/user/omarchy-brightness-keyboard-auto.service "$pkgdir/usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service"
++  fi
+   # Marks app.slice (and only app.slice) as a systemd-oomd kill candidate, so
+   # memory pressure costs one app scope instead of the compositor session.
+   # Thresholds live in etc/systemd/oomd.conf.d/10-omarchy.conf. Both this and
+diff --git a/pkgbuilds/omarchy-settings/PKGBUILD b/pkgbuilds/omarchy-settings/PKGBUILD
+index a457e6d..ada2878 100644
+--- a/pkgbuilds/omarchy-settings/PKGBUILD
++++ b/pkgbuilds/omarchy-settings/PKGBUILD
+@@ -188,6 +188,11 @@ package() {
+   install -Dm644 default/systemd/user/omarchy-tailscale-receive.service "$pkgdir/usr/lib/systemd/user/omarchy-tailscale-receive.service"
+   install -Dm644 default/systemd/user/omarchy-fcitx5.service "$pkgdir/usr/lib/systemd/user/omarchy-fcitx5.service"
+   install -Dm644 default/systemd/user/omarchy-crash-watch.service "$pkgdir/usr/lib/systemd/user/omarchy-crash-watch.service"
++  # Newer source trees enable this at first login; older pinned releases do
++  # not contain or request the unit. Keep both source layouts buildable.
++  if [[ -f default/systemd/user/omarchy-brightness-keyboard-auto.service ]]; then
++    install -Dm644 default/systemd/user/omarchy-brightness-keyboard-auto.service "$pkgdir/usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service"
++  fi
+   # Marks app.slice (and only app.slice) as a systemd-oomd kill candidate, so
+   # memory pressure costs one app scope instead of the compositor session.
+   # Thresholds live in etc/systemd/oomd.conf.d/10-omarchy.conf. Both this and
+diff --git a/pkgbuilds/omarchy/PKGBUILD b/pkgbuilds/omarchy/PKGBUILD
+index 2e20a38..7ec3267 100644
+--- a/pkgbuilds/omarchy/PKGBUILD
++++ b/pkgbuilds/omarchy/PKGBUILD
+@@ -58,6 +58,7 @@ depends=(
+
+   # System font (UI assumes it)
+   'ttf-jetbrains-mono-nerd-basic'
++  'snapper' # Root snapshots also apply to btrfs installations on Apple Silicon.
+ )
+
+ # Bootloader stack. Lives here rather than on omarchy-settings because
+@@ -71,11 +72,10 @@ depends_x86_64=(
+   'limine'
+   'limine-mkinitcpio-hook'
+   'limine-snapper-sync'
+-  'snapper'
+ )
+
+ # Apple Silicon boots through m1n1 + GRUB from the Asahi packages and keeps
+-# Arch Linux ARM's kernel and boot layout, so the Limine/Snapper stack does not
++# Arch Linux ARM's kernel and boot layout, so the Limine stack does not
+ # apply. Wi-Fi on the Broadcom parts only scans reliably through the iwd
+ # backend, which install/hardware/network.sh selects on Apple Silicon.
+ depends_aarch64=(
+diff --git a/pkgbuilds/omarchy-settings-dev/PKGBUILD b/pkgbuilds/omarchy-settings-dev/PKGBUILD
+--- a/pkgbuilds/omarchy-settings-dev/PKGBUILD
++++ b/pkgbuilds/omarchy-settings-dev/PKGBUILD
+@@ -205,3 +210,6 @@
+-  install -Dm644 default/systemd/system/plocate-updatedb.service.d/10-omarchy.conf "$pkgdir/usr/lib/systemd/system/plocate-updatedb.service.d/10-omarchy.conf"
++  # Older source trees configure locate through install/config/locate.sh.
++  if [[ -f default/systemd/system/plocate-updatedb.service.d/10-omarchy.conf ]]; then
++    install -Dm644 default/systemd/system/plocate-updatedb.service.d/10-omarchy.conf "$pkgdir/usr/lib/systemd/system/plocate-updatedb.service.d/10-omarchy.conf"
++  fi
+
+   # Same for applications/** — used by omarchy-refresh-applications,

@@ -37,6 +37,22 @@ case "${1:-}" in
       exit 1
     fi
 
+    # Factory reset creates this stable root-owned lock before its first
+    # operation. Keep a shared descriptor for the entire update, distinct
+    # from the recovery-layout lock used by migrations within this update.
+    maintenance_lock=/var/lib/omarchy/factory-reset.lock
+    if [[ -e $maintenance_lock || -L $maintenance_lock ]]; then
+      if [[ ! -f $maintenance_lock || -L $maintenance_lock || $(stat -c %u "$maintenance_lock") != 0 ]]; then
+        echo "Unsafe system maintenance lock; inspect $maintenance_lock."
+        exit 1
+      fi
+      exec {OMARCHY_MAINTENANCE_FD}<"$maintenance_lock"
+      if [[ -s $maintenance_lock ]] || ! flock -sn "$OMARCHY_MAINTENANCE_FD"; then
+        echo "Factory reset is active; finish it before updating."
+        exit 1
+      fi
+    fi
+
     export OMARCHY_UPDATE_LOCK_FD
     exec "$@"
     ;;

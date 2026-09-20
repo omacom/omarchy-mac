@@ -1,41 +1,36 @@
-# Packages from omarchy-base.packages not attempted by default on aarch64,
-# because building them here is expensive and buys nothing. Two reasons qualify:
-# there is no aarch64 build and the attempt compiles a dependency chain for
-# hours before failing anyway, or the package builds fine but something already
-# installed satisfies what depends on it, so the result is discarded. Most
-# unavailable packages fail their architecture check in seconds and cost
-# nothing; only the expensive ones are listed. Measured on a clean Apple
-# Silicon install.
+# Default ARM exclusions pending qualification. The filename is retained for
+# compatibility; membership does not establish that no ARM package exists.
+# Historical installation attempts encountered failed builds, missing targets,
+# or unsuitable dependency paths. Repository packages and providers may now be
+# available, but their installation and Apple Silicon runtime still need review.
 #
-# This is a default, not a verdict. The installer offers to build them anyway
-# when it has a terminal, and OMARCHY_TRY_UNAVAILABLE=1 forces the attempt, so
-# an entry that gains ARM support later costs a prompt rather than being wrong
-# forever. Drop it from this list once it builds.
+# The installer offers an explicit attempt when it has a terminal, and
+# OMARCHY_TRY_UNAVAILABLE=1 opts in without a prompt. Keep the default exclusion
+# until a suitable installation path and ARM behavior have been qualified.
 
-# obs-studio resolves to obs-studio-browser, whose chain builds ffmpeg-obs
-# (134 min), svt-av1-hdr10plus-git (26 min), vlc-luajit (18 min) and
-# libajantv2 before svt-av1-hdr10plus-git and libhdr10plus-rs-git fail their
-# aarch64 architecture check. Roughly 183 minutes for nothing.
+# A historical obs-studio attempt selected obs-studio-browser and spent about
+# three hours building dependencies before architecture checks failed. The
+# 4.0.3 RC repository audit found an ARM obs-studio package; that availability
+# does not by itself qualify capture or encoding on Apple Silicon.
 obs-studio
 
-# dotnet-runtime ships in Arch's x86_64 extra repo, but Arch Linux ARM has no
-# package under that name and neither does the AUR (only the -bin variants), so
-# yay fails it immediately. Listed so the install skips it cleanly rather than
-# emitting a misleading "skipped" warning for a package that cannot install here.
+# Earlier attempts could not resolve this default target. The 4.0.3 RC audit
+# found dotnet-runtime-bin providing dotnet-runtime. Provider availability does
+# not establish compatibility with every application's runtime requirements.
 dotnet-runtime
 
 
-# pinta is arch=('x86_64') in the AUR, so makepkg refuses it in seconds -- but
-# yay installs makedepends before makepkg gets that far, and pinta's are
-# autoconf-archive, intltool and dotnet-sdk. A clean install was left with
-# dotnet-sdk-2.1 and friends orphaned for a package that never had a chance of
-# building. Cheap in time, expensive in leftovers.
+# A historical AUR attempt installed build dependencies before pinta failed an
+# architecture check. The 4.0.3 RC audit found an ARM pinta package; its current
+# dependency path and application behavior remain part of qualification.
 pinta
 
-# obsidian in the AUR is a pkgbase, not a package: pkgname=(${pkgbase}-{bin,appimage}).
-# Asking for "obsidian" installs the dependencies -- fuse2, for the AppImage --
-# builds, and then installs nothing, because no package by that name exists. A
-# clean aarch64 install ends up with fuse2 orphaned and no Obsidian. The
-# appimage variant does build here, so this is a naming problem rather than a
-# missing port: obsidian-appimage would work if it were asked for by name.
+# A previous AUR attempt used a pkgbase rather than a binary package name and
+# installed dependencies without a usable application. This default still
+# needs a qualified source/package selection and Apple Silicon runtime check.
 obsidian
+
+# Arch Linux ARM explicitly removes the static QEMU build. Dynamic qemu-user
+# and qemu-user-binfmt are not replacements for static foreign-root execution.
+# Preserve any existing static installation while this default remains excluded.
+qemu-user-static-binfmt

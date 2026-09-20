@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# omarchy:summary=Remove mlx-omarchy along with its private venv and chat demo.
+# omarchy:requires-sudo=true
+
+set -euo pipefail
+
+# Same pinned installer as the install entry: it owns the uninstall path, so the
+# two stay in step. Bump both together.
+INSTALLER_REPO="joshuaswarren/mlx-omarchy"
+INSTALLER_REF="286ef7297b0db6576c70d9999c6f6b005ce1c8de"
+INSTALLER_SHA256="cdfa8a985d38984c68053c2765b50cc8875b7f894001c44d4c6732e47921ebf1"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+curl -fsSL "https://raw.githubusercontent.com/$INSTALLER_REPO/$INSTALLER_REF/install.sh" -o "$tmp/install.sh"
+
+echo "$INSTALLER_SHA256  $tmp/install.sh" | sha256sum -c --quiet - || {
+  echo "Checksum mismatch on the mlx-omarchy installer. Refusing to run it." >&2
+  exit 1
+}
+
+bash "$tmp/install.sh" --uninstall
+
+echo ""
+echo "mlx-omarchy has been removed."

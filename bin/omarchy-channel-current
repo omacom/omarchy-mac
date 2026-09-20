@@ -23,6 +23,9 @@ elif pacman -Q omarchy omarchy-settings >/dev/null 2>&1; then
   case "$channel" in
     stable) echo stable ;;
     rc) echo rc ;;
+    edge)
+      if [[ $(uname -m) == "aarch64" ]]; then echo edge; else echo unknown; fi
+      ;;
     *) echo unknown ;;
   esac
 else

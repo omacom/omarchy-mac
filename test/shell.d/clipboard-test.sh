@@ -438,9 +438,10 @@ pass "clipboard reaper pattern matches running watchers"
 
 watch_owner="$clipboard_lifecycle_dir/watch-owner.sh"
 watch_pid_file="$clipboard_lifecycle_dir/watch.pid"
+watch_log_file="$clipboard_lifecycle_dir/watch.log"
 cat >"$watch_owner" <<SH
 #!/bin/bash
-PATH="$TMPDIR/bin:\$PATH" setpriv --pdeathsig TERM wl-paste --type text --watch "$current_script" text &
+WL_PASTE_LOG="$watch_log_file" PATH="$TMPDIR/bin:\$PATH" setpriv --pdeathsig TERM wl-paste --type text --watch "$current_script" text &
 printf '%s\n' "\$!" >"$watch_pid_file"
 wait
 SH
@@ -458,6 +459,14 @@ done
 watch_pid=$(<"$watch_pid_file")
 [[ -n $watch_pid ]] && process_alive "$watch_pid" || fail "clipboard watcher starts under setpriv"
 PIDS_TO_KILL+=("$watch_pid")
+
+# The parent can publish the PID before setpriv installs the death signal.
+# Wait for wl-paste itself to start before terminating its owner.
+for _ in {1..40}; do
+  [[ -s $watch_log_file ]] && break
+  sleep 0.1
+done
+[[ -s $watch_log_file ]] && process_alive "$watch_pid" || fail "clipboard watcher is ready under setpriv"
 
 kill "$owner_pid" 2>/dev/null || true
 process_gone "$watch_pid" || fail "clipboard watcher dies with its owner via pdeathsig"
