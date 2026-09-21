@@ -10,7 +10,8 @@ declare -A VULKAN_DRIVERS=(
 
 PACKAGES=()
 
-if [[ $(uname -m) == "aarch64" ]] && [[ -f /proc/device-tree/compatible ]] && grep -qi "apple" /proc/device-tree/compatible 2>/dev/null; then
+compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
+if [[ $(uname -m) == "aarch64" && -f $compatible ]] && grep -Faiq 'apple,' "$compatible"; then
   PACKAGES+=(vulkan-asahi)
 fi
 
