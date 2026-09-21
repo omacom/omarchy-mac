@@ -81,7 +81,7 @@ luks_device() {
   local src part
   src=$(findmnt -no SOURCE / | sed 's/\[.*//')
   [[ -n $src ]] || return 1
-  part=$(lsblk -nspo NAME,FSTYPE "$src" 2>/dev/null | awk '$2=="crypto_LUKS"{print $1; exit}')
+  part=$(lsblk -nsrpo NAME,FSTYPE "$src" 2>/dev/null | awk '$2=="crypto_LUKS"{print $1; exit}')
   [[ -n $part ]] && { echo "$part"; return 0; }
   return 1
 }
