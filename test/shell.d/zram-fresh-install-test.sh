@@ -58,6 +58,8 @@ new_root fresh
 run_setup
 config="$OMARCHY_ZRAM_ROOT/etc/systemd/zram-generator.conf"
 cmp "$OMARCHY_PATH/default/systemd/zram-generator.conf.d/90-omarchy.conf" "$config" || fail 'fresh hardware setup installs the shipped default'
+grep -qx 'vm.swappiness=150' "$OMARCHY_ZRAM_ROOT/etc/sysctl.d/99-omarchy-zram.conf" ||
+  fail 'fresh ARM setup writes zram reclaim tunings'
 [[ $(stat -c %a "$config") == 644 ]] || fail 'fresh default is readable by the generator'
 : >"$TEST_ZRAM_CALLS"
 run_setup
@@ -71,7 +73,7 @@ for context in ordinary upgrade x86; do
     upgrade) OMARCHY_UPGRADE=1 run_setup ;;
     x86) TEST_ARCH=x86_64 run_setup ;;
   esac
-  [[ ! -e $OMARCHY_ZRAM_ROOT/etc/systemd/zram-generator.conf && ! -s $TEST_ZRAM_CALLS ]] || fail "$context setup must not preempt migration or change x86 policy"
+  [[ ! -e $OMARCHY_ZRAM_ROOT/etc/systemd/zram-generator.conf && ! -e $OMARCHY_ZRAM_ROOT/etc/sysctl.d/99-omarchy-zram.conf && ! -s $TEST_ZRAM_CALLS ]] || fail "$context setup must not preempt migration or change x86 policy"
 done
 pass 'non-fresh, upgrade, and x86 paths remain unchanged'
 

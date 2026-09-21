@@ -8,6 +8,7 @@ if [[ ${OMARCHY_FIRST_INSTALL:-0} == "1" && ${OMARCHY_UPGRADE:-0} != "1" && $(un
       echo "zram-generator is required before configuring compressed swap; retry system setup after installing it." >&2
       return 1
     fi
-    omarchy_zram_write_default
+    omarchy_zram_write_default || return 1
   fi
+  omarchy_zram_write_sysctl || return 1
 fi
