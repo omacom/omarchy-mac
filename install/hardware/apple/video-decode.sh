@@ -1,17 +1,16 @@
 #!/bin/bash
-# Hardware video decode on Apple Silicon needs two packages that no repository
-# outside omarchy-aarch64 carries.
+# Hardware video decode on Apple Silicon needs avd-fw from Asahi ALARM and
+# libva-v4l2_request-avd from omarchy-aarch64.
 #
 # The kernel already has the driver: CONFIG_VIDEO_APPLE_AVD=m, and it autoloads
 # and autoprobes on its own. What it does not have is firmware. Asahi wrote a
-# clean MIT-licensed replacement for the Apple Video Decoder rather than
-# extracting Apple's, but nobody packaged it, so every boot on a stock install
-# ends with the driver giving up:
+# clean MIT-licensed replacement for the Apple Video Decoder, packaged as
+# avd-fw in Asahi ALARM. Without it, the driver gives up during probing:
 #
 #   avd 269080000.avd: Direct firmware load for apple/avd-fw-v2-t0.bin failed with error -2
 #   avd 269080000.avd: probe with driver avd failed with error -2
 #
-# avd-fw supplies that blob and the decoder appears as /dev/video1.
+# avd-fw supplies that blob and the decoder appears as a /dev/video* device.
 #
 # Firmware alone is not enough to be useful. AVD is a *stateless* decoder,
 # which almost nothing on the desktop speaks -- ffmpeg's v4l2m2m decoders are
