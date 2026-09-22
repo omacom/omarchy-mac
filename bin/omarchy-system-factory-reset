@@ -43,6 +43,9 @@ if (( EUID != 0 )); then
 fi
 
 export PATH="$OMARCHY_PATH/bin:$PATH"
+source "$OMARCHY_PATH/install/helpers/factory-reset.sh"
+source "$OMARCHY_PATH/install/helpers/owner-rekey.sh"
+RESET_STATE="$TOP_MNT/.omarchy-factory-reset"
 
 log() {
   echo "$1" | tee -a "$LOG_FILE" >/dev/null
@@ -99,13 +102,41 @@ generate_passphrase() {
 }
 
 cleanup() {
+  local status=$? rollback_ok=1
   if mountpoint -q "$TOP_MNT" 2>/dev/null; then
-    if [[ -d $TOP_MNT/$NEXT_NAME && ${swap_done:-0} == 0 ]]; then
-      btrfs subvolume delete --recursive "$TOP_MNT/$NEXT_NAME" >/dev/null 2>&1 || true
+    if [[ ${reset_started:-0} == 1 && ${swap_done:-0} == 0 ]]; then
+      if ! reset_transaction_rollback "$TOP_MNT" "$RESET_STATE"; then
+        rollback_ok=0
+        echo "Reset rollback is incomplete. Preserve $RESET_STATE and do not reboot until its root/boot identities are reconciled." >&2
+      else
+        : >/var/lib/omarchy/factory-reset.lock
+        echo "Original root and baseline restored. Failed staging is retained at $RESET_STATE and @omarchy-reset-* for inspection." >&2
+      fi
+    fi
+    if [[ ${swap_done:-0} == 0 && ${reset_services_started:-0} == 1 && $rollback_ok == 1 ]]; then
+      if ! reset_limine_resume "$RESET_STATE"; then
+        rollback_ok=0
+        echo "Limine service restoration needs inspection: $RESET_STATE/limine-services" >&2
+      fi
+      if ! backend_resume_services; then
+        rollback_ok=0
+        echo "Reset service restoration needs inspection: $BACKEND_SERVICE_RECEIPT" >&2
+      fi
+    fi
+    if [[ ${reset_started:-0} == 0 && ${reset_journal_created:-0} == 1 ]]; then
+      # Maintenance starts before inventory and the prompt. Restore our service
+      # changes first; a failed restoration must retain its identities/receipt.
+      if (( rollback_ok )); then
+        reset_cancel_journal "$RESET_STATE" "$RESET_TXN_FS $RESET_TXN_STAMP $RESET_TXN_ROOT $RESET_TXN_FACTORY - - $RESET_TXN_DEFAULT $RESET_TXN_DEFAULT_PATH" || echo "Pre-confirm reset journal needs inspection: $RESET_STATE" >&2
+      else
+        status=1
+        echo "Pre-confirm maintenance restoration is incomplete; preserve $RESET_STATE for inspection." >&2
+      fi
     fi
     umount -R "$TOP_MNT" 2>/dev/null || true
   fi
   rmdir "$TOP_MNT" 2>/dev/null || true
+  return "$status"
 }
 trap cleanup EXIT
 
@@ -122,6 +153,8 @@ confirm_reset() {
   gum style --foreground 8 "Note: on disks without encryption this is deletion, not secure erasure."
   echo
 
+  reset_inventory_display "$RESET_STATE/inventory"
+  echo
   local typed
   typed=$(gum input --placeholder "Type 'reset' to continue" --prompt "> ") || exit 1
   [[ $typed == "reset" ]] || fail "Reset not confirmed."
@@ -147,7 +180,14 @@ stage_luks_rekey() {
   done
 
   passphrase=$(generate_passphrase)
-  cryptsetup luksAddKey --key-file <(printf '%s' "$current") "$device" <(printf '%s' "$passphrase")
+  local old_slots new_slot luks_uuid
+  old_slots=$(owner_rekey_slots "$device") || fail "Could not enumerate original LUKS slots"
+  for (( new_slot=0; new_slot<32; new_slot++ )); do
+    grep -qx "$new_slot" <<<"$old_slots" || break
+  done
+  (( new_slot < 32 )) || fail "No free LUKS slot for provisioning"
+  luks_uuid=$(cryptsetup luksUUID "$device") || fail "Could not identify LUKS container"
+  [[ $luks_uuid =~ ^[a-fA-F0-9-]{36}$ ]] || fail "Malformed LUKS identity"
 
   install -d -m 755 "$next$PROVISIONING_DIR"
   printf '%s' "$passphrase" >"$next$PROVISIONING_DIR/luks-key"
@@ -156,10 +196,20 @@ stage_luks_rekey() {
   install -d -m 755 "$next/etc/omarchy"
   printf '%s' "$passphrase" >"$next/etc/omarchy/provisioning.key"
   chmod 600 "$next/etc/omarchy/provisioning.key"
+  reset_state_write "$RESET_STATE/staged-luks" "$luks_uuid $new_slot ${old_slots//$'\n'/,}" || fail "Could not record staged LUKS slot intent"
+  cryptsetup luksAddKey --new-key-slot "$new_slot" --key-file <(printf '%s' "$current") "$device" "$next$PROVISIONING_DIR/luks-key"
+  cryptsetup open --test-passphrase --key-slot "$new_slot" --key-file "$next$PROVISIONING_DIR/luks-key" "$device" || fail "Could not verify provisioning slot"
 
-  install -d "$next/etc/limine-entry-tool.d" "$next/etc/mkinitcpio.conf.d"
-  echo 'KERNEL_CMDLINE[default]+=" cryptkey=rootfs:/etc/omarchy/provisioning.key"' \
-    >"$next/etc/limine-entry-tool.d/99-omarchy-provisioning-unlock.conf"
+  install -d "$next/etc/mkinitcpio.conf.d"
+  if [[ $RESET_BOOT_BACKEND == grub ]]; then
+    install -d "$next/etc/default/grub.d"
+    echo 'GRUB_CMDLINE_LINUX="${GRUB_CMDLINE_LINUX} cryptkey=rootfs:/etc/omarchy/provisioning.key"' \
+      >"$next/etc/default/grub.d/99-omarchy-provisioning-unlock.cfg"
+  else
+    install -d "$next/etc/limine-entry-tool.d"
+    echo 'KERNEL_CMDLINE[default]+=" cryptkey=rootfs:/etc/omarchy/provisioning.key"' \
+      >"$next/etc/limine-entry-tool.d/99-omarchy-provisioning-unlock.conf"
+  fi
   echo 'FILES+=(/etc/omarchy/provisioning.key)' \
     >"$next/etc/mkinitcpio.conf.d/99-omarchy-provisioning-key.conf"
 }
@@ -297,65 +347,62 @@ rebuild_next_boot() {
   umount "$next$esp_mount"
 }
 
-# Remove the seller's account material and machine identity from the retained
-# @factory baseline so it can neither be mounted for recovery nor restore the
-# seller's account on a future reset. Idempotent (a scrubbed baseline has no
-# uid>=1000 accounts left to remove).
-sanitize_factory_baseline() {
-  local factory="$1" user
-  btrfs property set -ts "$factory" ro false
-
-  for user in $(awk -F: '$3 >= 1000 && $3 < 60000 { print $1 }' "$factory/etc/passwd"); do
-    userdel --root "$factory" "$user" 2>>"$LOG_FILE" || true
-    rm -rf "${factory:?}/home/$user"
-  done
-  passwd --root "$factory" --lock root >>"$LOG_FILE" 2>&1 || true
-  rm -f "$factory"/etc/ssh/ssh_host_*
-  rm -f "$factory"/etc/NetworkManager/system-connections/*
-  rm -rf "$factory"/var/lib/NetworkManager/* "$factory/var/lib/tailscale" "$factory/var/lib/iwd"
-  rm -f "$factory/var/lib/sddm/state.conf" "$factory/etc/sddm.conf.d/autologin.conf"
-  : >"$factory/etc/machine-id"
-
-  btrfs property set -ts "$factory" ro true
+prepare_reset_inventory() {
+  # The recovery lock is already held. Pause managed writers before capturing
+  # identities, and keep them paused across the prompt and root exchange.
+  source "$OMARCHY_PATH/bin/omarchy-mac-snapper-backend"
+  # shellcheck disable=SC2034 # consumed by the sourced recovery maintenance helpers
+  BACKEND_MASKED=() BACKEND_TIMERS=() BACKEND_DAEMON=0
+  BACKEND_SERVICE_RECEIPT="$RESET_STATE/services"
+  (umask 077; : >"$BACKEND_SERVICE_RECEIPT")
+  reset_services_started=1
+  backend_quiesce || fail "Could not obtain exclusive Snapper maintenance"
+  reset_limine_quiesce "$RESET_STATE" || fail "Could not obtain exclusive Limine maintenance"
+  reset_inventory_build "$TOP_MNT" "$RESET_TXN_STAMP" "$RESET_STATE/inventory" || fail "Could not construct complete reset inventory"
+  reset_inventory_verify_sources "$TOP_MNT" "$RESET_STATE/inventory" || fail "Reset inventory is not stable"
 }
 
 stage_full_reset() {
-  local top="$TOP_MNT" next="$TOP_MNT/$NEXT_NAME"
-
+  local top="$TOP_MNT" next="$TOP_MNT/$NEXT_NAME" clean="$TOP_MNT/@omarchy-reset-factory" user
+  reset_inventory_verify_sources "$top" "$RESET_STATE/inventory" || fail "Confirmed reset inventory changed"
+  [[ ! -e $next && ! -L $next && ! -e $clean && ! -L $clean ]] || fail "A prior reset staging object needs inspection"
+  reset_started=1
+  reset_state_write "$RESET_STATE/backend" "$RESET_BOOT_BACKEND" || fail "Could not record boot backend"
+  reset_state_write "$RESET_STATE/phase" preparing || fail "Could not record reset preparation"
   log "Cloning the factory snapshot"
-  [[ -d $next ]] && btrfs subvolume delete --recursive "$next" >/dev/null
   btrfs subvolume snapshot "$top/@factory" "$next" >>"$LOG_FILE"
+  RESET_TXN_NEXT=$(reset_uuid "$next") || fail "Could not identify staged root"
+  reset_transaction_record "$RESET_STATE" || fail "Could not record staged root identity"
 
-  local unit_src="$next/usr/share/omarchy/install/provisioning"
-  [[ -f $unit_src/omarchy-provision-owner.service && -x $next/usr/bin/omarchy-provision-owner ]] ||
-    fail "the factory snapshot predates provisioning support; cannot reset from it"
-
-  log "Scrubbing machine identity from the factory system"
-  systemd-id128 new >"$next/etc/machine-id"
-  rm -f "$next"/etc/ssh/ssh_host_*
-  rm -f "$next"/etc/NetworkManager/system-connections/*
-  rm -rf "$next"/var/lib/NetworkManager/* "$next/var/lib/tailscale" "$next/var/lib/iwd"
-  rm -f "$next/var/lib/sddm/state.conf" "$next/etc/sddm.conf.d/autologin.conf"
-
-  # A factory snapshot from a normal (normal) install contains the original
-  # user account; first-boot setup must start from none. A leftover account
-  # would keep its password hash and group memberships (including wheel), so
-  # failure here has to abort the reset, not be shrugged off.
-  local user
+  # Use exact current worker/owner/helper bytes even when the factory baseline
+  # predates the fix. The baseline's application payload stays at its version.
+  install -d -m 700 "$next$PROVISIONING_DIR"
+  # Reusable installer inputs are distinct from previous-owner state. Never
+  # deliver authorized_keys, setup-user or a prior completed re-key receipt.
+  find "$next$PROVISIONING_DIR" -mindepth 1 -maxdepth 1 ! -name packages ! -name groups -exec rm -rf -- {} +
+  reset_closure_install "$OMARCHY_PATH" "$next" "$next$PROVISIONING_DIR/reset-closure.sha256" || fail "Current reset closure could not be delivered"
+  log "Scrubbing identity from the staged factory system"
   for user in $(awk -F: '$3 >= 1000 && $3 < 60000 { print $1 }' "$next/etc/passwd"); do
-    log "Removing user $user from the factory system"
-    userdel --root "$next" "$user" 2>>"$LOG_FILE" ||
-      fail "could not remove user $user from the factory system (see $LOG_FILE)"
+    userdel --root "$next" "$user" 2>>"$LOG_FILE" || fail "Could not remove factory user $user"
   done
-  passwd --root "$next" --lock root >>"$LOG_FILE" 2>&1 || true
+  # Locking prefixes the former hash with ! and retains it. Replace the root
+  # credential completely and remove shadow/passwd backups made by userdel.
+  usermod --root "$next" --password '!' root || fail "Could not clear former root credential"
+  rm -f "$next/etc/passwd-" "$next/etc/shadow-" "$next/etc/group-" "$next/etc/gshadow-"
+  rm -f "$next"/etc/ssh/ssh_host_* "$next"/etc/NetworkManager/system-connections/*
+  rm -rf "$next"/var/lib/NetworkManager/* "$next/var/lib/tailscale" "$next/var/lib/iwd" "$next/var/lib/fprint"
+  rm -f "$next/var/lib/sddm/state.conf" "$next/etc/sddm.conf.d/autologin.conf"
+  # Root-local /home can hold old data too; external @home is separately in
+  # the displayed UUID inventory. Refuse a mounted/custom staging home.
+  [[ ! -L $next/home ]] || fail "Factory /home is an unsupported symlink"
+  find "$next/home" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  [[ -d $next/root && ! -L $next/root ]] || fail "Factory root home is unsupported"
+  find "$next/root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  : >"$next/etc/machine-id"
+  rm -f "$next$PROVISIONING_DIR/pending" "$next$PROVISIONING_DIR/wipe-pending" "$next$PROVISIONING_DIR/luks-key" \
+    "$next/etc/omarchy/provisioning.key" "$next/etc/limine-entry-tool.d/99-omarchy-provisioning-unlock.conf" \
+    "$next/etc/default/grub.d/99-omarchy-provisioning-unlock.cfg" "$next/etc/mkinitcpio.conf.d/99-omarchy-provisioning-key.conf"
 
-  # @factory itself survives the wipe as the baseline for future resets. If it
-  # came from a normal install it still holds the seller's account and
-  # /etc/shadow, which the new wheel user could mount and read — and a second
-  # reset would restore that account. Scrub it once, in place.
-  sanitize_factory_baseline "$top/@factory"
-
-  # Keep the Node tarball reachable for offline first-boot finalization.
   if ! compgen -G "$next$PROVISIONING_DIR/packages/node-v*.tar.gz" >/dev/null; then
     if compgen -G "$PROVISIONING_DIR/packages/node-v*.tar.gz" >/dev/null; then
       install -d -m 755 "$next$PROVISIONING_DIR/packages"
@@ -363,23 +410,56 @@ stage_full_reset() {
     fi
   fi
 
-  install -d -m 755 "$next$PROVISIONING_DIR"
+  [[ ! -L $next/var/lib/omarchy/factory-reset.lock ]] || fail "Unsafe factory maintenance lock"
+  : >"$next/var/lib/omarchy/factory-reset.lock"
+  chmod 644 "$next/var/lib/omarchy/factory-reset.lock"
+
+  # The sanitized baseline remains usable if explicitly restored later.
+  # It contains no auto-unlock key or wipe inventory, and asks for an owner.
+  touch "$next$PROVISIONING_DIR/pending"
+  install -Dm644 "$next/usr/share/omarchy/install/provisioning/omarchy-provision-owner.service" "$next/etc/systemd/system/omarchy-provision-owner.service"
+  install -d "$next/etc/systemd/system/multi-user.target.wants"
+  ln -sf /etc/systemd/system/omarchy-provision-owner.service "$next/etc/systemd/system/multi-user.target.wants/omarchy-provision-owner.service"
+
+  # Capture a sanitized reusable factory BEFORE introducing an auto-unlock
+  # secret. The original factory remains untouched until the final exchange.
+  btrfs subvolume snapshot -r "$next" "$clean" >>"$LOG_FILE"
+  RESET_TXN_CLEAN=$(reset_uuid "$clean") || fail "Could not identify sanitized factory"
+  reset_transaction_record "$RESET_STATE" || fail "Could not record sanitized factory identity"
+  systemd-id128 new >"$next/etc/machine-id"
+  install -d -m 700 "$next$PROVISIONING_DIR"
+  cp "$RESET_STATE/inventory" "$next$PROVISIONING_DIR/reset-inventory"
+  printf '%s %s %s\n' "$RESET_TXN_FS" "$RESET_TXN_NEXT" "$RESET_TXN_CLEAN" >"$next$PROVISIONING_DIR/reset-identities"
+  chmod 600 "$next$PROVISIONING_DIR/reset-inventory" "$next$PROVISIONING_DIR/reset-identities"
   touch "$next$PROVISIONING_DIR/pending" "$next$PROVISIONING_DIR/wipe-pending"
+  printf 'pending %s %s\n' "$RESET_TXN_FS" "$RESET_TXN_NEXT" >"$next/var/lib/omarchy/factory-reset.lock"
+  install_provisioning_units "$next" "$next/usr/share/omarchy/install/provisioning"
+  if encrypted_install; then stage_luks_rekey "$next"; fi
 
-  install_provisioning_units "$next" "$unit_src"
-
-  if encrypted_install; then
-    stage_luks_rekey "$next"
+  if [[ $RESET_BOOT_BACKEND == grub ]]; then
+    reset_boot_prepare "$next" "$RESET_STATE/boot" provision || fail "Factory GRUB generation or verification failed"
+    reset_boot_backup "$RESET_STATE/boot" provision || fail "Could not preserve scoped original boot files"
+  else
+    # Preserve the existing Limine/UKI generation path. Its validation remains
+    # separate from the new GRUB staged publication/rollback qualification.
+    rebuild_next_boot "$next"
   fi
-
-  rebuild_next_boot "$next"
-
-  log "Activating the factory system"
-  local old="@omarchy-old-$(date +%s)"
-  mv "$top/@" "$top/$old"
-  mv "$next" "$top/@"
+  reset_inventory_verify_sources "$top" "$RESET_STATE/inventory" || fail "Confirmed inventory changed during preparation"
+  reset_state_write "$RESET_STATE/phase" ready || fail "Could not record reset readiness"
+  if [[ $RESET_BOOT_BACKEND == grub ]]; then
+    reset_boot_publish "$RESET_STATE/boot" provision || fail "Could not publish verified factory boot files"
+  fi
+  reset_state_write "$RESET_STATE/phase" exchanging || fail "Could not record root exchange"
+  mv -T "$top/@factory" "$top/@omarchy-old-factory-$RESET_TXN_STAMP"
+  mv -T "$clean" "$top/@factory"
+  mv -T "$top/@" "$top/@omarchy-old-$RESET_TXN_STAMP"
+  mv -T "$next" "$top/@"
+  [[ $(reset_uuid "$top/@") == "$RESET_TXN_NEXT" && $(reset_uuid "$top/@factory") == "$RESET_TXN_CLEAN" ]] || fail "Root exchange identity check failed"
+  reset_default_set "$top" "$RESET_TXN_NEXT" "$top/@" || fail "Could not hand the Btrfs default to the factory root"
+  printf 'pending %s %s\n' "$RESET_TXN_FS" "$RESET_TXN_NEXT" >/var/lib/omarchy/factory-reset.lock
+  reset_state_write "$RESET_STATE/phase" committed || fail "Could not record completed exchange"
+  sync -f "$top"
   swap_done=1
-  sync
 }
 
 # A reset is a clone of @factory, so a machine without one has nothing to
@@ -406,7 +486,22 @@ main() {
 
   touch "$LOG_FILE"
   chmod 600 "$LOG_FILE"
-  swap_done=0
+  swap_done=0 reset_started=0 reset_journal_created=0 reset_services_started=0
+  install -d -m 755 /var/lib/omarchy
+  [[ ! -L /var/lib/omarchy/factory-reset.lock ]] || fail "Unsafe reset lock"
+  exec 8<>/var/lib/omarchy/factory-reset.lock
+  chmod 644 /var/lib/omarchy/factory-reset.lock
+  flock -n 8 || fail "An update or factory reset holds system maintenance"
+  [[ ! -s /var/lib/omarchy/factory-reset.lock ]] || fail "A staged reset is pending; reboot to finish it before another reset"
+  # Current updates hold the shared maintenance lock. This process check
+  # also rejects an older/already-running updater from before its creation.
+  local updater_status=0
+  pgrep -f '(^|/|[[:space:]])omarchy-(update([[:space:]/-]|$)|channel-set([[:space:]]|$)|migrate([[:space:]]|$))' >/dev/null || updater_status=$?
+  (( updater_status == 1 )) || fail "Finish all Omarchy updates, channel changes and migrations before factory reset"
+  [[ ! -e /var/lib/pacman/db.lck && ! -L /var/lib/pacman/db.lck ]] || fail "Finish the package transaction before factory reset"
+  # Share the recovery exclusion lock while inventory/root identities move.
+  exec 9>/run/omarchy-snapper-layout.lock
+  flock -n 9 || fail "Another snapshot recovery operation is active"
 
   local device
   device=$(root_device)
@@ -416,14 +511,25 @@ main() {
   mountpoint -q "$TOP_MNT" || mount -o subvolid=5 "$device" "$TOP_MNT"
 
   require_factory_snapshot
-
+  [[ ! -e $TOP_MNT/.omarchy-snapper-restore && ! -L $TOP_MNT/.omarchy-snapper-restore ]] || fail "Finish pending snapshot recovery before reset"
+  [[ ! -e $RESET_STATE && ! -L $RESET_STATE ]] || fail "A prior reset journal exists at $RESET_STATE; inspect it before starting another reset"
+  for device in "$TOP_MNT/@omarchy-reset-next" "$TOP_MNT/@omarchy-reset-factory" "$TOP_MNT/@omarchy-reset-home" "$TOP_MNT/@omarchy-reset-log"; do
+    [[ ! -e $device && ! -L $device ]] || fail "Prior reset staging remains: $device"
+  done
+  reset_closure_preflight "$OMARCHY_PATH" "$TOP_MNT/@factory" || fail "Factory root cannot run the current reset closure"
+  reset_boot_probe "$TOP_MNT/@factory" || fail "Unsupported factory boot inputs or topology"
+  install -d -m 700 "$RESET_STATE"
+  reset_journal_created=1
+  RESET_TXN_STAMP=$(date +%s)
+  RESET_TXN_FS=$(findmnt -rn -T "$TOP_MNT" -o UUID)
+  RESET_TXN_ROOT=$(reset_uuid "$TOP_MNT/@") || fail "Could not identify current root"
+  RESET_TXN_FACTORY=$(reset_uuid "$TOP_MNT/@factory") || fail "Could not identify factory baseline"
+  IFS=$'\t' read -r RESET_TXN_DEFAULT RESET_TXN_DEFAULT_PATH < <(reset_default_identity "$TOP_MNT") || fail "Could not identify the Btrfs default subvolume"
+  RESET_TXN_NEXT=- RESET_TXN_CLEAN=-
+  reset_transaction_record "$RESET_STATE" || fail "Could not record reset identities"
+  prepare_reset_inventory
+  reset_default_in_inventory "$RESET_STATE/inventory" "$RESET_TXN_DEFAULT" "$RESET_TXN_DEFAULT_PATH" || fail "The Btrfs default is outside the confirmed reset inventory"
   confirm_reset
-
-  # The running system's limine-snapper-sync must not rewrite the ESP's
-  # limine.conf behind the staged rebuild (subvolume changes below can
-  # trigger it). The runtime mask evaporates on the reboot that follows.
-  systemctl mask --runtime --now limine-snapper-sync.service >/dev/null 2>&1 || true
-  systemctl mask --runtime --now limine-snapper-sync.path >/dev/null 2>&1 || true
 
   stage_full_reset
 

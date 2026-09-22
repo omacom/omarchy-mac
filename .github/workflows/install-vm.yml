@@ -37,12 +37,15 @@ jobs:
           # The default pull_request checkout tests GitHub's merge ref.
           persist-credentials: false
 
+      - name: Read package recipe pin
+        id: recipes
+        run: echo "revision=$(cat build-inputs/omarchy-pkgs-revision)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout omarchy-pkgs
         uses: actions/checkout@v4
         with:
           repository: omacom/omarchy-pkgs
-          # Companion first-run dependencies and units (omacom/omarchy-pkgs#341).
-          ref: 6d27290193109c07b0134360d382e64790ae5dda
+          ref: ${{ steps.recipes.outputs.revision }}
           path: omarchy-pkgs
           persist-credentials: false
 

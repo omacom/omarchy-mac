@@ -10,18 +10,32 @@ migration=$(/usr/bin/grep -rl 'Give the machine a UTF-8 locale' "$ROOT/migration
 [[ -f $leaf ]] || fail "the locale step ships"
 [[ -n $migration ]] || fail "existing installs get the locale repair"
 
-# Asahi Alarm ships LANG=C, so the installer has to set the locale itself --
-# there is no ISO step here to do it.
-/usr/bin/grep -q '^  ensure_utf8_locale$' "$ROOT/install.sh" ||
-  fail "the installer sets a UTF-8 locale"
-locale_call=$(/usr/bin/grep -n '^  ensure_utf8_locale$' "$ROOT/install.sh" | cut -d: -f1)
-packages_call=$(/usr/bin/grep -n '^  install_default_package_set$' "$ROOT/install.sh" | cut -d: -f1)
-(( locale_call < packages_call )) ||
-  fail "the locale is set before the install starts printing package output"
-pass "the installer sets a UTF-8 locale before the package pass"
-
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
+
+# Execute both real installer branches with the same inert driver used by the
+# channel tests. Read-only lane preflight can precede locale setup; package and
+# system mutation must follow it, and a locale failure must stop those steps.
+work="$test_tmp/installer"
+mkdir "$work"
+source "$ROOT/test/shell.d/helpers/install-orchestration.sh"
+for path in source channel; do
+  options=()
+  [[ $path != "channel" ]] || options=(--channel rc)
+  CHANNEL="" run_case "${options[@]}" || fail "$path installer orchestration"
+  awk '
+    $0 == "locale" { locale++; next }
+    /^(repositories|gum|aur|recipes|build|local-install|apply|environment|protect|trust|defaults|seed|setup|snapshot)$/ && !locale { exit 1 }
+    END { if (locale != 1) exit 1 }
+  ' "$CALLS" || fail "$path installer sets locale before package/system changes" "$(cat "$CALLS")"
+  if CHANNEL="" FAIL_AT=locale run_case "${options[@]}"; then
+    fail "$path installer must stop on locale failure"
+  fi
+  if grep -qE '^(repositories|gum|aur|recipes|build|local-install|apply|environment|protect|trust|defaults|seed|setup|snapshot)$' "$CALLS"; then
+    fail "$path installer mutated packages/system after locale failure" "$(cat "$CALLS")"
+  fi
+  pass "$path installer sets locale before package/system changes and stops on locale failure"
+done
 
 stub_bin="$test_tmp/bin"
 calls="$test_tmp/calls.log"

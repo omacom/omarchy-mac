@@ -17,18 +17,9 @@ fi
 # Keep /usr/lib package-owned so a corrected settings package can install its
 # vendor drop-in without a file conflict; that drop-in takes precedence later.
 zram_root="${OMARCHY_ZRAM_ROOT:-}"
-zram_configured=false
-for directory in /etc /run /usr/local/lib /usr/lib; do
-  for config in "$zram_root$directory/systemd/zram-generator.conf" \
-    "$zram_root$directory/systemd/zram-generator.conf.d/"*.conf; do
-    if [[ -e $config || -L $config ]]; then
-      zram_configured=true
-      break 2
-    fi
-  done
-done
+source "$OMARCHY_PATH/install/helpers/zram.sh"
 
-if [[ $zram_configured == "false" ]]; then
+if ! omarchy_zram_has_config; then
   sudo install -D -m 0644 "$OMARCHY_PATH/default/systemd/zram-generator.conf.d/90-omarchy.conf" \
     "$zram_root/etc/systemd/zram-generator.conf"
 fi

@@ -38,13 +38,24 @@ if [[ ${1:-} == "-y" ]] || omarchy-update-confirm; then
 
   omarchy-update-stay-awake start
 
-  omarchy-update-dev
-  omarchy-update-keyring
+  if [[ -z ${OMARCHY_UPDATE_CHANNEL:-} ]]; then
+    omarchy-update-dev
+    omarchy-update-keyring
+  fi
 
   # Migrations ship with the packages installed here and are written against
   # them, so everything below waits on this finishing. An upgrade that stopped
   # takes the update with it rather than migrating against what is still on disk.
   omarchy-update-system-pkgs
+  if [[ -n ${OMARCHY_UPDATE_CHANNEL:-} ]]; then
+    # The channel transaction installed the package-backed migration set.
+    # Do not run migrations from the checkout we may be leaving behind.
+    omarchy-dev-unlink --no-reboot
+    [[ $OMARCHY_PATH == "/usr/share/omarchy" ]] || omarchy-state set reboot-required
+    export OMARCHY_PATH=/usr/share/omarchy
+    export PATH="$OMARCHY_PATH/bin:$PATH"
+    unset OMARCHY_UPDATE_CHANNEL
+  fi
   omarchy-migrate
   omarchy-hook post-update
   omarchy-update-aur-pkgs

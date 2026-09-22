@@ -12,6 +12,7 @@ for dependency in absent snapper 'snapper>=0.12'; do
   case_dir="$work_dir/${dependency//[>=]/_}"
   mkdir -p "$case_dir/source/omarchy" "$case_dir/build" "$case_dir/output"
   cat >"$case_dir/source/omarchy/PKGBUILD" <<'PKGBUILD'
+pkgver=0.0.0
 pkgrel=1
 depends=(
   'gum'
@@ -42,7 +43,7 @@ PKGBUILD
 
   expected_dependency=$dependency
   [[ $dependency != "absent" ]] || expected_dependency=snapper
-  expected=$(printf '%s\n' gum "$expected_dependency" | sort)
+  expected=$(printf '%s\n' gum 'omarchy-mac-keyring>=20260914-2' "$expected_dependency" | sort)
   actual=$(sort "$case_dir/output/omarchy.pkg.tar.zst")
   [[ $actual == "$expected" ]] ||
     fail "Mac build requires Snapper exactly once and preserves other dependencies ($dependency)" "$actual"

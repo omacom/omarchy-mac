@@ -16,3 +16,4 @@ run_logged "$OMARCHY_INSTALL/user/hardware/apple/mic.sh"
 
 run_logged "$OMARCHY_INSTALL/user/default-keyring.sh"
 run_logged "$OMARCHY_INSTALL/user/mise.sh"
+run_logged "$OMARCHY_INSTALL/user/hermes.sh"

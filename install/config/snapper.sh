@@ -31,6 +31,16 @@ configure_snapper_root() {
       echo "Error: Snapper root config does not describe the btrfs root; preserving existing state." >&2
       return 1
     fi
+    # Restore of a nested Btrfs snapshot can leave only an empty placeholder.
+    # Repair only the supported Mac @ layout; other working Btrfs layouts and
+    # custom mounts retain their existing setup behavior.
+    if [[ $(uname -m) == aarch64 && $(findmnt -no FSROOT /) == /@ ]] &&
+      [[ ! -L $snapshots_path ]] && ! btrfs subvolume show "$snapshots_path" >/dev/null 2>&1; then
+      local backend_helper
+      # This leaf also supports the documented standalone sudo bash invocation.
+      backend_helper="${OMARCHY_PATH:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}/bin/omarchy-mac-snapper-backend"
+      bash "$backend_helper" repair || return $?
+    fi
     # A config file alone is not a working backend. Never recreate a partial
     # backend: it may contain snapshots or administrator-managed mounts.
     if [[ -L $snapshots_path ]] || ! btrfs subvolume show "$snapshots_path" >/dev/null; then

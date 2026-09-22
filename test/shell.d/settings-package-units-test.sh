@@ -11,6 +11,10 @@ pkgs_root="${OMARCHY_PKGS_PATH:-$ROOT/../omarchy-pkgs}"
 
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
+# Exercise the same canonical recipe overlay used by the native builder.
+source "$ROOT/build-inputs/prepare-recipes.sh"
+prepare_omarchy_recipes "$pkgs_root" "$test_tmp/recipes"
+pkgs_root="$test_tmp/recipes/pkgbuilds"
 mkdir -p "$test_tmp/source/omarchy"
 
 # Use tracked checkout contents, not an installed desktop or the developer's

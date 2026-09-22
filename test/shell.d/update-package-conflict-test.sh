@@ -31,11 +31,17 @@ exec "$@"
 STUB
 
 # Fails the first -Syu with the report under test, then succeeds. Every call
-# records its arguments and which of its streams reached a terminal: pacman puts
+# records upgrade arguments and which streams reached a terminal: pacman puts
 # its questions on stderr once it is not running --noconfirm, so a retry meant
 # for a person has to keep that stream.
 cat >"$stub_bin/pacman" <<'STUB'
 #!/bin/bash
+# Optional-app source selection asks about installed state before upgrading.
+# This fixture has neither optional app; queries cannot consume a transaction.
+if [[ ${1:-} == "--config" && ${3:-} == "-Q" ]]; then
+  case "${4:-}" in asdcontrol | tobi-try) exit 1 ;; esac
+fi
+[[ " $* " == *" -Syu "* ]] || { echo "unexpected pacman call: $*" >&2; exit 2; }
 attempt=$(($(cat "$PACMAN_ATTEMPTS") + 1))
 echo "$attempt" >"$PACMAN_ATTEMPTS"
 {

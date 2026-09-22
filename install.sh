@@ -11,7 +11,11 @@ set -euo pipefail
 readonly checkout="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly package_output="$checkout/build-output"
 readonly asahi_alarm_key="12CE6799A94A3F1B5DDFFE88F576553597FB8FEB"
+readonly omarchy_mac_key="FBD6874D423C418DDB6D143EECE19CDDE306DBD2"
 source "$checkout/install/helpers/arm-package-sources.sh"
+source "$checkout/install/helpers/arm-channel.sh"
+install_channel="${OMARCHY_MIRROR:-}"
+channel_stage=""
 
 # gum is how the rest of Omarchy talks to people, but it arrives with the
 # omarchy package well into this script, so every helper falls back to plain
@@ -86,14 +90,20 @@ ensure_package_sources() {
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-build"
   local pkgs_checkout="$cache_dir/omarchy-pkgs"
 
-  if [[ -d $pkgs_checkout/.git ]]; then
-    log "Updating the PKGBUILD checkout"
-    git -C "$pkgs_checkout" pull --ff-only || warn "Could not update $pkgs_checkout; using it as is."
-  else
-    log "Cloning the PKGBUILD checkout"
+  local revision
+  revision=$(<"$checkout/build-inputs/omarchy-pkgs-revision")
+  [[ $revision =~ ^[0-9a-f]{40}$ ]] || fail "Invalid package recipe revision"
+  if [[ ! -d $pkgs_checkout/.git ]]; then
+    log "Cloning the pinned PKGBUILD checkout"
     mkdir -p "$cache_dir"
-    git clone --depth 1 https://github.com/omacom/omarchy-pkgs.git "$pkgs_checkout"
+    git clone https://github.com/omacom/omarchy-pkgs.git "$pkgs_checkout"
   fi
+  [[ -z $(git -C "$pkgs_checkout" status --porcelain --untracked-files=all) ]] ||
+    fail "Cached recipes have local changes: $pkgs_checkout"
+  if ! git -C "$pkgs_checkout" cat-file -e "$revision^{commit}" 2>/dev/null; then
+    git -C "$pkgs_checkout" fetch origin "$revision" || fail "Could not fetch pinned package recipes"
+  fi
+  git -C "$pkgs_checkout" checkout --detach "$revision" || fail "Could not select pinned package recipes"
 
   export OMARCHY_PKGS_PATH="$pkgs_checkout"
 }
@@ -117,6 +127,10 @@ install_omarchy_packages() {
 
   # env-bootstrap is the single source of truth for OMARCHY_PATH and PATH, and
   # this shell started before the package existed.
+  load_installed_environment
+}
+
+load_installed_environment() {
   source /usr/share/omarchy/default/bash/env-bootstrap
 }
 
@@ -139,6 +153,19 @@ ensure_asahi_alarm_keyring() {
   sudo pacman -Sy --needed --noconfirm asahi-alarm-keyring
 }
 
+ensure_omarchy_mac_keyring() {
+  local keyfile="$checkout/default/pacman/keyrings/omarchy-mac.gpg"
+  [[ -f $keyfile && ! -L $keyfile ]] || fail "Pinned Omarchy Mac signing key is missing or unsafe."
+
+  if ! sudo pacman-key --list-keys "$omarchy_mac_key" >/dev/null 2>&1; then
+    log "Importing the pinned Omarchy Mac package signing key"
+    sudo pacman-key --add "$keyfile"
+  fi
+  sudo pacman-key --finger "$omarchy_mac_key" | tr -d '[:space:]' | grep -qF "$omarchy_mac_key" ||
+    fail "The imported Omarchy Mac signing key has the wrong fingerprint."
+  sudo pacman-key --lsign-key "$omarchy_mac_key" >/dev/null
+}
+
 # Compared in bash rather than with grep against a process substitution, which
 # ugrep answers differently from GNU grep.
 # The shipped pacman.conf only lands during post-install, after the package set
@@ -148,14 +175,15 @@ ensure_arm_package_repo() {
   if ! grep -q '^\[omarchy-aarch64\]' /etc/pacman.conf; then
     local block
     block=$(sed -n '/^\[omarchy-aarch64\]/,/^Server[[:space:]]*=/p' \
-      "$checkout/default/pacman/pacman-stable.conf")
-    [[ -n $block ]] || fail "default/pacman/pacman-stable.conf has no [omarchy-aarch64] section."
+      "$checkout/default/pacman/pacman-edge.conf")
+    [[ -n $block ]] || fail "default/pacman/pacman-edge.conf has no [omarchy-aarch64] section."
 
     log "Adding the Omarchy ARM package repo"
     printf '\n%s\n' "$block" | sudo tee -a /etc/pacman.conf >/dev/null
   fi
 
   ensure_asahi_alarm_keyring
+  ensure_omarchy_mac_keyring
   omarchy_arm_prepare_package_sources
   local -a targets
   mapfile -t targets < <(omarchy_arm_package_upgrade_args)
@@ -179,8 +207,8 @@ confirm() {
 
   if command -v gum >/dev/null 2>&1; then
     # --default=false to match the [y/N] fallback below: gum selects Yes
-    # otherwise, so Enter accepts -- and what this asks about is whether to
-    # spend three hours building packages that were measured to fail.
+    # otherwise, so Enter accepts an attempt at defaults whose current ARM
+    # installation and runtime behavior have not yet been qualified.
     gum confirm --default=false "$question" </dev/tty
   else
     local answer
@@ -189,19 +217,19 @@ confirm() {
   fi
 }
 
-# Default to skipping, because building these was measured to fail. Offer the
-# choice anyway: an AUR package can gain aarch64 support at any time, and a
-# stale entry here should cost a prompt rather than be permanently wrong.
+# Preserve default exclusions pending ARM qualification. Historical failures
+# do not establish current unavailability: repository packages or providers may
+# now exist, so retain an explicit opt-in attempt.
 should_attempt_unavailable() {
   (( ${#unavailable_packages[@]} )) || return 1
   [[ ${OMARCHY_TRY_UNAVAILABLE:-0} == "1" ]] && return 0
   [[ -r /dev/tty ]] || return 1
 
-  warn "No aarch64 build is known for: ${unavailable_packages[*]}"
-  echo "Building them took about 3 hours on a clean install and still failed."
-  echo "They may have gained ARM support since, so you can try."
+  warn "Excluded by default pending ARM qualification: ${unavailable_packages[*]}"
+  echo "Earlier attempts encountered long builds, missing targets, or incompatible dependencies."
+  echo "Packages or providers may now exist; availability alone does not establish Apple Silicon compatibility."
 
-  confirm "Try building them anyway?"
+  confirm "Try installing these packages anyway?"
 }
 
 package_is_unavailable_here() {
@@ -215,7 +243,7 @@ package_is_unavailable_here() {
 }
 
 install_default_package_set() {
-  local package skipped=() unbuildable=() attempt_unavailable=0
+  local package target skipped=() unbuildable=() attempt_unavailable=0
 
   load_unavailable_packages
   if should_attempt_unavailable; then
@@ -230,17 +258,18 @@ install_default_package_set() {
       pacman -Q "$package" >/dev/null || fail "Compatible package missing after system upgrade: $package"
       continue
     fi
-    # These compile a dependency chain for hours before failing an architecture
-    # check, so do not start them unless asked to.
+    # Keep unqualified defaults excluded unless explicitly requested, even
+    # where a package or provider is available in the current repositories.
     if (( ! attempt_unavailable )) && package_is_unavailable_here "$package"; then
       unbuildable+=("$package")
       continue
     fi
-    yay -S --needed --noconfirm "$package" </dev/null || skipped+=("$package")
+    target=$(omarchy_arm_default_package_target "$package")
+    yay -S --needed --noconfirm "$target" </dev/null || skipped+=("$package")
   done < <(grep -vE '^\s*(#|$)' "$checkout/install/omarchy-base.packages")
 
   if (( ${#unbuildable[@]} )); then
-    warn "Not attempted, no known aarch64 build: ${unbuildable[*]}"
+    warn "Not attempted (excluded pending ARM qualification): ${unbuildable[*]}"
     echo "Try one later with: yay -S <package>"
   fi
 
@@ -248,7 +277,7 @@ install_default_package_set() {
   yay -S --needed --noconfirm wf-recorder </dev/null || skipped+=("wf-recorder")
 
   if (( ${#skipped[@]} )); then
-    warn "Skipped packages with no aarch64 build: ${skipped[*]}"
+    warn "Could not install: ${skipped[*]}"
   fi
 }
 
@@ -261,12 +290,18 @@ seed_user_defaults() {
 
 run_system_setup() {
   log "Running Omarchy system setup"
-  sudo omarchy-apply-system --install-user "$USER" --first-install
+  if [[ -n $install_channel ]]; then
+    sudo env OMARCHY_MIRROR="$install_channel" OMARCHY_PRESERVE_PACMAN_CONFIG=1 omarchy-apply-system --install-user "$USER" --first-install
+  else
+    sudo omarchy-apply-system --install-user "$USER" --first-install
+  fi
 
   # System setup restores pacman.conf and can introduce repositories absent
   # from the starting image. Trust their keys and refresh with a full upgrade
   # before user setup installs packages, retaining the explicit edge stack.
-  ensure_arm_package_repo
+  if [[ -z $install_channel ]]; then
+    ensure_arm_package_repo
+  fi
 
   log "Running Omarchy user setup"
   omarchy-provision-user --first-install
@@ -294,18 +329,87 @@ snapshot_factory_baseline() {
   sudo rmdir "$top"
 }
 
+parse_install_options() {
+  while (( $# )); do
+    case "$1" in
+      --channel)
+        (( $# >= 2 )) || fail "--channel needs stable, rc, or edge"
+        install_channel="$2"
+        shift 2
+        ;;
+      *) fail "Unknown installer argument: $1" ;;
+    esac
+  done
+  case "$install_channel" in "" | stable | rc | edge) ;; *) fail "Invalid channel: $install_channel" ;; esac
+}
+
+verify_published_pair() {
+  [[ -n $channel_stage ]] || return 0
+  local name expected actual
+  expected=$(<"$channel_stage/pair-version")
+  for name in omarchy omarchy-settings; do
+    actual=$(pacman -Q "$name") || return
+    [[ $actual == "$name $expected" ]] || fail "Setup changed the preflighted package pair: $actual (expected $expected)"
+  done
+}
+
+protect_published_pair() {
+  # Defaults and optional AUR setup remain rolling. Ignore the captured pair
+  # during that phase, including package helpers run by system/user setup.
+  awk '{ print; if ($0 ~ /^[[:space:]]*\[options\][[:space:]]*$/) print "IgnorePkg = omarchy omarchy-settings # omarchy-install-pair" }' /etc/pacman.conf >"$channel_stage/protected.conf"
+  sudo install -m 644 "$channel_stage/protected.conf" /etc/pacman.conf
+}
+
+unprotect_published_pair() {
+  if [[ -n $channel_stage && -f $channel_stage/protected.conf ]]; then
+    # Remove only our temporary pin, retaining any administrator changes.
+    sed '/^IgnorePkg = omarchy omarchy-settings # omarchy-install-pair$/d' /etc/pacman.conf >"$channel_stage/unpinned.conf"
+    sudo install -m 644 "$channel_stage/unpinned.conf" /etc/pacman.conf
+    rm "$channel_stage/protected.conf"
+  fi
+}
+
+cleanup_channel_install() {
+  if [[ -n $channel_stage ]]; then
+    unprotect_published_pair
+    omarchy_arm_channel_stage_remove "$channel_stage"
+  fi
+}
+
 main() {
+  parse_install_options "$@"
   check_preconditions
-  ensure_utf8_locale
-  ensure_arm_package_repo
-  ensure_gum
-  ensure_aur_helper
-  ensure_package_sources
-  build_omarchy_packages
-  install_omarchy_packages
+  if [[ -n $install_channel ]]; then
+    channel_stage=$(omarchy_arm_channel_stage_new)
+    trap cleanup_channel_install EXIT
+    export OMARCHY_SIGNING_SOURCE="$checkout"
+    # Availability, resolution and signature checks precede locale or system
+    # changes. Apply exactly the captured published pair and dependencies.
+    omarchy_arm_channel_prepare "$channel_stage" "$install_channel" fresh
+    ensure_utf8_locale
+    omarchy_arm_channel_apply_prepared "$channel_stage"
+    load_installed_environment
+    protect_published_pair
+    # Optional package setup uses the live keyring after the accepted core
+    # transaction. Establish the same declared stack signer there now.
+    omarchy_arm_prepare_package_sources
+    ensure_gum
+    ensure_aur_helper
+  else
+    ensure_utf8_locale
+    ensure_arm_package_repo
+    ensure_gum
+    ensure_aur_helper
+    ensure_package_sources
+    build_omarchy_packages
+    install_omarchy_packages
+  fi
   install_default_package_set
+  verify_published_pair
   seed_user_defaults
   run_system_setup
+  verify_published_pair
+  unprotect_published_pair
   snapshot_factory_baseline
 
   log "Install complete. Reboot to start Omarchy."

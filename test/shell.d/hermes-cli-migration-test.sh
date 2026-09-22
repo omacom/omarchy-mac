@@ -38,6 +38,7 @@ chmod +x "$mock_bin"/*
 run_migration() {
   OMARCHY_TEST_DESKTOP_INSTALLED="${1:-0}" \
     OMARCHY_TEST_MISE_LOG="$mise_log" \
+    OMARCHY_PATH="$ROOT" \
     HOME="$test_home" \
     PATH="$mock_bin:$ROOT/bin:$PATH" \
     bash -euo pipefail "$migration" >/dev/null 2>&1

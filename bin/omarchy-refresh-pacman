@@ -3,6 +3,12 @@
 # omarchy:summary=Overwrite the package configuration for /etc/pacman with the Omarchy default of using its dedicated mirrors and repositories, then update all packages.
 # omarchy:requires-sudo=true
 
+if [[ $(uname -m) == "aarch64" ]]; then
+  # ARM refresh preserves custom repositories and mirror ordering. Explicit
+  # refresh uses the same validated lane switch as omarchy channel set.
+  exec env OMARCHY_UPDATE_CHANNEL="${1:-stable}" omarchy-update -y
+fi
+
 sudo cp -f /etc/pacman.conf /etc/pacman.conf.bak
 sudo cp -f /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak
 if [[ -f /etc/pacman.d/mirrorlist.asahi-alarm ]]; then

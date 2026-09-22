@@ -20,6 +20,8 @@ migration_name=$(basename "$migration")
 first_marker="$first_home/.local/state/omarchy/migrations/$migration_name"
 second_marker="$second_home/.local/state/omarchy/migrations/$migration_name"
 mkdir -p "$stub_bin" "$test_root/migrations"
+mkdir -p "$test_root/install/helpers"
+cp "$ROOT/install/helpers/zram.sh" "$test_root/install/helpers/zram.sh"
 cp "$migration" "$test_root/migrations/$migration_name"
 mkdir -p "$test_root/default/systemd/zram-generator.conf.d"
 cp "$ROOT/default/systemd/zram-generator.conf.d/90-omarchy.conf" \
@@ -305,3 +307,92 @@ if [[ -x $generator ]]; then
 else
   pass "zram-generator is unavailable; skipping real generator integration"
 fi
+
+# The repair was added to a migration already shipped in v4.0.2-2. Exercise
+# the new delivery marker through the real migrator with that old marker set.
+repair_name=1789246530.sh
+cp "$ROOT/migrations/$repair_name" "$test_root/migrations/$repair_name"
+
+prepare_previously_migrated_user() {
+  local scenario="$1"
+  retry_home="$test_tmp/previously-migrated-$scenario"
+  retry_state="$retry_home/.local/state/omarchy/migrations"
+  retry_marker="$retry_state/$repair_name"
+  repair_pending="$retry_state/1789246530.zram-repair-pending"
+  export OMARCHY_ZRAM_ROOT="$test_tmp/previously-migrated-system-$scenario"
+  mkdir -p "$retry_state"
+  touch "$retry_state/$migration_name"
+  rm -f "$swap_active"
+  : >"$calls"
+}
+
+prepare_previously_migrated_user unconfigured
+run_required_package_migration
+[[ -f $retry_marker && -f $swap_active ]] || fail "old completion markers do not suppress the new repair"
+[[ ! -e $repair_pending ]] || fail "a successful repair clears its in-progress receipt"
+cmp "$test_root/default/systemd/zram-generator.conf.d/90-omarchy.conf" \
+  "$OMARCHY_ZRAM_ROOT/etc/systemd/zram-generator.conf" || fail "previously migrated users get persistent configuration"
+assert_systemd_start_follows_reload
+: >"$calls"
+run_required_package_migration
+[[ ! -s $calls ]] || fail "the new completion marker prevents repeated operations"
+pass "previously migrated unconfigured installs receive the repair exactly once"
+
+# A stopped device with existing configuration is not evidence of this bug.
+# Include the vendor default itself, because an administrator may stop swap
+# without editing it; neither package nor service operations should run.
+for directory in etc run usr/local/lib usr/lib; do
+  for kind in main drop-in empty mask dangling-mask; do
+    prepare_previously_migrated_user "configured-$directory-$kind"
+    config="$OMARCHY_ZRAM_ROOT/$directory/systemd/zram-generator.conf"
+    [[ $kind == main ]] || config="$config.d/90-omarchy.conf"
+    mkdir -p "$(dirname "$config")"
+    case "$kind" in
+      main | drop-in) cp "$ROOT/default/systemd/zram-generator.conf.d/90-omarchy.conf" "$config" ;;
+      empty) touch "$config" ;;
+      mask) ln -s /dev/null "$config" ;;
+      dangling-mask) ln -s "$test_tmp/does-not-exist" "$config" ;;
+    esac
+    run_required_package_migration
+    [[ -f $retry_marker && ! -e $repair_pending ]] || fail "configured $directory/$kind completes without a repair receipt"
+    [[ ! -s $calls && ! -e $swap_active ]] || fail "configured $directory/$kind does not reactivate stopped swap"
+    [[ -e $config || -L $config ]] || fail "configured $directory/$kind is preserved"
+  done
+done
+pass "new migration preserves configured and deliberately disabled swap at every level"
+
+prepare_previously_migrated_user start-failure
+if TEST_START_STATUS=1 run_required_package_migration; then
+  fail "the new migration propagates activation failure"
+fi
+[[ ! -e $retry_marker && -f $repair_pending ]] || fail "failed activation leaves the new repair pending"
+[[ -f $OMARCHY_ZRAM_ROOT/etc/systemd/zram-generator.conf ]] || fail "the failed activation fixture already wrote its configuration"
+: >"$calls"
+run_required_package_migration
+[[ -f $retry_marker && -f $swap_active && ! -e $repair_pending ]] || fail "retry completes the repair despite its newly written configuration"
+assert_systemd_start_follows_reload
+pass "failed activation retries without mistaking its fallback for prior local configuration"
+
+prepare_previously_migrated_user package-failure
+rm -f "$TEST_REPO_PACKAGE_AVAILABLE" "$TEST_REPO_PACKAGE_INSTALLED"
+if run_required_package_migration; then
+  fail "the new migration cannot complete with an unavailable required package"
+fi
+[[ ! -e $retry_marker && -f $repair_pending ]] || fail "missing package keeps the new repair pending"
+touch "$TEST_REPO_PACKAGE_AVAILABLE"
+run_required_package_migration
+[[ -f $retry_marker && -f $swap_active && ! -e $repair_pending ]] || fail "new repair recovers when the package becomes available"
+pass "new migration keeps required-package failures retryable"
+
+prepare_previously_migrated_user unit-mask
+TEST_LOAD_STATE=masked run_required_package_migration
+[[ -f $retry_marker && ! -e $swap_active ]] || fail "masked swap units are not activated"
+! grep -q '^systemctl start ' "$calls" || fail "do not start an explicitly masked unit"
+pass "new repair respects an administrator's systemd unit mask"
+
+prepare_previously_migrated_user active
+touch "$swap_active"
+run_required_package_migration
+[[ -f $retry_marker && -f $OMARCHY_ZRAM_ROOT/etc/systemd/zram-generator.conf ]] || fail "active swap gets persistent configuration"
+! grep -q '^systemctl start ' "$calls" || fail "do not restart active swap during the new repair"
+pass "new repair supplies persistence without restarting active swap"

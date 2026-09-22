@@ -16,7 +16,11 @@ This will restore your root filesystem, but not your `/home`. So it works for re
 
 This also means that your `~/.config` directory is kept as-is. So if you're rolling back to an earlier version of a library or application that stores configuration files in a new format, you'll have to sort that out manually.
 
-_Note: This feature is only available on installations using the Limine boot loader, which has been the default since Omarchy 2.0. It's not available if you're on GRUB or systemd-boot._
+### Apple Silicon
+
+Macs using the standard Btrfs root mounted from `@` use `omarchy-snapshot restore` from a running terminal. Choose a Snapper snapshot, `@fresh`, or `@factory`, confirm, and reboot. The helper retains the displaced root and transfers the nested snapshot backend so history remains usable after reboot. It prints an undo command using the helper in the retained root; keep that root until verified. Do not use raw root rename commands or start concurrent Snapper/Btrfs maintenance. After restoring older software, update before another recovery operation.
+
+This restores the root only. The Asahi kernel, initramfs, ESP and firmware require separate recovery; check that the restored modules match the booted kernel. Other GRUB/systemd-boot layouts are not supported by this Mac helper.
 
 ### Skipping the boot menu
 

@@ -284,13 +284,13 @@ tr '\0' '\n' <"$mise_log" | grep -Eq '^(rm|uninstall)$' &&
   fail "an unmarked Hermes mise environment is not given an Omarchy wrapper"
 pass "a Hermes mise environment needs wrapper ownership before replacement"
 
-# install/user/mise.sh is sourced by install/user/all.sh through run_logged,
+# install/user/hermes.sh is sourced by install/user/all.sh through run_logged,
 # which runs it under `bash -eE` and hands its exit code back to
 # omarchy-provision-user's `set -euo pipefail`. Everything that finalizes a user
 # -- the default browser, the mailto handler, the first-install migration
 # markers, the finalize-user marker -- runs after that source, so this leaf
-# returning non-zero costs the user all of it. The Hermes installer is the only
-# line in it that can fail, and it does exactly that whenever hermes-desktop is
+# returning non-zero costs the user all of it. The Hermes installer returns
+# non-zero whenever hermes-desktop is
 # installed but the app has not been launched yet: the case a second user on a
 # shared machine hits on their first login.
 mise_sh_home="$test_tmp/mise-sh-home"
@@ -315,7 +315,7 @@ OMARCHY_TEST_DESKTOP_INSTALLED=1 \
   OMARCHY_TEST_MISE_LOG="$mise_log" \
   HOME="$mise_sh_home" \
   PATH="$mock_bin:$ROOT/bin:$PATH" \
-  bash -eE -c 'source "$1"' bash "$ROOT/install/user/mise.sh" >/dev/null 2>&1 ||
+  bash -eE -c 'source "$1"' bash "$ROOT/install/user/hermes.sh" >/dev/null 2>&1 ||
   fail "user setup survives a Hermes install that cannot finish"
 pass "user setup survives a Hermes install that cannot finish"
 

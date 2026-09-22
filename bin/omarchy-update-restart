@@ -1,6 +1,16 @@
 #!/bin/bash
 # omarchy:summary=Restart after an update when the kernel changed
 
+confirm_reboot() {
+  if [[ ${OMARCHY_UPDATE_UNATTENDED:-} == 1 ]]; then
+    omarchy-state set reboot-required
+    echo "Updates require a reboot. Reboot when convenient; unattended updates do not prompt or reboot."
+    return 1
+  fi
+
+  gum confirm "$1"
+}
+
 # Compare kernel version before and after updates.
 # Mac fork: this fork ships the Apple-Silicon kernel, so kernel-update detection
 # compares the linux-asahi *package version* (not upstream's `uname -r` vs
@@ -10,18 +20,18 @@ kernel_after=$(pacman -Q linux-asahi 2>/dev/null | awk '{print $2}')
 rm -f /tmp/omarchy-kernel-before
 
 if [[ -n $kernel_before && $kernel_before != "$kernel_after" ]]; then
-  gum confirm "Linux kernel has been updated. Reboot?" && omarchy-state clear re*-required && sudo reboot now
+  confirm_reboot "Linux kernel has been updated. Reboot?" && omarchy-state clear re*-required && sudo reboot now
 fi
 
 if find /usr/lib/modules -maxdepth 2 -name vmlinuz -newermt "$(uptime -s)" 2>/dev/null | grep -q .; then
-  gum confirm "Linux kernel has been updated. Reboot?" && omarchy-system-reboot
+  confirm_reboot "Linux kernel has been updated. Reboot?" && omarchy-system-reboot
 elif [[ -f $HOME/.local/state/omarchy/reboot-required ]]; then
-  gum confirm "Updates require reboot. Ready?" && omarchy-system-reboot
+  confirm_reboot "Updates require reboot. Ready?" && omarchy-system-reboot
 fi
 
 running_hyprland=$(readlink /proc/$(pgrep -x Hyprland)/exe 2>/dev/null)
 if [[ $running_hyprland == *"(deleted)"* ]]; then
-  gum confirm "Hyprland has been updated. Reboot?" && omarchy-system-reboot
+  confirm_reboot "Hyprland has been updated. Reboot?" && omarchy-system-reboot
 fi
 
 for file in "$HOME"/.local/state/omarchy/restart-*-required; do

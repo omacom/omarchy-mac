@@ -8,6 +8,11 @@ set -e
 targets=()
 if [[ $(uname -m) == "aarch64" ]]; then
   source "$OMARCHY_PATH/install/helpers/arm-package-sources.sh"
+  if [[ -n ${OMARCHY_UPDATE_CHANNEL:-} ]]; then
+    source "$OMARCHY_PATH/install/helpers/arm-channel.sh"
+    omarchy_arm_channel_apply "$OMARCHY_UPDATE_CHANNEL"
+    exit $?
+  fi
   omarchy_arm_prepare_package_sources
   mapfile -t targets < <(omarchy_arm_package_upgrade_args)
 fi
