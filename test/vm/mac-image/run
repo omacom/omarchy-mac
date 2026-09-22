@@ -1,0 +1,267 @@
+#!/bin/bash
+# Private, authenticated adaptation of Marcelo's pinned first-boot VM harness.
+set -euo pipefail
+
+harness=$(cd -- "$(dirname -- "$0")" && pwd)
+state="" evidence="" only="" keep=0
+while (($#)); do
+  case "$1" in
+    --state) state=$2; shift 2 ;;
+    --evidence) evidence=$2; shift 2 ;;
+    --only) only=$2; shift 2 ;;
+    --keep) keep=1; shift ;;
+    --) shift; break ;;
+    *) echo "usage: $0 --state NEW-DIRECTORY --evidence NEW-DIRECTORY [--only plain|encrypted] [--keep] -- ADMISSION-ARGUMENTS" >&2; exit 1 ;;
+  esac
+done
+fail() { echo "not ok - $*" >&2; exit 1; }
+ok() { echo "ok - $*" | tee -a "$evidence/run.txt"; }
+[[ -n $state && -n $evidence && $# -gt 0 ]] || fail "explicit state, evidence and admission inputs are required"
+[[ -z $only || $only == "plain" || $only == "encrypted" ]] || fail "invalid --only"
+[[ ! -e $state && ! -L $state && ! -e $evidence && ! -L $evidence ]] || fail "state and evidence must be new directories"
+state=$(realpath -m -- "$state"); evidence=$(realpath -m -- "$evidence")
+[[ $evidence != "$state" && $evidence != "$state"/* && $state != "$evidence"/* ]] || fail "state and evidence must be separate"
+mkdir -m 700 -p "$state" "$evidence"
+python3 "$harness/admit.py" "$@" --output "$state/admitted" >"$evidence/admission.log" 2>&1 || fail "input authentication failed; see admission.log"
+work=$state
+admitted=$state/admitted
+cp "$admitted/inputs.json" "$admitted/admission.json" "$evidence/"
+[[ $(uname -m) == "aarch64" && -r /dev/kvm ]] || fail "an aarch64 KVM host is required"
+for tool in qemu-system-aarch64 sgdisk mkfs.vfat losetup btrfs bsdtar gpg mount umount chroot blkid cryptsetup; do
+  command -v "$tool" >/dev/null || fail "missing $tool; use the disposable tools container"
+done
+sudo -n true || fail "passwordless sudo or container root is required"
+[[ -r /usr/share/AAVMF/AAVMF_CODE.fd && -r /usr/share/AAVMF/AAVMF_VARS.fd ]] || fail "AAVMF firmware missing"
+loops=() mounts=() qemu_pid=""
+cleanup() {
+  local status=$? item
+  if [[ -n $qemu_pid ]]; then kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true; fi
+  for ((i=${#mounts[@]}-1; i>=0; i--)); do sudo umount -R "${mounts[$i]}" 2>/dev/null || true; done
+  for item in "${loops[@]}"; do sudo losetup -d "$item" 2>/dev/null || true; done
+  echo "state retained for inspection: $state (exit $status)" >&2
+}
+trap cleanup EXIT
+attach() { ATTACHED=$(sudo losetup -f --show "$@"); loops+=("$ATTACHED"); }
+detach_last() { sudo losetup -d "${loops[-1]}"; unset 'loops[-1]'; }
+mount_tracked() { sudo mount "$@"; mounts+=("${@: -1}"); }
+umount_last() { sudo umount -R "${mounts[-1]}"; unset 'mounts[-1]'; }
+read_json() {
+  python3 -c 'import json,sys
+value=json.load(open(sys.argv[1]))
+for key in sys.argv[2:]: value=value[key]
+print(value)' "$@"
+}
+BOOT_UUID=$(sudo blkid -c /dev/null -o value -s UUID "$admitted/payload/boot.img")
+ROOT_UUID=$(sudo blkid -c /dev/null -o value -s UUID "$admitted/payload/root.img")
+[[ $BOOT_UUID =~ ^[a-f0-9-]{36}$ && $ROOT_UUID =~ ^[a-f0-9-]{36}$ ]] || fail "invalid image filesystem UUIDs"
+ESP_ID=$(read_json "$admitted/product.json" esp_volume_id)
+ESP_ID=${ESP_ID#0x}
+[[ $ESP_ID =~ ^[a-fA-F0-9]{8}$ ]] || fail "invalid ESP volume ID"
+boot_timeout=${OMARCHY_VM_BOOT_TIMEOUT:-1200}
+[[ $boot_timeout =~ ^[1-9][0-9]*$ ]] || fail "invalid VM timeout"
+{
+  uname -a
+  qemu-system-aarch64 --version
+  sha256sum "$harness/run" "$harness/admit.py" /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/AAVMF/AAVMF_VARS.fd
+  echo 'Qualification scope: generic ALARM kernel, synthetic Apple detector in disposable disk, direct kernel EFI launch; not Apple boot-chain/hardware qualification.'
+} >"$evidence/environment.txt"
+
+build_generic_kernel() {
+  local lower=$work/lower merged=$work/merged kernel image_kernel
+  kernel=$(read_json "$admitted/inputs.json" generic_kernel filename)
+  # A tiny generic build overlay is discarded after its outputs are copied.
+  mkdir -p "$lower" "$merged" "$work/upper" "$work/overlay-work" "$work/generic" "$work/gpg"
+  chmod 700 "$work/gpg"
+  attach -r "$admitted/payload/root.img"
+  mount_tracked -o ro,subvol=@ "$ATTACHED" "$lower"
+  cmp "$lower/var/lib/omarchy/package-snapshots/QUATTRO-CANDIDATE.json" "$admitted/candidate/signing.json" || fail "image candidate binding differs"
+  cmp "$lower/var/lib/omarchy/package-snapshots/DEPENDENCIES.json" "$admitted/dependencies/manifest.json" || fail "image dependency binding differs"
+  gpg --batch --homedir "$work/gpg" --import "$lower/usr/share/pacman/keyrings/archlinuxarm.gpg" >"$evidence/kernel-keyring.log" 2>&1
+  gpg --batch --homedir "$work/gpg" --status-fd 1 --verify "$admitted/$kernel.sig" "$admitted/$kernel" >"$evidence/kernel-signature.log" 2>&1 || fail "generic kernel signature rejected by admitted image keyring"
+  python3 - "$admitted/$kernel" "$(read_json "$admitted/inputs.json" generic_kernel version)" <<'PY'
+import subprocess, sys
+fields = {}
+for line in subprocess.check_output(['bsdtar', '-xOf', sys.argv[1], '.PKGINFO'], text=True).splitlines():
+    if ' = ' in line:
+        key, value = line.split(' = ', 1)
+        fields.setdefault(key, []).append(value)
+assert fields.get('pkgname') == ['linux-aarch64'] and fields.get('arch') == ['aarch64'] and fields.get('pkgver') == [sys.argv[2]], 'generic kernel metadata mismatch'
+PY
+  mount_tracked -t overlay overlay -o "lowerdir=$lower,upperdir=$work/upper,workdir=$work/overlay-work" "$merged"
+  for d in dev proc sys; do
+    sudo mount --rbind "/$d" "$merged/$d"; sudo mount --make-rslave "$merged/$d"; mounts+=("$merged/$d")
+  done
+  mount_tracked -t tmpfs tmpfs "$merged/tmp"
+  sudo cp "$admitted/$kernel" "$merged/tmp/kernel.pkg.tar.xz"
+  image_kernel=$(ls "$lower/usr/lib/modules")
+  [[ $(wc -l <<<"$image_kernel") == "1" ]] || fail "expected exactly one Apple kernel"
+  sudo chroot "$merged" bash -euo pipefail -c '
+    bsdtar -xf /tmp/kernel.pkg.tar.xz -C / --exclude=.PKGINFO --exclude=.MTREE --exclude=.BUILDINFO --exclude=.INSTALL
+    versions=(); for d in /usr/lib/modules/*; do [[ ${d##*/} == "$1" ]] || versions+=("${d##*/}"); done
+    ((${#versions[@]} == 1)) || exit 1
+    ver=${versions[0]}
+    depmod "$ver"
+    mkinitcpio -k "$ver" -S autodetect -g /tmp/initramfs-generic.img >/tmp/mkinitcpio.log 2>&1 || { tail -40 /tmp/mkinitcpio.log; exit 1; }
+    grep -Fq "Running build hook: [omarchy-mac-encrypt]" /tmp/mkinitcpio.log
+    grep -Fq "Running build hook: [asahi]" /tmp/mkinitcpio.log
+    lsinitcpio /tmp/initramfs-generic.img >/tmp/initramfs-members.txt
+    grep -Fq "omarchy-mac-encrypt.service" /tmp/initramfs-members.txt
+    grep -Fq "keydev\x2droot.mount.d" /tmp/initramfs-members.txt
+    cp /boot/Image /tmp/Image-generic
+    printf "%s\n" "$ver" >/tmp/generic.version
+  ' bash "$image_kernel" >"$evidence/generic-build.log" 2>&1 || fail "generic initramfs build failed"
+  for f in Image-generic initramfs-generic.img generic.version mkinitcpio.log initramfs-members.txt; do sudo cp "$merged/tmp/$f" "$work/generic/"; done
+  sudo chown -R "$(id -u):$(id -g)" "$work/generic"
+  cp "$work/generic/"{mkinitcpio.log,initramfs-members.txt,generic.version} "$evidence/"
+  sha256sum "$work/generic/"* >"$evidence/generic-hashes.txt"
+  while ((${#mounts[@]})); do umount_last; done
+  detach_last
+  sudo rm -rf -- "$work/upper" "$work/overlay-work"
+  gpgconf --homedir "$work/gpg" --kill gpg-agent || true
+  ok "generic kernel signature and metadata authenticated; initramfs built from admitted image hooks"
+}
+
+make_disk() {
+  local disk=$1 encrypt=$2 boot_size root_size esp_size total dev
+  boot_size=$(stat -c %s "$admitted/payload/boot.img")
+  root_size=$(stat -c %s "$admitted/payload/root.img")
+  esp_size=$(read_json "$admitted/product.json" esp_size_bytes)
+  # An extra 256 MiB exercises installer-like root growth without excessive disk demand.
+  total=$((esp_size + boot_size + root_size + 256*1024*1024 + 4*1024*1024))
+  [[ ! -e $disk ]] || fail "guest disk already exists"
+  # Budget the entire virtual disk plus 1 GiB even if every sparse byte is written.
+  (( $(df --output=avail -B1 "$work" | tail -1) > total + 1024*1024*1024 )) || fail "insufficient free space for full disposable disk plus 1 GiB margin"
+  printf 'disk=%s virtual_bytes=%s required_free_bytes=%s\n' "$disk" "$total" "$((total + 1024*1024*1024))" >>"$evidence/disk-allocation.txt"
+  truncate -s "$total" "$disk"
+  sgdisk -o -n1:0:+$((esp_size/512)) -t1:ef00 -c1:EFI -n2:0:+$((boot_size/512)) -t2:8300 -c2:BOOT -n3:0:0 -t3:8300 -c3:ROOT "$disk" >"$evidence/disk-layout-$encrypt.log"
+  attach -P "$disk"; dev=$ATTACHED
+  sudo mkfs.vfat -F32 -i "$ESP_ID" -n OMARCHY_EFI "${dev}p1" >/dev/null
+  mkdir -p "$work/mnt"
+  mount_tracked "${dev}p1" "$work/mnt"
+  sudo cp -r "$admitted/payload/esp/." "$work/mnt/"
+  sudo mkdir -p "$work/mnt/omarchy"
+  printf 'format=1\nencrypt=%s\nlane=rc\n' "$encrypt" | sudo tee "$work/mnt/omarchy/install.conf" >/dev/null
+  umount_last
+  sudo dd if="$admitted/payload/boot.img" of="${dev}p2" bs=4M conv=sparse,fsync status=none
+  sudo dd if="$admitted/payload/root.img" of="${dev}p3" bs=4M conv=sparse,fsync status=none
+  mount_tracked -o subvol=@ "${dev}p3" "$work/mnt"
+  # The sole shipping-runtime adaptation is explicit and confined to this disposable root.
+  sudo sha256sum "$work/mnt/usr/share/omarchy/bin/omarchy-hw-apple-silicon" >>"$evidence/vm-adaptations.txt"
+  printf '#!/bin/bash\n# Disposable QEMU qualification override, never shipped.\nexit 0\n' | sudo tee "$work/mnt/usr/share/omarchy/bin/omarchy-hw-apple-silicon" >/dev/null
+  sudo sha256sum "$work/mnt/usr/share/omarchy/bin/omarchy-hw-apple-silicon" >>"$evidence/vm-adaptations.txt"
+  sudo mkdir -p "$work/mnt/etc/systemd/system/multi-user.target.wants"
+  cat <<'UNIT' | sudo tee "$work/mnt/etc/systemd/system/omarchy-vm-evidence.service" >/dev/null
+[Unit]
+Description=Disposable VM firmware and boot evidence
+After=omarchy-mac-first-boot.service
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'test -d /sys/firmware/efi && test -f /sys/firmware/efi/fw_platform_size && echo EFI_PRESENT && /usr/share/omarchy/bin/omarchy-mac-limine-active && echo LIMINE_ACTIVE'
+Environment=PATH=/usr/share/omarchy/bin:/usr/local/sbin:/usr/local/bin:/usr/bin
+Environment=OMARCHY_PATH=/usr/share/omarchy
+StandardOutput=journal+console
+[Install]
+WantedBy=multi-user.target
+UNIT
+  sudo ln -s ../omarchy-vm-evidence.service "$work/mnt/etc/systemd/system/multi-user.target.wants/omarchy-vm-evidence.service"
+  umount_last
+  detach_last
+}
+
+boot_guest() {
+  local disk=$1 log=$2 append=$3
+  cp /usr/share/AAVMF/AAVMF_VARS.fd "$work/vars.fd"
+  qemu-system-aarch64 -M virt,accel=kvm,gic-version=host -cpu host -m 6144 -smp 4 \
+    -drive if=pflash,format=raw,readonly=on,file=/usr/share/AAVMF/AAVMF_CODE.fd \
+    -drive "if=pflash,format=raw,file=$work/vars.fd" \
+    -kernel "$work/generic/Image-generic" -initrd "$work/generic/initramfs-generic.img" \
+    -append "$append console=ttyAMA0,115200 loglevel=7 systemd.journald.forward_to_console=1 zswap.enabled=0" \
+    -drive "file=$disk,format=raw,if=none,id=d0,cache=writeback" -device virtio-blk-pci,drive=d0,romfile= \
+    -nic none -device virtio-rng-pci -display none -serial "file:$log" -monitor none \
+    >"$log.qemu" 2>&1 &
+  qemu_pid=$!
+}
+wait_serial() {
+  local log=$1 pattern=$2 what=$3 waited=0
+  until grep -aqE -- "$pattern" "$log" 2>/dev/null; do
+    kill -0 "$qemu_pid" 2>/dev/null || fail "$what: guest exited ($log)"
+    ((waited < boot_timeout)) || fail "$what: ${boot_timeout}s timeout ($log)"
+    sleep 5; waited=$((waited + 5))
+  done
+}
+stop_guest() {
+  # Let fsync/tree-log and ESP writeback settle before an intentional VM power cut.
+  for ((i=0;i<8;i++)); do kill -0 "$qemu_pid"; sleep 5; done
+  kill "$qemu_pid"; wait "$qemu_pid" || true; qemu_pid=""
+}
+check_first_boot() {
+  local log=$1
+  wait_serial "$log" 'Finished Omarchy first boot' 'first boot completion'
+  wait_serial "$log" 'Starting Omarchy provisioning first-boot user setup' 'owner setup armed'
+  wait_serial "$log" 'EFI_PRESENT' 'real guest EFI runtime'
+  wait_serial "$log" 'LIMINE_ACTIVE' 'Apple Limine runtime selected'
+  ! grep -aqE 'Failed to start Omarchy first boot|Failed to start Encrypt the Omarchy Mac root' "$log" || fail "guest first boot failed"
+}
+check_plain() {
+  local disk=$work/plain.img log=$evidence/plain-serial.log dev
+  make_disk "$disk" 0
+  boot_guest "$disk" "$log" "root=UUID=$ROOT_UUID rw rootflags=subvol=@ rootfstype=btrfs"
+  wait_serial "$log" 'install.conf sets encrypt=0' 'explicit encryption decline'
+  check_first_boot "$log"; stop_guest
+  attach -P "$disk"; dev=$ATTACHED
+  [[ $(sudo blkid -c /dev/null -o value -s TYPE "${dev}p3") == "btrfs" ]] || fail "plain root changed type"
+  mount_tracked -o ro,subvol=@ "${dev}p3" "$work/mnt"
+  local st=$work/mnt/var/lib/omarchy/mac-first-boot
+  sudo test ! -e "$st/pending" && sudo test ! -e "$st/last-error" || fail "plain first boot markers invalid"
+  sudo grep -qx 'encrypt=0' "$st/install.conf"
+  sudo grep -qE '^master=[0-9A-F]{40}$' "$st/keyring"
+  sudo test -f "$work/mnt/var/lib/omarchy/provisioning/pending"
+  umount_last
+  mount_tracked -o ro "${dev}p1" "$work/mnt"
+  sudo test ! -e "$work/mnt/omarchy/install.conf" || fail "installer handoff not consumed"
+  sudo cmp "$work/mnt/EFI/BOOT/BOOTAA64.EFI" "$admitted/payload/esp/EFI/BOOT/BOOTAA64.EFI" || fail "first boot replaced Limine loader"
+  umount_last
+  mount_tracked -o ro "${dev}p2" "$work/mnt"
+  sudo grep -qx 'phase=declined' "$work/mnt/omarchy/encrypt.state"
+  umount_last; detach_last
+  ok "plain first boot: explicit decline, owner pending, machine keyring, Limine retained, handoff consumed"
+  stat --printf="%n virtual_bytes=%s allocated_512_blocks=%b\n" "$disk" >>"$evidence/disk-allocation.txt"
+  if ((keep == 0)); then rm "$disk"; fi
+}
+check_encrypted() {
+  local disk=$work/encrypted.img log=$evidence/encrypted-serial.log dev luks
+  make_disk "$disk" 1
+  boot_guest "$disk" "$log" "root=UUID=$ROOT_UUID rw rootflags=subvol=@ rootfstype=btrfs"
+  wait_serial "$log" 'encrypting in place' 'requested conversion started'
+  wait_serial "$log" 'conversion finished' 'conversion finished'
+  wait_serial "$log" 'sysroot.mount drop-in What=/dev/mapper/root' 'encrypted root selected'
+  check_first_boot "$log"; stop_guest
+  attach -P "$disk"; dev=$ATTACHED
+  [[ $(sudo blkid -c /dev/null -o value -s TYPE "${dev}p3") == "crypto_LUKS" ]] || fail "requested root is not LUKS"
+  luks=$(sudo blkid -c /dev/null -o value -s UUID "${dev}p3")
+  mount_tracked -o ro "${dev}p2" "$work/mnt"
+  sudo grep -qx 'phase=configured' "$work/mnt/omarchy/encrypt.state"
+  sudo grep -qx "luks_uuid=$luks" "$work/mnt/omarchy/encrypt.state"
+  [[ $(sudo stat -c '%s %a' "$work/mnt/omarchy/luks-key") == "64 600" ]] || fail "staged key has wrong size or mode"
+  # Never emit staged key bytes to evidence.
+  umount_last
+  mount_tracked -o ro "${dev}p1" "$work/mnt"
+  sudo cmp "$work/mnt/EFI/BOOT/BOOTAA64.EFI" "$admitted/payload/esp/EFI/BOOT/BOOTAA64.EFI" || fail "conversion replaced Limine loader"
+  sudo grep -q "rd.luks.name=$luks=root" "$work/mnt/limine.conf"
+  sudo grep -q "rd.luks.key=$luks=/omarchy/luks-key:UUID=$BOOT_UUID" "$work/mnt/limine.conf"
+  umount_last; detach_last
+  ok "requested conversion: LUKS configured, Boot staged key, regenerated Limine encrypted command line and loader"
+  log=$evidence/encrypted-second-serial.log
+  boot_guest "$disk" "$log" "root=/dev/mapper/root rw rootflags=subvol=@ rootfstype=btrfs rd.luks.name=$luks=root rd.luks.key=$luks=/omarchy/luks-key:UUID=$BOOT_UUID"
+  wait_serial "$log" 'Volume root already active|Set up cryptsetup for root|Finished Cryptography Setup for root' 'second boot unlock'
+  wait_serial "$log" 'LIMINE_ACTIVE' 'second boot reaches multi-user with Limine selected'
+  ! grep -aqE 'Emergency Mode|Failed to mount /run/systemd/cryptsetup/keydev-root|Failed to start Encrypt the Omarchy Mac root' "$log" || fail "second boot unlock failure"
+  stop_guest
+  ok "second encrypted boot: staged key unlock and key-device ordering reach multi-user"
+  stat --printf="%n virtual_bytes=%s allocated_512_blocks=%b\n" "$disk" >>"$evidence/disk-allocation.txt"
+  if ((keep == 0)); then rm "$disk"; fi
+}
+build_generic_kernel
+[[ $only == "encrypted" ]] || check_plain
+[[ $only == "plain" ]] || check_encrypted
+ok "requested VM lanes passed; owner completion, password/recovery, factory reset, update, Apple firmware remain separate qualification"

@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/base-test.sh"
+python3 "$ROOT/test/vm/mac-image/test_admit.py"
+bash -n "$ROOT/test/vm/mac-image/run"
+pass "private VM input admission rejects substitution, unsafe images and dirty verifier code"
