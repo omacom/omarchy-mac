@@ -71,7 +71,19 @@ run() {
   OMARCHY_PACMAN_HOOKS_DIR="$etc/pacman.d/hooks" OMARCHY_SYSTEMD_DIR="$etc/systemd/system" \
   OMARCHY_LIMINE_GATE="$test_tmp/limine.enabled" OMARCHY_FSTAB="$etc/fstab" \
   OMARCHY_MACHINE_ID="$etc/machine-id" \
-  PATH="$stub_bin:$PATH" bash -c "source '$leaf'"
+  PATH="$stub_bin:$PATH" TEST_LEAF="$leaf" bash -c '
+    trap "echo caller-trap >&2" ERR
+    caller_trap=$(trap -p ERR)
+    if [[ ${TEST_CONDITIONAL_SOURCE:-0} == 1 ]]; then
+      source "$TEST_LEAF" || exit $?
+    else
+      source "$TEST_LEAF"
+      status=$?
+      (( status == 0 )) || exit "$status"
+    fi
+    [[ $(trap -p ERR) == "$caller_trap" ]] || exit 99
+  '
+
 }
 
 # No gate: a GRUB Mac stays one.
@@ -86,16 +98,16 @@ pass "Limine is opt-in"
 # No menu template: nothing happens at all. The checkout's own template is
 # never moved; the leaf is pointed at a path that does not exist.
 : >"$calls"
-OMARCHY_LIMINE_CONF_SOURCE="$test_tmp/missing.conf" run 2>"$test_tmp/err" ||
-  fail "the leaf returns cleanly without the menu template"
+if OMARCHY_LIMINE_CONF_SOURCE="$test_tmp/missing.conf" run 2>"$test_tmp/err"; then
+  fail "an opted-in image must fail without its menu template"
+fi
 [[ ! -s $calls && ! -e $etc/limine && $(cat "$esp/EFI/BOOT/BOOTAA64.EFI") == "GRUB image" ]] ||
   fail "without the menu template nothing changes" "$(cat "$calls")"
-grep -q 'leaving GRUB in place' "$test_tmp/err" || fail "the missing template is reported" "$(cat "$test_tmp/err")"
+grep -q 'menu template' "$test_tmp/err" || fail "the missing template is reported" "$(cat "$test_tmp/err")"
 pass "no menu template, no activation"
 
-# A step the leaf does not guard fails (installing the menu on the ESP), under
-# the production shell flags: the ERR trap rolls the activation back and the
-# leaf reports the failure.
+# Installing the menu fails under the production shell flags. The scoped
+# transaction restores the previous boot files and reports the failure.
 : >"$calls"
 cat >"$stub_bin/install" <<'SH'
 #!/bin/bash
@@ -114,21 +126,21 @@ TEST_CALLS="$calls" TEST_ESP="$esp" TEST_UPDATE_GRUB_DEFAULT="$etc/update-grub" 
   OMARCHY_LIMINE_GATE="$test_tmp/limine.enabled" OMARCHY_FSTAB="$etc/fstab" \
   PATH="$stub_bin:$PATH" bash -eE -c "source '$leaf'" 2>"$test_tmp/err" || status=$?
 rm -f "$stub_bin/install"
-(( status != 0 )) || fail "an unguarded failure fails the leaf" "$(cat "$test_tmp/err")"
-grep -q 'a step failed with status' "$test_tmp/err" || fail "the unguarded failure is reported" "$(cat "$test_tmp/err")"
-[[ $(cat "$esp/EFI/BOOT/BOOTAA64.EFI") == "GRUB image" ]] || fail "an unguarded failure leaves GRUB in the U-Boot slot"
-[[ ! -e $etc/limine ]] || fail "an unguarded failure removes the Limine defaults it created" "$(cat "$etc/limine" 2>&1)"
-[[ ! -e $etc/update-grub ]] || fail "an unguarded failure puts GRUB's update target back"
-pass "an unguarded failure rolls the activation back"
+(( status != 0 )) || fail "a menu write failure fails the leaf" "$(cat "$test_tmp/err")"
+grep -q 'cannot install the Limine menu' "$test_tmp/err" || fail "the menu write failure is reported" "$(cat "$test_tmp/err")"
+[[ $(cat "$esp/EFI/BOOT/BOOTAA64.EFI") == "GRUB image" ]] || fail "a menu write failure leaves GRUB in the U-Boot slot"
+[[ ! -e $etc/limine ]] || fail "a menu write failure removes the Limine defaults it created" "$(cat "$etc/limine" 2>&1)"
+[[ ! -e $etc/update-grub ]] || fail "a menu write failure puts GRUB's update target back"
+pass "a menu write failure rolls the activation back"
 
-# limine-update fails: GRUB keeps the U-Boot slot and the Mac is not a Limine Mac.
+# limine-update fails: GRUB keeps the U-Boot slot and the caller sees failure.
 : >"$calls"
-FAIL_LIMINE_UPDATE=1 run 2>"$test_tmp/err" || fail "a guarded failure is a decline, not a failed install step"
+if FAIL_LIMINE_UPDATE=1 run 2>"$test_tmp/err"; then fail "an opted-in build failure must fail the caller"; fi
 [[ $(cat "$esp/EFI/BOOT/BOOTAA64.EFI") == "GRUB image" ]] || fail "a failed UKI build leaves GRUB in the U-Boot slot"
 [[ ! -e $etc/limine ]] || fail "a failed activation removes the Limine defaults it created"
 [[ ! -e $etc/update-grub ]] || fail "a failed activation puts GRUB's update target back (none before)"
-[[ $(tail -n 1 "$calls") == update-grub ]] || fail "GRUB is regenerated into the U-Boot slot after the rollback" "$(cat "$calls")"
-grep -q 'GRUB stays the boot loader' "$test_tmp/err" || fail "the failure is reported" "$(cat "$test_tmp/err")"
+(( $(grep -c '^update-grub$' "$calls") == 1 )) || fail "rollback restores the loader without regenerating GRUB" "$(cat "$calls")"
+grep -q 'restored the previous boot files' "$test_tmp/err" || fail "the failure is reported" "$(cat "$test_tmp/err")"
 pass "GRUB keeps the slot until the Limine menu boots the kernel"
 
 # The full activation.
@@ -210,8 +222,85 @@ pass "an image without GRUB activates Limine on its own"
 cp "$etc/limine" "$test_tmp/prior-defaults"
 cp "$esp/limine.conf" "$test_tmp/prior-menu"
 cp "$esp/EFI/Linux/omarchy_linux-aurora.efi" "$test_tmp/prior-uki"
-FAIL_LIMINE_UPDATE=1 run || fail "a declined reactivation returns without committing"
+if FAIL_LIMINE_UPDATE=1 run; then fail "a failed reactivation returns nonzero"; fi
 cmp -s "$etc/limine" "$test_tmp/prior-defaults" || fail "reactivation restores the previous defaults"
 cmp -s "$esp/limine.conf" "$test_tmp/prior-menu" || fail "reactivation restores the previous menu"
 cmp -s "$esp/EFI/Linux/omarchy_linux-aurora.efi" "$test_tmp/prior-uki" || fail "reactivation restores the previous UKI"
 pass "failed reactivation preserves the bootable Limine state"
+
+# Failed foreign-identity activation must retain both its history and the
+# installer staging content. Cleanup belongs after a successful deployment.
+foreign_id=0123456789abcdef0123456789abcdef
+mkdir -p "$esp/$foreign_id" "$esp/omarchy"
+printf 'history\n' >"$esp/$foreign_id/snapshot"
+printf 'installer contract\n' >"$esp/omarchy/install.conf"
+printf '\ncomment: machine-id=%s\n' "$foreign_id" >>"$esp/limine.conf"
+if TEST_CONDITIONAL_SOURCE=1 FAIL_LIMINE_UPDATE=1 run; then fail "foreign-identity build failure is reported"; fi
+[[ $(cat "$esp/$foreign_id/snapshot") == "history" ]] || fail "failed activation retains foreign history"
+[[ $(cat "$esp/omarchy/install.conf") == "installer contract" ]] || fail "failed activation retains installer staging contents"
+cp "$test_tmp/prior-menu" "$esp/limine.conf"
+rm -rf "$esp/$foreign_id"
+pass "failed replacement retains prior machine history and installer staging"
+
+# Required hook installation happens before deployment. A failure must work
+# even when the source itself is in a conditional (errexit is then ignored).
+cp "$esp/EFI/BOOT/BOOTAA64.EFI" "$test_tmp/prior-loader"
+cp "$etc/pacman.d/hooks/81-omarchy-mac-limine-deploy.hook" "$test_tmp/prior-deploy-hook"
+cat >"$stub_bin/tee" <<'STUB'
+#!/bin/bash
+for arg in "$@"; do
+  [[ $arg == */81-omarchy-mac-limine-deploy.hook ]] && exit 8
+done
+exec /usr/bin/tee "$@"
+STUB
+chmod +x "$stub_bin/tee"
+if TEST_CONDITIONAL_SOURCE=1 run; then fail "required hook write failure is propagated inside a conditional source"; fi
+rm -f "$stub_bin/tee"
+for item in 'limine prior-defaults' 'pacman.d/hooks/81-omarchy-mac-limine-deploy.hook prior-deploy-hook'; do
+  read -r target before <<<"$item"
+  cmp -s "$etc/$target" "$test_tmp/$before" || fail "hook failure restores $target"
+done
+cmp -s "$esp/EFI/BOOT/BOOTAA64.EFI" "$test_tmp/prior-loader" || fail "hook failure never changes the EFI loader"
+pass "required deploy hook fails before activation even inside a conditional source"
+
+# A deploy failure after touching the slot still restores the exact prior
+# loader, menu, UKI and defaults. Never reconstruct the old loader as GRUB.
+rm "$stub_bin/omarchy-mac-limine-deploy"
+cat >"$stub_bin/omarchy-mac-limine-deploy" <<'STUB'
+#!/bin/bash
+printf 'failed-deployment\n' >"$TEST_ESP/EFI/BOOT/BOOTAA64.EFI"
+exit 6
+STUB
+chmod +x "$stub_bin/omarchy-mac-limine-deploy"
+if TEST_CONDITIONAL_SOURCE=1 run; then fail "post-write deployment failure is propagated"; fi
+rm "$stub_bin/omarchy-mac-limine-deploy"
+ln -s "$ROOT/bin/omarchy-mac-limine-deploy" "$stub_bin/omarchy-mac-limine-deploy"
+cmp -s "$esp/EFI/BOOT/BOOTAA64.EFI" "$test_tmp/prior-loader" || fail "post-write failure restores the exact loader"
+cmp -s "$etc/limine" "$test_tmp/prior-defaults" || fail "post-write failure restores defaults"
+cmp -s "$esp/limine.conf" "$test_tmp/prior-menu" || fail "post-write failure restores menu"
+cmp -s "$esp/EFI/Linux/omarchy_linux-aurora.efi" "$test_tmp/prior-uki" || fail "post-write failure restores UKI"
+pass "deployment rollback restores the existing Limine loader byte for byte"
+
+# Existing GRUB target configuration and an old recovery image are restored
+# verbatim, including a zero-byte file: rollback must not infer prior state
+# from an empty command substitution or regenerate the loader.
+printf '#!/bin/bash\nexit 0\n' >"$stub_bin/grub-probe"
+printf '#!/bin/bash\nexit 0\n' >"$stub_bin/grub-mkconfig"
+chmod +x "$stub_bin/grub-probe" "$stub_bin/grub-mkconfig"
+: >"$etc/update-grub"
+printf 'prior unused recovery\n' >"$test_tmp/boot/grub/grub-aa64.efi"
+if FAIL_LIMINE_UPDATE=1 run; then fail "GRUB retarget followed by failed UKI reports failure"; fi
+[[ -f $etc/update-grub && ! -s $etc/update-grub ]] || fail "rollback preserves an existing empty update-grub configuration"
+[[ $(cat "$test_tmp/boot/grub/grub-aa64.efi") == "prior unused recovery" ]] || fail "rollback restores the old recovery image"
+cmp -s "$esp/EFI/BOOT/BOOTAA64.EFI" "$test_tmp/prior-loader" || fail "GRUB rollback preserves the actual previous EFI loader"
+pass "rollback restores GRUB target configuration and recovery image verbatim"
+
+# A helper that returns success without deploying the packaged bytes does
+# not satisfy activation; image and first-boot callers must see the failure.
+printf 'previous-efi\n' >"$esp/EFI/BOOT/BOOTAA64.EFI"
+rm "$stub_bin/omarchy-mac-limine-deploy"
+printf '#!/bin/bash\nexit 0\n' >"$stub_bin/omarchy-mac-limine-deploy"
+chmod +x "$stub_bin/omarchy-mac-limine-deploy"
+if run; then fail "success without matching EFI bytes is refused"; fi
+[[ $(cat "$esp/EFI/BOOT/BOOTAA64.EFI") == "previous-efi" ]] || fail "false-success rollback retains the prior loader"
+pass "successful activation requires actual packaged EFI bytes"
