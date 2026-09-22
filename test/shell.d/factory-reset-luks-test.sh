@@ -125,6 +125,7 @@ export OMARCHY_PATH="$tmp/omarchy"
 export OMARCHY_FACTORY_RESET_SOURCE=1
 export OMARCHY_FACTORY_RESET_LOG="$tmp/reset.log"
 export OMARCHY_BOOT_LUKS_KEY="$boot_key"
+export OMARCHY_ENCRYPT_STATE="$tmp/boot/omarchy/encrypt.state"
 export OMARCHY_GRUB_DEFAULT="$grub_live"
 export OMARCHY_CRYPTTAB="$tmp/live/crypttab"
 export OMARCHY_LUKS_DEVICE="$device"
@@ -210,6 +211,17 @@ grep -F 'omarchy-mac-boot-update' "$calls" >/dev/null || fail "a Limine Mac's re
 rm -f "$stub_bin/omarchy-mac-limine-active" "$stub_bin/omarchy-mac-boot-update" "$next/usr/bin/omarchy-mac-boot-update"
 pass "a Limine Mac's reset resets Limine's menu and rebuilds it from the factory root"
 
+# Observe state at the slot write, the first persistent temporary credential.
+printf 'format=1\nphase=finished\nowner_slot=0\n' >"$OMARCHY_ENCRYPT_STATE"
+cp "$stub_bin/cryptsetup" "$stub_bin/cryptsetup.real"
+cat >"$stub_bin/cryptsetup" <<'SH'
+#!/bin/bash
+if [[ $1 == "luksAddKey" ]]; then
+  grep -Fxq 'phase=configured' "$OMARCHY_ENCRYPT_STATE" || exit 90
+fi
+exec "${BASH_SOURCE[0]}.real" "$@"
+SH
+chmod +x "$stub_bin/cryptsetup"
 : >"$calls"
 stage_luks_rekey_apple_commit "$RESET_LUKS_DEVICE" "$RESET_THROWAY"
 [[ -f $boot_key ]] || fail "reset writes the Boot-partition luks-key immediately before activation"
@@ -261,8 +273,8 @@ sanitize_factory_baseline "$factory"
 [[ ! -e $factory/var/lib/omarchy/provisioning/wipe-pending ]] || fail "@factory does not keep wipe-pending"
 [[ ! -e $factory/boot/efi/omarchy/install.conf ]] || fail "@factory does not keep the ESP install.conf"
 # /boot inside a subvolume is an empty mountpoint on a real system: the live
-# Boot partition's encrypt.state is rewritten by reopen_encrypt_state after
-# activation, never by the subvolume scrub.
+# Boot partition's encrypt.state is reopened before committing the key,
+# never by the subvolume scrub.
 [[ -f $factory/boot/omarchy/encrypt.state ]] || fail "the subvolume scrub leaves boot/omarchy alone"
 live_state="$tmp/boot/omarchy/encrypt.state"
 printf 'format=1\nphase=finished\npartition=p\nluks_uuid=u\nowner_slot=1\nrecovery_slot=2\n' >"$live_state"
@@ -306,3 +318,13 @@ printf 'different kernel' >"$next/usr/lib/modules/test-kernel/vmlinuz"
 if (rebuild_next_boot_apple "$next"); then fail "reset rejects a different factory kernel"; fi
 ! grep -Eq '^(mount|chroot|update-m1n1)' "$calls" || fail "a mismatched kernel changes no boot files"
 pass "cross-kernel reset requires a coordinated boot-package restore"
+
+# A failed state flush must stop before adding a key or activating the root.
+printf 'format=1\nphase=finished\n' >"$OMARCHY_ENCRYPT_STATE"
+: >"$calls"
+if (sync() { return 1; }; stage_luks_rekey_apple_commit "$device" throwaway); then
+  fail "reset aborts when the reopened phase cannot be persisted"
+fi
+! grep -Fq 'cryptsetup luksAddKey' "$calls" || fail "state durability failure adds no key"
+grep -Fxq 'phase=finished' "$OMARCHY_ENCRYPT_STATE" || fail "failed file sync retains the prior journal"
+pass "reset persists an unfinished phase before adding a temporary unlock"

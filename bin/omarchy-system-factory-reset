@@ -202,9 +202,12 @@ stage_luks_rekey_apple_commit() {
   [[ -n $device && -n $passphrase && -n ${RESET_LUKS_AUTH:-} ]] || fail "reset LUKS commit is missing the throwaway passphrase"
   [[ $- == *x* ]] && xtrace_on=1
   set +x
+  # Reopen durably before the first persistent temporary credential exists.
+  # A power loss after activation must never leave phase=finished behind.
+  reopen_encrypt_state
   local before after
   before=$(cryptsetup luksDump "$device" | awk '/^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }' | sort)
-  if ! { cryptsetup luksAddKey --key-file <(printf '%s' "$RESET_LUKS_AUTH") "$device" <(printf '%s' "$passphrase") ; } 2>/dev/null; then
+  if ! { cryptsetup luksAddKey --key-file <(printf '%s' "$RESET_LUKS_AUTH") "$device" <(printf '%s' "$passphrase") ; } 2>>"$LOG_FILE"; then
     if (( xtrace_on )); then set -x; fi
     fail "could not add the throwaway LUKS keyslot"
   fi
@@ -233,7 +236,7 @@ revoke_reset_luks() {
   if [[ -n ${RESET_LUKS_SLOT:-} && -n ${RESET_LUKS_DEVICE:-} && -n ${RESET_LUKS_AUTH:-} ]]; then
     [[ $- == *x* ]] && xtrace_on=1
     set +x
-    { cryptsetup luksKillSlot -q --key-file <(printf '%s' "$RESET_LUKS_AUTH") "$RESET_LUKS_DEVICE" "$RESET_LUKS_SLOT" ; } 2>/dev/null || true
+    { cryptsetup luksKillSlot -q --key-file <(printf '%s' "$RESET_LUKS_AUTH") "$RESET_LUKS_DEVICE" "$RESET_LUKS_SLOT" ; } 2>>"$LOG_FILE" || true
     if (( xtrace_on )); then set -x; fi
     RESET_LUKS_SLOT=""
   fi
@@ -257,7 +260,7 @@ stage_luks_rekey() {
   while true; do
     current=$(gum input --password --placeholder "Current disk encryption passphrase" --prompt "Passphrase> ") || exit 1
     set +x
-    if { cryptsetup open --test-passphrase --key-file <(printf '%s' "$current") "$device" ; } 2>/dev/null; then
+    if { cryptsetup open --test-passphrase --key-file <(printf '%s' "$current") "$device" ; } 2>>"$LOG_FILE"; then
       if (( xtrace_on )); then set -x; fi
       break
     fi
@@ -280,7 +283,7 @@ stage_luks_rekey() {
   fi
 
   set +x
-  { cryptsetup luksAddKey --key-file <(printf '%s' "$current") "$device" <(printf '%s' "$passphrase") ; } 2>/dev/null
+  { cryptsetup luksAddKey --key-file <(printf '%s' "$current") "$device" <(printf '%s' "$passphrase") ; } 2>>"$LOG_FILE"
   if (( xtrace_on )); then set -x; fi
 
   install -d -m 755 "$next/etc/omarchy"
@@ -517,8 +520,8 @@ sanitize_factory_baseline() {
 
 # @factory must not carry first-boot markers or the ESP install.conf (v3 item
 # 2e); the Boot partition's encrypt.state lives outside the subvolume and is
-# reopened by reopen_encrypt_state after activation. The reset re-arms markers
-# on the cloned next root, not on the sealed baseline.
+# reopened before committing the temporary key. The reset re-arms markers on
+# the cloned next root, not on the sealed baseline.
 scrub_factory_boot_state() {
   local root=$1
   rm -f \
@@ -541,8 +544,9 @@ reopen_encrypt_state() {
   sed -e 's/^phase=.*/phase=configured/' -e '/^owner_slot=/d' -e '/^recovery_slot=/d' "$state" >"$tmp" ||
     fail "could not rewrite $state"
   chmod 0644 "$tmp"
-  mv -f "$tmp" "$state"
-  sync "$(dirname "$state")" 2>/dev/null || true
+  sync "$tmp" || fail "could not persist $state"
+  mv -f "$tmp" "$state" || fail "could not commit $state"
+  sync "$(dirname "$state")" || fail "could not persist the encryption state directory"
 }
 
 arm_reset_markers() {
@@ -619,11 +623,6 @@ stage_full_reset() {
   mv "$next" "$top/@"
   swap_done=1
   sync
-  # The live Boot partition's state opens the re-key for the next owner only
-  # once the factory system is the one that boots.
-  if encrypted_install && apple_silicon; then
-    reopen_encrypt_state
-  fi
 }
 
 # A reset is a clone of @factory, so a machine without one has nothing to

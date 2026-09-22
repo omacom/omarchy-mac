@@ -58,7 +58,7 @@ SH
 
 # The re-key regenerates boot files through omarchy-mac-boot-update, which on
 # a GRUB Mac is update-grub.
-ln -sf "$ROOT/bin/omarchy-mac-boot-update" "$stub_bin/omarchy-mac-boot-update"
+cp "$ROOT/bin/omarchy-mac-boot-update" "$stub_bin/omarchy-mac-boot-update"
 cat >"$stub_bin/omarchy-mac-limine-active" <<'SH'
 #!/bin/bash
 exit 1
@@ -103,6 +103,7 @@ slot_for() {
 add_slot() {
   local material=\$1 next
   next=\$(awk '{s=\$1} END {print s+1}' "\$slots_file")
+  next=\${requested_slot:-\$next}
   printf '%s %s\n' "\$next" "\$material" >>"\$slots_file"
 }
 case "\$1" in
@@ -122,6 +123,8 @@ case "\$1" in
     exit 0
     ;;
   luksAddKey)
+    requested_slot=""
+    if [[ -f "$tmp/add-fail" ]]; then echo "fixture: keyslot write failed" >&2; exit 1; fi
     keyfile=""
     device=""
     newfile=""
@@ -129,6 +132,7 @@ case "\$1" in
     while ((\$#)); do
       case "\$1" in
         --key-file) keyfile=\$2; shift 2 ;;
+        --key-slot) requested_slot=\$2; shift 2 ;;
         --*) shift ;;
         *)
           if [[ -z \$device ]]; then
@@ -217,7 +221,7 @@ exit 0
 SH
 chmod +x "$stub_bin/gum"
 
-show_recovery_key "$recovery_key" >"$tmp/show.out"
+prepare_luks_recovery "$device" >"$tmp/show.out"
 grep -aqF $'\e[3J' "$tmp/show.out" || fail "recovery display clearing uses CSI 3J" "$(od -An -tx1 "$tmp/show.out" | head)"
 
 [[ -f $prov/luks-key ]] || fail "acknowledgement leaves the provisioning luks-key in place"
@@ -225,8 +229,10 @@ grep -aqF $'\e[3J' "$tmp/show.out" || fail "recovery display clearing uses CSI 3
 [[ -f $prov/pending ]] || fail "acknowledgement leaves provisioning/pending in place"
 grep -Fxq 'phase=encrypted' "$encrypt_state" ||
   fail "acknowledgement does not finalise encrypt.state" "$(cat "$encrypt_state")"
-! grep -F 'cryptsetup luksAddKey' "$calls" >/dev/null ||
-  fail "acknowledgement happens before any keyslot is added"
+(( $(grep -cF 'cryptsetup luksAddKey' "$calls") == 2 )) ||
+  fail "owner and verified recovery slots exist before acknowledgement"
+grep -Fq "$recovery_key" "$slots" || fail "the displayed key is installed"
+grep -Fxq 'recovery_shown=1' "$REKEY_STATE" || fail "acknowledgement is durable"
 ! grep -F "$recovery_key" "$calls" >/dev/null ||
   fail "the recovery key is not passed as a gum argument" "$(cat "$calls")"
 [[ "$(<"$tmp/gum-stdin")" == "$recovery_key" ]] ||
@@ -255,8 +261,8 @@ grep -q '^owner_slot=' "$REKEY_STATE" || fail "owner slot is recorded" "$(cat "$
 grep -q '^recovery_slot=' "$REKEY_STATE" || fail "recovery slot is recorded" "$(cat "$REKEY_STATE")"
 grep -Fxq 'recovery_shown=1' "$REKEY_STATE" || fail "recovery_shown=1 is recorded after acknowledgement" "$(cat "$REKEY_STATE")"
 [[ -f $prov/pending ]] || fail "provisioning state is not removed before phase=finished"
-(( $(grep -cF 'cryptsetup luksAddKey' "$calls") == 2 )) ||
-  fail "first attempt adds the owner key and the recovery keyslot" "$(cat "$calls")"
+! grep -Fq 'cryptsetup luksAddKey' "$calls" ||
+  fail "the worker uses the already-confirmed slots" "$(cat "$calls")"
 grep -F 'cryptsetup luksKillSlot' "$calls" >/dev/null || fail "the staged-key slot is killed after slots are recorded"
 
 recorded_owner=$(awk -F= '$1 == "owner_slot" { print $2 }' "$REKEY_STATE")
@@ -355,7 +361,8 @@ printf '0 throwaway-install-key\n' >"$slots"
 # The stub compares slot material exactly; owner-secret-xtrace is new.
 : >"$OMARCHY_PROVISION_OWNER_LOG"
 : >"$calls"
-RECOVERY_ACKED=1
+printf '%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
+prepare_luks_recovery "$device" >"$tmp/xtrace-screen"
 set -x
 rekey_luks >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1
 set +x
@@ -379,3 +386,81 @@ printf 'format=1\nphase=rekeyed\nowner_slot=1\nrecovery_slot=2\n' >"$encrypt_sta
 rm -f "$prov/luks-key" "$device"
 if rekey_luks; then fail "an incomplete re-key rejects an unavailable device"; fi
 pass "an incomplete re-key cannot silently skip a missing device"
+
+# Finished must never mean success while reset credentials/configuration remain.
+: >"$device"
+printf 'format=1\nphase=finished\n' >"$encrypt_state"
+for leftover in provisioning boot cmdline; do
+  rm -f "$prov/luks-key" "$boot_key"
+  printf 'GRUB_CMDLINE_LINUX="quiet"\n' >"$grub_default"
+  case $leftover in
+    provisioning) printf dummy >"$prov/luks-key" ;;
+    boot) printf dummy >"$boot_key" ;;
+    cmdline) printf 'GRUB_CMDLINE_LINUX="rd.luks.key=dummy"\n' >"$grub_default" ;;
+  esac
+  : >"$calls"
+  if rekey_luks; then fail "finished refuses leftover $leftover"; fi
+  ! grep -Fq 'cryptsetup luksKillSlot' "$calls" || fail "inconsistent finished state does not retire slots"
+done
+pass "finished state refuses staged credentials and persistent auto-unlock configuration"
+
+reset_recovery_fixture() {
+  printf 'format=1\nphase=configured\n' >"$encrypt_state"
+  printf '0 throwaway-install-key\n1 owner-secret\n' >"$slots"
+  printf 'throwaway-install-key' >"$prov/luks-key"
+  printf 'throwaway-install-key' >"$boot_key"
+  printf 'owner_slot=1\n' >"$REKEY_STATE"
+  password=owner-secret
+  recovery_key=""
+  RECOVERY_ACKED=0
+  : >"$calls"
+  : >"$tmp/gum-stdin"
+  printf '%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
+}
+
+reset_recovery_fixture
+touch "$tmp/add-fail"
+if prepare_luks_recovery "$device"; then fail "failed slot creation aborts recovery display"; fi
+[[ ! -s $tmp/gum-stdin ]] || fail "an uninstalled recovery key is never shown"
+grep -Fq 'fixture: keyslot write failed' "$LOG_FILE" || fail "cryptsetup diagnostics reach the private log"
+[[ -n $(rekey_state_get recovery_slot) ]] || fail "slot intent precedes its header write"
+rm "$tmp/add-fail"
+prepare_luks_recovery "$device" >"$tmp/retry-screen"
+[[ $(luks_slot_for "$recovery_key" "$device") == "$(rekey_state_get recovery_slot)" ]] || fail "retry displays a usable key"
+pass "failed key creation retains diagnostics and never displays an unusable key"
+
+# Kill the foreground transaction while displaying: durable slot intent lets
+# the next attempt revoke precisely the unacknowledged key, even after restart.
+reset_recovery_fixture
+if (show_recovery_key() { exit 71; }; prepare_luks_recovery "$device"); then
+  fail "interrupted recovery display must not complete"
+fi
+old_recovery=$(awk '$1 == 2 { print $2 }' "$slots")
+[[ -n $old_recovery ]] || fail "display starts only after installing the slot"
+[[ $(rekey_state_get recovery_shown || true) != 1 ]] || fail "interrupted display is not acknowledged"
+prepare_luks_recovery "$device" >"$tmp/retry-screen"
+! grep -Fq "$old_recovery" "$slots" || fail "retry revokes the unacknowledged key"
+(( $(wc -l <"$slots") == 3 )) || fail "retry does not accumulate slots"
+grep -Fq 'Replace any earlier copy' "$calls" || fail "retry explains replacement"
+: >"$calls"
+: >"$tmp/gum-stdin"
+prepare_luks_recovery "$device"
+[[ ! -s $tmp/gum-stdin ]] || fail "acknowledged recovery key is not shown again"
+! grep -Eq 'cryptsetup luks(AddKey|KillSlot)' "$calls" || fail "acknowledged retry leaves slots intact"
+pass "interrupted display replaces its key; acknowledged retries preserve their key"
+
+# A background worker cannot prepare or display a recovery key into its log.
+reset_recovery_fixture
+if OMARCHY_PROVISION_WORKER=1 prepare_luks_recovery "$device"; then fail "worker cannot prepare recovery UI"; fi
+if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "worker rejects an unconfirmed recovery slot"; fi
+[[ -f $prov/luks-key && -f $boot_key ]] || fail "unconfirmed recovery preserves staged unlock for retry"
+pass "worker refuses an unconfirmed recovery key"
+
+reset_recovery_fixture
+prepare_luks_recovery "$device" >"$tmp/confirmed-screen"
+: >"$calls"
+if (sync() { return 1; }; rekey_luks); then fail "rekey rejects a failed phase sync"; fi
+[[ -f $prov/luks-key && -f $boot_key ]] || fail "failed phase sync retains retry keys"
+! grep -Fq 'cryptsetup luksKillSlot' "$calls" || fail "failed phase sync retires no slots"
+grep -Fxq 'phase=configured' "$encrypt_state" || fail "failed phase sync retains prior journal"
+pass "failed rekey journal persistence retains the staged unlock for retry"
