@@ -41,6 +41,7 @@ run_logged "$OMARCHY_INSTALL/hardware/apple/fix-brcmfmac-supplicant.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/video-decode.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/audio.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/electron-gl.sh"
+run_logged "$OMARCHY_INSTALL/hardware/apple/grub-console.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/limine-boot.sh"
 
 run_logged "$OMARCHY_INSTALL/hardware/lenovo/fix-yoga-pro7-bass-speakers.sh"
