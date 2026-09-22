@@ -401,4 +401,3 @@ printf '/dev/nvme0n1p5 btrfs\n/dev/nvme0n1p4 crypto_LUKS\n' >"$test_tmp/lsblk"
 TEST_LSBLK="$test_tmp/lsblk" run_check
 expect_fail "crypto_LUKS parent without crypttab" "encrypted root has no crypttab"
 pass "a mapper or LUKS root without crypttab is a failure"
-
