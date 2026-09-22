@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# omarchy:summary=Set or show the Apple Silicon battery charge limit
+# omarchy:args=[80|100]
+# omarchy:examples=omarchy battery charge limit | omarchy battery charge limit 80 | omarchy battery charge limit 100
+
+set -euo pipefail
+
+battery_path="/sys/class/power_supply/macsmc-battery"
+start_file="$battery_path/charge_control_start_threshold"
+end_file="$battery_path/charge_control_end_threshold"
+
+usage() {
+  echo "Usage: omarchy battery charge limit [80|100]" >&2
+  exit 2
+}
+
+(( $# <= 1 )) || usage
+limit="${1:-status}"
+case "$limit" in
+  status | 80 | 100) ;;
+  *) usage ;;
+esac
+
+if [[ ! -r $start_file || ! -r $end_file ]]; then
+  echo "Apple Silicon charge thresholds are not available on this system." >&2
+  exit 1
+fi
+
+current_start=$(<"$start_file")
+current_end=$(<"$end_file")
+if [[ $limit == "status" ]]; then
+  printf 'Charge limit: %s%% (restart charging at %s%%)\n' "$current_end" "$current_start"
+  exit 0
+fi
+
+if [[ $limit == "80" ]]; then
+  new_start=75
+  new_end=80
+else
+  new_start=100
+  new_end=100
+fi
+
+write_threshold() {
+  local value=$1 file=$2
+  if (( EUID == 0 )); then
+    printf '%s\n' "$value" | /usr/bin/tee "$file" >/dev/null
+  else
+    printf '%s\n' "$value" | pkexec /usr/bin/tee "$file" >/dev/null
+  fi
+}
+
+if [[ $limit == "80" ]]; then
+  # Lower the restart point before lowering the stop point, so both values
+  # remain valid while the SMC applies each update.
+  write_threshold "$new_start" "$start_file"
+  if ! write_threshold "$new_end" "$end_file"; then
+    write_threshold "$current_start" "$start_file" || true
+    exit 1
+  fi
+else
+  # Raise the stop point first when removing a cap.
+  write_threshold "$new_end" "$end_file"
+  if ! write_threshold "$new_start" "$start_file"; then
+    write_threshold "$current_end" "$end_file" || true
+    exit 1
+  fi
+fi
+
+actual_start=$(<"$start_file")
+actual_end=$(<"$end_file")
+if [[ $actual_start != "$new_start" || $actual_end != "$new_end" ]]; then
+  echo "Charge threshold update did not stick; the SMC reports ${actual_start}%/${actual_end}%." >&2
+  exit 1
+fi
+
+printf 'Charge limit set to %s%% (restart charging at %s%%).\n' "$new_end" "$new_start"

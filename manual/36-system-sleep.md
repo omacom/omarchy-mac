@@ -8,6 +8,8 @@ On a laptop, Omarchy remembers your power profile separately for plugged in and 
 
 You can see what your machine offers with `omarchy powerprofiles list`, and set the one you want for the state you're currently in with `omarchy powerprofiles set autodetect power-saver`. To set the other state without unplugging anything, name it directly: `omarchy powerprofiles set battery power-saver`. Whatever you pick is what you'll get back the next time you're in that state.
 
+On supported Apple Silicon MacBooks, the battery charge controller can hold charging below full to reduce time spent at a high state of charge. Check the current setting with `omarchy battery charge limit`, set an 80% cap with `omarchy battery charge limit 80`, or restore full charging with `omarchy battery charge limit 100`. The 80% setting resumes charging at 75%. The default remains full charging.
+
 ### Toggle suspend
 
 You toggle suspend by running `omarchy toggle suspend` from the terminal. That just reveals/hides the option under _System_ (or `Super + Esc`), and then you can see if it works consistently on your system. If not, you can hide it again with the same command.
