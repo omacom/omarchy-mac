@@ -81,7 +81,7 @@ python3 test/vm/mac-image/launch_private.py audit \
   --inputs /path/VM-INPUTS.json --inputs-sha256 CALLER_PINNED_SHA256
 ```
 
-The audit authenticates the descriptor-bound image report and exported root bytes, checks the reviewed trust-audit tool's SHA256, then attaches only `payload/root.img` through a read-only loop. It requires the exact backing identity, `UDISKS_IGNORE=1`, this task's private tag and no host mount before mounting `@` and `@factory` with `ro,nologreplay`. Both shipping trees are checked by the parent-provided audit tool. Cleanup unmounts before detaching, refuses to detach a reused device, and hashes root.img again to prove unchanged bytes. No final VM state directory is created by this audit. Its report is `vm/shipping-trust-audit-image-3.json`.
+The audit authenticates the descriptor-bound image report and exported root bytes, checks the reviewed trust-audit tool's SHA256, then attaches only `payload/root.img` through a read-only loop. It requires the exact backing identity, `UDISKS_IGNORE=1`, this task's private tag and no host mount before mounting `@` and `@factory` with `ro,rescue=nologreplay`. Both shipping trees are checked by the parent-provided audit tool. Cleanup unmounts before detaching, refuses to detach a reused device, and hashes root.img again to prove unchanged bytes. No final VM state directory is created by this audit. Its report is `vm/shipping-trust-audit-image-3.json`.
 
 After that report passes and storage is ready, run both VM lanes:
 

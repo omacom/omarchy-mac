@@ -37,7 +37,7 @@ def audit(args):
         trees = [temporary / 'root', temporary / 'factory']
         for subvolume, target in zip(('@', '@factory'), trees):
             target.mkdir()
-            subprocess.run(['mount', '-t', 'btrfs', '-o', 'ro,nologreplay,subvol=' + subvolume, device, str(target)], check=True)
+            subprocess.run(['mount', '-t', 'btrfs', '-o', 'ro,rescue=nologreplay,subvol=' + subvolume, device, str(target)], check=True)
             mounted.append(target)
         result = subprocess.run([sys.executable, str(args.audit_tool), '--root-tree', str(trees[0]), '--factory-tree', str(trees[1])], capture_output=True, text=True, check=True)
         trust = admit.strict_json(result.stdout)
@@ -59,7 +59,7 @@ def audit(args):
     print(json.dumps({'kind': 'private-limine-export-trust-audit', 'result': 'passed',
         'inputs_sha256': args.inputs_sha256, 'audit_tool_sha256': AUDIT_SHA256,
         'root_image_sha256_before': before, 'root_image_sha256_after': after,
-        'mount_options': ['ro', 'nologreplay', 'subvol=@', 'subvol=@factory'],
+        'mount_options': ['ro', 'rescue=nologreplay', 'subvol=@', 'subvol=@factory'],
         'loop_guard': guard, 'shipping_trust': trust}, indent=2))
 
 

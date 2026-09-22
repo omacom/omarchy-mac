@@ -65,7 +65,7 @@ class ReadOnlyAuditTests(unittest.TestCase):
         report = self.run_audit()
         self.assertEqual(report['root_image_sha256_before'],report['root_image_sha256_after'])
         mounts = [call for call in self.calls if call[0]=='mount']
-        self.assertEqual([call[4] for call in mounts],['ro,nologreplay,subvol=@','ro,nologreplay,subvol=@factory'])
+        self.assertEqual([call[4] for call in mounts],['ro,rescue=nologreplay,subvol=@','ro,rescue=nologreplay,subvol=@factory'])
         self.assertEqual(self.calls[-1],['losetup','--detach','/dev/loop7'])
         self.assertEqual(self.image.read_bytes(),b'immutable shipping root')
 
