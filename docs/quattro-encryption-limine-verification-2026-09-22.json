@@ -3,7 +3,7 @@
   "kind": "draft-encryption-limine-source-verification",
   "date": "2026-09-22",
   "source_commits": {
-    "runtime": "eceaaaeb8adbc156dd46681983f0df27bd67d20c",
+    "runtime": "12308e1ca57d35abf38ff801df589da5e4754823",
     "package": "359eb8fc3e495f2188dd92eefa92ef3810e52c82",
     "image": "ae81ba75bffcca6799f79284a173dba5f6161135"
   },
@@ -11,10 +11,11 @@
   "results": {
     "runtime_aggregate": {
       "result": "passed",
-      "shell_test_files": 298,
+      "shell_test_files": 299,
       "cli": "passed",
+      "implementation_commit": "5d4c0f8e20c3b2690c97c55a7bc19dc3124a7f54",
       "environment": "unset LC_ALL, NO_COLOR, WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE, DISPLAY; OMARCHY_PATH=checkout; TERM=xterm-256color; fixture commit.gpgsign=false",
-      "initial_run": "296/298; untouched launch-about and update-pacman fixtures failed under inherited NO_COLOR/LC_ALL; both passed with a clean environment, then the entire aggregate passed"
+      "final_delta": "12308e1ca57d35abf38ff801df589da5e4754823 adds linked-destination refusal after this aggregate started; the full activation failure-injection fixture passed separately at that final implementation commit"
     },
     "runtime_focused": "passed: root environment, kernel query, owner rekey, reset, Limine activation/update, drive password and boot checks",
     "native_luks_file": "passed: cryptsetup 2.8.8, disposable 32 MiB regular file, PBKDF2 with reduced fixture iterations; interrupted unacknowledged slot replacement, owner/recovery authentication, acknowledged retry without slot growth; no block device or mount",
@@ -35,7 +36,15 @@
     },
     "image_aggregate": "not rerun: image implementation unchanged; original sandbox UID ownership limitation remains recorded in initial_checkpoint",
     "schema_4_image_guard": "retained; deferred-steps and limine.enabled writers remain explicit image-finalization prerequisites",
-    "preservation": "four original worktrees retain HEAD/status/dirty-file hashes; private tester source and bundle unchanged; no remote publication or installed-system changes"
+    "preservation": "four original worktrees retain HEAD/status/dirty-file hashes; private tester source and bundle unchanged; no remote publication or installed-system changes",
+    "runtime_integration": {
+      "gop_cmdline_commit": "18880961b",
+      "activation_transaction_commit": "5d4c0f8e20c3b2690c97c55a7bc19dc3124a7f54",
+      "linked_destination_commit": "12308e1ca57d35abf38ff801df589da5e4754823",
+      "source": "GRUB #208/#209 exact head 979ed031191ee7388d1536cb3ec1a6e583909254; no-GRUB behavior from unchanged runtime ceiling d418ab7f95e8ba447df4fb368ddd838a5ffc7943",
+      "focused": "passed: GOP effective assignments, regeneration retry, no-GRUB and active-Limine dispatch; activation prerequisites, required writes, conditional-source failures, hook ordering, exact EFI/config/menu/UKI rollback, foreign history and staging retention, linked-destination refusal; cmdline, boot-update and privileged-heredoc checks",
+      "limits": "No native EFI/UKI boot or power-loss qualification. GRUB display behavior remains a target boot check. Cross-kernel reset remains refused. Image guard and marker contract are owned by the coordinated image/package integration."
+    }
   },
   "files": [
     {
@@ -253,6 +262,14 @@
     {
       "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/native-luks.log",
       "sha256": "257e3a1f2036b7a0a555c745dae3b63b6f88c24f493f6008f7246188ec765ace"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-runtime-integration-20260922/aggregate.log",
+      "sha256": "5b8a68b0c232535cbf7040bd76afa31ec044b476e5b0b7150da45fe960943a9c"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-runtime-integration-20260922/activation-final.log",
+      "sha256": "cb8131c3ee0f64ab960230ee87b56630ef2c139df715b198186595c82c925ca6"
     }
   ],
   "initial_checkpoint": {
@@ -283,5 +300,15 @@
     }
   },
   "source_commit_meaning": "Implementation commits whose source was tested; later documentation-only commits do not change these pins. Image implementation is unchanged.",
-  "reviewed_at_utc": "2026-09-22T20:00:38.925869+00:00"
+  "reviewed_at_utc": "2026-09-22T20:24:28.745852+00:00",
+  "runtime_review_checkpoint": {
+    "source_commit": "eceaaaeb8adbc156dd46681983f0df27bd67d20c",
+    "aggregate": {
+      "result": "passed",
+      "shell_test_files": 298,
+      "cli": "passed",
+      "environment": "unset LC_ALL, NO_COLOR, WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE, DISPLAY; OMARCHY_PATH=checkout; TERM=xterm-256color; fixture commit.gpgsign=false",
+      "initial_run": "296/298; untouched launch-about and update-pacman fixtures failed under inherited NO_COLOR/LC_ALL; both passed with a clean environment, then the entire aggregate passed"
+    }
+  }
 }

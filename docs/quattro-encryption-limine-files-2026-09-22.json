@@ -575,7 +575,7 @@
       "owner": "desktop-runtime",
       "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
       "present_at_source_ceiling": true,
-      "implementation": "pending review or implementation; not imported by this checkpoint"
+      "implementation": "selectively adapted #208/#209 GOP and encrypted-root device wait at 979ed031191ee7388d1536cb3ec1a6e583909254; retain no-GRUB support; omit font/theme/splash polish; runtime integration 18880961b"
     },
     {
       "repository": "maralcbr/omarchy-mx-mac",
@@ -590,7 +590,7 @@
       "owner": "desktop-runtime",
       "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
       "present_at_source_ceiling": true,
-      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+      "implementation": "adapted from pinned ceiling; local strict-return, required-hook ordering and exact prior EFI/config/UKI rollback follow-up in 5d4c0f8e2; not power-loss qualified"
     },
     {
       "repository": "maralcbr/omarchy-mx-mac",
@@ -748,7 +748,7 @@
       "owner": "tests/runtime-or-image",
       "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
       "present_at_source_ceiling": true,
-      "implementation": "pending review or implementation; not imported by this checkpoint"
+      "implementation": "selectively adapted #208/#209 GOP and encrypted-root device wait at 979ed031191ee7388d1536cb3ec1a6e583909254; retain no-GRUB support; omit font/theme/splash polish; runtime integration 18880961b"
     },
     {
       "repository": "maralcbr/omarchy-mx-mac",
@@ -763,7 +763,7 @@
       "owner": "tests/runtime-or-image",
       "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
       "present_at_source_ceiling": true,
-      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+      "implementation": "adapted from pinned ceiling; local strict-return, required-hook ordering and exact prior EFI/config/UKI rollback follow-up in 5d4c0f8e2; not power-loss qualified"
     },
     {
       "repository": "maralcbr/omarchy-mx-mac",
