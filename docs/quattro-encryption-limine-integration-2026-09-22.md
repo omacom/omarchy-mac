@@ -1,6 +1,6 @@
 # Scoped Quattro encryption and Limine integration — 2026-09-22
 
-Status: checkpointed baseline; source inventory and separate local integration branches prepared. No functional port, new package/image/app build, VM run or physical operation has been performed in this preparation. This is the entry point for the next source implementation, not an encrypted-install qualification claim.
+Status: first source integration slices implemented on the separate integration branches. Runtime encryption/Limine behavior, boot package recipes, and opt-in signed schema-4 inputs are ported and fixture-tested. Full image assembly remains deliberately disabled for schema 4 while the coordinated dependency snapshot and finalized boot contract are unfinished. No new package/image/app build, disposable conversion/VM run, or physical operation has been performed. The validated M3 baseline remains unchanged. See [the implementation record](quattro-encryption-limine-source-port-2026-09-22.md) for exact completed scope, tests, and remaining work.
 
 ## Branches and preserved baseline
 
@@ -25,7 +25,7 @@ GitHub API was re-queried on September 22; exact query time, PR state, source co
 - Package default branch at query: `02da5b7ac1fa2c762dda0af1484a43b6e7e9267a`. Proposed image reference: open [#194](https://github.com/maralcbr/omarchy-pkgs/pull/194), head `68a61cef1aba768c6aae20a0feda2a42e19de6e8`. This is source-only reference; its own PR still lacks a payload build and macOS reinstall.
 - Marcelo's image repository default branch: `268bac16d351a21d867e37565738f458b11cb06c`. Preserve our implemented candidate builder rather than replacing it with his newer package-repository image script.
 - Standalone extraction origin: `maralcbr/omarchy-mx-mac` at `4db862da7a0957758c504c5a3e041202019dbabf`, prefix `apps/omarchy-apple-installer/`. Runtime #185 predates this app extraction but its Linux behavior was not imported with the app.
-- Destination desktop still resolves to tested `1c595bb6030c487c0b584f3e192ef9e8b858b821`. Destination package main has advanced to `78bf4a2d659187c10c722d8d0e8c41dd9e5e3726`; the new package branch intentionally starts from the tested recipe revision, so later main changes require their own comparison before any eventual merge.
+- The desktop integration branch starts from tested `1c595bb6030c487c0b584f3e192ef9e8b858b821`. Destination package main has advanced to `78bf4a2d659187c10c722d8d0e8c41dd9e5e3726`; the new package branch intentionally starts from the tested recipe revision, so later main changes require their own comparison before any eventual merge.
 
 Read upstream [Limine design at the pinned source](https://github.com/maralcbr/omarchy-mx-mac/blob/d418ab7f95e8ba447df4fb368ddd838a5ffc7943/docs/apple-silicon-limine.md). The boot chain remains m1n1 → U-Boot → EFI Limine → UKI. `/etc/default/grub` remains a derived-command-line input even without an active GRUB loader. Snapshots do not restore m1n1 or U-Boot on the ESP.
 
@@ -81,6 +81,6 @@ The destination already includes raw `lsblk -nsrpo NAME,FSTYPE` in owner setup a
 6. Validate the standalone app against the exact image, unchanged engine and private catalog; use portable tests and macOS debug/release, packaging/signature/unsupported-host checks as applicable. Do not rebuild passed immutable inputs without a changed dependency.
 7. Only after coordinated qualification, stage a concrete owner-reviewed M3 installation plan covering encrypted first boot, owner and recovery unlock, temporary-key absence, reboot, update, snapshot boot and restore. No physical authorization is inferred from this preparation or the earlier Aurora experiment.
 
-The preparation itself changes documentation only. Verify JSON/link integrity, documentation diffs and preserved worktree hashes; do not repeat full source suites or image qualification for unchanged implementations. Source pins are a review ceiling, and open PR movement must be reviewed explicitly before replacing them.
+The initial preparation changed documentation only; the source implementation is recorded separately above. Source pins remain a review ceiling, and open PR movement must be reviewed explicitly before replacing them.
 
 Preparation checks on September 22 passed: `env -u NO_COLOR -u LC_ALL bash test/shell.d/luks-parent-detection-test.sh` and the same invocation of `snapper-test.sh`. These confirm existing overlap behavior, not the unported encryption/Limine changes. The file disposition map contains 168 entries.
