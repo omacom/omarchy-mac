@@ -4,10 +4,10 @@
   "date": "2026-09-22",
   "source_commits": {
     "runtime": "12308e1ca57d35abf38ff801df589da5e4754823",
-    "package": "359eb8fc3e495f2188dd92eefa92ef3810e52c82",
-    "image": "ae81ba75bffcca6799f79284a173dba5f6161135"
+    "package": "c71c8c93180d05c1c96e6d560dcfb4b35c627bb6",
+    "image": "655283a460a7cf6d62fcd255188ef852f267a2a5"
   },
-  "qualification": "source suites plus a real LUKS2 regular-file keyslot check; no native boot package build, schema-4 image, VM boot or physical encrypted installation",
+  "qualification": "source suites, native four boot-package builds, focused legacy boot-package replacement, and real LUKS2 regular-file check; no complete signed thirteen-package image, VM boot or physical encrypted installation",
   "results": {
     "runtime_aggregate": {
       "result": "passed",
@@ -20,22 +20,28 @@
     "runtime_focused": "passed: root environment, kernel query, owner rekey, reset, Limine activation/update, drive password and boot checks",
     "native_luks_file": "passed: cryptsetup 2.8.8, disposable 32 MiB regular file, PBKDF2 with reduced fixture iterations; interrupted unacknowledged slot replacement, owner/recovery authentication, acknowledged retry without slot growth; no block device or mount",
     "recovery_screen": "current retry notice not visually verified: desktop monitor reported disabled, captures stalled; temporary preview/capture processes stopped. Earlier dummy-key preview covers the prior screen only.",
-    "package_boot_source": "passed including missing Limine defaults/updater and failed-update fixtures; container/block lanes disabled",
+    "package_boot_source": "passed including strict deferred-step contract and dormant/active Limine package hook coverage",
     "package_self_test": {
       "passed": 92
     },
     "package_candidate": {
-      "passed": 16
+      "passed": 17
     },
     "package_signing": {
       "passed": 13,
       "keys": "disposable only, disk-backed TMPDIR"
     },
     "image_candidate": {
-      "passed": 31
+      "passed": 32
     },
-    "image_aggregate": "not rerun: image implementation unchanged; original sandbox UID ownership limitation remains recorded in initial_checkpoint",
-    "schema_4_image_guard": "retained; deferred-steps and limine.enabled writers remain explicit image-finalization prerequisites",
+    "image_aggregate": {
+      "result": "passed",
+      "test_files": 74,
+      "implementation_commit": "655283a460a7cf6d62fcd255188ef852f267a2a5",
+      "ledger": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/unit-test-results.json",
+      "prior_failures": "old schema-less package-install fixture and source-impact CLI timing regression; explicit schema/full schema4 regression coverage and invocation-local discovery caching added before green rerun"
+    },
+    "schema_4_image_guard": "retained before builder trust changes; marker writers and artifact checks implemented, awaiting exact signed closure, new U-Boot/m1n1 branding/product contract and real image/VM qualification",
     "preservation": "four original worktrees retain HEAD/status/dirty-file hashes; private tester source and bundle unchanged; no remote publication or installed-system changes",
     "runtime_integration": {
       "gop_cmdline_commit": "18880961b",
@@ -44,6 +50,36 @@
       "source": "GRUB #208/#209 exact head 979ed031191ee7388d1536cb3ec1a6e583909254; no-GRUB behavior from unchanged runtime ceiling d418ab7f95e8ba447df4fb368ddd838a5ffc7943",
       "focused": "passed: GOP effective assignments, regeneration retry, no-GRUB and active-Limine dispatch; activation prerequisites, required writes, conditional-source failures, hook ordering, exact EFI/config/menu/UKI rollback, foreign history and staging retention, linked-destination refusal; cmdline, boot-update and privileged-heredoc checks",
       "limits": "No native EFI/UKI boot or power-loss qualification. GRUB display behavior remains a target boot check. Cross-kernel reset remains refused. Image guard and marker contract are owned by the coordinated image/package integration."
+    },
+    "package_dependency": {
+      "passed": 7
+    },
+    "package_native_build": {
+      "result": "passed",
+      "recipes": [
+        "uboot-asahi",
+        "limine-mkinitcpio-hook",
+        "limine-snapper-sync",
+        "omarchy-mac-boot"
+      ],
+      "artifacts": "unsigned qualification only"
+    },
+    "package_replacement": "focused real legacy-to-new boot-package transaction passed; complete thirteen-package/ESP/kernel transaction remains unqualified",
+    "image_dependency": {
+      "passed": 17
+    },
+    "image_finalizer": {
+      "passed": 17,
+      "native_format": "real cpio listing and authenticated native Limine ARM64 PE; synthetic UKI section fixtures"
+    },
+    "image_source_impact": {
+      "result": "passed",
+      "stage_input_cases": 38,
+      "source_impact_cases": 14,
+      "implementation_commit": "af03af5fb0af390c0687671704c34603db921bf7",
+      "cli_seconds": "0.56-0.60 on this host",
+      "timeout_seconds": 2.0,
+      "evidence": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/source-impact-performance/verification.json"
     }
   },
   "files": [
@@ -270,6 +306,42 @@
     {
       "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-runtime-integration-20260922/activation-final.log",
       "sha256": "cb8131c3ee0f64ab960230ee87b56630ef2c139df715b198186595c82c925ca6"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/aggregate.log",
+      "sha256": "1b29028a23b745103fc2898831978125b5ce1e0fe06d862a1cd938a3b930360f"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/unit-test-results.json",
+      "sha256": "9a6695a23c0596e40e89bc6a8413b9d9e27d091a525a719d08b7fbda8ef95cb8"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/aggregate-fixture-failure.log",
+      "sha256": "751d8bf9aab166839dbab148a19c82e6a667c1ef315fe909af581e008e896879"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/fixture-failure-results.json",
+      "sha256": "eaecec36331890feb6e8ba2611b196d77a1888b9a2479b4feb2caa581e6886a3"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/aggregate-timing-failure.log",
+      "sha256": "f9b85bd69e63500a10fa563ac390c78f6e7cd92821e9e0ebefcb35f042f34ba2"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/timing-failure-results.json",
+      "sha256": "c3e07644015eb0d8702d660204051fa9582bbdcd9ec36dc728f9991650de954f"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/source-impact-rerun.log",
+      "sha256": "264e48494de16053c2f1a89a3ef96189129389095a8c75a774444bc9820b24c2"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/source-impact-performance/verification.json",
+      "sha256": "267ec9c8c7fbcdab3d3e1af2168e234f9ffd488023c3a9d08b5f5807264d8928"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-packages-integration-20260922/evidence.json",
+      "sha256": "d52fe62cbf3ba96f6a96d280d053ad1ddf83d6d78471b6667f005f1197deae47"
     }
   ],
   "initial_checkpoint": {
