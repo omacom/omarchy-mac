@@ -42,6 +42,12 @@ omarchy-hw-apple-silicon || return 0
     "$pacman_hooks_dir/81-omarchy-mac-limine-deploy.hook")
   for index in "${!limine_managed[@]}"; do
     file=${limine_managed[index]}
+    # tee/install would follow a linked destination outside this backup set.
+    # The command-line hook is intentionally a symlink replaced by ln -sfn.
+    if [[ $file != "$boot_hooks_dir/20-omarchy-mac-cmdline" ]] && sudo test -L "$file"; then
+      sudo rm -rf "$limine_backup"
+      limine_boot_fail "$file must not be a symlink"
+    fi
     if sudo test -e "$file" || sudo test -L "$file"; then
       if ! sudo cp -a -- "$file" "$limine_backup/$index"; then
         sudo rm -rf "$limine_backup"

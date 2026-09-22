@@ -106,6 +106,14 @@ fi
 grep -q 'menu template' "$test_tmp/err" || fail "the missing template is reported" "$(cat "$test_tmp/err")"
 pass "no menu template, no activation"
 
+# Writes through a linked destination would escape the rollback backup.
+printf 'unmanaged defaults\n' >"$test_tmp/linked-defaults"
+ln -s "$test_tmp/linked-defaults" "$etc/limine"
+if run 2>"$test_tmp/err"; then fail "linked mutable destinations are rejected before writes"; fi
+[[ $(cat "$test_tmp/linked-defaults") == "unmanaged defaults" && -L $etc/limine ]] || fail "refusal preserves the linked target"
+rm "$etc/limine"
+pass "activation refuses writes outside its rollback set"
+
 # Installing the menu fails under the production shell flags. The scoped
 # transaction restores the previous boot files and reports the failure.
 : >"$calls"
