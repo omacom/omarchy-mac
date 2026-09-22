@@ -31,6 +31,9 @@ set +x
 
 set -euo pipefail
 
+# These root entrypoints also run before uwsm (systemd or sudo env_reset).
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+
 PROVISIONING_DIR="${OMARCHY_PROVISIONING_DIR:-/var/lib/omarchy/provisioning}"
 TOP_MNT=/run/omarchy-system-factory-reset/top
 NEXT_NAME=@omarchy-reset-next

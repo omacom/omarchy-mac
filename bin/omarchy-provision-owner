@@ -19,6 +19,9 @@ set +x
 
 set -euo pipefail
 
+# These root entrypoints also run before uwsm (systemd or sudo env_reset).
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+
 PROVISIONING_DIR="${OMARCHY_PROVISIONING_DIR:-/var/lib/omarchy/provisioning}"
 LOG_FILE="${OMARCHY_PROVISION_OWNER_LOG:-/var/log/omarchy-provision-owner.log}"
 BOOT_LUKS_KEY="${OMARCHY_BOOT_LUKS_KEY:-/boot/omarchy/luks-key}"
