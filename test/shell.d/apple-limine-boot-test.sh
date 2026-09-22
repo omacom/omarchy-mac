@@ -16,7 +16,7 @@ mkdir -p "$stub_bin" "$esp/EFI/BOOT" "$etc" "$test_tmp/share/limine" "$test_tmp/
 
 printf '#!/bin/bash\nexec "$@"\n' >"$stub_bin/sudo"
 printf '#!/bin/bash\nexit 0\n' >"$stub_bin/omarchy-hw-apple-silicon"
-printf '#!/bin/bash\necho linux-aurora\n' >"$stub_bin/omarchy-hw-apple-kernel"
+printf '#!/bin/bash\necho linux-aurora\n' >"$stub_bin/omarchy-mac-kernel"
 printf '#!/bin/bash\necho "systemctl $*" >>"$TEST_CALLS"\n' >"$stub_bin/systemctl"
 printf '#!/bin/bash\necho "limine-snapper-sync $*" >>"$TEST_CALLS"\n' >"$stub_bin/limine-snapper-sync"
 cat >"$stub_bin/findmnt" <<'SH'

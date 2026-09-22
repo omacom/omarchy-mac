@@ -29,7 +29,7 @@ boot_hooks_dir=${OMARCHY_LIMINE_BOOT_HOOKS_DIR:-/etc/boot/hooks/pre.d}
 pacman_hooks_dir=${OMARCHY_PACMAN_HOOKS_DIR:-/etc/pacman.d/hooks}
 systemd_dir=${OMARCHY_SYSTEMD_DIR:-/etc/systemd/system}
 grub_target=${OMARCHY_GRUB_TARGET:-/boot/grub/grub-aa64.efi}
-kernel=$(omarchy-hw-apple-kernel)
+kernel=$(omarchy-mac-kernel) || return 1
 
 if [[ ! -f $limine_efi ]]; then
   echo "limine is not installed; leaving GRUB in place" >&2

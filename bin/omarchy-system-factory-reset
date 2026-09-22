@@ -367,7 +367,7 @@ rebuild_next_boot_apple() {
   local next="$1" dir kernel pkgbase
   local boot_dir=${OMARCHY_BOOT_DIR:-/boot}
   local -a kernel_images=()
-  kernel=$(omarchy-hw-apple-kernel) || fail "cannot identify the Apple kernel"
+  kernel=$(omarchy-mac-kernel) || fail "cannot identify the Apple kernel"
   for pkgbase in "$next"/usr/lib/modules/*/pkgbase; do
     [[ -f $pkgbase ]] || continue
     [[ $(<"$pkgbase") == "$kernel" ]] || continue
