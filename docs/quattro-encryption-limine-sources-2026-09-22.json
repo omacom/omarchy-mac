@@ -1,0 +1,1640 @@
+{
+  "queried_at": "2026-09-22T13:33:15.832559+00:00",
+  "refs": {
+    "maralcbr/omarchy-mx-mac": "5e7a409fae1ddc17433d9408e15153b4fe813f7b",
+    "maralcbr/omarchy-pkgs": "02da5b7ac1fa2c762dda0af1484a43b6e7e9267a",
+    "maralcbr/omarchy-iso": "268bac16d351a21d867e37565738f458b11cb06c",
+    "omacom/omarchy-mac": "1c595bb6030c487c0b584f3e192ef9e8b858b821",
+    "omarchy-mac/omarchy-pkgs-aarch64": "78bf4a2d659187c10c722d8d0e8c41dd9e5e3726"
+  },
+  "pull_requests": [
+    {
+      "number": 185,
+      "title": "Finish the per-machine LUKS re-key: recovery key, drive password, factory reset and boot check",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "d30af9f84c2dbfc023f4fd553dac91ae2a02d04b",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/185",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "5e6303ec1961718059b524f9cd80e79fd1aa35bc",
+      "base": "30b2e6c7bf12047dd11af04aa1ff8e9ead623686",
+      "files": [
+        {
+          "filename": "bin/omarchy-apple-silicon-boot-check",
+          "status": "modified",
+          "additions": 92,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-drive-password",
+          "status": "modified",
+          "additions": 47,
+          "deletions": 5
+        },
+        {
+          "filename": "bin/omarchy-provision-owner",
+          "status": "modified",
+          "additions": 480,
+          "deletions": 76
+        },
+        {
+          "filename": "bin/omarchy-system-factory-reset",
+          "status": "modified",
+          "additions": 213,
+          "deletions": 9
+        },
+        {
+          "filename": "test/shell.d/apple-silicon-boot-check-test.sh",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 1
+        },
+        {
+          "filename": "test/shell.d/boot-check-luks-test.sh",
+          "status": "added",
+          "additions": 380,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/drive-password-apple-test.sh",
+          "status": "added",
+          "additions": 134,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/drive-password-test.sh",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 1
+        },
+        {
+          "filename": "test/shell.d/factory-reset-luks-test.sh",
+          "status": "added",
+          "additions": 255,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/provision-owner-luks-test.sh",
+          "status": "added",
+          "additions": 357,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "b03251ad221377e1c03f5782579d5d5a3a163a9d",
+          "message": "Add an Apple Silicon LUKS recovery keyslot after first-boot re-key.\n\nOn Macs the throwaway ESP key is shredded, rd.luks.key= is dropped via update-grub, and a 48-character base32 recovery passphrase is shown once."
+        },
+        {
+          "sha": "9e65a85236198cce256b21568d5a4261f22360c4",
+          "message": "Keep login and LUKS passphrases in sync on Apple Silicon.\n\nThe Intel Limine path is unchanged; the Apple GRUB+sd-encrypt branch updates the disk key and the owner/root login password together."
+        },
+        {
+          "sha": "6a5b7e9253cfb58eb03a84774f726ae7aaaaefce",
+          "message": "Stage an ESP LUKS keyfile for Apple Silicon factory reset.\n\n@factory restore still re-keys the volume; on Macs the throwaway key lives on the ESP and mkinitcpio, update-grub, and update-m1n1 rebuild the boot chain."
+        },
+        {
+          "sha": "ac25deec54b7c3d95368a45014efd6bcee61a6c1",
+          "message": "Check GRUB, crypttab, and sd-encrypt when the Apple Silicon root is LUKS.\n\nUnencrypted roots keep the existing boot-check; after provisioning rd.luks.key= must be gone."
+        },
+        {
+          "sha": "cab1dc891e5ed24c70a4d77f88938c681236f1c5",
+          "message": "Finish Apple LUKS re-key by rebuilding initramfs and marking encrypt.state.\n\nThe throwaway key lives on the ext4 Boot partition; recovery is shown once and acknowledged by typing a fixed phrase."
+        },
+        {
+          "sha": "2b9613120a4fabd2c9ec4d3bf124080d5120c323",
+          "message": "Re-arm both first-boot markers on Apple factory reset.\n\nThe sealed @factory snapshot keeps neither marker nor install.conf nor encrypt.state; the throwaway key is staged on Boot."
+        },
+        {
+          "sha": "0c252ce477aaac14d7614b23df4f205424eaad88",
+          "message": "Fail Apple boot-check while throwaway LUKS unlock remains after provisioning.\n\nOnce first-boot markers are gone, rd.luks.key=, the Boot keyfile, extra keyslots, or a non-finished encrypt.state all fail."
+        },
+        {
+          "sha": "fe07f84036e37e5fa1086b0de6d36e1ec01f69d2",
+          "message": "Show the recovery key before Apple LUKS re-key is final.\n\nRetries reuse recorded keyslots, cryptsetup failure no longer desyncs login, and a mapper root without crypttab is a failure."
+        },
+        {
+          "sha": "258ac0b371dc54ab296161a4400e7420c216e189",
+          "message": "Make Apple LUKS re-key idempotent and crash-resumable.\n\nRetries reuse recorded owner and recovery slots instead of adding more, finalisation continues from phase=rekeyed, and factory-reset only writes the Boot keyfile after rebuilds succeed."
+        },
+        {
+          "sha": "7bac78d0debbc6bc48e71c491eb1f1daf5a362e0",
+          "message": "Keep the reset unlock after a successful factory reset and record the slot cryptsetup used\n\nThe EXIT trap revoked the reset keyslot and Boot keyfile even when the reset\nhad activated; it now revokes only an uncommitted reset. The throwaway slot is\nthe one cryptsetup actually filled (the lowest free), the live Boot partition's\nencrypt.state goes back to configured so the next owner setup re-keys, the\nrecovery key is refused from the background worker, drive-password keeps\ncryptsetup's diagnostics, and the [[ ]] quoting follows this repository's rule."
+        },
+        {
+          "sha": "49003219cb743ac539548e047abdea553f7b4424",
+          "message": "Reopen the encryption state only after the factory system is activated"
+        },
+        {
+          "sha": "f6bf09c39656dc3e80caf2885e975d6f702d34ce",
+          "message": "Point the factory reset test at a live crypttab and test the post-activation state reopen"
+        },
+        {
+          "sha": "5d9559dd4154f54ee09df4573c734f1fe14adeb5",
+          "message": "Merge remote-tracking branch 'origin/main' into e/T4c"
+        },
+        {
+          "sha": "b30ebba32ae01e279ef2bc97fdaae6596046bce0",
+          "message": "Accept the mtree verification the boot check now runs in the LUKS boot-check test"
+        },
+        {
+          "sha": "5e6303ec1961718059b524f9cd80e79fd1aa35bc",
+          "message": "Stage the Aurora release identity the boot check binds the running kernel to in the LUKS test"
+        }
+      ]
+    },
+    {
+      "number": 192,
+      "title": "Boot check: tolerate depmod's rewrite of the kernel package's modules.* files",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "1ddefba6a5611e2966dca63f4fb4ef4d97d07d42",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/192",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "819a490ac8c4b3af43b4f47b8109af36bd011b0d",
+      "base": "368815ece09f0ef1bb033be1925da57f3afb1a75",
+      "files": [
+        {
+          "filename": "bin/omarchy-apple-silicon-boot-check",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 2
+        },
+        {
+          "filename": "test/shell.d/apple-silicon-boot-check-test.sh",
+          "status": "modified",
+          "additions": 38,
+          "deletions": 1
+        }
+      ],
+      "commits": [
+        {
+          "sha": "a6a7ed811b7231a63909e22416389d2367d7bcd0",
+          "message": "Boot check: ignore the modification times depmod gives the kernel's modules.* files"
+        },
+        {
+          "sha": "819a490ac8c4b3af43b4f47b8109af36bd011b0d",
+          "message": "Boot check: read pacman -Qkk in the C locale and keep its exit status"
+        }
+      ]
+    },
+    {
+      "number": 193,
+      "title": "VM guest: locale-pinned restored-package check",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "0d26cdd13309fdf6c5c522a3bd24b5a260063886",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/193",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "48c85264b2a375dc4302651cc46a9c41636dd259",
+      "base": "1ddefba6a5611e2966dca63f4fb4ef4d97d07d42",
+      "files": [
+        {
+          "filename": "test/vm/asahi-fresh/guest/verify",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 1
+        }
+      ],
+      "commits": [
+        {
+          "sha": "48c85264b2a375dc4302651cc46a9c41636dd259",
+          "message": "VM guest: read the restored-package check in the C locale and keep pacman's status"
+        }
+      ]
+    },
+    {
+      "number": 194,
+      "title": "Mac image first-boot VM harness",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "c99395120dab0290d62c8e2af2d318801728fc36",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/194",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "e2b1076b0c6d8c01b7cb93cfa3d3dc05442e1d39",
+      "base": "0d26cdd13309fdf6c5c522a3bd24b5a260063886",
+      "files": [
+        {
+          "filename": "test/vm/mac-image/README.md",
+          "status": "added",
+          "additions": 46,
+          "deletions": 0
+        },
+        {
+          "filename": "test/vm/mac-image/run",
+          "status": "added",
+          "additions": 442,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "1276029a25aebbd1d33fe12b32609c8af4a413c2",
+          "message": "Mac image first-boot VM harness\n\nBoots a built Mac image in a KVM guest twice over: install.conf encrypt=0\n(first boot leaves the root plain and arms owner provisioning) and no\ninstall.conf (in-place LUKS2 conversion, GRUB and initramfs regenerated,\nroot switched to the mapper, then a second boot through sd-encrypt). The\nAurora kernel cannot run on QEMU virt, so the guest boots a generic Arch\nLinux ARM kernel with an initramfs built inside the image root from the\nimage's own hooks. This is the recipe that found the two encrypt-unit bugs\nfixed in omarchy-pkgs #170, kept as a script with evidence output."
+        },
+        {
+          "sha": "fd118d285da7e31f1323c4a7f9a42d5f37636c64",
+          "message": "README: the harness addresses disks by path"
+        },
+        {
+          "sha": "9d5761abd7a3118f59e38d4526cc6339a65dfe93",
+          "message": "harness: track loop devices outside command substitution; hold members to the signed IMAGE; preflight and evidence nits"
+        },
+        {
+          "sha": "c5cf9c91a2b6d1a060348745cd574126b5f78761",
+          "message": "harness: fail loudly on a missing PROVENANCE payload line or IMAGE input digest; README wrap"
+        },
+        {
+          "sha": "f070f98abe986939253588061e3b9b1a89b3ddf5",
+          "message": "harness: read the stopped guest's disks without journal replay"
+        },
+        {
+          "sha": "72e53d1d95c9ead4a32e4ae2970e4eaf45d89e57",
+          "message": "harness: the overlay upper dir is root-owned, remove the run directory with sudo"
+        },
+        {
+          "sha": "97361b9662a27660e6b2e691ec19800bb7fc0dfa",
+          "message": "harness: replay the stopped guest's journals (fsynced btrfs writes live in the tree-log)"
+        },
+        {
+          "sha": "e2b1076b0c6d8c01b7cb93cfa3d3dc05442e1d39",
+          "message": "harness: let the ESP writeback land before stopping the guest"
+        }
+      ]
+    },
+    {
+      "number": 195,
+      "title": "Prepare installer 2.0.6 for publication",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "c84747dd8d31f6b3f0dcbf2c736e0f667765d275",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/195",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "ba8c9e1d9b0965985ebf2d4541d59ecfdab82056",
+      "base": "c99395120dab0290d62c8e2af2d318801728fc36",
+      "files": [
+        {
+          "filename": "apps/omarchy-apple-installer/Packaging/Info.plist",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Packaging/build-app.sh",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        }
+      ],
+      "commits": [
+        {
+          "sha": "ba8c9e1d9b0965985ebf2d4541d59ecfdab82056",
+          "message": "Prepare installer 2.0.6 for publication"
+        }
+      ]
+    },
+    {
+      "number": 196,
+      "title": "Resolve the LUKS parent from raw lsblk output",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "c8cd575287ebd83e7708f83e137f117a68381b08",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/196",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "f8795da8171a21793d6895ff10f376f42a5133f9",
+      "base": "c84747dd8d31f6b3f0dcbf2c736e0f667765d275",
+      "files": [
+        {
+          "filename": "bin/omarchy-provision-owner",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "bin/omarchy-system-factory-reset",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        }
+      ],
+      "commits": [
+        {
+          "sha": "f8795da8171a21793d6895ff10f376f42a5133f9",
+          "message": "Resolve the LUKS parent from raw lsblk output\n\nlsblk -s prints the ancestor tree with box-drawing prefixes (\"\u2514\u2500/dev/nvme0n1p6\"),\nso the crypto_LUKS parent came back as a path that does not exist and first-boot\nsetup stopped with \"Could not locate the LUKS device to re-key\" on the first\nimage install (M2 Max, 2026-09-21). -r prints raw names."
+        }
+      ]
+    },
+    {
+      "number": 197,
+      "title": "Installer 2.0.7: retire the RC (Aurora) channel",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "eeb4e6f294ce0a5d80120b17531780dc250e92a0",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/197",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "1ad82c602538d58003ceb8874dc0446c1e008da2",
+      "base": "c8cd575287ebd83e7708f83e137f117a68381b08",
+      "files": [
+        {
+          "filename": "apps/omarchy-apple-installer/Packaging/Info.plist",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Packaging/build-app.sh",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Release/README.md",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Release/release.json",
+          "status": "modified",
+          "additions": 0,
+          "deletions": 3
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Sources/OmarchyAppleInstaller/InstallConf.swift",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Sources/OmarchyAppleInstaller/InstallerReleaseConfiguration.swift",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 6
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Sources/OmarchyAppleInstallerApp/OmarchyAppleInstallerApp.swift",
+          "status": "modified",
+          "additions": 0,
+          "deletions": 1
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Sources/OmarchyAppleInstallerApp/SimulationDashboard.swift",
+          "status": "modified",
+          "additions": 0,
+          "deletions": 1
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Sources/OmarchyInstallerUXCore/PlainLanguage.swift",
+          "status": "modified",
+          "additions": 0,
+          "deletions": 3
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallConfESPWriterTests.swift",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallConfTests.swift",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallerAssetPreparerTests.swift",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 4
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallerPlanReviewTests.swift",
+          "status": "modified",
+          "additions": 0,
+          "deletions": 3
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallerReleaseConfigurationTests.swift",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 18
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/Tests/OmarchyInstallerUXCoreTests/PlainLanguageTests.swift",
+          "status": "modified",
+          "additions": 0,
+          "deletions": 1
+        },
+        {
+          "filename": "apps/omarchy-apple-installer/scripts/make-release-descriptor",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 4
+        }
+      ],
+      "commits": [
+        {
+          "sha": "1ad82c602538d58003ceb8874dc0446c1e008da2",
+          "message": "Installer 2.0.7: retire the RC (Aurora) channel\n\nThe rc channel now carries the Aurora kernel image, so the separate rc-aurora\nlane from 18 September only duplicates it and confused the first from-scratch\ninstall. The app knows stable and rc; the bundled descriptor, the descriptor\ngenerator and install.conf lanes follow. A descriptor still naming rc-aurora\nis rejected, as any unknown channel key is."
+        }
+      ]
+    },
+    {
+      "number": 198,
+      "title": "Packager reads the two remaining channels from the descriptor",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "fa195bbf491923430da953ce1cd9399d12f1be03",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/198",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "3470d6adcc4f3b91f8a5c482e3c67241e33656c8",
+      "base": "eeb4e6f294ce0a5d80120b17531780dc250e92a0",
+      "files": [
+        {
+          "filename": "apps/omarchy-apple-installer/Packaging/build-app.sh",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 5
+        }
+      ],
+      "commits": [
+        {
+          "sha": "3470d6adcc4f3b91f8a5c482e3c67241e33656c8",
+          "message": "Packager reads the two remaining channels from the descriptor"
+        }
+      ]
+    },
+    {
+      "number": 199,
+      "title": "Boot check: recognise sd-encrypt in a systemd initramfs",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "a6bef70668a2862fd192c13bf3067e603a8c251d",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/199",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "b094ffef196c8a70ad8fb6f783be15a12e2a67ab",
+      "base": "eeb4e6f294ce0a5d80120b17531780dc250e92a0",
+      "files": [
+        {
+          "filename": "bin/omarchy-apple-silicon-boot-check",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 2
+        },
+        {
+          "filename": "test/shell.d/apple-silicon-boot-check-test.sh",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "b094ffef196c8a70ad8fb6f783be15a12e2a67ab",
+          "message": "Boot check: recognise sd-encrypt in a systemd initramfs\n\nA systemd initramfs has no runtime hook named sd-encrypt and lsinitcpio -a\nlists no hook for it, so the first encrypted Mac (M2 Max, image install)\nfailed the check with \"does not contain sd-encrypt\" although it unlocks\nthrough sd-encrypt every boot. The cryptsetup generator and binary the install\nhook leaves behind now count as proof. The crypto_LUKS parent lookup reads raw\nlsblk output, as omarchy-provision-owner does since #196."
+        }
+      ]
+    },
+    {
+      "number": 202,
+      "title": "Apple Silicon: snapper update snapshots and a gated snapshot restore",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "5d6c068556505e0dcf2dfb4108bde9fe9dcfe623",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/202",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "1dd44950964f28cf52ece089526d59a6db174cdb",
+      "base": "98d2a271592e866cd4742db40e84fa3d19c808f0",
+      "files": [
+        {
+          "filename": "bin/omarchy-mac-snapshot-restore",
+          "status": "added",
+          "additions": 337,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-mac-snapshot-restore-finish",
+          "status": "added",
+          "additions": 73,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-migrate",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-snapshot",
+          "status": "modified",
+          "additions": 26,
+          "deletions": 4
+        },
+        {
+          "filename": "bin/omarchy-update",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 2
+        },
+        {
+          "filename": "docs/apple-silicon-hardware-validation.md",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 0
+        },
+        {
+          "filename": "install/config/all.sh",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 3
+        },
+        {
+          "filename": "install/config/snapper.sh",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 2
+        },
+        {
+          "filename": "install/hardware/all.sh",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "install/hardware/apple/snapshots-subvolume.sh",
+          "status": "added",
+          "additions": 26,
+          "deletions": 0
+        },
+        {
+          "filename": "install/omarchy-other-asahi.packages",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "install/provisioning/omarchy-mac-snapshot-restore-finish.service",
+          "status": "added",
+          "additions": 21,
+          "deletions": 0
+        },
+        {
+          "filename": "migrations/1789999316.sh",
+          "status": "added",
+          "additions": 22,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/asahi-packages-test.sh",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "test/shell.d/mac-snapshot-restore-test.sh",
+          "status": "added",
+          "additions": 313,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/snapper-test.sh",
+          "status": "modified",
+          "additions": 40,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "eb747ecc4a1c0487f750dae08aa275cf6ff20991",
+          "message": "Apple Silicon: snapper update snapshots and a gated snapshot restore\n\nApple Silicon installs never had snapper: the package was excluded and\ninstall/config/snapper.sh skipped, so `omarchy update` silently took no\nsnapshot (exit 127) and nothing could restore one. snapper is now in the\nApple package set and snapper.sh runs everywhere: an image build bakes the\nretention policy and the cleanup timer without touching the build root\n(create-config would nest a /.snapshots subvolume the image copy flattens),\na deferred first-boot step creates the /.snapshots subvolume on the Mac,\nand a migration brings installed Macs to the same state. The Limine sync\nunit stays x86 only.\n\nRestore on Macs cannot use snapper rollback (fstab and GRUB name subvol=@)\nor Limine's tool. omarchy-snapshot restore now dispatches to\nomarchy-mac-snapshot-restore, which stages a writable clone of the snapshot\non the top level, moves the live /.snapshots collection into it so snapper\nkeeps its numbering, writes a recovery record on the plaintext Boot\npartition, renames the roots the way the factory reset does, and reboots.\nThe next boot verifies the restore before the kept previous root may be\npruned. The rename pair is not crash-safe, so the command is gated to\nmachines that opted in with /var/lib/omarchy/snapshot-restore.enabled;\nmismatched kernels, swap layouts, pending provisioning and a kept previous\nroot are refused before anything is touched."
+        },
+        {
+          "sha": "aeaafc39b4578fda265a23923706e60796c9656c",
+          "message": "Apple Silicon restore: recover a half-done swap, prune only after the verifying boot\n\nReview findings. A failed second rename left no @: the current root now\ngets its name back before anything else is unwound, and the record stays\nwhenever the unwind is incomplete. prune-previous checked only the running\nroot's pending marker, which the restore writes into the clone, so it\ncould delete the still-running previous root before the reboot; it now\nrequires the record to say finished and the running root to be the\nrestored clone the record names. The finish worker fails closed when\nsnapper is missing or the record cannot be updated, and requires /boot\nmounted. The first-boot leaf removes only an empty stub directory. The\nkernel on /boot is identified through the installed Apple kernel package\n(omarchy-hw-apple-kernel, /boot/vmlinuz-<package>) rather than by any\nmodules directory with a pkgbase."
+        },
+        {
+          "sha": "1dd44950964f28cf52ece089526d59a6db174cdb",
+          "message": "Apple Silicon restore: keep the record until recovery is complete, prove the running root\n\nReview findings. The record is removed only by the run that wrote it and\nonly once every recovery step succeeded; a refusal for a kept root leaves\nan earlier record alone. prune-previous requires a finished record and\nchecks the mounted root's subvolume id against the clone the record\nnames. The finish worker fails closed without a record. A snapshot from\nbefore the restore worker shipped is refused, since its next boot could\nnot verify itself. The kernel on /boot must be byte-identical to the\nvmlinuz the matching modules directory ships, not merely present. The\nhelpers replace command -v, and the record heredoc declares its\nexpansions."
+        }
+      ]
+    },
+    {
+      "number": 203,
+      "title": "Apple Silicon: bootable snapshots in the GRUB menu through grub-btrfs",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "d1cf20b10bf37330201bddbf6252ca207f3380cd",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/203",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "1494ea98161759ad4fd6a456df326dac8317f551",
+      "base": "5d6c068556505e0dcf2dfb4108bde9fe9dcfe623",
+      "files": [
+        {
+          "filename": "bin/omarchy-mac-snapshot-menu",
+          "status": "added",
+          "additions": 108,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-mac-snapshot-restore",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-mac-snapshot-restore-finish",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-snapshot",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 3
+        },
+        {
+          "filename": "docs/apple-silicon-hardware-validation.md",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "filename": "install/omarchy-other-asahi.packages",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/mac-snapshot-menu-test.sh",
+          "status": "added",
+          "additions": 117,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "e9acda9a9c3eef6801da9d1d0a701f519b4b75eb",
+          "message": "Apple Silicon: bootable snapshots in the GRUB menu through grub-btrfs\n\nTier 2 of the Apple Silicon snapshot support: grub-btrfs joins the Apple\npackage set and a new omarchy-mac-snapshot-menu writes its configuration,\nruns the generator into /boot/grub/grub-btrfs.cfg and adds the \"Omarchy\nsnapshots\" submenu include to grub.cfg once, through the Asahi update-grub\n(which also resets grubenv and re-copies the EFI GRUB, so never per\nsnapshot). There is no grub-btrfsd: omarchy-snapshot refreshes the menu\nafter each snapshot, the restore tools after pruning and verification, and\nthe omarchy-mac-boot kernel hook after a kernel change.\n\nThe kernel lives on the ext4 /boot outside every snapshot, so only\nsnapshots that carry the modules of the kernel on /boot are offered; the\nrest, @, @factory and the staging or kept roots are hidden. Snapshots are\nread-only; the omarchy-mac-boot initrd unit overlays a tmpfs on them for\nthe session."
+        },
+        {
+          "sha": "4099850042fa60d101b0d849698077651c81f7e0",
+          "message": "Apple Silicon snapshot menu: hide kept roots by exact name, identify the /boot kernel\n\ngrub-btrfs reads IGNORE_PREFIX_PATH as \"prefix/*\", not as a string prefix,\nso staging and kept roots are now enumerated from the top level and listed\nby exact name. The kernel on /boot is identified through the installed\nApple kernel package like the restore does."
+        },
+        {
+          "sha": "a5c09ba1adec476cebee86bee622875ac5769ed3",
+          "message": "Validation checklist: the GRUB snapshot submenu and snapshot boots"
+        },
+        {
+          "sha": "1c3c45102564403a60e3d7d08d10e085528f864a",
+          "message": "Apple Silicon snapshot menu: match the /boot image against the modules directory's vmlinuz"
+        },
+        {
+          "sha": "1494ea98161759ad4fd6a456df326dac8317f551",
+          "message": "Snapshot menu: declare the config heredoc's expansions"
+        }
+      ]
+    },
+    {
+      "number": 205,
+      "title": "Snapper: skip configuration on a root that is not btrfs",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "0a556c4d6ca1cbbcc8cc3e34e7e4d0030f78acbf",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/205",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "ea2894457a1f38206bbbdb95f38a17e094b829bb",
+      "base": "2d5d719d53ec67efb78562011360d62e2b1e9ad3",
+      "files": [
+        {
+          "filename": "install/config/snapper.sh",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 0
+        },
+        {
+          "filename": "install/hardware/apple/snapshots-subvolume.sh",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/snapper-test.sh",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "ea2894457a1f38206bbbdb95f38a17e094b829bb",
+          "message": "Snapper: skip configuration on a root that is not btrfs\n\ninstall/config/snapper.sh now runs on Apple Silicon too, and the VM\nacceptance guest installs onto a generic image whose root is not btrfs:\nsnapper's create-config failed there and took the config phase down with\nit, so the fresh install never completed. A non-btrfs root now skips the\nconfig, the timer and the first-boot /.snapshots step with a message;\nevery real Omarchy layout is btrfs."
+        }
+      ]
+    },
+    {
+      "number": 208,
+      "title": "Apple Silicon: readable GRUB font and an unbounded root-device wait",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "d7fa9430a8ff9620744945d8810ea1eb6355297a",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/208",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "1845f6d74dbf7ddbb9e71516dc15ad8db23d56fb",
+      "base": "28a5a3f0afedd00e13defb764fb8a4d81bb818e6",
+      "files": [
+        {
+          "filename": "bin/omarchy-migrate",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "install/hardware/all.sh",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "install/hardware/apple/grub-console.sh",
+          "status": "added",
+          "additions": 73,
+          "deletions": 0
+        },
+        {
+          "filename": "migrations/1790030337.sh",
+          "status": "added",
+          "additions": 15,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-grub-console-test.sh",
+          "status": "added",
+          "additions": 75,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "a63ada277e9fa7e96762e9fc63645acc1a0bb511",
+          "message": "Apple Silicon: readable GRUB font and an unbounded root-device wait\n\nGRUB drew its menu with the 16-pixel unicode font on a native-resolution\npanel, which the owner could not read, and an unattended boot of an\nencrypted Mac gave up on the root device after systemd's 90 s default and\nsat in the initrd's emergency mode (root locked, \"Press Enter\") instead of\nwaiting at the passphrase prompt; the M2 Max spent a night there. The new\ninstall/hardware/apple/grub-console.sh renders a 28-pixel Liberation Mono\nfont for GRUB, points GRUB_FONT at it, appends\nrootflags=x-systemd.device-timeout=0 to GRUB_CMDLINE_LINUX (systemd\nconcatenates repeated rootflags, so the initrd's sysroot device job waits\nwithout limit), and regenerates GRUB once. It runs at first boot for image\ninstalls (deferred hardware step) and through a migration on installed\nMacs."
+        },
+        {
+          "sha": "1845f6d74dbf7ddbb9e71516dc15ad8db23d56fb",
+          "message": "GRUB console leaf: one authoritative assignment, regeneration owed until it succeeds\n\nReview findings: a later active assignment would have overridden the\nedited first one, and a failed update-grub left the defaults reading as\nconfigured so the retry skipped it. The leaf now keeps the effective\n(last) value, collapses the key to one line, and records a pending\nregeneration until update-grub succeeds."
+        }
+      ]
+    },
+    {
+      "number": 209,
+      "title": "GRUB console leaf: pin the efi_gop video backend",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "7bb6bf476010af0033f6d7ae72d51e0be79d4643",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/209",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "979ed031191ee7388d1536cb3ec1a6e583909254",
+      "base": "d7fa9430a8ff9620744945d8810ea1eb6355297a",
+      "files": [
+        {
+          "filename": "install/hardware/apple/grub-console.sh",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-grub-console-test.sh",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "979ed031191ee7388d1536cb3ec1a6e583909254",
+          "message": "GRUB console leaf: pin the efi_gop video backend\n\nInstalls from before the image finalizer had no GRUB_VIDEO_BACKEND, so\n00_header also loads efi_uga, which the arm64 GRUB does not ship, and\nevery boot printed \"efi_uga.mod not found\" before the menu."
+        }
+      ]
+    },
+    {
+      "number": 210,
+      "title": "Apple Silicon: the Omarchy GRUB theme and a splash-only boot",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "2a47d45f5872f31733731f0bc82f80c1096b1ffe",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/210",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "056a250d4fc047c1c9d3953f8b407755c698bcb2",
+      "base": "7bb6bf476010af0033f6d7ae72d51e0be79d4643",
+      "files": [
+        {
+          "filename": "bin/omarchy-migrate",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "default/grub/omarchy/theme.txt",
+          "status": "added",
+          "additions": 46,
+          "deletions": 0
+        },
+        {
+          "filename": "install/hardware/apple/grub-console.sh",
+          "status": "modified",
+          "additions": 97,
+          "deletions": 18
+        },
+        {
+          "filename": "migrations/1790037110.sh",
+          "status": "added",
+          "additions": 16,
+          "deletions": 0
+        },
+        {
+          "filename": "test/fixtures/grub/10_linux",
+          "status": "added",
+          "additions": 341,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-grub-console-test.sh",
+          "status": "modified",
+          "additions": 86,
+          "deletions": 20
+        }
+      ],
+      "commits": [
+        {
+          "sha": "a26bd6f44fa777bd05475367ab72f375d8a5cdb1",
+          "message": "Apple Silicon: the Omarchy GRUB theme and a splash-only boot\n\nThe GRUB console leaf now gives Macs the x86 Limine look: a gfxmenu theme\nwith the Tokyo Night backdrop, the green \"Omarchy Bootloader\" title and\nLiberation fonts rendered at install, the menu shown for three seconds\nlike x86, and the efi_gop backend the arm64 GRUB ships (no more\n\"efi_uga.mod not found\"). The boot after the menu is the splash alone:\nPlymouth forced its text view because the device tree registers the\nserial console (plymouth.ignore-serial-consoles fixes that, verified on\nthe M1 Pro), and 10_linux's \"Loading Linux ...\" echoes are guarded behind\na quiet kernel line, with the original kept under /var/lib/omarchy/backups\nrather than in grub.d where an executable copy runs as a second\ngenerator. A new migration runs the leaf again on Macs that took the\nearlier one."
+        },
+        {
+          "sha": "056a250d4fc047c1c9d3953f8b407755c698bcb2",
+          "message": "GRUB console leaf: install only a complete 10_linux guard, fail closed on fonts\n\nReview findings: a partially matching 10_linux could end up with the\nmarker but only one guard; the transformed script is now checked for both\nguards and both guarded echoes and parsed with sh before it replaces the\noriginal. A font grub-mkfont cannot render no longer activates the theme\nor GRUB_FONT. The test executes the guarded heredoc under sh for both a\nquiet and a loud kernel line."
+        }
+      ]
+    },
+    {
+      "number": 211,
+      "title": "Apple Silicon: Limine is the boot loader",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "8428cb7691b3d9a48c3ea3e01c1bad6a87363169",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/211",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "f8010dbd1a278bda59016ab6d1ffde3238ecbb06",
+      "base": "2a47d45f5872f31733731f0bc82f80c1096b1ffe",
+      "files": [
+        {
+          "filename": "bin/omarchy-apple-platform-stack-verify",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "bin/omarchy-apple-silicon-boot-check",
+          "status": "modified",
+          "additions": 68,
+          "deletions": 23
+        },
+        {
+          "filename": "bin/omarchy-channel-set",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 6
+        },
+        {
+          "filename": "bin/omarchy-install-asahi-fresh",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "bin/omarchy-mac-boot-update",
+          "status": "added",
+          "additions": 21,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-mac-limine-active",
+          "status": "added",
+          "additions": 17,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-mac-limine-cmdline",
+          "status": "added",
+          "additions": 71,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-mac-limine-deploy",
+          "status": "added",
+          "additions": 30,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-mac-snapshot-menu",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-mac-snapshot-restore",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-migrate",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-provision-owner",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 5
+        },
+        {
+          "filename": "bin/omarchy-snapshot",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 6
+        },
+        {
+          "filename": "bin/omarchy-system-factory-reset",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 2
+        },
+        {
+          "filename": "default/omarchy/omarchy-menu.jsonc",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "docs/apple-silicon-hardware-validation.md",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 1
+        },
+        {
+          "filename": "docs/apple-silicon-limine.md",
+          "status": "added",
+          "additions": 74,
+          "deletions": 0
+        },
+        {
+          "filename": "install/apple-silicon-platform-stack.json",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "install/config/snapper.sh",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 2
+        },
+        {
+          "filename": "install/hardware/all.sh",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "filename": "install/hardware/apple/limine-boot.sh",
+          "status": "added",
+          "additions": 150,
+          "deletions": 0
+        },
+        {
+          "filename": "install/helpers/mac-image-build.sh",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 0
+        },
+        {
+          "filename": "install/omarchy-base-asahi.packages",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 0
+        },
+        {
+          "filename": "migrations/1790055026.sh",
+          "status": "added",
+          "additions": 35,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-limine-boot-test.sh",
+          "status": "added",
+          "additions": 128,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-platform-stack-test.sh",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 4
+        },
+        {
+          "filename": "test/shell.d/apple-silicon-test.sh",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/asahi-fresh-deferred-test.sh",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/asahi-fresh-offline-test.sh",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/asahi-packages-test.sh",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "test/shell.d/channel-test.sh",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 5
+        },
+        {
+          "filename": "test/shell.d/factory-reset-luks-test.sh",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 1
+        },
+        {
+          "filename": "test/shell.d/mac-boot-update-test.sh",
+          "status": "added",
+          "additions": 63,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/mac-image-build-test.sh",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 1
+        },
+        {
+          "filename": "test/shell.d/mac-limine-cmdline-test.sh",
+          "status": "added",
+          "additions": 87,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/provision-owner-luks-test.sh",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/snapshot-limine-dispatch-test.sh",
+          "status": "added",
+          "additions": 64,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "818851918d0427ec7fa2795462b9365af10ae9ff",
+          "message": "Experiment: Limine in front of U-Boot on the M1 Pro\n\nNot for merging: records the configuration, the deploy/rollback script and\nthe findings of booting Aurora Linux through Limine 12.9 on Apple Silicon\n(boots; kernel copies must live on the ESP; what an integration would need)."
+        },
+        {
+          "sha": "eb114cf31e754a9f3c917fac5b7913ac164a603d",
+          "message": "Experiment: UKIs boot through Limine on the M1 Pro; entry tool needs an aarch64 patch"
+        },
+        {
+          "sha": "5563fdac114124b85f6f007ecde2eda7b5c11c66",
+          "message": "Experiment: Apple Limine leaf driving the x86 tooling on the M1 Pro\n\nGated by /var/lib/omarchy/limine.enabled. Puts Limine at BOOTAA64.EFI,\nkeeps GRUB as a recovery entry and retargets Asahi's update-grub to it,\nwrites /etc/default/limine for an ESP at /boot/efi with GRUB's kernel\ncommand line, installs Omarchy's limine.conf with a 3 s timeout, then\nlimine-update (UKI with the aarch64 systemd-stub, entries) and\nlimine-snapper-sync. Needs limine-mkinitcpio-hook 1.36.0-2 (aarch64\nentries)."
+        },
+        {
+          "sha": "da4809b16cd72a5eb6c41afb5dd49af7a932b8e5",
+          "message": "Experiment leaf: recovery entry after the Omarchy block so default_entry 2 is the kernel"
+        },
+        {
+          "sha": "088e7df9546e95b04e20b38ff988eafed6f0613a",
+          "message": "Apple Silicon: Limine boot integration behind the limine.enabled gate\n\nThe limine-boot leaf activates Limine only after limine-update produced a\nmenu that boots the kernel's UKI: GRUB is regenerated into grub-aa64.efi\nfirst (never copied from the U-Boot slot), the recovery entry is re-placed\nafter the Omarchy block on every run, and a pacman hook redeploys the\npackaged Limine since limine-install does nothing on aarch64.\n\n/etc/default/grub stays the source of the kernel command line:\nomarchy-mac-limine-cmdline derives KERNEL_CMDLINE[default] from it (one\nmerged rootflags with subvol=@) before every UKI rebuild, and\nomarchy-mac-boot-update regenerates GRUB, then Limine, for the re-key, the\nfresh installer and the factory reset. omarchy-snapshot uses the x86 tooling\non a Limine Mac (limine-snapper-restore, the sync watcher), and\nomarchy-mac-boot-sync rebuilds the ext4 /boot for the GRUB recovery entry\nwhen a Limine restore leaves it behind the running kernel. The boot check\nverifies the UKI, the entry's root and LUKS mapping, and the ESP's Limine."
+        },
+        {
+          "sha": "3506e28aaa88b6a63f7a536e7b0703514fdefd80",
+          "message": "apple-limine: README for the integrated state"
+        },
+        {
+          "sha": "3a8d67d5b61cf3087d0c7176fee809179e20ed21",
+          "message": "omarchy-mac-boot-sync: leave a pending kernel update alone\n\n/boot is consistent while its kernel has modules in this root; only a\nkernel with no modules here (a restored root) is rebuilt from the running one."
+        },
+        {
+          "sha": "9ab11c8254c82c2ab5a314b7d7f32f4349e1b507",
+          "message": "Limine leaf: full rollback on a failed activation; staged Limine deploy\n\nA failed activation restores GRUB's update target and regenerates GRUB\ninto the U-Boot slot, not only the Limine defaults. The ESP's Limine is\nstaged and synced before the rename. omarchy-mac-boot-sync runs\n/usr/bin/mkinitcpio so the wrapper's UKI rebuild cannot hide a failed\ninitramfs, and a missing root UUID fails the command line derivation."
+        },
+        {
+          "sha": "04a7b081757d65fadfb52c9bd5a14f5b05bee8c2",
+          "message": "omarchy-mac-limine-cmdline: the booted root's UUID as the last fallback\n\nA snapshot boot runs on a tmpfs overlay with the fstab row neutralised;\nthe kernel command line still names the root filesystem."
+        },
+        {
+          "sha": "8157e4e7823f90816d26f03e8e48f84633699991",
+          "message": "apple-limine: record the verified restore cycle"
+        },
+        {
+          "sha": "95e9c25eaa7a22340f9c6f3bd30fa72203530af8",
+          "message": "Apple Silicon: the channel menu offers stable and rc only\n\nEdge is the Aurora testing kernel lane (lab Macs move there with\nomarchy-apple-silicon-channel switch) and dev an upstream source checkout;\nneither is a Mac user channel. The menu hides both on a Mac and\nomarchy-channel-set refuses them."
+        },
+        {
+          "sha": "171496738db92741fa767fd86b1deca1abf0b921",
+          "message": "Limine Macs: no GRUB in the boot, no recovery entry, no /boot resync\n\nLimine is the boot loader on Apple Silicon. The Asahi update-grub is\nretargeted to an unused file under /boot/grub; the menu is Omarchy's and\nits snapshots; omarchy-mac-boot-update, the boot check and the grub-btrfs\nmenu skip GRUB on a Limine Mac. The experiment scripts and the /boot\nresync unit are gone; the design note moves to docs/apple-silicon-limine.md."
+        },
+        {
+          "sha": "5f23cfa98f18fb251c169da49cfe2698cd6ec1c9",
+          "message": "Apple Silicon: Limine for new installs and installed Macs\n\nThe Apple manifest installs limine, limine-mkinitcpio-hook,\nlimine-snapper-sync and the silent uboot-asahi; the image build ships the\nlimine.enabled gate so the deferred limine-boot leaf activates Limine at\nfirst boot; a migration brings installed Macs over; the platform contract\nnames Limine as the boot backend."
+        },
+        {
+          "sha": "f8010dbd1a278bda59016ab6d1ffde3238ecbb06",
+          "message": "Limine Macs: migration registered, reset keeps Limine, fatal hook failure\n\nThe Limine migration is in the Apple disposition table; the factory reset\nstarts the ESP's Limine menu over and verifies the rebuilt entries; a\nmissing root UUID aborts the UKI rebuild from the pre-hook (exit 100); the\nGRUB-era root swap refuses to run on a Limine Mac."
+        }
+      ]
+    },
+    {
+      "number": 212,
+      "title": "Fresh installer: GRUB's configuration is verified by content",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "f2d1bb8cbc88de27fc5eebf8993a5a4defc7e217",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/212",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "a3595846e65f53e630ec731b11c7d83eb74ccba1",
+      "base": "8428cb7691b3d9a48c3ea3e01c1bad6a87363169",
+      "files": [
+        {
+          "filename": "bin/omarchy-install-asahi-fresh",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 6
+        },
+        {
+          "filename": "test/shell.d/asahi-fresh-deferred-test.sh",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "test/shell.d/asahi-fresh-install-test.sh",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "test/vm/asahi-fresh/guest/install",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 2
+        }
+      ],
+      "commits": [
+        {
+          "sha": "a3595846e65f53e630ec731b11c7d83eb74ccba1",
+          "message": "Fresh installer: GRUB's configuration is verified by content, not digest\n\nThe GRUB console leaf regenerates grub.cfg during system setup (quiet\nboot, theme), so a byte-identical grub.cfg is no longer the invariant of\na fresh install. The installer and the VM harness now require that the\nregenerated configuration boots the installed kernel; the kernel image\nstays protected by digest. VM acceptance of the Limine candidate failed\non the old check."
+        }
+      ]
+    },
+    {
+      "number": 213,
+      "title": "Fresh installer: a resume accepts the recorded GRUB configuration",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "02f1dac63a208ef2b1fc3effecaaf1756c5537d6",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/213",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "42acab023f4fcdc0507e67eb545eda8fa78ddb0d",
+      "base": "f2d1bb8cbc88de27fc5eebf8993a5a4defc7e217",
+      "files": [
+        {
+          "filename": "bin/omarchy-install-asahi-fresh",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 4
+        },
+        {
+          "filename": "test/shell.d/asahi-fresh-install-test.sh",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 1
+        },
+        {
+          "filename": "test/vm/asahi-fresh/guest/install",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "42acab023f4fcdc0507e67eb545eda8fa78ddb0d",
+          "message": "Fresh installer: a resume accepts the recorded GRUB configuration\n\nAn install interrupted before the console leaf ran still has the\noriginal grub.cfg, which need not name the kernel yet; the resume accepts\nthe digest recorded at the checkpoint or a configuration that boots the\ninstalled kernel. The end of the install still requires the latter."
+        }
+      ]
+    },
+    {
+      "number": 214,
+      "title": "VM acceptance: the guest keeps its own boot configuration",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "dceb3432c929be8467c9a42d50750e37c8344cf2",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/214",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "aae41397e4bedabbbd5b43b6d6233af489ac0408",
+      "base": "02f1dac63a208ef2b1fc3effecaaf1756c5537d6",
+      "files": [
+        {
+          "filename": "test/vm/asahi-fresh/guest/install",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        },
+        {
+          "filename": "test/vm/asahi-fresh/guest/verify",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "aae41397e4bedabbbd5b43b6d6233af489ac0408",
+          "message": "VM acceptance: the guest keeps its own boot configuration\n\nOmarchy's GRUB console leaf regenerates grub.cfg during the install, and\nthe result boots the Asahi kernel, which the QEMU guest cannot run: the\nguest never came back from the reboot. The harness now keeps Omarchy's\nconfiguration as evidence, checks it boots the Asahi kernel, and puts the\nguest's own configuration back before the reboot, the way it already\nkeeps the guest kernel image."
+        }
+      ]
+    },
+    {
+      "number": 216,
+      "title": "Release records for the Limine boot candidate 2949b88c",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "54e909eb110b174e7ee32fefdc0c0727db02f741",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/216",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "bec0589b3664fdaa2ef7c082bfea0402b0441956",
+      "base": "dceb3432c929be8467c9a42d50750e37c8344cf2",
+      "files": [
+        {
+          "filename": "docs/releases/asahi-packages-candidate-2949b88c-acceptance.txt",
+          "status": "added",
+          "additions": 32,
+          "deletions": 0
+        },
+        {
+          "filename": "docs/releases/asahi-packages-candidate-2949b88c-hardware-evidence.txt",
+          "status": "added",
+          "additions": 39,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "bec0589b3664fdaa2ef7c082bfea0402b0441956",
+          "message": "Release records for the Limine boot candidate 2949b88c\n\nVM acceptance on the M1 Pro and the hardware evidence for the three boot\npackages (limine-mkinitcpio-hook, omarchy-mac-boot, uboot-asahi) that\npackage channel 13 and runtime channel 54 published."
+        }
+      ]
+    },
+    {
+      "number": 217,
+      "title": "Limine leaf: roll back on any failure, and refuse without the menu",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "0be2b926615ad3479e478ea6a5569a188928ec38",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/217",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "1aa0b372d153dfded28456cba8ef9b8e902e227f",
+      "base": "dceb3432c929be8467c9a42d50750e37c8344cf2",
+      "files": [
+        {
+          "filename": "install/hardware/apple/limine-boot.sh",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 0
+        },
+        {
+          "filename": "migrations/1790055026.sh",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-limine-boot-test.sh",
+          "status": "modified",
+          "additions": 27,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "1aa0b372d153dfded28456cba8ef9b8e902e227f",
+          "message": "Limine leaf: roll back on any failure, and refuse without the menu\n\nActivating Limine on the M2 Max stopped halfway: the Omarchy menu template\nis not on an Apple Silicon Mac, and the leaf had already retargeted GRUB's\nupdate and written Limine's defaults before the step that needed it. The\nleaf now returns before touching anything when the template is missing and\nrolls back from an unexpected failure too, and the migration verifies the\nboot files before it counts as done."
+        }
+      ]
+    },
+    {
+      "number": 218,
+      "title": "Limine review round: a real GRUB check and a single rollback",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "79509ee33f00a82153e7df2a66d9ba70b47693c0",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/218",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "ca098e5dbbcd761d67fdd7144a33c6b3e6165b0a",
+      "base": "0be2b926615ad3479e478ea6a5569a188928ec38",
+      "files": [
+        {
+          "filename": "bin/omarchy-install-asahi-fresh",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 1
+        },
+        {
+          "filename": "install/hardware/apple/limine-boot.sh",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        },
+        {
+          "filename": "test/shell.d/apple-limine-boot-test.sh",
+          "status": "modified",
+          "additions": 31,
+          "deletions": 20
+        },
+        {
+          "filename": "test/vm/asahi-fresh/guest/install",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        },
+        {
+          "filename": "test/vm/asahi-fresh/guest/verify",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        }
+      ],
+      "commits": [
+        {
+          "sha": "ca098e5dbbcd761d67fdd7144a33c6b3e6165b0a",
+          "message": "Limine review round: a real GRUB check and a single rollback\n\nThe installer accepted a GRUB configuration that merely mentioned the\nkernel's file names; it now requires a linux directive naming the kernel\nimage and an initrd directive naming its initramfs, and the VM harness\nchecks Omarchy's output the same way. A declined activation returns\nsuccess instead of an error that fired the rollback a second time through\nthe trap. The leaf's tests no longer move the checkout's own menu\ntemplate, and the rollback case now fails a step the leaf does not guard."
+        }
+      ]
+    },
+    {
+      "number": 219,
+      "title": "Apple Silicon: the runtime works on a Mac with no GRUB",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "5e7a409fae1ddc17433d9408e15153b4fe813f7b",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/219",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "1b994dcfcc2e32dc9a4411787d529bb8080a9570",
+      "base": "79509ee33f00a82153e7df2a66d9ba70b47693c0",
+      "files": [
+        {
+          "filename": "bin/omarchy-install-asahi-fresh",
+          "status": "modified",
+          "additions": 29,
+          "deletions": 5
+        },
+        {
+          "filename": "bin/omarchy-mac-boot-update",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 0
+        },
+        {
+          "filename": "bin/omarchy-update-asahi-bundle",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 1
+        },
+        {
+          "filename": "install/hardware/apple/grub-console.sh",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 1
+        },
+        {
+          "filename": "install/hardware/apple/limine-boot.sh",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 6
+        },
+        {
+          "filename": "migrations/1790003445.sh",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 1
+        },
+        {
+          "filename": "migrations/1790009252.sh",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-grub-console-test.sh",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-limine-boot-test.sh",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/apple-quiet-grub-migration-test.sh",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "filename": "test/shell.d/mac-boot-update-test.sh",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 3
+        }
+      ],
+      "commits": [
+        {
+          "sha": "0ff09e647360270d04b364027dbcac71cc093c46",
+          "message": "Apple Silicon: the runtime works on a Mac with no GRUB\n\nStep one towards an image that ships Limine: nothing on a Limine Mac may\nrequire GRUB. The fresh installer requires the boot loader its image\ncarries and verifies the boot chain when Limine is active, the bundle\nupdate accepts a Limine menu, the console leaf writes the command line\neither way but regenerates GRUB only where it exists, the boot update\nrefreshes GRUB's unused image only when it is installed, and the two GRUB\nmigrations no-op on a Limine Mac."
+        },
+        {
+          "sha": "1b994dcfcc2e32dc9a4411787d529bb8080a9570",
+          "message": "No-GRUB runtime: test GRUB itself, and judge Limine without the runtime\n\nupdate-grub ships with asahi-scripts, which stays for update-m1n1, so its\npresence says nothing about GRUB; the leaf, the console leaf, the quiet\nmigration and the boot update now look for grub-probe and grub-mkconfig.\nThe installer's Limine predicate reads the ESP the image shipped, so an\ninstall interrupted before the runtime lands still resumes."
+        }
+      ]
+    },
+    {
+      "number": 220,
+      "title": "Limine leaf: keep the installer's staging directory, reset another identity's menu",
+      "state": "open",
+      "merged": false,
+      "merge_commit_sha": "48fc7fbd1e56dfb318919d56127263cfeba1372f",
+      "html_url": "https://github.com/maralcbr/omarchy-mx-mac/pull/220",
+      "repository": "maralcbr/omarchy-mx-mac",
+      "head": "d418ab7f95e8ba447df4fb368ddd838a5ffc7943",
+      "base": "5e7a409fae1ddc17433d9408e15153b4fe813f7b",
+      "files": [
+        {
+          "filename": "install/hardware/apple/limine-boot.sh",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 2
+        },
+        {
+          "filename": "test/shell.d/apple-limine-boot-test.sh",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 0
+        }
+      ],
+      "commits": [
+        {
+          "sha": "d418ab7f95e8ba447df4fb368ddd838a5ffc7943",
+          "message": "Limine leaf: keep the installer's staging directory, reset another identity's menu\n\nThe leaf deleted /boot/efi/omarchy, which is where the macOS installer\nwrites install.conf, and it kept a menu whose entries belong to another\nmachine-id: the image's, or the one from before a factory reset. Those\nentries point at a UKI this Mac does not have. The menu now starts over\nfrom the template in that case, and the stale identity's history on the\nESP goes with it."
+        }
+      ]
+    },
+    {
+      "number": 170,
+      "title": "omarchy-mac-boot: let update-grub write the ESP the encrypt unit holds read-only",
+      "state": "closed",
+      "merged": true,
+      "merge_commit_sha": "a59e0faf13b5c043b35f2bb2dabde6e3bce5d3ce",
+      "html_url": "https://github.com/maralcbr/omarchy-pkgs/pull/170",
+      "repository": "maralcbr/omarchy-pkgs",
+      "head": "4082944420da7d337fd5dd32609a1f5a73020aa1",
+      "base": "d7de2b80ac59a23028ade2cddaf59e71e1f379c1",
+      "files": [
+        {
+          "filename": "pkgbuilds/omarchy-mac-boot/PKGBUILD",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "filename": "pkgbuilds/omarchy-mac-boot/files/usr/lib/initcpio/install/omarchy-mac-encrypt",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "filename": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-mac-encrypt",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 0
+        },
+        {
+          "filename": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-mac-encrypt-keydev.conf",
+          "status": "added",
+          "additions": 8,
+          "deletions": 0
+        },
+        {
+          "filename": "test/omarchy-mac-boot",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "filename": "test/omarchy-mac-encrypt",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 1
+        }
+      ],
+      "commits": [
+        {
+          "sha": "f7ecdfc44f4e2a280db469a1533a6908753ad12a",
+          "message": "omarchy-mac-boot: let update-grub write the ESP the encrypt unit holds read-only\n\nThe initrd unit reads install.conf from a read-only mount of the ESP. When it\nfinishes a fresh conversion it runs update-grub in the opened root, and\nasahi-scripts' mount_boot_esp bind-mounts /boot/efi, which is that same mount,\nso copying BOOTAA64.EFI failed with a read-only file system and the boot stopped\nat \"Dependency failed for Initrd Root Device\". Seen on the first encrypted first\nboot of a built image in a KVM guest; an installed Mac never ran this path.\n\nThe finish step now remounts the ESP read-write before the chroot and hands it\nback read-only afterwards. The test stub of update-grub writes under\n/boot/efi/EFI/BOOT and the conversion case runs with the ESP fixture read-only."
+        },
+        {
+          "sha": "bf2a6b464b5f1dde84364e54a7e9f4af0379ece7",
+          "message": "test: the update-grub stub writes with a builtin only (the chroot has no coreutils)"
+        },
+        {
+          "sha": "d33d71b04b7c6e833fafda9cc54199afaf81699b",
+          "message": "omarchy-mac-boot: order sd-encrypt's Boot key mount after the encrypt unit\n\nOn the boot after a conversion the cmdline carries rd.luks.key=\u2026:UUID=<Boot>.\nThe generator's key-device mount takes the Boot partition read-only the moment\nits node appears, while the unit still holds it read-write to read\nencrypt.state and open the root with the throwaway key. ext4 refuses the second\nmount, systemd-cryptsetup@root fails on its key mount, and emergency.target\nstops the unit in the middle of cryptsetup open: the guest landed in the\nemergency shell on its second boot.\n\nA drop-in in the initramfs orders run-systemd-cryptsetup-keydev\\x2droot.mount\nafter omarchy-mac-encrypt.service; the unit releases the partition when it is\ndone and systemd-cryptsetup finds the mapping already open."
+        },
+        {
+          "sha": "111fab6caf0edb301fcd25cb1c65ee3eaf87e2d6",
+          "message": "omarchy-mac-boot: hand the ESP back read-only only when it was read-only"
+        },
+        {
+          "sha": "890bb5664482492b8f0261eb35e56b7f439a5988",
+          "message": "test: match the key-mount drop-in path with a single backslash"
+        },
+        {
+          "sha": "5feb8c7644c49bc4682f93e0cbc3df400f31b980",
+          "message": "omarchy-mac-boot: restore the ESP on cleanup too; test clears a stale probe"
+        },
+        {
+          "sha": "4082944420da7d337fd5dd32609a1f5a73020aa1",
+          "message": "omarchy-mac-boot 20260921-5: initrd encrypt fixes"
+        }
+      ]
+    },
+    {
+      "number": 194,
+      "title": "Mac image: ship Limine, its menu and the UKI",
+      "state": "open",
+      "merged": false,
+      "merge_commit_sha": "e2f68f5a719b279d68433441f4f3dc1a82b8e15a",
+      "html_url": "https://github.com/maralcbr/omarchy-pkgs/pull/194",
+      "repository": "maralcbr/omarchy-pkgs",
+      "head": "68a61cef1aba768c6aae20a0feda2a42e19de6e8",
+      "base": "02da5b7ac1fa2c762dda0af1484a43b6e7e9267a",
+      "files": [
+        {
+          "filename": "bin/build-mac-image",
+          "status": "modified",
+          "additions": 46,
+          "deletions": 1
+        },
+        {
+          "filename": "bin/mac-image-check",
+          "status": "modified",
+          "additions": 64,
+          "deletions": 5
+        },
+        {
+          "filename": "test/mac-image",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 2
+        }
+      ],
+      "commits": [
+        {
+          "sha": "bba4f07407ee35848fabf64350c28e979002aeb1",
+          "message": "Mac image: ship Limine, its menu and the UKI\n\nThe image activates Limine the same way an installed Mac does, so a Mac\nboots m1n1, U-Boot and Limine from the moment the install finishes, with\nno GRUB menu on the first boot or after it. GRUB stays installed for\n/etc/default/grub, where the kernel command line lives, and its image is\nkept off the U-Boot slot at /boot/grub/grub-aa64.efi. The image check\nrequires Limine in the slot, the Omarchy menu, and a UKI the menu boots."
+        },
+        {
+          "sha": "68a61cef1aba768c6aae20a0feda2a42e19de6e8",
+          "message": "Mac image: run the activation, and ship no identity of the builder\n\nThe builder exports OMARCHY_MAC_IMAGE_BUILD, which every hardware leaf\ndeclines on, so the activation never ran; it is cleared for this one leaf.\nlimine-entry-tool gives the image's empty machine-id a value and keys its\nhistory on the ESP by it: the identity is scrubbed again after activation,\nthat history removed, and the installer's staging directory recreated. The\nimage check reads the kernel entry Limine boots and the UKI's sections\ninstead of matching strings anywhere in the file."
+        }
+      ]
+    }
+  ]
+}
