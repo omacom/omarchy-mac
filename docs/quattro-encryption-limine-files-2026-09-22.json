@@ -1305,7 +1305,7 @@
       "owner": "package-recipes/boot",
       "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
       "present_at_source_ceiling": true,
-      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+      "implementation": "ported with local Limine prerequisite refusal before boot rewrite; coordinated image integration pending"
     },
     {
       "repository": "maralcbr/omarchy-pkgs",

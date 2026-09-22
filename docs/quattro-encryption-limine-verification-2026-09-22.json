@@ -3,16 +3,23 @@
   "kind": "draft-encryption-limine-source-verification",
   "date": "2026-09-22",
   "source_commits": {
-    "runtime": "08b0da7bd3da1b7ba5b268c9df8e98075834e81f",
-    "package": "8abb8a6afaba8601ffe0c482b6386ed8a91bfccd",
+    "runtime": "eceaaaeb8adbc156dd46681983f0df27bd67d20c",
+    "package": "359eb8fc3e495f2188dd92eefa92ef3810e52c82",
     "image": "ae81ba75bffcca6799f79284a173dba5f6161135"
   },
-  "qualification": "source fixtures only; no package build, image, VM or physical installation",
+  "qualification": "source suites plus a real LUKS2 regular-file keyslot check; no native boot package build, schema-4 image, VM boot or physical encrypted installation",
   "results": {
-    "runtime_aggregate": "initial failure: metadata, privileged heredoc and three environment-sensitive fixtures; all affected checks passed after focused corrections; whole aggregate not rerun",
-    "runtime_focused": "passed",
-    "recovery_screen": "dummy-key desktop terminal preview passed; not Apple VT qualification",
-    "package_boot_source": "passed; container/block tests explicitly disabled",
+    "runtime_aggregate": {
+      "result": "passed",
+      "shell_test_files": 298,
+      "cli": "passed",
+      "environment": "unset LC_ALL, NO_COLOR, WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE, DISPLAY; OMARCHY_PATH=checkout; TERM=xterm-256color; fixture commit.gpgsign=false",
+      "initial_run": "296/298; untouched launch-about and update-pacman fixtures failed under inherited NO_COLOR/LC_ALL; both passed with a clean environment, then the entire aggregate passed"
+    },
+    "runtime_focused": "passed: root environment, kernel query, owner rekey, reset, Limine activation/update, drive password and boot checks",
+    "native_luks_file": "passed: cryptsetup 2.8.8, disposable 32 MiB regular file, PBKDF2 with reduced fixture iterations; interrupted unacknowledged slot replacement, owner/recovery authentication, acknowledged retry without slot growth; no block device or mount",
+    "recovery_screen": "current retry notice not visually verified: desktop monitor reported disabled, captures stalled; temporary preview/capture processes stopped. Earlier dummy-key preview covers the prior screen only.",
+    "package_boot_source": "passed including missing Limine defaults/updater and failed-update fixtures; container/block lanes disabled",
     "package_self_test": {
       "passed": 92
     },
@@ -21,12 +28,14 @@
     },
     "package_signing": {
       "passed": 13,
-      "keys": "disposable fixtures only; includes schemas 3 and 4"
+      "keys": "disposable only, disk-backed TMPDIR"
     },
     "image_candidate": {
       "passed": 31
     },
-    "image_aggregate": "incomplete: existing lifecycle test rejects sandbox root owner UID 65534; runner cancelled remaining tests"
+    "image_aggregate": "not rerun: image implementation unchanged; original sandbox UID ownership limitation remains recorded in initial_checkpoint",
+    "schema_4_image_guard": "retained; deferred-steps and limine.enabled writers remain explicit image-finalization prerequisites",
+    "preservation": "four original worktrees retain HEAD/status/dirty-file hashes; private tester source and bundle unchanged; no remote publication or installed-system changes"
   },
   "files": [
     {
@@ -164,6 +173,115 @@
     {
       "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/visual/screenshot-2026-09-22_10-08-12.png",
       "sha256": "978ad126d9d14d2aca6e9388aaee1725cf8584b6bdf454ba5b35aabb05798149"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/runtime-all.log",
+      "sha256": "973480bfea6137f5fc1f465e0491f486789050198dc4276622be930f639d4fc5"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/runtime-all-clean.log",
+      "sha256": "9512d166c6e1f7e7e03de1590f730e74a07ae54ceb784aded4b44e76f1633e3e"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/launch-about-clean.log",
+      "sha256": "59ff18e1d36c32bfffdc62fb7a9cb0f2877812d04b43aa5f7c65d9d412ccb0a1"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/update-pacman-clean.log",
+      "sha256": "16e80478403885ccb828a8787ab648395871c6b6e8fb35ad3c14d7f5c8ab1398"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/provision-root-environment.log",
+      "sha256": "d4a95eddaca79cc168f6ff1bab11fbb60926a70f55c852c91683d5357d2e5599"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/mac-kernel.log",
+      "sha256": "0271014afb8447c5de7276535af0bcd94f155245d02b04081b55e10357f4f075"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/provision-owner-luks.log",
+      "sha256": "676850d345da54db239ad046c23c0835a491bc5e5efe46201449c30bf221d6e1"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/factory-reset-luks.log",
+      "sha256": "f294156aebaad722fc400c3bc4a3a76aca8a1b3795c88852b8ef14d7b754d235"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/apple-limine-boot.log",
+      "sha256": "aa57fd642511e5a6f7b65b11650160526294c3b909fd59e28fbba0fdab124159"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/mac-boot-update.log",
+      "sha256": "c2443e80842f190217234d818a31c069bf05dcfff2423c1cdbaff04a3746bdaa"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/drive-password-apple.log",
+      "sha256": "99b43da43948c09957da3fdb95afec163d7e79593306ef991e6bd913470c04a4"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/boot-check-luks.log",
+      "sha256": "eb937b6a38e44bc9ad60054e6d72023331cd0b9986e9ed01581ae24a2a33f1f4"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/cli.log",
+      "sha256": "ba35680ebfdb02efbe22b18030667d1e87bc727f2242c489778f8cbc0938895c"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/boot-source.log",
+      "sha256": "bf180bc1d0475bbdf6e95d39cd5f91f24ee3bd1f9261606de507976c37634318"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/package-self-test.log",
+      "sha256": "4fab71d4ed2c920870e9fe705c59934123214ceea9d3aa2c5155a5a5fc3d4aea"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/package-candidate.log",
+      "sha256": "bd9e2461e37898cf4f481acaaf410ff65a0bf36c5b89e6612c3005aa92aa351b"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/package-signing.log",
+      "sha256": "dcb04ee5ea6ec0a334d450d9b75f8a77fcecbf53c62ea8a7e87a2a146706b514"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/image-candidate.log",
+      "sha256": "9e92f74f6d10ef9ded31f456b38f60f6379e3add7252972024c852cbd3f8af28"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/native-luks.sh",
+      "sha256": "5356e6b993ff972e5f690940f2c393998f944a878515e7e1184e56b8bcbde96f"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/native-luks.log",
+      "sha256": "257e3a1f2036b7a0a555c745dae3b63b6f88c24f493f6008f7246188ec765ace"
     }
-  ]
+  ],
+  "initial_checkpoint": {
+    "source_commits": {
+      "runtime": "08b0da7bd3da1b7ba5b268c9df8e98075834e81f",
+      "package": "8abb8a6afaba8601ffe0c482b6386ed8a91bfccd",
+      "image": "ae81ba75bffcca6799f79284a173dba5f6161135"
+    },
+    "results": {
+      "runtime_aggregate": "initial failure: metadata, privileged heredoc and three environment-sensitive fixtures; all affected checks passed after focused corrections; whole aggregate not rerun",
+      "runtime_focused": "passed",
+      "recovery_screen": "dummy-key desktop terminal preview passed; not Apple VT qualification",
+      "package_boot_source": "passed; container/block tests explicitly disabled",
+      "package_self_test": {
+        "passed": 92
+      },
+      "package_candidate": {
+        "passed": 16
+      },
+      "package_signing": {
+        "passed": 13,
+        "keys": "disposable fixtures only; includes schemas 3 and 4"
+      },
+      "image_candidate": {
+        "passed": 31
+      },
+      "image_aggregate": "incomplete: existing lifecycle test rejects sandbox root owner UID 65534; runner cancelled remaining tests"
+    }
+  },
+  "source_commit_meaning": "Implementation commits whose source was tested; later documentation-only commits do not change these pins. Image implementation is unchanged.",
+  "reviewed_at_utc": "2026-09-22T20:00:38.925869+00:00"
 }
