@@ -18,6 +18,18 @@ ensure_keyboard_backlight_unit "$recipe"
 cmp "$recipe" "$test_tmp/once" || fail "keyboard-unit adaptation is idempotent"
 pass "keyboard-unit adaptation accepts an already corrected recipe"
 
+cat >"$recipe" <<'SH'
+package() {
+  if [[ -f default/systemd/user/omarchy-brightness-keyboard-auto.service ]]; then
+    install -Dm644 default/systemd/user/omarchy-brightness-keyboard-auto.service "$pkgdir/usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service"
+  fi
+}
+SH
+cp "$recipe" "$test_tmp/guarded"
+ensure_keyboard_backlight_unit "$recipe"
+cmp "$recipe" "$test_tmp/guarded" || fail "guarded upstream keyboard-unit install is preserved"
+pass "keyboard-unit adaptation accepts an install nested in a source-file guard"
+
 (
   cd "$ROOT"
   pkgdir="$test_tmp/package"

@@ -222,9 +222,20 @@ ensure_keyboard_backlight_unit() {
   local anchor='  install -Dm644 default/systemd/user/bt-agent.service "$pkgdir/usr/lib/systemd/user/bt-agent.service"'
   local install_line="  install -Dm644 default/systemd/user/$unit \"\$pkgdir/usr/lib/systemd/user/$unit\""
 
-  # Accept upstream adopting this install, but stop for an unfamiliar recipe
-  # instead of silently producing another incomplete package.
-  grep -Fxq "$install_line" "$pkgbuild" && return 0
+  # Accept upstream adopting this install, including when it is nested inside
+  # a source-file guard and therefore indented more deeply than the anchor.
+  # Parse shell words so whitespace and indentation do not make a valid install
+  # look unfamiliar; still require the exact source and package destination.
+  awk -v unit="$unit" '
+    $1 == "install" && $2 == "-Dm644" && $3 == "default/systemd/user/" unit {
+      destination = $4
+      if (substr(destination, 1, 1) == "\"" && substr(destination, length(destination), 1) == "\"") {
+        destination = substr(destination, 2, length(destination) - 2)
+      }
+      if (destination == "$pkgdir/usr/lib/systemd/user/" unit) found = 1
+    }
+    END { exit !found }
+  ' "$pkgbuild" && return 0
   [[ $(grep -Fxc "$anchor" "$pkgbuild") == 1 ]] ||
     fail "omarchy-settings user-unit installation changed; re-check $pkgbuild"
   ! grep -Fq "$unit" "$pkgbuild" ||
