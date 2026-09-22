@@ -65,15 +65,19 @@ Qualify each exact tested configuration. A successful run with pool-built overri
 
 ## Installer recovery constraints
 
-Installation and reclamation must be explicit, restartable state machines. Keep durable progress and revalidate the actual disk state before each mutation; a progress marker alone does not authorize a write.
+The September 21 installer direction prioritizes qualification of Marcelo's image-first encryption flow; the temporary tail installer remains a fallback pending that decision. Installation, encryption conversion, re-keying and any reclamation must be explicit, restartable state machines. Keep durable progress and revalidate the actual disk state before each mutation; a progress marker alone does not authorize a write.
 
-Test interruption before and after installer-partition deletion, root-partition growth, encrypted-mapping resize, and filesystem growth. A retry must recognize completed stages without deleting or formatting a different partition. Validate exact identities and geometry, not labels alone. Preserve unrelated Linux installations, macOS, and recovery partitions.
+For image-first installation, test interrupted encryption conversion, owner re-keying, recovery-key acknowledgment and factory reset. Verify that retries preserve the intended keyslots and that completed provisioning removes temporary unlock keys from unencrypted artifacts and boot configuration. No reusable unlock credential may remain in logs or unencrypted boot files after completion. Keep personal data out of the system until encryption and owner setup are complete.
 
-Retain the temporary installer until a successful independent installed boot. Document recovery for failed installation, failed first boot, interrupted reclamation, and failed updates. Reclamation should leave an already bootable installation recoverable even if subsequent growth steps fail.
+If the tail-installer design is selected, test interruption before and after installer-partition deletion, root-partition growth, encrypted-mapping resize, and filesystem growth. A retry must recognize completed stages without deleting or formatting a different partition. Validate exact identities and geometry, not labels alone. Preserve unrelated Linux installations, macOS, and recovery partitions.
+
+For that tail-installer design, retain the temporary installer until a successful independent installed boot. Document recovery for failed installation, failed first boot, interrupted reclamation, and failed updates. Reclamation should leave an already bootable installation recoverable even if subsequent growth steps fail.
 
 Resolve package-managed kernel/initramfs ownership and ESP update hooks as part of this work. The existing UUID-private ESP design and managed-kernel-update proposal are inputs to review, not a requirement to retain that exact layout. Test snapshot recovery together with the kernel/modules state, because restoring an encrypted root does not necessarily restore external boot files.
 
-The existing bootstrap may remain a developer or recovery route. Do not imply it creates encryption, or require two equally supported public installers. The recommended release path must meet the encrypted lifecycle in the [plan](upstream-integration-plan.md#installer).
+Evaluate Marcelo's `omarchy-mac-boot` package against the selected boot layout rather than applying it unchanged to the ISO's UUID-private ESP layout. Snapshot restore remains experimental until its interrupted root-switch behavior and external-kernel compatibility are qualified; retain the opt-in gate and test refusal of incompatible snapshots.
+
+The existing bootstrap may remain a developer or recovery route. Describe encryption only for the exact qualified path; do not require two equally supported public installers. The recommended release path must meet the encrypted lifecycle in the [plan](upstream-integration-plan.md#installer).
 
 ## Upstream merge record
 
