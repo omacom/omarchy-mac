@@ -69,3 +69,27 @@ bash test/shell.d/mac-image-vm-admission-test.sh
 ```
 
 The focused suite covers descriptor substitution, duplicate JSON keys, dirty-verifier substitution, kernel path traversal, immutable snapshot destinations, altered ZIPs, member size/hash mismatches, unexpected/duplicate/symlink/traversing ZIP entries, sparse extraction, wrong boot profile and exported-member substitution. VM execution remains dependent on the authenticated final image and adequate disk space.
+
+## This qualification's launch helper
+
+`launch_private.py` fixes the approved artifact, VM state, evidence, candidate/dependency and kernel paths for the 2026-09-22 private qualification. It pins the disposable tools image by immutable ID. Docker receives only read-only input mounts plus the dedicated `vm/` evidence/state parent read-write; signing-key directories and unrelated workspaces are absent. The host udev database and host PID 1's mount table are exposed read-only so every tracked loop and partition can be checked before mounting. The temporary host rule must already cover the literal backing paths. No launch action installs a rule or changes host automount settings.
+
+Once the parent exports `artifact-image-3` and supplies the descriptor hash, run the audit first:
+
+```bash
+python3 test/vm/mac-image/launch_private.py audit \
+  --inputs /path/VM-INPUTS.json --inputs-sha256 CALLER_PINNED_SHA256
+```
+
+The audit authenticates the descriptor-bound image report and exported root bytes, checks the reviewed trust-audit tool's SHA256, then attaches only `payload/root.img` through a read-only loop. It requires the exact backing identity, `UDISKS_IGNORE=1`, this task's private tag and no host mount before mounting `@` and `@factory` with `ro,nologreplay`. Both shipping trees are checked by the parent-provided audit tool. Cleanup unmounts before detaching, refuses to detach a reused device, and hashes root.img again to prove unchanged bytes. No final VM state directory is created by this audit. Its report is `vm/shipping-trust-audit-image-3.json`.
+
+After that report passes and storage is ready, run both VM lanes:
+
+```bash
+python3 test/vm/mac-image/launch_private.py vm \
+  --inputs /path/VM-INPUTS.json --inputs-sha256 CALLER_PINNED_SHA256
+```
+
+`--print-command` makes either invocation reviewable without starting a container. The VM helper requires the same descriptor to have passed the shipping trust audit. It refuses existing attempt directories and requires more than 19 GiB free both before and after authenticated admission. It uses `vm/state-attempt-1` and `vm/run-attempt-1`; sequential passing disks are removed to preserve space. The generic kernel signature is still verified against the admitted image's ALARM public keyring before its kernel or guest scripts execute. A successful generic boot remains separate from Apple firmware/hardware qualification.
+
+The focused suite additionally covers loop identity substitution, physical-device refusal, missing host exclusion/tag, missing host mount visibility, unexpected desktop mounts, partition-specific exclusion, read-only audit options, partial mount failures and refused cleanup of a reused loop device.

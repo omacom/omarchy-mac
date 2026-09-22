@@ -26,6 +26,7 @@ python3 "$harness/admit.py" "$@" --output "$state/admitted" >"$evidence/admissio
 work=$state
 admitted=$state/admitted
 cp "$admitted/inputs.json" "$admitted/admission.json" "$evidence/"
+(( $(df --output=avail -B1 "$work" | tail -1) > 19*1024*1024*1024 )) || fail "more than 19 GiB free is required after admission"
 [[ $(uname -m) == "aarch64" && -r /dev/kvm ]] || fail "an aarch64 KVM host is required"
 for tool in qemu-system-aarch64 sgdisk mkfs.vfat losetup btrfs bsdtar gpg mount umount chroot blkid cryptsetup; do
   command -v "$tool" >/dev/null || fail "missing $tool; use the disposable tools container"
@@ -33,16 +34,33 @@ done
 sudo -n true || fail "passwordless sudo or container root is required"
 [[ -r /usr/share/AAVMF/AAVMF_CODE.fd && -r /usr/share/AAVMF/AAVMF_VARS.fd ]] || fail "AAVMF firmware missing"
 loops=() mounts=() qemu_pid=""
+declare -A loop_backing=()
 cleanup() {
   local status=$? item
   if [[ -n $qemu_pid ]]; then kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true; fi
   for ((i=${#mounts[@]}-1; i>=0; i--)); do sudo umount -R "${mounts[$i]}" 2>/dev/null || true; done
-  for item in "${loops[@]}"; do sudo losetup -d "$item" 2>/dev/null || true; done
+  for item in "${loops[@]}"; do detach_owned "$item" || true; done
   echo "state retained for inspection: $state (exit $status)" >&2
 }
 trap cleanup EXIT
-attach() { ATTACHED=$(sudo losetup -f --show "$@"); loops+=("$ATTACHED"); }
-detach_last() { sudo losetup -d "${loops[-1]}"; unset 'loops[-1]'; }
+attach() {
+  local backing=${@: -1}
+  ATTACHED=$(sudo losetup -f --show "$@"); loops+=("$ATTACHED")
+  loop_backing[$ATTACHED]=$backing
+  python3 "$harness/loop_guard.py" "$ATTACHED" "$backing" >>"$evidence/loop-guards.jsonl" || fail "host desktop exclusion or loop identity failed"
+}
+detach_owned() {
+  local device=$1 backing=/sys/block/${1##*/}/loop/backing_file
+  [[ -e $backing ]] || return 0
+  if [[ $(cat "$backing") == "${loop_backing[$device]}" ]]; then
+    sudo losetup -d "$device"
+    python3 "$harness/loop_guard.py" --released "$device" "${loop_backing[$device]}" >>"$evidence/loop-guards.jsonl"
+  else
+    echo "refusing to detach $device: backing identity changed" >&2
+    return 1
+  fi
+}
+detach_last() { detach_owned "${loops[-1]}"; unset 'loops[-1]'; }
 mount_tracked() { sudo mount "$@"; mounts+=("${@: -1}"); }
 umount_last() { sudo umount -R "${mounts[-1]}"; unset 'mounts[-1]'; }
 read_json() {
@@ -73,7 +91,7 @@ build_generic_kernel() {
   mkdir -p "$lower" "$merged" "$work/upper" "$work/overlay-work" "$work/generic" "$work/gpg"
   chmod 700 "$work/gpg"
   attach -r "$admitted/payload/root.img"
-  mount_tracked -o ro,subvol=@ "$ATTACHED" "$lower"
+  mount_tracked -o ro,nologreplay,subvol=@ "$ATTACHED" "$lower"
   cmp "$lower/var/lib/omarchy/package-snapshots/QUATTRO-CANDIDATE.json" "$admitted/candidate/signing.json" || fail "image candidate binding differs"
   cmp "$lower/var/lib/omarchy/package-snapshots/DEPENDENCIES.json" "$admitted/dependencies/manifest.json" || fail "image dependency binding differs"
   gpg --batch --homedir "$work/gpg" --import "$lower/usr/share/pacman/keyrings/archlinuxarm.gpg" >"$evidence/kernel-keyring.log" 2>&1
