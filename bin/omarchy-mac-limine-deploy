@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# omarchy:summary=Put the installed Limine on the ESP of an Apple Silicon Mac that boots it
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# U-Boot boots ESP:/EFI/BOOT/BOOTAA64.EFI. The limine package's own pacman
+# hook (limine-install) deploys nothing on aarch64, so this copies the
+# packaged Limine into that slot whenever it changed; a pacman hook on
+# usr/share/limine/BOOTAA64.EFI runs it, and so does omarchy-mac-boot-update.
+
+set -uo pipefail
+
+esp=${OMARCHY_ESP:-/boot/efi}
+limine_efi=${OMARCHY_LIMINE_EFI:-/usr/share/limine/BOOTAA64.EFI}
+target=$esp/EFI/BOOT/BOOTAA64.EFI
+
+omarchy-mac-limine-active || exit 0
+[[ -f $limine_efi ]] || { echo "omarchy-mac-limine-deploy: $limine_efi is missing" >&2; exit 1; }
+findmnt -no TARGET "$esp" >/dev/null 2>&1 || { echo "omarchy-mac-limine-deploy: the ESP is not mounted at $esp" >&2; exit 1; }
+
+cmp -s "$limine_efi" "$target" && exit 0
+# Staged beside the slot and synced before the rename: the slot is never
+# half-written, and a Mac that loses power keeps GRUB or gets whole Limine.
+mkdir -p "$esp/EFI/BOOT" &&
+  install -m600 "$limine_efi" "$target.new" &&
+  sync -f "$target.new" || { rm -f "$target.new"; echo "omarchy-mac-limine-deploy: could not stage Limine on $esp" >&2; exit 1; }
+mv -f "$target.new" "$target" || { rm -f "$target.new"; echo "omarchy-mac-limine-deploy: could not write $target" >&2; exit 1; }
+sync -f "$target" || true
+echo "Limine updated on $target"

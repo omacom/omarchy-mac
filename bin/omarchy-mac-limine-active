@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# omarchy:summary=Exit 0 when this Apple Silicon Mac boots Limine, 1 when it boots GRUB
+# omarchy:hidden=true
+
+# install/hardware/apple/limine-boot.sh activates Limine on Macs that carry
+# /var/lib/omarchy/limine.enabled (shipped by the image, or by the migration)
+# and writes /etc/default/limine once Limine's menu boots the kernel. Both,
+# plus the tooling, make the Mac a Limine Mac for every flow that
+# regenerates boot files.
+
+gate=${OMARCHY_LIMINE_GATE:-/var/lib/omarchy/limine.enabled}
+limine_default=${OMARCHY_LIMINE_DEFAULT:-/etc/default/limine}
+
+omarchy-hw-apple-silicon || exit 1
+[[ -e $gate && -f $limine_default ]] || exit 1
+omarchy-cmd-present limine-update

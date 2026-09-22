@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# omarchy:summary=Derive Limine's kernel command line from GRUB's defaults on an Apple Silicon Mac
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# /etc/default/grub stays the one place the encrypt flow, the owner's re-key
+# and the console leaf write the kernel command line. This turns it into
+# Limine's KERNEL_CMDLINE[default]: root=UUID= of the root filesystem, rw, one
+# rootflags= carrying subvol=@ and every flag GRUB's variables added, then
+# GRUB_CMDLINE_LINUX and GRUB_CMDLINE_LINUX_DEFAULT without repeats. Both
+# loaders boot the same line. Linked as /etc/boot/hooks/pre.d/20-omarchy-mac-cmdline
+# it runs before every UKI rebuild; omarchy-mac-boot-update runs it too.
+
+set -uo pipefail
+set -f
+
+grub_default=${OMARCHY_GRUB_DEFAULT:-/etc/default/grub}
+limine_default=${OMARCHY_LIMINE_DEFAULT:-/etc/default/limine}
+fstab=${OMARCHY_FSTAB:-/etc/fstab}
+
+[[ -f $grub_default && -f $limine_default ]] || exit 0
+
+grub_value() {
+  sed -n "s/^$1=//p" "$grub_default" | tail -n 1 | sed -E "s/^\"(.*)\"$/\1/; s/^'(.*)'$/\1/"
+}
+
+# The installed system's root filesystem, as fstab names it (also right from
+# inside a chroot), else the mounted one, else the booted one (a snapshot
+# boot runs on a tmpfs overlay with the fstab row neutralised).
+root_uuid=$(awk '$1 !~ /^#/ && $2 == "/" && $1 ~ /^UUID=/ { sub(/^UUID=/, "", $1); print $1; exit }' "$fstab" 2>/dev/null)
+[[ -n $root_uuid ]] || root_uuid=$(findmnt -no UUID / 2>/dev/null)
+[[ -n $root_uuid ]] || root_uuid=$(grep -Eo '(^|[[:space:]])root=UUID=[^[:space:]]+' "${OMARCHY_CMDLINE:-/proc/cmdline}" 2>/dev/null | tail -n 1 | sed 's/.*root=UUID=//')
+if [[ -z $root_uuid ]]; then
+  # 100 and above: the limine-entry-tool hook runner aborts the rebuild on
+  # it; anything lower is a warning it would build the UKI over.
+  echo "omarchy-mac-limine-cmdline: cannot tell the root filesystem UUID; $limine_default keeps its command line" >&2
+  exit 100
+fi
+
+rootflags=(subvol=@)
+words=()
+for word in $(grub_value GRUB_CMDLINE_LINUX) $(grub_value GRUB_CMDLINE_LINUX_DEFAULT); do
+  case $word in
+    root=* | rw | ro) ;;
+    rootflags=*)
+      IFS=, read -r -a flags <<<"${word#rootflags=}"
+      for flag in "${flags[@]}"; do
+        case $flag in
+          '' | subvol=* | subvolid=*) ;;
+          *) [[ " ${rootflags[*]} " == *" $flag "* ]] || rootflags+=("$flag") ;;
+        esac
+      done
+      ;;
+    *) [[ " ${words[*]-} " == *" $word "* ]] || words+=("$word") ;;
+  esac
+done
+
+cmdline="root=UUID=$root_uuid rw rootflags=$(IFS=,; printf '%s' "${rootflags[*]}")"
+[[ -z ${words[*]-} ]] || cmdline+=" ${words[*]}"
+
+tmp=$(mktemp) || exit 1
+trap 'rm -f "$tmp"' EXIT
+awk -v line="KERNEL_CMDLINE[default]=\"$cmdline\"" '
+  /^KERNEL_CMDLINE\[default\]/ { if (!done) { print line; done = 1 }; next }
+  { print }
+  END { if (!done) print line }
+' "$limine_default" >"$tmp" || exit 1
+if ! cmp -s "$tmp" "$limine_default"; then
+  install -m644 "$tmp" "$limine_default" || exit 1
+fi

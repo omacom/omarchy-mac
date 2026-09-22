@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# omarchy:summary=Print which kernel package this Apple Silicon Mac runs.
+
+# The Aurora payload records its kernel here because it is not the Asahi one.
+# An Asahi install writes no such file, so the answer is linux-asahi unless the
+# system says otherwise. Callers can then name the kernel without caring which
+# payload they came from.
+
+kernel_file="${OMARCHY_APPLE_KERNEL_FILE:-/usr/share/omarchy/apple-silicon-kernel}"
+kernel=""
+
+if [[ -f $kernel_file && ! -L $kernel_file ]]; then
+  read -r kernel <"$kernel_file" || true
+fi
+
+[[ $kernel =~ ^linux-[a-z0-9]+$ ]] || kernel=linux-asahi
+printf '%s\n' "$kernel"
