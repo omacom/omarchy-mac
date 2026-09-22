@@ -1,0 +1,47 @@
+#!/bin/bash
+# omarchy:summary=Collect Mac compatibility results for community submissions
+#
+# Fetches the collector and its vendored helpers from the same ref into a
+# cache directory, then executes it. The collector itself is network-free
+# and redacts before writing; --submit is the only network call it makes,
+# and only when you pass it.
+#
+# Usage (same flags as scripts/collect_e2e.py):
+#   bin/omarchy-mac-e2e-collect --interview --out e2e-mytest.tar.gz
+#   bin/omarchy-mac-e2e-collect --out e2e-mytest.tar.gz \
+#     --submit https://mlx-omarchy-community-data.joshua-s-warren.workers.dev
+#
+# Pin a ref with OMARCHY_MAC_REF (default: quattro). Re-running refreshes
+# nothing unless you pass --refresh.
+set -euo pipefail
+
+REF="${OMARCHY_MAC_REF:-quattro}"
+BASE="${OMARCHY_MAC_RAW_BASE:-https://raw.githubusercontent.com/omacom/omarchy-mac/$REF/scripts}"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-mac-e2e/$REF"
+
+if [ "${1:-}" = "--refresh" ]; then
+  shift
+  rm -rf "$CACHE"
+fi
+
+mkdir -p "$CACHE"
+fetch() { curl -fsSL "$1/$2.py" -o "$CACHE/$2.py" 2>/dev/null; }
+for f in collect_common collect_submit collect_quick collect_macos collect_e2e; do
+  if [ ! -s "$CACHE/$f.py" ] && ! fetch "$BASE" "$f"; then
+    if [ -z "${FALLBACK_BASE:-}" ]; then
+      # Pre-merge, quattro does not carry the collector yet; the PR branch
+      # does. Say which base served the file so provenance stays visible.
+      FALLBACK_BASE="https://raw.githubusercontent.com/joshuaswarren/omarchy-mac/e2e-collector/scripts"
+      echo "not on $BASE; using the PR branch until this merges:" >&2
+      echo "  $FALLBACK_BASE" >&2
+    fi
+    fetch "$FALLBACK_BASE" "$f" || {
+      echo "Could not fetch $f.py from either base." >&2
+      echo "Set OMARCHY_MAC_RAW_BASE to a tree that carries scripts/." >&2
+      exit 1
+    }
+  fi
+done
+chmod 700 "$CACHE"
+
+exec python3 "$CACHE/collect_e2e.py" "$@"
