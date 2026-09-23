@@ -178,6 +178,7 @@ omarchy="$tmp/omarchy"
 mkdir -p "$omarchy/install/provisioning"
 printf 'OMARCHY\n' >"$omarchy/logo.txt"
 : >"$omarchy/install/provisioning/setup-form.sh"
+cp "$ROOT/install/provisioning/luks-recovery.sh" "$omarchy/install/provisioning/luks-recovery.sh"
 
 export PATH="$stub_bin:$PATH"
 export OMARCHY_PATH="$omarchy"
