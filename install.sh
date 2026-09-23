@@ -68,6 +68,32 @@ check_preconditions() {
     warn "This does not look like Apple hardware; continuing anyway."
 }
 
+prompt_install_keyboard() {
+  local keymap answer listed
+  keymap=$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"' | head -1) || keymap=""
+  keymap=${keymap:-us}
+
+  while true; do
+    read -r -p "Keyboard layout [$keymap] (? to list): " answer </dev/tty || fail "keyboard selection requires a terminal"
+    if [[ $answer == "?" ]]; then
+      localectl --no-pager list-keymaps || true
+      continue
+    fi
+    answer=${answer:-$keymap}
+    listed=$(localectl --no-pager list-keymaps 2>/dev/null || true)
+    if [[ -z $listed ]] || grep -qixF "$answer" <<<"$listed"; then
+      keymap=$answer
+      break
+    fi
+    warn "Unknown keyboard layout: $answer. Type ? to see available layouts."
+  done
+
+  if [[ $(tty </dev/tty 2>/dev/null) == /dev/tty* ]]; then
+    sudo loadkeys "$keymap" || fail "could not activate keyboard layout $keymap"
+  fi
+  sudo localectl set-keymap "$keymap" || fail "could not save keyboard layout $keymap"
+}
+
 ensure_aur_helper() {
   command -v yay >/dev/null && return 0
 
@@ -379,11 +405,14 @@ cleanup_channel_install() {
 main() {
   parse_install_options "$@"
   check_preconditions
+  if [[ ${OMARCHY_KEYBOARD_CONFIRMED:-0} != "1" ]]; then
+    prompt_install_keyboard
+  fi
   if [[ -n $install_channel ]]; then
     channel_stage=$(omarchy_arm_channel_stage_new)
     trap cleanup_channel_install EXIT
     export OMARCHY_SIGNING_SOURCE="$checkout"
-    # Availability, resolution and signature checks precede locale or system
+    # Availability, resolution and signature checks precede locale and package
     # changes. Apply exactly the captured published pair and dependencies.
     omarchy_arm_channel_prepare "$channel_stage" "$install_channel" fresh
     ensure_utf8_locale

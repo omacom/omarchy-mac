@@ -71,10 +71,7 @@ repository's default branch and the script installs from it by default; it
 checks the version it is about to install and stops rather than giving you
 Omarchy 3 by accident.)
 
-It asks whether to encrypt (yes by default), then for a hostname, username and
-password, then carries the machine the rest of the way on its own — moving
-`/boot` onto the EFI partition, encrypting the root, installing Omarchy —
-rebooting between steps and resuming itself each time on tty1.
+It asks for your keyboard layout first and activates it before you type any other answers. Press Enter to keep the current layout, or type `?` to list available keymaps. It then asks whether to encrypt (yes by default), followed by a username, hostname and password, and carries the machine the rest of the way on its own — moving `/boot` onto the EFI partition, encrypting the root, installing Omarchy — rebooting between steps and resuming itself each time on tty1.
 
 Expect about fifteen minutes, three reboots, and two questions along the way:
 

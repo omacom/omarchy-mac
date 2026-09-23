@@ -11,6 +11,16 @@ build_script="$ROOT/build-packages.sh"
 [[ -x $build_script ]] || fail "the Apple Silicon package build script ships and is executable"
 pass "the Apple Silicon install scripts ship and are executable"
 
+install_main=$(sed -n '/^main() {/,/^}/p' "$install_script")
+bootstrap_main=$(sed -n '/^main() {/,/^}/p' "$ROOT/bootstrap.sh")
+[[ $install_main == *$'  check_preconditions\n  if [[ ${OMARCHY_KEYBOARD_CONFIRMED:-0} != "1" ]]; then\n    prompt_install_keyboard'* ]] ||
+  fail "direct installation asks for a keyboard layout before package setup"
+[[ $bootstrap_main == *$'    require_root\n    prompt_keyboard\n\n    local username'* ]] ||
+  fail "bootstrap asks for a keyboard layout before the username"
+grep -qF 'OMARCHY_KEYBOARD_CONFIRMED=1 bash install.sh' "$ROOT/bootstrap.sh" ||
+  fail "bootstrap passes its selected layout to the package installer"
+pass "installation starts with keyboard selection on both entry points"
+
 # Quattro renamed the setup entry points once already, and set -e turns a call
 # to a command that no longer ships into a half-finished install.
 while read -r command_name; do
