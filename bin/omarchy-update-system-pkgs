@@ -19,7 +19,7 @@ if [[ $(uname -m) == "aarch64" ]]; then
   for target in "${arm_targets[@]}"; do
     package=${target#*/}
     installed=$(pacman -Q "$package" 2>/dev/null | awk '{print $2}') || installed=""
-    available=$(pacman -Si "$target" 2>/dev/null | awk '/^Version[[:space:]]*:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }') || available=""
+    available=$(LC_ALL=C pacman -Si "$target" 2>/dev/null | awk '/^Version[[:space:]]*:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }') || available=""
     if [[ -n $installed && $installed == "$available" ]]; then
       ignored_targets+=("$package")
     else

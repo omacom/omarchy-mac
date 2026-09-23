@@ -50,7 +50,13 @@ if [[ " $* " != *" -Syu "* ]]; then
       exit 0
       ;;
     -Si)
-      printf 'Name            : %s\nVersion         : 0.5.4-5.1\n' "$2"
+      # Simulate translated metadata without requiring an installed language.
+      if [[ ${LC_ALL:-} == "C" ]]; then
+        label=Version
+      else
+        label=Versión
+      fi
+      printf 'Name            : %s\n%s         : 0.5.4-5.1\n' "$2" "$label"
       exit 0
       ;;
   esac
@@ -88,6 +94,7 @@ write_conflict_report() {
 
 update_env() {
   printf '%s\n' \
+    "LC_ALL=C.UTF-8" \
     "OMARCHY_PATH=$test_tmp/omarchy" \
     "OMARCHY_REPLACED_DIR=$test_tmp/replaced" \
     "PACMAN_ATTEMPTS=$test_tmp/attempts" \
@@ -138,10 +145,12 @@ for call in 1 2; do
     fail "the initial upgrade or interactive retry loses the current ARM target pin"
   [[ " $(call_line "$call" args) " == *" omarchy/hyprtoolkit "* ]] ||
     fail "the initial upgrade or interactive retry loses an out-of-date ARM target"
+  [[ " $(call_line "$call" args) " != *" omarchy/hyprland "* && " $(call_line "$call" args) " != *" omarchy/hyprland-guiutils "* ]] ||
+    fail "the initial upgrade or interactive retry explicitly targets current ARM packages"
   [[ " $(call_line "$call" args) " == *" --needed "* ]] ||
     fail "the initial upgrade or interactive retry reinstalls current ARM targets"
 done
-pass "the initial upgrade and interactive retry retain the current ARM target pin"
+pass "the initial upgrade and interactive retry retain the current ARM target pin with a non-C caller locale"
 pass "the initial upgrade and interactive retry retain out-of-date ARM targets"
 
 [[ $(call_line 2 tty0) == "yes" && $(call_line 2 tty2) == "yes" ]] ||

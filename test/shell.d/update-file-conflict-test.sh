@@ -32,14 +32,35 @@ STUB
 # asked for the retry to fail too.
 cat >"$stub_bin/pacman" <<'STUB'
 #!/bin/bash
-if [[ $1 == -Qo ]]; then
-  # Anything in OWNED_PATHS has a package behind it; everything else is unowned.
-  [[ " $OWNED_PATHS " == *" $2 "* ]]
-  exit $?
-fi
+case "$1" in
+  -Qo)
+    # Anything in OWNED_PATHS has a package behind it; everything else is unowned.
+    [[ " $OWNED_PATHS " == *" $2 "* ]]
+    exit $?
+    ;;
+  -Sy)
+    exit 0
+    ;;
+  -Q)
+    if [[ $2 == "hyprtoolkit" ]]; then
+      printf '%s %s\n' "$2" "0.5.4-5.0"
+    else
+      printf '%s %s\n' "$2" "0.5.4-5.1"
+    fi
+    exit 0
+    ;;
+  -Si)
+    printf 'Name            : %s\nVersion         : 0.5.4-5.1\n' "$2"
+    exit 0
+    ;;
+esac
 
-# Every initial transaction and retry must retain the explicit ARM targets.
-[[ " $* " == *" omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils "* ]] || exit 99
+# Every initial transaction and retry must pin current ARM packages and retain
+# an explicit target for the out-of-date package.
+[[ $1 == "-Syu" ]] || exit 99
+[[ " $* " == *" --ignore hyprland,hyprland-guiutils "* ]] || exit 99
+[[ " $* " == *" omarchy/hyprtoolkit "* ]] || exit 99
+[[ " $* " != *" omarchy/hyprland "* && " $* " != *" omarchy/hyprland-guiutils "* ]] || exit 99
 
 attempt=$(($(cat "$PACMAN_ATTEMPTS") + 1))
 echo "$attempt" >"$PACMAN_ATTEMPTS"
