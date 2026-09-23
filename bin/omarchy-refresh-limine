@@ -3,23 +3,30 @@
 # omarchy:summary=Overwrite the user config for the Limine bootloader and rebuild it.
 # omarchy:requires-sudo=true
 
-# Apple Silicon boots m1n1 -> u-boot -> GRUB. Without this the missing
-# /boot/limine.conf aborts omarchy-reinstall-configs.
+set -euo pipefail
+
+# Installations without Limine have no configuration to refresh.
 if omarchy-cmd-missing limine; then
   exit 0
 fi
 
-legacy_uki="/boot/EFI/Linux/$(cat /etc/machine-id)_linux.efi"
+esp=""
+limine_default=${OMARCHY_LIMINE_DEFAULT:-/etc/default/limine}
+if [[ -f $limine_default ]]; then
+  esp=$(sed -n 's/^ESP_PATH=["'\'']\?\([^"'\'']*\).*/\1/p' "$limine_default" | tail -1)
+fi
+esp=${esp:-/boot}
+legacy_uki="$esp/EFI/Linux/$(cat /etc/machine-id)_linux.efi"
 
-if sudo test -f /boot/EFI/Linux/omarchy_linux.efi && sudo test -f "$legacy_uki"; then
+if sudo test -f "$esp/EFI/Linux/omarchy_linux.efi" && sudo test -f "$legacy_uki"; then
   echo "Cleanup extra UKI"
   sudo rm -f "$legacy_uki"
 fi
 echo "Resetting limine config"
 
-sudo mv /boot/limine.conf /boot/limine.conf.bak
+sudo mv "$esp/limine.conf" "$esp/limine.conf.bak"
 
-sudo cp "$OMARCHY_PATH/default/limine/limine.conf" /boot/limine.conf
+sudo cp "$OMARCHY_PATH/default/limine/limine.conf" "$esp/limine.conf"
 
 sudo limine-update
 sudo limine-snapper-sync
