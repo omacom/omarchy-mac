@@ -150,8 +150,9 @@ manifest="$iso_root/manifests/fresh-4-semantic.json"
 # The phases/manifest assertions cover the newer ISO orchestrator structure.
 # Skip them when the checkout predates that layout.
 if [[ -f $phases && -f $manifest ]]; then
-  ! grep -F '_configure_snapper_root' "$phases" >/dev/null || fail "ISO does not duplicate Omarchy Snapper setup"
-  grep -F 'run_system_finalizer' "$phases" >/dev/null || fail "ISO runs packaged system setup"
+  phase_sources=("${phases%/*}"/*phases*.py)
+  ! grep -F '_configure_snapper_root' "${phase_sources[@]}" >/dev/null || fail "ISO does not duplicate Omarchy Snapper setup"
+  grep -F 'run_system_finalizer' "${phase_sources[@]}" >/dev/null || fail "ISO runs packaged system setup"
   grep -F '/etc/systemd/system/timers.target.wants/snapper-cleanup.timer' "$manifest" >/dev/null || fail "fresh ISO manifest has snapper-cleanup timer enabled"
   ! grep -F '/etc/systemd/system/timers.target.wants/snapper-timeline.timer' "$manifest" >/dev/null || fail "fresh ISO manifest does not enable snapper timeline timer"
 fi
