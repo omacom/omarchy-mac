@@ -37,8 +37,8 @@ for tool in qemu-system-aarch64 sgdisk mkfs.vfat losetup btrfs bsdtar gpg mount 
 done
 sudo -n true || fail "passwordless sudo or container root is required"
 [[ -r /usr/share/AAVMF/AAVMF_CODE.fd && -r /usr/share/AAVMF/AAVMF_VARS.fd ]] || fail "AAVMF firmware missing"
-loops=() mounts=() qemu_pid=""
-declare -A loop_backing=()
+loops=() mounts=() qemu_pid="" node_generation=0
+declare -A loop_backing=() loop_node_receipts=()
 cleanup() {
   local status=$? item
   if [[ -n $qemu_pid ]]; then kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true; fi
@@ -48,20 +48,31 @@ cleanup() {
 }
 trap cleanup EXIT
 attach() {
-  local backing=${@: -1}
+  local backing=${@: -1} argument count=0 receipt
+  for argument in "$@"; do
+    if [[ $argument == "-P" ]]; then count=3; fi
+  done
   ATTACHED=$(sudo losetup -f --show "$@"); loops+=("$ATTACHED")
   loop_backing[$ATTACHED]=$backing
   python3 "$harness/loop_guard.py" "$ATTACHED" "$backing" >>"$evidence/loop-guards.jsonl" || fail "host desktop exclusion or loop identity failed"
+  node_generation=$((node_generation + 1))
+  receipt=$evidence/loop-nodes-$node_generation.json
+  loop_node_receipts[$ATTACHED]=$receipt
+  python3 "$harness/loop_nodes.py" create --device "$ATTACHED" --backing "$backing" --partition-count "$count" --receipt "$receipt" >>"$evidence/loop-node-actions.jsonl" || fail "container loop partition node setup failed"
 }
 detach_owned() {
   local device=$1 backing=/sys/block/${1##*/}/loop/backing_file
-  [[ -e $backing ]] || return 0
-  if [[ $(cat "$backing") == "${loop_backing[$device]}" ]]; then
-    sudo losetup -d "$device"
-    python3 "$harness/loop_guard.py" --released "$device" "${loop_backing[$device]}" >>"$evidence/loop-guards.jsonl"
-  else
-    echo "refusing to detach $device: backing identity changed" >&2
-    return 1
+  if [[ -e $backing ]]; then
+    if [[ $(cat "$backing") == "${loop_backing[$device]}" ]]; then
+      sudo losetup -d "$device"
+      python3 "$harness/loop_guard.py" --released "$device" "${loop_backing[$device]}" >>"$evidence/loop-guards.jsonl"
+    else
+      echo "refusing to detach $device: backing identity changed" >&2
+      return 1
+    fi
+  fi
+  if [[ -n ${loop_node_receipts[$device]:-} && -f ${loop_node_receipts[$device]} ]]; then
+    python3 "$harness/loop_nodes.py" cleanup --receipt "${loop_node_receipts[$device]}" >>"$evidence/loop-node-actions.jsonl"
   fi
 }
 detach_last() { detach_owned "${loops[-1]}"; unset 'loops[-1]'; }
