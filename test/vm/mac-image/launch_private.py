@@ -1,6 +1,7 @@
 """Launch this qualification's read-only trust audit or admitted VM lanes."""
 import argparse
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -8,6 +9,7 @@ import subprocess
 import sys
 
 import admit
+import disposable_payload
 from audit_export import AUDIT_SHA256
 
 ROOT = Path('/home/scott/code/omarchy-integration-evidence/encryption-limine-build-20260922')
@@ -63,12 +65,22 @@ def command(args):
     common += ['--tmpfs', '/admission-tmp:rw,nosuid,nodev,noexec,size=3g,mode=0700']
     product = admit.strict_json((ARTIFACT / 'product.json').read_bytes())
     kernel = pin['generic_kernel']['filename']
+    payload = ARTIFACT / product['package_filename']
     guest = [IMAGE, str(HARNESS / 'run'), '--state', str(STATE), '--evidence', str(EVIDENCE)]
+    if args.disposable_payload is not None:
+        payload = args.disposable_payload.absolute()
+        package = admit.strict_json((ARTIFACT / 'package-evidence.json').read_bytes())['package']
+        receipt = disposable_payload.inspect(payload, package, args.inputs_sha256, os.getuid())
+        disposable_payload.require_memory(ROOT / 'candidate-signed', ROOT / 'dependencies-signed')
+        # A directory bind permits unlink+close to release tmpfs pages. A file
+        # bind would keep the ZIP inode pinned for the lifetime of the container.
+        common += mount_args(payload.parent, writable=True)
+        guest += ['--disposable-payload-receipt', json.dumps(receipt, sort_keys=True)]
     if args.only:
         guest += ['--only', args.only]
     guest += ['--', '--inputs', str(args.inputs), '--inputs-sha256', args.inputs_sha256,
               '--builder', str(BUILDER), '--candidate-root', str(ROOT / 'candidate-signed'),
-              '--dependency-root', str(ROOT / 'dependencies-signed'), '--payload', str(ARTIFACT / product['package_filename']),
+              '--dependency-root', str(ROOT / 'dependencies-signed'), '--payload', str(payload),
               '--product', str(ARTIFACT / 'product.json'), '--verification', str(ARTIFACT / 'package-evidence.json'),
               '--generic-kernel', str(KERNELS / kernel), '--generic-kernel-signature', str(KERNELS / (kernel + '.sig')),
               '--members-source', str(ARTIFACT / 'payload'), '--snapshot-tmpfs', '/admission-tmp']
@@ -81,9 +93,11 @@ def main():
     parser.add_argument('--inputs', type=Path, required=True)
     parser.add_argument('--inputs-sha256', required=True)
     parser.add_argument('--only', choices=('plain', 'encrypted'))
+    parser.add_argument('--disposable-payload', type=Path, help='explicit owned tmpfs ZIP; securely released after successful admission')
     parser.add_argument('--print-command', action='store_true')
     args = parser.parse_args()
     args.inputs = args.inputs.absolute()
+    admit.require(args.stage == 'vm' or args.disposable_payload is None, 'disposable payload is only valid for VM execution')
     invocation = command(args)
     if args.print_command:
         print(shlex.join(invocation))

@@ -3,13 +3,14 @@
 set -euo pipefail
 
 harness=$(cd -- "$(dirname -- "$0")" && pwd)
-state="" evidence="" only="" keep=0
+state="" evidence="" only="" keep=0 disposable_payload_receipt=""
 while (($#)); do
   case "$1" in
     --state) state=$2; shift 2 ;;
     --evidence) evidence=$2; shift 2 ;;
     --only) only=$2; shift 2 ;;
     --keep) keep=1; shift ;;
+    --disposable-payload-receipt) disposable_payload_receipt=$2; shift 2 ;;
     --) shift; break ;;
     *) echo "usage: $0 --state NEW-DIRECTORY --evidence NEW-DIRECTORY [--only plain|encrypted] [--keep] -- ADMISSION-ARGUMENTS" >&2; exit 1 ;;
   esac
@@ -23,6 +24,9 @@ state=$(realpath -m -- "$state"); evidence=$(realpath -m -- "$evidence")
 [[ $evidence != "$state" && $evidence != "$state"/* && $state != "$evidence"/* ]] || fail "state and evidence must be separate"
 mkdir -m 700 -p "$state" "$evidence"
 python3 "$harness/admit.py" "$@" --output "$state/admitted" >"$evidence/admission.log" 2>&1 || fail "input authentication failed; see admission.log"
+if [[ -n $disposable_payload_receipt ]]; then
+  python3 "$harness/disposable_payload.py" --receipt "$disposable_payload_receipt" --admitted "$state/admitted" >"$evidence/disposable-payload-release.json" || fail "disposable payload release failed; refusing kernel build or guest"
+fi
 work=$state
 admitted=$state/admitted
 cp "$admitted/inputs.json" "$admitted/admission.json" "$evidence/"
