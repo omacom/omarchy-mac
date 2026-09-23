@@ -16,9 +16,17 @@
 #
 # Those device trees go into the shared boot.bin. Picking the released
 # linux-asahi GRUB entry is not a fallback: update-m1n1 already wrote the WIP
-# DTBs into the one image both entries use. Snapshot boot.bin before the
-# install, restore it with --rollback-boot, or from macOS copy boot.bin.old
-# over boot.bin (see docs/apple-m3.md).
+# DTBs into the one image both entries use. Snapshot that image before the
+# install and refuse to install without the snapshot. Restore it with
+# --rollback-boot, or from macOS copy boot.bin.omarchy-pre-wip (or, if that
+# snapshot is missing, boot.bin.old) over boot.bin. See docs/apple-m3.md.
+#
+# update-m1n1 (AsahiLinux/asahi-scripts) does not write /boot by name. It
+# mounts the system ESP from the device-tree property
+# chosen/asahi,efi-system-partition and replaces m1n1/boot.bin there, copying
+# the previous bytes to boot.bin.old only when the hash changes. This command
+# snapshots that same file. The two GRUB entries cannot be given separate
+# device trees: m1n1 has one boot image, and that format belongs to Asahi.
 #
 # A kernel build on an M3 Pro takes about an hour. Run it plugged in.
 
@@ -35,12 +43,62 @@ fail() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # update-m1n1 writes $ESP/m1n1/boot.bin and, when the contents change, copies
 # the previous image to boot.bin.old. Tests set OMARCHY_M1N1_BOOT_BIN.
+# OMARCHY_ASAHI_ESP_UUID_PATH, OMARCHY_PROC_MOUNTS, and OMARCHY_PARTUUID_ROOT
+# stub the ESP lookup. OMARCHY_M1N1_MOUNT_ESP=0 skips mounting.
+mounted_esp=""
+
+asahi_esp_uuid() {
+  local chosen=${OMARCHY_ASAHI_ESP_UUID_PATH:-/proc/device-tree/chosen/asahi,efi-system-partition}
+  [[ -f $chosen ]] || return 1
+  tr -d '\0' <"$chosen"
+}
+
+# Print m1n1/boot.bin on the mounted system ESP identified by PARTUUID.
+esp_boot_bin_from_mounts() {
+  local uuid=$1
+  local mounts=${OMARCHY_PROC_MOUNTS:-/proc/mounts}
+  local partuuid_root=${OMARCHY_PARTUUID_ROOT:-/dev/disk/by-partuuid}
+  local resolved="" dev mountpoint _rest candidate
+  [[ -n $uuid && -r $mounts ]] || return 1
+  if [[ -e $partuuid_root/$uuid ]]; then
+    resolved=$(readlink -f "$partuuid_root/$uuid") || true
+  fi
+  while read -r dev mountpoint _rest; do
+    [[ -n $dev && -n $mountpoint ]] || continue
+    if [[ $dev == "PARTUUID=$uuid" ]]; then
+      :
+    elif [[ -n $resolved ]] && [[ $(readlink -f "$dev" 2>/dev/null || true) == "$resolved" ]]; then
+      :
+    else
+      continue
+    fi
+    candidate=${mountpoint%/}/m1n1/boot.bin
+    if [[ -e $candidate ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done <"$mounts"
+  return 1
+}
+
+# Locate the boot.bin update-m1n1 will replace. No mount side effect.
+# A known system-ESP PARTUUID that is not mounted is not treated as /boot:
+# /boot may be the root filesystem's boot directory, and snapshotting that
+# would leave the real image unprotected.
 m1n1_boot_bin() {
+  local uuid="" candidate
   if [[ -n ${OMARCHY_M1N1_BOOT_BIN:-} ]]; then
     printf '%s\n' "$OMARCHY_M1N1_BOOT_BIN"
     return 0
   fi
-  local candidate
+  if uuid=$(asahi_esp_uuid) && [[ -n $uuid ]]; then
+    candidate=$(esp_boot_bin_from_mounts "$uuid") || true
+    if [[ -n $candidate ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    return 1
+  fi
   for candidate in /boot/m1n1/boot.bin /boot/efi/m1n1/boot.bin; do
     if [[ -e $candidate ]]; then
       printf '%s\n' "$candidate"
@@ -50,28 +108,65 @@ m1n1_boot_bin() {
   return 1
 }
 
+# Mounts in this shell so cleanup_esp_mount can see mounted_esp. Callers read
+# BOOT_BIN; do not call this from a command substitution.
+mount_system_esp() {
+  local uuid mp
+  uuid=$(asahi_esp_uuid) || return 1
+  [[ -n $uuid ]] || return 1
+  mp=${OMARCHY_ESP_MOUNT_POINT:-/run/omarchy-m1n1-esp}
+  sudo mkdir -p -- "$mp" || return 1
+  sudo mount "PARTUUID=$uuid" "$mp" || return 1
+  mounted_esp=$mp
+  BOOT_BIN=$mp/m1n1/boot.bin
+  [[ -e $BOOT_BIN ]]
+}
+
+cleanup_esp_mount() {
+  [[ -n $mounted_esp ]] || return 0
+  sudo umount "$mounted_esp" || true
+  mounted_esp=""
+}
+
+# Sets BOOT_BIN. Mounts the system ESP when the device tree names one and it
+# is not already mounted. Not safe to call from a command substitution: the
+# mount has to happen in the caller's shell so the EXIT trap can unmount it.
+ensure_m1n1_boot_bin() {
+  local path=""
+  BOOT_BIN=""
+  if path=$(m1n1_boot_bin); then
+    BOOT_BIN=$path
+    return 0
+  fi
+  if [[ ${OMARCHY_M1N1_MOUNT_ESP:-1} == "0" ]]; then
+    return 1
+  fi
+  mount_system_esp
+}
+
 # Keep the pre-WIP image across rebuilds so a second --branch does not replace
 # the released snapshot with the previous WIP boot.bin.
 snapshot_boot_bin() {
-  local boot snapshot
-  boot=$(m1n1_boot_bin) || return 1
-  snapshot=${boot}.omarchy-pre-wip
+  local snapshot
+  ensure_m1n1_boot_bin || return 1
+  snapshot=${BOOT_BIN}.omarchy-pre-wip
   [[ -e $snapshot ]] && return 0
-  sudo cp -a -- "$boot" "$snapshot"
+  sudo cp -a -- "$BOOT_BIN" "$snapshot" || return 1
+  [[ -s $snapshot ]]
 }
 
 rollback_boot_bin() {
-  local boot previous
-  boot=$(m1n1_boot_bin) || return 1
-  if [[ -e ${boot}.omarchy-pre-wip ]]; then
-    previous=${boot}.omarchy-pre-wip
-  elif [[ -e ${boot}.old ]]; then
-    previous=${boot}.old
+  local previous
+  ensure_m1n1_boot_bin || return 1
+  if [[ -e ${BOOT_BIN}.omarchy-pre-wip ]]; then
+    previous=${BOOT_BIN}.omarchy-pre-wip
+  elif [[ -e ${BOOT_BIN}.old ]]; then
+    previous=${BOOT_BIN}.old
   else
     return 1
   fi
-  sudo cp -a -- "$previous" "$boot" || return 1
-  log "Restored $boot from $(basename "$previous")"
+  sudo cp -a -- "$previous" "$BOOT_BIN" || return 1
+  log "Restored $BOOT_BIN from $(basename "$previous")"
 }
 
 refresh_boot() {
@@ -84,14 +179,29 @@ refresh_boot() {
   fi
 }
 
+# Fail closed. update-m1n1 runs from the package hook and replaces the only
+# boot image. Without a snapshot taken first, a bad DTB takes both GRUB
+# entries and Linux cannot undo it.
+install_wip_package() {
+  local pkg=$1
+  if ! snapshot_boot_bin; then
+    fail "could not snapshot m1n1/boot.bin; refusing to install. Mount the system ESP (the PARTUUID in /proc/device-tree/chosen/asahi,efi-system-partition) and retry. Nothing was changed."
+  fi
+  log "Installing $(basename "$pkg")"
+  sudo pacman -U --noconfirm "$pkg"
+}
+
 warn_shared_boot_image() {
   log "Both GRUB entries share one m1n1 boot.bin. update-m1n1 writes the WIP"
   log "kernel's DTBs into that image, so the released linux-asahi entry is not a"
   log "safe fallback. Before rebooting: omarchy-mac-kernel-wip --rollback-boot"
-  log "After a failed boot, from macOS copy m1n1/boot.bin.old over boot.bin."
+  log "After a failed boot, from macOS copy m1n1/boot.bin.omarchy-pre-wip over"
+  log "boot.bin. Asahi's boot.bin.old is only the previous image, and the next"
+  log "update-m1n1 replaces it."
 }
 
 main() {
+  trap cleanup_esp_mount EXIT
   while (( $# )); do
     case $1 in
       --repo) repo=${2:?--repo needs owner/repo}; shift ;;
@@ -114,6 +224,12 @@ main() {
   if (( rollback_boot )); then
     rollback_boot_bin ||
       fail "could not restore m1n1/boot.bin (need boot.bin.omarchy-pre-wip or boot.bin.old)"
+    # update-m1n1 rebuilds the one shared image from the newest module
+    # directory. While linux-asahi-wip is installed, that directory is the WIP
+    # tree, so this restore is undone by the next update-m1n1. Asahi owns that
+    # boot image; nothing here can give the released GRUB entry its own DTBs.
+    log "This restore lasts until the next update-m1n1. Reboot before that, or"
+    log "run omarchy-mac-kernel-wip --remove so the released device trees stick."
     exit 0
   fi
 
@@ -128,7 +244,7 @@ main() {
     sudo pacman -R --noconfirm linux-asahi-wip
     # update-m1n1 picks the newest module directory, which was the one just
     # removed; rebuild boot.bin so m1n1 carries the released kernel's trees again.
-    sudo update-m1n1 || fail "could not rebuild the shared m1n1 boot image; saved images were retained. Restore with --rollback-boot before rebooting"
+    sudo update-m1n1 || fail "could not rebuild the shared m1n1 boot image; saved images were retained. Restore with --rollback-boot before rebooting. If Linux will not boot, copy m1n1/boot.bin.omarchy-pre-wip (or boot.bin.old) over boot.bin from macOS"
     if boot=$(m1n1_boot_bin 2>/dev/null); then
       sudo rm -f -- "${boot}.omarchy-pre-wip"
     fi
@@ -158,9 +274,7 @@ main() {
 
   pkg=$(ls -1t "$build_dir"/linux-asahi-wip-*.pkg.tar.* | grep -v '\.sig$' | head -1)
   [[ -n $pkg ]] || fail "no package was produced"
-  snapshot_boot_bin || log "could not snapshot boot.bin; if the new DTBs do not boot, restore boot.bin.old from macOS"
-  log "Installing $(basename "$pkg")"
-  sudo pacman -U --noconfirm "$pkg"
+  install_wip_package "$pkg"
   refresh_boot
 
   log "Installed. Reboot and pick the linux-asahi-wip entry in GRUB."

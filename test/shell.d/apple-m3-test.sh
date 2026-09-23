@@ -142,6 +142,8 @@ grep -q 't6032' "$ROOT/bin/omarchy-mac-setup" ||
 pass "the guided setup warns on an M3 Ultra as well as M3/Pro/Max"
 
 # UWSM, not apple.lua, must export AQ_NO_MODIFIERS before Aquamarine starts.
+# Source the env file itself. OMARCHY_ENV_BOOTSTRAP=/dev/null keeps a host
+# that has the real bootstrap from replacing OMARCHY_PATH.
 stub_soc="$test_tmp/bin/omarchy-hw-apple-soc"
 mkdir -p "$(dirname "$stub_soc")"
 cat >"$stub_soc" <<'SH'
@@ -152,17 +154,41 @@ case ${1:-} in
 esac
 SH
 chmod +x "$stub_soc"
-aq=$(
-  OMARCHY_PATH="$test_tmp" HOME="$test_tmp" bash -c '
-    apple_soc="${OMARCHY_PATH%/}/bin/omarchy-hw-apple-soc"
-    if [ -x "$apple_soc" ] && "$apple_soc" >/dev/null 2>&1 && ! "$apple_soc" --gpu; then
-      export AQ_NO_MODIFIERS=1
-    fi
-    printf %s "${AQ_NO_MODIFIERS:-}"
-  '
-)
+cat >"$test_tmp/bin/omarchy-cmd-present" <<'SH'
+#!/bin/bash
+exit 1
+SH
+chmod +x "$test_tmp/bin/omarchy-cmd-present"
+source_uwsm_env() {
+  OMARCHY_PATH="$test_tmp" HOME="$test_tmp" OMARCHY_ENV_BOOTSTRAP=/dev/null \
+    PATH="$test_tmp/bin:$PATH" \
+    bash --noprofile --norc -c '
+      # shellcheck disable=SC1090
+      . "$1"
+      printf %s "${AQ_NO_MODIFIERS:-}"
+    ' bash "$uwsm_env"
+}
+aq=$(source_uwsm_env)
 [[ $aq == "1" ]] || fail "UWSM exports AQ_NO_MODIFIERS when the GPU driver is unbound"
 pass "UWSM exports AQ_NO_MODIFIERS when the GPU driver is unbound"
+
+cat >"$stub_soc" <<'SH'
+#!/bin/bash
+exit 0
+SH
+chmod +x "$stub_soc"
+aq=$(source_uwsm_env)
+[[ -z $aq ]] || fail "UWSM leaves AQ_NO_MODIFIERS unset when the GPU driver is bound"
+pass "UWSM leaves AQ_NO_MODIFIERS unset when the GPU driver is bound"
+
+cat >"$stub_soc" <<'SH'
+#!/bin/bash
+exit 1
+SH
+chmod +x "$stub_soc"
+aq=$(source_uwsm_env)
+[[ -z $aq ]] || fail "UWSM leaves AQ_NO_MODIFIERS unset for an unconfirmed SoC"
+pass "UWSM leaves AQ_NO_MODIFIERS unset for an unconfirmed SoC"
 
 # The same block must stay in the UWSM env file, not only in this test.
 python3 - "$uwsm_env" <<'PY' || fail "the UWSM env file is what exports AQ_NO_MODIFIERS"

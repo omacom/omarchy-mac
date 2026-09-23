@@ -22,8 +22,10 @@ m2=$(compat m2 apple,j413 apple,t8112 apple,arm-platform)
 m3=$(compat m3 apple,j516s apple,t6030 apple,arm-platform)
 m3max=$(compat m3max apple,j514c apple,t6031 apple,arm-platform)
 m3ultra=$(compat m3ultra apple,j575d apple,t6032 apple,arm-platform)
+m3max14=$(compat m3max14 apple,j514m apple,t6034 apple,arm-platform)
 m4=$(compat m4 apple,j713 apple,t8132 apple,arm-platform)
 m4pro=$(compat m4pro apple,j714 apple,t6040 apple,arm-platform)
+m4max=$(compat m4max apple,j716c apple,t6041 apple,arm-platform)
 m5=$(compat m5 apple,j815 apple,t6050 apple,arm-platform)
 pi=$(compat pi raspberrypi,4-model-b brcm,bcm2711)
 
@@ -42,14 +44,66 @@ pass "t6030 is an M3 Pro"
 pass "t6031 is an M3 Max"
 [[ $(run "$m3ultra") == "m3" ]] || fail "t6032 is an M3 Ultra"
 pass "t6032 is an M3 Ultra"
+[[ $(run "$m3ultra" --key) == "m3-ultra" ]] || fail "--key keeps the t6032 M3 Ultra mapping"
+pass "--key keeps the t6032 M3 Ultra mapping"
 run "$m3ultra" --is m3 || fail "--is m3 matches an M3 Ultra"
 pass "--is m3 matches an M3 Ultra"
+run "$m3ultra" --is m3-ultra || fail "--is m3-ultra matches t6032"
+pass "--is m3-ultra matches t6032"
+! run "$m3" --is m3-ultra || fail "--is m3-ultra does not match an M3 Pro"
+pass "--is m3-ultra does not match an M3 Pro"
+[[ $(run "$m3" --key) == "m3-pro" ]] || fail "t6030 key is m3-pro"
+pass "t6030 key is m3-pro"
+[[ $(run "$m3max" --key) == "m3-max" ]] || fail "t6031 key is m3-max"
+pass "t6031 key is m3-max"
+[[ $(run "$m3max14" --key) == "m3-max" ]] || fail "t6034 key is m3-max"
+pass "t6034 key is m3-max"
+[[ $(run "$m1" --key) == "m1-pro" ]] || fail "t6000 key is m1-pro"
+pass "t6000 key is m1-pro"
 [[ $(run "$m4") == "m4" ]] || fail "t8132 is an M4"
 pass "t8132 is an M4"
-! run "$m4pro" || fail "t6040 stays unmapped until a confirmed M4 Pro device tree"
-pass "t6040 stays unmapped until a confirmed M4 Pro device tree"
-! run "$m5" || fail "t6050 is not claimed as M4"
+[[ $(run "$m4" --key) == "m4" ]] || fail "t8132 key is m4"
+pass "t8132 key is m4"
+
+unconfirmed() {
+  local file=$1
+  local out="$test_tmp/unconfirmed.out"
+  local err="$test_tmp/unconfirmed.err"
+  if OMARCHY_APPLE_COMPATIBLE="$file" OMARCHY_DRM_SYSFS_PATH="$test_tmp/no-drm" \
+    OMARCHY_PLATFORM_DRIVERS_PATH="$test_tmp/no-drivers" \
+    bash "$soc" --key >"$out" 2>"$err"; then
+    fail "$2 exits 0"
+  fi
+  [[ ! -s $out ]] || fail "$2 prints a generation"
+  [[ $(<"$err") == "unconfirmed-compatible" ]] || fail "$2 reports unconfirmed-compatible"
+  pass "$2"
+}
+unconfirmed "$m4pro" "t6040 stays unconfirmed"
+unconfirmed "$m4max" "t6041 stays unconfirmed"
+
+m5_out="$test_tmp/m5.out"
+m5_err="$test_tmp/m5.err"
+if OMARCHY_APPLE_COMPATIBLE="$m5" OMARCHY_DRM_SYSFS_PATH="$test_tmp/no-drm" \
+  OMARCHY_PLATFORM_DRIVERS_PATH="$test_tmp/no-drivers" \
+  bash "$soc" >"$m5_out" 2>"$m5_err"; then
+  fail "t6050 is not claimed as M4"
+fi
+[[ ! -s $m5_out && ! -s $m5_err ]] || fail "t6050 is not named as a generation or as M4"
 pass "t6050 is not claimed as M4"
+
+# The pre-checkout setup warning cannot call this command yet. Its M3 id list
+# has to carry every generation this command calls m3, including t6032.
+m3_rows=$(sed -n 's/^[[:space:]]*\(t[0-9| ]*\)) soc_key=m3.*/\1/p' "$soc")
+[[ -n $m3_rows ]] || fail "the SoC command has M3 rows"
+while read -r row; do
+  [[ -n $row ]] || continue
+  for id in $row; do
+    [[ $id == "|" ]] && continue
+    grep -q "$id" "$ROOT/bin/omarchy-mac-setup" || fail "setup warning includes $id"
+  done
+done <<<"$m3_rows"
+! grep -q 't6040' "$ROOT/bin/omarchy-mac-setup" || fail "setup does not treat t6040 as M3"
+pass "setup's M3 warning matches the SoC command, including t6032"
 
 [[ $(run "$m3" --codename) == "j516s" ]] || fail "the codename is the non-SoC apple entry"
 pass "the codename is the non-SoC apple entry"

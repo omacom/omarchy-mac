@@ -1,34 +1,60 @@
 #!/bin/bash
 
 # omarchy:summary=Identify the Apple Silicon generation and whether its GPU driver is bound
-# omarchy:args=[--gen|--codename|--is <m1|m2|m3|m4>|--gpu]
-# omarchy:examples=omarchy hw apple-soc | omarchy hw apple-soc --is m3 | omarchy hw apple-soc --gpu
+# omarchy:args=[--gen|--key|--codename|--is <m1|m2|m3|m4|variant>|--gpu]
+# omarchy:examples=omarchy hw apple-soc | omarchy hw apple-soc --key | omarchy hw apple-soc --is m3 | omarchy hw apple-soc --gpu
 # omarchy:hidden=true
 
-# The kernel names the SoC in the device tree's compatible list, as
-# "apple,<machine>", "apple,<soc>", "apple,arm-platform". The SoC id is what
-# decides which Asahi drivers exist for the machine, so it is what everything
-# else keys off. Generation rows follow the pinned Asahi SoC table
-# (soc-codenames.md) and the better-sourced mappings from omarchy-mac#326:
-# t6032 is M3 Ultra (J575d); t8132 is the only confirmed M4. M4 Pro/Max
-# (t6040/t6041) stay unmapped until a root DTS or live device tree exists;
-# t6050 is M5, not M4.
+# One SoC interface. omarchy-hw-apple remains the boolean "any Apple Silicon"
+# check. This command is the generation table: do not add a second one.
+# --gen prints m1, m2, m3, or m4. --key prints the variant (m3-ultra for
+# t6032) so that mapping is part of the command, not only a comment. --gpu
+# asks whether the Asahi GPU driver has bound, which is independent of the
+# marketing name and is what software rendering keys off.
 #
-# With no flag it prints the generation (m1, m2, m3, m4) and exits 0, or exits
-# 1 when this is not an Apple Silicon machine. --is <gen> is the conditional
-# form. --gpu asks a different question: whether the Asahi GPU driver has bound
-# to the hardware, which on a generation the driver does not know is false no
-# matter what the generation is.
+# Confirmed ids, cited where the claim is made:
+#   M1 through base M4, including T6031/T6034 as M3 Max, follow
+#   AsahiLinux/docs docs/hw/soc/soc-codenames.md at 715664a269937fe83293f46bbbeaae6094cb504e.
+#   T8132 is also the compatible in AsahiLinux/linux t8132-j713.dts
+#   (MacBook Air M4) at fbf2e630a95d1a084220f8dcea54aa85065481bb.
+#   T6032 is not in that soc-codenames pin. It is M3 Ultra in
+#   AsahiLinux/linux Documentation/devicetree/bindings/arm/apple.yaml at
+#   f3a01f769afda404c73f45090ee6190b8486dcbe (apple,j575d / apple,t6032,
+#   Mac Studio M3 Ultra 2025) and in t6032-j575d.dts at
+#   44ca2144b29d84b4d1b94e372e408998607b5733.
+#   T6040 and T6041 are named M4 Pro and M4 Max in the same soc-codenames pin,
+#   but no merged root DTS confirms them (AsahiLinux/linux#577 is an unmerged
+#   skeleton). They exit unconfirmed-compatible, the same refusal as
+#   omarchy-mac#326. T6050 is M5 Pro/Max in that pin, not an M4 id, and is
+#   not claimed here.
+#
+# With no flag this prints the generation and exits 0, or exits 1 when this
+# is not a confirmed Apple Silicon generation. Callers treat that 1 as
+# "not a generation this tree will name."
 
 compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
 drm_path="${OMARCHY_DRM_SYSFS_PATH:-/sys/class/drm}"
 
-soc_generation() {
+# Sets soc_key, soc_gen, and soc_reason for one SoC id. soc_reason is
+# unconfirmed-compatible for ids the marketing table names but a root device
+# tree has not confirmed. Returns 1 for an id this table does not know.
+remember_soc() {
+  soc_reason=""
   case $1 in
-    t8103 | t6000 | t6001 | t6002) echo m1 ;;
-    t8112 | t6020 | t6021 | t6022) echo m2 ;;
-    t8122 | t6030 | t6031 | t6032 | t6034) echo m3 ;;
-    t8132) echo m4 ;;
+    t8103) soc_key=m1; soc_gen=m1 ;;
+    t6000) soc_key=m1-pro; soc_gen=m1 ;;
+    t6001) soc_key=m1-max; soc_gen=m1 ;;
+    t6002) soc_key=m1-ultra; soc_gen=m1 ;;
+    t8112) soc_key=m2; soc_gen=m2 ;;
+    t6020) soc_key=m2-pro; soc_gen=m2 ;;
+    t6021) soc_key=m2-max; soc_gen=m2 ;;
+    t6022) soc_key=m2-ultra; soc_gen=m2 ;;
+    t8122) soc_key=m3; soc_gen=m3 ;;
+    t6030) soc_key=m3-pro; soc_gen=m3 ;;
+    t6031 | t6034) soc_key=m3-max; soc_gen=m3 ;;
+    t6032) soc_key=m3-ultra; soc_gen=m3 ;;
+    t8132) soc_key=m4; soc_gen=m4 ;;
+    t6040 | t6041) soc_reason=unconfirmed-compatible ;;
     *) return 1 ;;
   esac
 }
@@ -42,21 +68,37 @@ read_compatible() {
 detect() {
   local entry soc
   gen=""
+  key=""
   codename=""
+  reason=""
   while read -r entry; do
     case $entry in
       apple,arm-platform) ;;
       apple,*)
         soc=${entry#apple,}
-        if [[ -z $gen ]] && gen=$(soc_generation "$soc"); then
+        if remember_soc "$soc"; then
+          if [[ -n $soc_reason ]]; then
+            reason=$soc_reason
+          elif [[ -z $gen ]]; then
+            key=$soc_key
+            gen=$soc_gen
+            reason=""
+          fi
           continue
         fi
-        # Not a known SoC id, so it is the machine codename (apple,j516s).
+        # Not a SoC id, so it is the machine codename (apple,j516s).
         [[ -n $codename ]] || codename=$soc
         ;;
     esac
   done < <(read_compatible)
   [[ -n $gen ]]
+}
+
+reject_unconfirmed() {
+  if [[ ${reason:-} == "unconfirmed-compatible" ]]; then
+    printf '%s\n' "$reason" >&2
+  fi
+  exit 1
 }
 
 # The GPU driver registers as "asahi" on the platform bus and exposes the DRM
@@ -81,19 +123,24 @@ case ${1:-} in
     gpu_bound
     ;;
   --is)
-    [[ -n ${2:-} ]] || { echo "usage: omarchy-hw-apple-soc --is <m1|m2|m3|m4>" >&2; exit 2; }
-    detect && [[ $gen == "$2" ]]
+    [[ -n ${2:-} ]] || { echo "usage: omarchy-hw-apple-soc --is <m1|m2|m3|m4|variant>" >&2; exit 2; }
+    detect || reject_unconfirmed
+    [[ $gen == "$2" || $key == "$2" ]]
     ;;
   --codename)
-    detect || exit 1
+    detect || reject_unconfirmed
     echo "$codename"
     ;;
+  --key)
+    detect || reject_unconfirmed
+    echo "$key"
+    ;;
   "" | --gen)
-    detect || exit 1
+    detect || reject_unconfirmed
     echo "$gen"
     ;;
   *)
-    echo "usage: omarchy-hw-apple-soc [--gen|--codename|--is <gen>|--gpu]" >&2
+    echo "usage: omarchy-hw-apple-soc [--gen|--key|--codename|--is <gen>|--gpu]" >&2
     exit 2
     ;;
 esac

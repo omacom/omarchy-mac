@@ -17,10 +17,10 @@ Asahi said on 2026-08-26 it is "almost ready to cut an official release" for M3.
 
 ## What the repo does on an M3
 
-- `bin/omarchy-hw-apple-soc` identifies the generation from the device tree (`m1`, `m2`, `m3`, `m4`), prints the machine codename, and answers `--gpu`: whether the Asahi GPU driver has actually bound. The SoC table matches the better-sourced rows from omarchy-mac#326 (`t6032` is M3 Ultra; only `t8132` is claimed as M4). Everything else keys off `--gpu` rather than off a list of models, so it is right on the day the driver lands and needs no migration.
+- `bin/omarchy-hw-apple-soc` is the only SoC interface. `omarchy-hw-apple` stays the boolean "is this Apple Silicon" check. `--gen` prints `m1`, `m2`, `m3`, or `m4`; `--key` prints the variant, so `t6032` is `m3-ultra` and `--is m3` still matches it. `--gpu` reports whether the Asahi GPU driver has actually bound, and the command is stubbable through `OMARCHY_APPLE_COMPATIBLE`. Confirmed ids are cited in the command. `t6040` and `t6041` (M4 Pro/Max in Asahi's marketing table) stay `unconfirmed-compatible` until a merged root device tree exists, and `t6050` is not claimed as M4. There is no second generation command.
 - `install/hardware/vulkan.sh` installs `vulkan-asahi` only when the GPU driver is bound. Installing it without the driver is harmless but makes `omarchy-hw-vulkan` claim Vulkan works.
 - `install/hardware/apple/m3.sh` says on the console what the machine will and will not do, and records the SoC in `/etc/omarchy/apple-soc`.
-- `default/uwsm/env.d/10-omarchy` exports `AQ_NO_MODIFIERS=1` before Hyprland/Aquamarine start when the GPU driver is not bound. `default/hypr/apple.lua` (loaded from `envs.lua` next to the NVIDIA one) still turns on software cursors, no direct scanout, and variable frame rate at session start. A kernel that binds the driver turns all of this off by itself.
+- `default/uwsm/env.d/10-omarchy` exports `AQ_NO_MODIFIERS=1` when a confirmed SoC has no bound GPU driver. UWSM's `wayland-wm-env@.service` sources that file before `graphical-session-pre.target`, and the Hyprland unit starts after that. Aquamarine reads the variable at process start, so `default/hypr/apple.lua` does not set it; that file still turns on software cursors, no direct scanout, and variable frame rate at session start. A kernel that binds the driver turns all of this off by itself. The SDDM greeter starts its own Hyprland outside UWSM, so this export does not cover the greeter. A blanket export there would also disable modifiers on M1 and M2 machines whose driver is bound.
 - `bin/omarchy-mac-setup` warns before "Start?" on an M3.
 - `bin/omarchy-mac-asahi-install` runs on macOS and is the actual unlock: see below.
 - `pkgbuilds/linux-asahi-wip` and `bin/omarchy-mac-kernel-wip` build any Asahi branch as a second kernel: see below.
@@ -48,9 +48,11 @@ Sizing: the installer keeps 38 GB free inside the macOS container for updates, a
 
 ## Trying a newer kernel
 
-When Asahi pushes M3 display support it will be on a branch before it is in a tagged release, and Asahi Alarm follows tagged releases. `bin/omarchy-mac-kernel-wip` builds `pkgbuilds/linux-asahi-wip` from any branch of any fork with Asahi Alarm's own kernel config and installs it **next to** `linux-asahi`, not over it. GRUB lists both kernels, but that is not a safe fallback: `update-m1n1` concatenates the newest module directory's `t6*`/`t81*` device trees into the shared `m1n1/boot.bin`, so a WIP DTB that does not boot takes both entries with it.
+When Asahi pushes M3 display support it will be on a branch before it is in a tagged release, and Asahi Alarm follows tagged releases. `bin/omarchy-mac-kernel-wip` builds `pkgbuilds/linux-asahi-wip` from any branch of any fork with Asahi Alarm's own kernel config and installs it **next to** `linux-asahi`, not over it. GRUB lists both kernels, but that is not a safe fallback: `update-m1n1` concatenates the newest module directory's `t6*`/`t81*` device trees into one shared `m1n1/boot.bin`. m1n1 has a single boot image. The two GRUB entries cannot carry different device trees, and that image format belongs to Asahi's `update-m1n1`, not to this repo.
 
-The command snapshots `boot.bin` to `boot.bin.omarchy-pre-wip` before the install (and `update-m1n1` itself writes `boot.bin.old` when the image changes). Restore that image **before** rebooting if you want the released trees back:
+`update-m1n1` mounts the system ESP from `/proc/device-tree/chosen/asahi,efi-system-partition` and writes `m1n1/boot.bin` there. It copies the previous bytes to `boot.bin.old` only when the hash changes, and the next change replaces `boot.bin.old`. This command finds that same file (mounting the ESP if it is not already mounted) and snapshots it to `boot.bin.omarchy-pre-wip` **before** `pacman -U`. If the snapshot cannot be written, the install stops and the boot image is left alone. The snapshot is kept across later WIP rebuilds so a second install does not replace the released image with the previous WIP image.
+
+Restore that image **before** rebooting if you want the released trees back. `--rollback-boot` copies the snapshot back, but it lasts only until the next `update-m1n1`: while `linux-asahi-wip` is installed, that command rebuilds `boot.bin` from the WIP device trees. `--remove` restores, removes the package, and runs `update-m1n1` so the released trees are what gets written. If that rebuild fails, the snapshot is kept.
 
 ```bash
 omarchy-mac-kernel-wip                                  # AsahiLinux/linux, branch asahi-wip
@@ -59,16 +61,16 @@ omarchy-mac-kernel-wip --rollback-boot                  # restore the pre-WIP bo
 omarchy-mac-kernel-wip --remove
 ```
 
-If the machine already fails to boot, recover from macOS (Asahi's own `boot.bin.old` path):
+If the machine already fails to boot, Linux cannot run `--rollback-boot`. Recover from macOS. The snapshot on the EFI partition is the image from before the WIP install; Asahi's `boot.bin.old` is only the previous generation and is replaced the next time `update-m1n1` changes the image:
 
 ```bash
 diskutil list disk0 | grep EFI
 sudo diskutil mount disk0sN          # the Linux EFI partition
 cd /Volumes/*EFI*
-cp m1n1/boot.bin.old m1n1/boot.bin
+cp m1n1/boot.bin.omarchy-pre-wip m1n1/boot.bin
 ```
 
-Then reboot into Linux and run `omarchy-mac-kernel-wip --remove` if you want the WIP kernel package gone too.
+If `boot.bin.omarchy-pre-wip` is missing, `cp m1n1/boot.bin.old m1n1/boot.bin` is Asahi's own fallback. Then reboot into Linux and run `omarchy-mac-kernel-wip --remove` if you want the WIP kernel package gone too.
 
 About an hour on an M3 Pro, plugged in. After a successful reboot, `omarchy-hw-apple-soc --gpu` and `ls /sys/class/drm` say what bound.
 
@@ -76,6 +78,6 @@ The default branch is `asahi-wip`, Asahi's integration branch. The day the M3 DC
 
 ## Known unknowns
 
-- Whether `AQ_NO_MODIFIERS` (exported by UWSM before Aquamarine starts) and software cursors are enough for Hyprland on simpledrm at 3456x2234 has not been measured on an M3; the settings are the ones that work in VMs on simpledrm. Halving the monitor scale in `hypr/monitors.lua` is the first thing to try if it is slow.
+- `AQ_NO_MODIFIERS` is exported by UWSM before Aquamarine starts. Whether that, plus software cursors, is enough for Hyprland on simpledrm at the panel's native resolution has not been measured on an M3. Halving the monitor scale in `hypr/monitors.lua` is the first thing to try if it is slow.
 - `enable-notch.sh` sets `appledrm show_notch=1`; with no display driver the module never binds and the option is inert.
 - Keyboard backlight and the 3.5 mm jack are in Asahi's 7.3 kernel; Asahi Alarm is on 7.1.

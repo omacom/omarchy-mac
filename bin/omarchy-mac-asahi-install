@@ -53,6 +53,11 @@ mac_generation() {
   mac_generation_for "$(sysctl -n hw.target 2>/dev/null)"
 }
 
+# Board ids are macOS hw.target values (the device-tree board plus "AP").
+# j575dap is the Mac Studio M3 Ultra: apple,j575d / apple,t6032 in
+# AsahiLinux/linux apple.yaml at f3a01f769afda404c73f45090ee6190b8486dcbe.
+# The SoC id table itself lives in omarchy-hw-apple-soc, which does not
+# exist on macOS when this wrapper runs.
 mac_generation_for() {
   local target
   target=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')

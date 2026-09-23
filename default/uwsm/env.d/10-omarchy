@@ -1,7 +1,10 @@
 # Changes require a restart to take effect.
 
 # UWSM doesn't source /etc/profile.d, so pull the env bootstrap in directly.
-[ -r /usr/share/omarchy/default/bash/env-bootstrap ] && . /usr/share/omarchy/default/bash/env-bootstrap
+# wayland-wm-env@.service sources this file (uwsm aux prepare-env) before
+# graphical-session-pre.target. The compositor unit starts after that, which
+# is early enough for variables Aquamarine reads at process start.
+[ -r "${OMARCHY_ENV_BOOTSTRAP:-/usr/share/omarchy/default/bash/env-bootstrap}" ] && . "${OMARCHY_ENV_BOOTSTRAP:-/usr/share/omarchy/default/bash/env-bootstrap}"
 
 # Omarchy session defaults. Users can override these in ~/.config/uwsm/default
 # or, preferably, ~/.config/uwsm/env.d/*.
@@ -15,10 +18,14 @@ fi
 # Optional user overrides kept for compatibility with older installs.
 [ -f "$HOME/.config/uwsm/default" ] && . "$HOME/.config/uwsm/default"
 
-# Aquamarine reads AQ_NO_MODIFIERS at process start. Setting it from Hyprland
-# config (apple.lua) is too late — Aquamarine has already initialized.
-apple_soc="${OMARCHY_PATH%/}/bin/omarchy-hw-apple-soc"
-if [ -x "$apple_soc" ] && "$apple_soc" >/dev/null 2>&1 && ! "$apple_soc" --gpu; then
+# Aquamarine reads AQ_NO_MODIFIERS when its process starts
+# (https://github.com/hyprwm/aquamarine/blob/main/docs/env.md). Hyprland config
+# runs after that, so apple.lua must not be the place that sets it. Export it
+# here, while UWSM is still preparing the session environment, and only when
+# a confirmed SoC has no bound Asahi GPU driver. An unconfirmed id (M4 Pro/Max)
+# fails the SoC command closed and does not set the variable.
+apple_soc="${OMARCHY_PATH:+${OMARCHY_PATH%/}/bin/omarchy-hw-apple-soc}"
+if [ -n "$apple_soc" ] && [ -x "$apple_soc" ] && "$apple_soc" >/dev/null 2>&1 && ! "$apple_soc" --gpu; then
   export AQ_NO_MODIFIERS=1
 fi
 

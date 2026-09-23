@@ -24,7 +24,7 @@ SH
 chmod +x "$stub_bin/sudo"
 
 run_helper() {
-  PATH="$stub_bin:$PATH" OMARCHY_M1N1_BOOT_BIN="$boot" bash -c '
+  PATH="$stub_bin:$PATH" OMARCHY_M1N1_BOOT_BIN="$boot" OMARCHY_M1N1_MOUNT_ESP=0 bash -c '
     # shellcheck source=/dev/null
     source "$1"
     shift
@@ -122,3 +122,89 @@ pass "--remove retains the recovery image and reports a failed rebuild"
 run_helper main --remove || fail "--remove succeeds after update-m1n1 succeeds"
 [[ ! -e ${boot}.omarchy-pre-wip ]] || fail "--remove clears the saved image after a successful rebuild"
 pass "--remove clears the recovery snapshot only after the rebuild succeeds"
+
+# A known system ESP that is not mounted must not be confused with /boot.
+# update-m1n1 writes the PARTUUID image, and /boot may be on the root fs.
+uuid_file="$test_tmp/esp-uuid"
+printf 'DEAD-BEEF' >"$uuid_file"
+mounts_file="$test_tmp/mounts"
+printf '/dev/nvme0n1p2 / %s\n' ext4 >"$mounts_file"
+partuuid_root="$test_tmp/by-partuuid"
+mkdir -p "$partuuid_root"
+esp_dev="$test_tmp/dev/nvme0n1p1"
+mkdir -p "$(dirname "$esp_dev")"
+: >"$esp_dev"
+ln -s "$esp_dev" "$partuuid_root/DEAD-BEEF"
+esp_mount="$test_tmp/esp-mount"
+mkdir -p "$esp_mount/m1n1"
+printf 'real-esp\n' >"$esp_mount/m1n1/boot.bin"
+printf '%s %s vfat rw 0 0\n' "$esp_dev" "$esp_mount" >>"$mounts_file"
+
+found=$(
+  OMARCHY_M1N1_BOOT_BIN= OMARCHY_M1N1_MOUNT_ESP=0 \
+    OMARCHY_ASAHI_ESP_UUID_PATH="$uuid_file" \
+    OMARCHY_PROC_MOUNTS="$mounts_file" \
+    OMARCHY_PARTUUID_ROOT="$partuuid_root" \
+    bash -c 'source "$1"; m1n1_boot_bin' bash "$kernel_wip"
+)
+[[ $found == "$esp_mount/m1n1/boot.bin" ]] || fail "boot.bin lookup uses the mounted system ESP"
+pass "boot.bin lookup uses the mounted system ESP"
+
+# Same PARTUUID, nothing mounted, mount disabled: do not invent a boot.bin.
+printf '\n' >"$test_tmp/mounts-empty"
+unmounted=$(
+  if OMARCHY_M1N1_BOOT_BIN= OMARCHY_M1N1_MOUNT_ESP=0 \
+    OMARCHY_ASAHI_ESP_UUID_PATH="$uuid_file" \
+    OMARCHY_PROC_MOUNTS="$test_tmp/mounts-empty" \
+    OMARCHY_PARTUUID_ROOT="$partuuid_root" \
+    bash -c 'source "$1"; m1n1_boot_bin' bash "$kernel_wip"; then
+    printf 'found\n'
+  else
+    printf 'missing\n'
+  fi
+)
+[[ $unmounted == "missing" ]] || fail "an unmounted system ESP is not replaced by some other boot.bin"
+pass "an unmounted system ESP is not replaced by some other boot.bin"
+
+# Installing without a snapshot must fail before pacman replaces the image.
+cat >"$stub_bin/mount" <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >>"${MOUNT_LOG:?}"
+target=${*: -1}
+mkdir -p "$target/m1n1"
+printf 'mounted-esp\n' >"$target/m1n1/boot.bin"
+SH
+chmod +x "$stub_bin/mount"
+mount_log="$test_tmp/mount.log"
+mounted_boot=$(
+  OMARCHY_M1N1_BOOT_BIN= OMARCHY_M1N1_MOUNT_ESP=1 \
+    OMARCHY_ASAHI_ESP_UUID_PATH="$uuid_file" \
+    OMARCHY_PROC_MOUNTS="$test_tmp/mounts-empty" \
+    OMARCHY_PARTUUID_ROOT="$partuuid_root" \
+    OMARCHY_ESP_MOUNT_POINT="$test_tmp/mounted-esp" \
+    MOUNT_LOG="$mount_log" \
+    PATH="$stub_bin:$PATH" \
+    bash -c 'source "$1"; ensure_m1n1_boot_bin; printf %s "$BOOT_BIN"' bash "$kernel_wip"
+)
+[[ -f $test_tmp/mounted-esp/m1n1/boot.bin ]] || fail "ensure_m1n1_boot_bin mounts the system ESP"
+[[ $mounted_boot == "$test_tmp/mounted-esp/m1n1/boot.bin" ]] || fail "ensure_m1n1_boot_bin returns the ESP boot.bin"
+grep -q 'PARTUUID=DEAD-BEEF' "$mount_log" || fail "the ESP mount uses the device-tree PARTUUID"
+pass "ensure_m1n1_boot_bin mounts the system ESP update-m1n1 would write"
+
+# snapshot failure is fatal: pacman must not run.
+cat >"$stub_bin/pacman" <<'SH'
+#!/bin/bash
+printf 'pacman %s\n' "$*" >>"${PACMAN_LOG:?}"
+SH
+chmod +x "$stub_bin/pacman"
+pacman_log="$test_tmp/pacman.log"
+: >"$pacman_log"
+if PACMAN_LOG="$pacman_log" OMARCHY_M1N1_BOOT_BIN="$test_tmp/missing-boot.bin" \
+  OMARCHY_M1N1_MOUNT_ESP=0 PATH="$stub_bin:$PATH" \
+  bash -c 'source "$1"; install_wip_package "$2"' bash "$kernel_wip" "$test_tmp/fake.pkg.tar.zst" \
+  >"$test_tmp/install-fail" 2>&1; then
+  fail "install_wip_package fails when the image cannot be saved"
+fi
+grep -q 'refusing to install' "$test_tmp/install-fail" || fail "install_wip_package says why it refused"
+[[ ! -s $pacman_log ]] || fail "a failed snapshot does not install a package"
+pass "install_wip_package fails closed before pacman replaces boot.bin"

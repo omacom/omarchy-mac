@@ -1150,6 +1150,8 @@ print_status() {
 # driver yet, so the desktop this installs runs in software on the firmware
 # framebuffer. Said before "Start?", from the device tree directly: the SoC
 # command lives in the checkout, which does not exist yet at this point.
+# The id list is the M3 rows of bin/omarchy-hw-apple-soc (t6032 is M3 Ultra).
+# It is duplicated only because this runs before that command is installed.
 notice_apple_m3() {
   local compatible=${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}
   [[ -f $compatible ]] || return 0
