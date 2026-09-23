@@ -27,52 +27,28 @@ if [[ ! -r $start_file || ! -r $end_file ]]; then
   exit 1
 fi
 
-current_start=$(<"$start_file")
-current_end=$(<"$end_file")
 if [[ $limit == "status" ]]; then
-  printf 'Charge limit: %s%% (restart charging at %s%%)\n' "$current_end" "$current_start"
+  printf 'Charge limit: %s%% (restart charging at %s%%)\n' "$(<"$end_file")" "$(<"$start_file")"
   exit 0
 fi
 
 if [[ $limit == "80" ]]; then
-  new_start=75
-  new_end=80
+  expected_start=75
 else
-  new_start=100
-  new_end=100
+  expected_start=100
 fi
 
-write_threshold() {
-  local value=$1 file=$2
-  if (( EUID == 0 )); then
-    printf '%s\n' "$value" | /usr/bin/tee "$file" >/dev/null
-  else
-    printf '%s\n' "$value" | pkexec /usr/bin/tee "$file" >/dev/null
-  fi
-}
-
-if [[ $limit == "80" ]]; then
-  # Lower the restart point before lowering the stop point, so both values
-  # remain valid while the SMC applies each update.
-  write_threshold "$new_start" "$start_file"
-  if ! write_threshold "$new_end" "$end_file"; then
-    write_threshold "$current_start" "$start_file" || true
-    exit 1
-  fi
+if (( EUID == 0 )); then
+  printf '%s\n' "$limit" | /usr/bin/tee "$end_file" >/dev/null
 else
-  # Raise the stop point first when removing a cap.
-  write_threshold "$new_end" "$end_file"
-  if ! write_threshold "$new_start" "$start_file"; then
-    write_threshold "$current_end" "$end_file" || true
-    exit 1
-  fi
+  printf '%s\n' "$limit" | sudo /usr/bin/tee "$end_file" >/dev/null
 fi
 
 actual_start=$(<"$start_file")
 actual_end=$(<"$end_file")
-if [[ $actual_start != "$new_start" || $actual_end != "$new_end" ]]; then
+if [[ $actual_start != "$expected_start" || $actual_end != "$limit" ]]; then
   echo "Charge threshold update did not stick; the SMC reports ${actual_start}%/${actual_end}%." >&2
   exit 1
 fi
 
-printf 'Charge limit set to %s%% (restart charging at %s%%).\n' "$new_end" "$new_start"
+printf 'Charge limit set to %s%% (restart charging at %s%%).\n' "$actual_end" "$actual_start"
