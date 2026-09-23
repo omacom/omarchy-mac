@@ -51,6 +51,7 @@ def command(args):
     git_common = Path(subprocess.check_output(['git', '-C', str(BUILDER), 'rev-parse', '--git-common-dir'], text=True).strip()).resolve()
     for source in (BUILDER, git_common, KERNELS, ROOT / 'candidate-signed', ROOT / 'dependencies-signed'):
         common += mount_args(source)
+    common += ['--tmpfs', '/admission-tmp:rw,nosuid,nodev,noexec,size=3g,mode=0700']
     product = admit.strict_json((ARTIFACT / 'product.json').read_bytes())
     kernel = pin['generic_kernel']['filename']
     guest = [IMAGE, str(HARNESS / 'run'), '--state', str(STATE), '--evidence', str(EVIDENCE)]
@@ -61,7 +62,7 @@ def command(args):
               '--dependency-root', str(ROOT / 'dependencies-signed'), '--payload', str(ARTIFACT / product['package_filename']),
               '--product', str(ARTIFACT / 'product.json'), '--verification', str(ARTIFACT / 'package-evidence.json'),
               '--generic-kernel', str(KERNELS / kernel), '--generic-kernel-signature', str(KERNELS / (kernel + '.sig')),
-              '--members-source', str(ARTIFACT / 'payload')]
+              '--members-source', str(ARTIFACT / 'payload'), '--snapshot-tmpfs', '/admission-tmp']
     return common + guest
 
 

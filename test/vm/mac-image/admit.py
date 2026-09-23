@@ -11,6 +11,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 CHUNK = 1024 * 1024
@@ -182,6 +183,53 @@ def extract_verified(payload, record, destination, source_members=None):
             require(found == set(members), "verified image member missing")
 
 
+def materialize_verified_snapshot(source, verified, destination):
+    """Keep normal verifier results while sharing the original archives' data extents."""
+    destination.mkdir(mode=0o700)  # Exclusive, including after a failed attempt.
+    names = sorted(path.name for path in verified.iterdir())
+    for name in names:
+        require(re.fullmatch(r'[A-Za-z0-9+_.:-]+', name) and name not in ('.', '..'), 'unsafe verified filename')
+        trusted = verified / name
+        require(trusted.is_file() and not trusted.is_symlink(), 'unsafe verified snapshot member')
+        expected = {'size_bytes': trusted.stat().st_size, 'sha256': digest_file(trusted)}
+        clone_member(source, PurePosixPath(name), destination / name, expected)
+        (destination / name).chmod(0o444)
+    require(sorted(path.name for path in destination.iterdir()) == names, 'snapshot inventory changed')
+    destination.chmod(0o555)
+
+
+def snapshot_inputs(args, output, pin, builder):
+    def verify_and_store(staging=None):
+        for kind, filename, source, flags in (
+            ('candidate', 'quattro-candidate.py', args.candidate_root,
+             ['--receipt-sha256', pin['candidate_receipt_sha256'], '--source-revision', pin['runtime_revision']]),
+            ('dependencies', 'quattro-dependencies.py', args.dependency_root,
+             ['--manifest-sha256', pin['dependency_manifest_sha256'], '--candidate-schema', '4']),
+        ):
+            verified = (staging if staging is not None else output) / kind
+            subprocess.run([sys.executable, str(builder / filename), '--input', str(source),
+                            '--output', str(verified), *flags], check=True)
+            if staging is not None:
+                materialize_verified_snapshot(source, verified, output / kind)
+    if args.snapshot_tmpfs is None:
+        verify_and_store()
+        return {'mode': 'standard-verifier-disk-copy'}
+    staging_root = args.snapshot_tmpfs
+    require(staging_root.is_dir() and not staging_root.is_symlink(), 'unsafe verification tmpfs')
+    filesystem = subprocess.check_output(['findmnt', '--noheadings', '--output', 'FSTYPE', '--target', str(staging_root)], text=True).strip()
+    require(filesystem == 'tmpfs', 'verification staging must be a dedicated tmpfs')
+    needed = sum(path.stat().st_size for root in (args.candidate_root, args.dependency_root)
+                 for path in root.iterdir() if path.is_file() and not path.is_symlink())
+    fs = os.statvfs(staging_root)
+    require(fs.f_bavail * fs.f_frsize > needed + 64 * 1024**2, 'insufficient tmpfs verification space')
+    with tempfile.TemporaryDirectory(prefix='verified-inputs-', dir=staging_root) as temporary:
+        stage = Path(temporary)
+        verify_and_store(stage)
+    require(not stage.exists(), 'verification tmpfs retained after materialization')
+    return {'mode': 'unchanged-verifier-tmpfs-then-verified-reflink',
+            'staged_logical_bytes': needed, 'tmpfs_contents_released': True}
+
+
 def admit(args):
     pin, descriptor_bytes = descriptor(args.inputs, args.inputs_sha256)
     args.output.mkdir(mode=0o700)  # Failed runs cannot be reused.
@@ -191,12 +239,7 @@ def admit(args):
     builder = output / "source/builder"
     for rel, expected in (("policy.json", pin["trust_policy_sha256"]), ("public.gpg", pin["trust_public_sha256"])):
         require(digest_file(builder / "quattro-trust" / rel) == expected, "pinned builder trust differs")
-    subprocess.run([sys.executable, str(builder / "quattro-candidate.py"), "--input", str(args.candidate_root),
-                    "--output", str(output / "candidate"), "--receipt-sha256", pin["candidate_receipt_sha256"],
-                    "--source-revision", pin["runtime_revision"]], check=True)
-    subprocess.run([sys.executable, str(builder / "quattro-dependencies.py"), "--input", str(args.dependency_root),
-                    "--output", str(output / "dependencies"), "--manifest-sha256", pin["dependency_manifest_sha256"],
-                    "--candidate-schema", "4"], check=True)
+    storage = snapshot_inputs(args, output, pin, builder)
     manifest = strict_json((output / "candidate/manifest.json").read_bytes())
     require(manifest["schema"] == 4, "VM requires candidate schema 4")
     copy_pinned(args.product, output / "product.json", pin["product_sha256"])
@@ -214,7 +257,7 @@ def admit(args):
     # Completion is written only after all snapshots and every image byte are admitted.
     (output / "admission.json").write_text(json.dumps({"schema": 1, "inputs_sha256": args.inputs_sha256,
         "builder_revision": pin["builder_revision"], "runtime_revision": pin["runtime_revision"],
-        "payload_sha256": record["package"]["sha256"], "scope": "generic-kernel VM; not Apple firmware qualification"}, indent=2) + "\n")
+        "payload_sha256": record["package"]["sha256"], "snapshot_storage": storage, "scope": "generic-kernel VM; not Apple firmware qualification"}, indent=2) + "\n")
     print(output)
 
 
@@ -224,6 +267,7 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--inputs-sha256", required=True)
     parser.add_argument("--members-source", type=Path, help="optional already exported image members; verified FICLONE only")
+    parser.add_argument("--snapshot-tmpfs", type=Path, help="run unchanged signed-input verifiers in tmpfs, then admit exact reflink clones")
     args = parser.parse_args()
     try:
         admit(args)

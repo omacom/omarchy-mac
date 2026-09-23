@@ -6,6 +6,7 @@ from pathlib import Path
 import stat
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 import warnings
 import zipfile
@@ -190,6 +191,93 @@ class AdmissionTests(unittest.TestCase):
         with patch.object(admit.fcntl, "ioctl", clone):
             admit.clone_member(exports, Path("root.img"), self.root / "clone", {"size_bytes": 7, "sha256": sha(b"correct")})
         self.assertEqual(source.read_bytes(), b"correct")
+
+    def snapshot_fixture(self, source_bytes=b'authenticated archive'):
+        source = self.root / 'source'
+        verified = self.root / 'verified'
+        source.mkdir(); verified.mkdir()
+        (source / 'package.pkg.tar.zst').write_bytes(source_bytes)
+        (verified / 'package.pkg.tar.zst').write_bytes(b'authenticated archive')
+        return source, verified
+
+    @staticmethod
+    def fixture_clone(destination_fd, request, source_fd):
+        os.write(destination_fd, os.read(source_fd, 4096))
+
+    def test_verified_snapshot_clone_is_exclusive_and_readonly(self):
+        source, verified = self.snapshot_fixture()
+        target = self.root / 'snapshot'
+        with patch.object(admit.fcntl, 'ioctl', self.fixture_clone):
+            admit.materialize_verified_snapshot(source, verified, target)
+        self.assertEqual((target / 'package.pkg.tar.zst').read_bytes(), b'authenticated archive')
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o555)
+        self.assertEqual(stat.S_IMODE((target / 'package.pkg.tar.zst').stat().st_mode), 0o444)
+        with self.assertRaises(FileExistsError):
+            admit.materialize_verified_snapshot(source, verified, target)
+
+    def test_verified_snapshot_rejects_source_mutation_after_verification(self):
+        source, verified = self.snapshot_fixture(b'substituted after verifier')
+        with patch.object(admit.fcntl, 'ioctl', self.fixture_clone):
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                admit.materialize_verified_snapshot(source, verified, self.root / 'snapshot')
+
+    def test_verified_snapshot_rejects_symlink_substitution(self):
+        source, verified = self.snapshot_fixture()
+        (source / 'package.pkg.tar.zst').unlink()
+        (source / 'package.pkg.tar.zst').symlink_to(verified / 'package.pkg.tar.zst')
+        with self.assertRaisesRegex(ValueError, 'linked'):
+            admit.materialize_verified_snapshot(source, verified, self.root / 'snapshot')
+
+    def test_verified_snapshot_rejects_non_cow_fallback(self):
+        source, verified = self.snapshot_fixture()
+        with patch.object(admit.fcntl, 'ioctl', side_effect=OSError('cross filesystem')):
+            with self.assertRaises(OSError):
+                admit.materialize_verified_snapshot(source, verified, self.root / 'snapshot')
+
+    def staged_args(self):
+        for name in ('candidate-input', 'dependency-input', 'stage', 'output'):
+            (self.root / name).mkdir()
+        for name in ('candidate-input', 'dependency-input'):
+            (self.root / name / 'package.pkg.tar.zst').write_bytes(b'authenticated archive')
+        return SimpleNamespace(candidate_root=self.root / 'candidate-input',
+                               dependency_root=self.root / 'dependency-input', snapshot_tmpfs=self.root / 'stage')
+
+    @staticmethod
+    def fake_snapshot_verifier(invocation, check):
+        source = Path(invocation[invocation.index('--input') + 1])
+        destination = Path(invocation[invocation.index('--output') + 1])
+        destination.mkdir()
+        (destination / 'package.pkg.tar.zst').write_bytes((source / 'package.pkg.tar.zst').read_bytes())
+
+    def test_staged_verifiers_release_tmpfs_before_return(self):
+        args = self.staged_args()
+        with patch.object(admit.subprocess, 'check_output', return_value='tmpfs\n'), \
+             patch.object(admit.subprocess, 'run', side_effect=self.fake_snapshot_verifier) as verifier, \
+             patch.object(admit.fcntl, 'ioctl', self.fixture_clone):
+            record = admit.snapshot_inputs(args, self.root / 'output', self.pin, self.root / 'builder')
+        self.assertEqual(verifier.call_count, 2)
+        self.assertTrue(record['tmpfs_contents_released'])
+        self.assertEqual(list(args.snapshot_tmpfs.iterdir()), [])
+        for kind in ('candidate', 'dependencies'):
+            self.assertEqual((self.root / 'output' / kind / 'package.pkg.tar.zst').read_bytes(), b'authenticated archive')
+
+    def test_staged_failure_releases_tmpfs_and_refuses_disk_fallback(self):
+        args = self.staged_args()
+        with patch.object(admit.subprocess, 'check_output', return_value='tmpfs\n'), \
+             patch.object(admit.subprocess, 'run', side_effect=self.fake_snapshot_verifier), \
+             patch.object(admit.fcntl, 'ioctl', side_effect=OSError('no CoW')):
+            with self.assertRaisesRegex(OSError, 'no CoW'):
+                admit.snapshot_inputs(args, self.root / 'output', self.pin, self.root / 'builder')
+        self.assertEqual(list(args.snapshot_tmpfs.iterdir()), [])
+        self.assertFalse((self.root / 'output/dependencies').exists())
+
+    def test_staging_rejects_disk_filesystem_before_verification(self):
+        args = self.staged_args()
+        with patch.object(admit.subprocess, 'check_output', return_value='btrfs\n'), \
+             patch.object(admit.subprocess, 'run') as verifier:
+            with self.assertRaisesRegex(ValueError, 'dedicated tmpfs'):
+                admit.snapshot_inputs(args, self.root / 'output', self.pin, self.root / 'builder')
+        verifier.assert_not_called()
 
     def test_builder_uses_committed_blob_not_dirty_checkout(self):
         repo = self.root / "repo"
