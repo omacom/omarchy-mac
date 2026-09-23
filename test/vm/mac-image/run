@@ -92,14 +92,12 @@ build_generic_kernel() {
   local lower=$work/lower merged=$work/merged kernel image_kernel
   kernel=$(read_json "$admitted/inputs.json" generic_kernel filename)
   # A tiny generic build overlay is discarded after its outputs are copied.
-  mkdir -p "$lower" "$merged" "$work/upper" "$work/overlay-work" "$work/generic" "$work/gpg"
-  chmod 700 "$work/gpg"
+  mkdir -p "$lower" "$merged" "$work/upper" "$work/overlay-work" "$work/generic"
   attach -r "$admitted/payload/root.img"
   mount_tracked -o ro,rescue=nologreplay,subvol=@ "$ATTACHED" "$lower"
   cmp "$lower/var/lib/omarchy/package-snapshots/QUATTRO-CANDIDATE.json" "$admitted/candidate/signing.json" || fail "image candidate binding differs"
   cmp "$lower/var/lib/omarchy/package-snapshots/DEPENDENCIES.json" "$admitted/dependencies/manifest.json" || fail "image dependency binding differs"
-  gpg --batch --homedir "$work/gpg" --import "$lower/usr/share/pacman/keyrings/archlinuxarm.gpg" >"$evidence/kernel-keyring.log" 2>&1
-  gpg --batch --homedir "$work/gpg" --status-fd 1 --verify "$admitted/$kernel.sig" "$admitted/$kernel" >"$evidence/kernel-signature.log" 2>&1 || fail "generic kernel signature rejected by admitted image keyring"
+  python3 "$harness/verify_generic_kernel.py" --keyring "$lower/usr/share/pacman/keyrings/archlinuxarm.gpg" --archive "$admitted/$kernel" --signature "$admitted/$kernel.sig" --evidence "$evidence" || fail "generic kernel signature rejected by admitted image keyring; see kernel-keyring/signature logs"
   python3 - "$admitted/$kernel" "$(read_json "$admitted/inputs.json" generic_kernel version)" <<'PY'
 import subprocess, sys
 fields = {}
@@ -139,7 +137,6 @@ PY
   while ((${#mounts[@]})); do umount_last; done
   detach_last
   sudo rm -rf -- "$work/upper" "$work/overlay-work"
-  gpgconf --homedir "$work/gpg" --kill gpg-agent || true
   ok "generic kernel signature and metadata authenticated; initramfs built from admitted image hooks"
 }
 

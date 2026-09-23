@@ -44,7 +44,7 @@ class LaunchRuleTests(unittest.TestCase):
         self.check()
 
     def test_launch_never_starts_container_when_rule_missing(self):
-        args = SimpleNamespace(inputs=self.root / 'inputs.json', stage='audit', print_command=False, disposable_payload=None)
+        args = SimpleNamespace(inputs=self.root / 'inputs.json', stage='audit', print_command=False, disposable_payload=None, attempt_label=None)
         with patch.object(launch.argparse.ArgumentParser, 'parse_args', return_value=args), \
              patch.object(launch, 'command', return_value=['docker', 'run']), \
              patch.object(launch, 'HOST_RULE', self.rule), \
@@ -52,6 +52,13 @@ class LaunchRuleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'absent'):
                 launch.main()
         run.assert_not_called()
+
+    def test_attempt_labels_keep_default_and_stay_inside_rule_scope(self):
+        self.assertEqual(launch.attempt_paths(None), (launch.STATE, launch.EVIDENCE, launch.ROOT / 'vm/vm-attempt-1-launch.log'))
+        self.assertEqual(launch.attempt_paths('retry-2'), (launch.STATE / 'retry-2', launch.ROOT / 'vm/run-retry-2', launch.ROOT / 'vm/vm-retry-2-launch.log'))
+        for label in ('', '../retry', 'retry/2', '-retry', 'Retry', 'a' * 33):
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, 'unsafe'):
+                launch.attempt_paths(label)
 
     def test_disposable_source_binds_directory_and_passes_release_identity(self):
         artifact = self.root / 'artifact'
@@ -76,7 +83,7 @@ class LaunchRuleTests(unittest.TestCase):
             (artifact / 'package-evidence.json').write_bytes(report)
             (artifact / 'product.json').write_text(json.dumps({'package_filename': source.name}))
             pin = {'image_verification_sha256': hashlib.sha256(report).hexdigest(), 'generic_kernel': {'filename': 'linux.pkg.tar.xz'}}
-            args = SimpleNamespace(stage='vm', inputs=inputs, inputs_sha256='d' * 64, only=None, disposable_payload=source)
+            args = SimpleNamespace(stage='vm', inputs=inputs, inputs_sha256='d' * 64, only=None, disposable_payload=source, attempt_label='retry-2')
             with patch.multiple(launch, ROOT=self.root, ARTIFACT=artifact, AUDIT=audit, AUDIT_REPORT=audit_report,
                                 AUDIT_SHA256=audit_sha, BUILDER=self.root / 'builder', KERNELS=self.root / 'kernels',
                                 STATE=self.root / 'vm/state', EVIDENCE=self.root / 'vm/evidence'), \
@@ -89,6 +96,8 @@ class LaunchRuleTests(unittest.TestCase):
             self.assertIn(f'type=bind,src={source.parent},dst={source.parent}', command)
             self.assertFalse(any(part.startswith(f'type=bind,src={source},') for part in command))
             self.assertEqual(command[command.index('--payload') + 1], str(source))
+            self.assertEqual(command[command.index('--state') + 1], str(self.root / 'vm/state/retry-2'))
+            self.assertEqual(command[command.index('--evidence') + 1], str(self.root / 'vm/run-retry-2'))
             receipt = json.loads(command[command.index('--disposable-payload-receipt') + 1])
             self.assertEqual(receipt['file']['inode'], source.stat().st_ino)
             self.assertEqual(receipt['sha256'], package['sha256'])
