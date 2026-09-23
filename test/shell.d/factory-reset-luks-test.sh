@@ -4,6 +4,8 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
+export OMARCHY_MAC_BOOT_LIB="$ROOT/packages/omarchy-mac/boot/lib"
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 

@@ -4,6 +4,8 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
+export OMARCHY_MAC_BOOT_LIB="$ROOT/packages/omarchy-mac/boot/lib"
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -58,7 +60,7 @@ SH
 
 # The re-key regenerates boot files through omarchy-mac-boot-update, which on
 # a GRUB Mac is update-grub.
-cp "$ROOT/bin/omarchy-mac-boot-update" "$stub_bin/omarchy-mac-boot-update"
+cp "$ROOT/packages/omarchy-mac/boot/bin/omarchy-mac-boot-update" "$stub_bin/omarchy-mac-boot-update"
 cat >"$stub_bin/omarchy-mac-limine-active" <<'SH'
 #!/bin/bash
 exit 1

@@ -686,8 +686,6 @@ apple_silicon() {
   omarchy-hw-apple-silicon
 }
 
-# 48 base32 characters (A-Z2-7), shown as groups of 4. Never written to disk.
-
 # Resolve the crypto_LUKS partition backing the root, or return non-zero if
 # the root is not on LUKS. Prefers the cmdline cryptdevice= spec (archinstall
 # writes PARTUUID=, the pre-mounted path UUID=), and falls back to walking the
@@ -848,18 +846,6 @@ finalize_user() {
     "$OMARCHY_PATH/bin/omarchy-provision-user" --force --first-install
 }
 
-# Strip rd.luks.key= tokens from GRUB_CMDLINE_LINUX so later boots prompt.
-grub_drop_rd_luks_key() {
-  local file=${1:-$GRUB_DEFAULT}
-  [[ -f $file ]] || return 1
-  grep -q 'rd.luks.key=' "$file" || return 0
-  local tmp
-  tmp=$(mktemp)
-  sed -E 's/[[:space:]]*rd\.luks\.key=[^[:space:]"]+//g' "$file" >"$tmp"
-  cat "$tmp" >"$file"
-  rm -f "$tmp"
-}
-
 # Show the recovery passphrase once, full-screen, until the owner types the
 # acknowledgement phrase. No re-show path. The value is never written to disk,
 # never placed in a process argument list (ps), and the screen is cleared
@@ -959,20 +945,6 @@ mark_encrypt_finished() {
   write_encrypt_state finished "$1"
 }
 
-# Identify the slot unlocked by $1 (passphrase) on $2 (device).
-
-
-
-
-
-# Add $1 (passphrase) to $2 (device) once. If a slot number is already recorded,
-# never add another: reuse it when it still exists, otherwise fail. The recovery
-# passphrase stays in memory of this attempt only.
-
-# Foreground only: persist the intended slot before adding its key, verify it,
-# then display and durably acknowledge it. An interrupted, unacknowledged slot
-# is revoked before replacement; an acknowledged slot is retained on retry.
-
 # A finished journal is not sufficient evidence when a reset or interrupted
 # cleanup has left an automatic unlock credential/configuration behind.
 require_finished_luks() {
@@ -980,29 +952,6 @@ require_finished_luks() {
     { [[ -f $GRUB_DEFAULT ]] && grep -q 'rd.luks.key=' "$GRUB_DEFAULT"; }; then
     log_step "phase=finished conflicts with staged auto-unlock; refusing provisioning completion"
     say --foreground 1 "Disk setup is inconsistent: a temporary unlock remains."
-    return 1
-  fi
-}
-
-# Kill every LUKS slot except the ones listed after the device. Uses the owner's
-# password as the remaining authorized key.
-
-# Drop rd.luks.key= and rebuild the initramfs and the boot loaders (GRUB, and
-# Limine's UKI on a Limine Mac). Idempotent: a retry after a failed rebuild
-# continues from the already-dropped cmdline.
-apple_rekey_boot() {
-  [[ -f $GRUB_DEFAULT ]] || {
-    log_step "no $GRUB_DEFAULT to drop rd.luks.key="
-    say --foreground 1 "Could not update GRUB to drop the auto-unlock key."
-    return 1
-  }
-  if grep -q 'rd.luks.key=' "$GRUB_DEFAULT"; then
-    grub_drop_rd_luks_key "$GRUB_DEFAULT" || return 1
-  fi
-  if ! mkinitcpio -P </dev/null >>"$LOG_FILE" 2>&1 ||
-    ! omarchy-mac-boot-update >>"$LOG_FILE" 2>&1; then
-    log_step "mkinitcpio or omarchy-mac-boot-update failed during re-key; will retry from phase=rekeyed"
-    say --foreground 1 "Could not rebuild boot files after the LUKS re-key; will retry."
     return 1
   fi
 }
@@ -1373,7 +1322,20 @@ run_setup() {
   # Omarchy..." card would only add a flash of screen before the handoff.
 }
 
-source "$OMARCHY_PATH/install/provisioning/luks-recovery.sh"
+# Shared cryptographic operations are core code; platform modules only adapt boot files.
+source "$OMARCHY_PATH/install/provisioning/luks-recovery.sh" || {
+  echo "Required LUKS provisioning support is unavailable" >&2
+  exit 1
+}
+
+# The shared lifecycle calls these boot operations only on Apple Silicon.
+# Never continue with generic boot handling when the required package is absent.
+if apple_silicon; then
+  source "${OMARCHY_MAC_BOOT_LIB:-/usr/lib/omarchy-mac/boot}/provision.sh" || {
+    echo "Required omarchy-mac-boot provision support is unavailable" >&2
+    exit 1
+  }
+fi
 
 # Tests source this file to exercise rekey_luks without the wizard.
 if [[ "${OMARCHY_PROVISION_OWNER_SOURCE:-}" == "1" ]]; then
