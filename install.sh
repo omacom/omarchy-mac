@@ -70,7 +70,8 @@ check_preconditions() {
 
 prompt_install_keyboard() {
   local keymap answer listed terminal
-  terminal=$(tty </dev/tty 2>/dev/null) || fail "keyboard selection requires a terminal"
+  terminal=$(ps -o tty= -p "$$" | tr -d '[:space:]') || fail "keyboard selection requires a terminal"
+  [[ -n $terminal && $terminal != "?" ]] || fail "keyboard selection requires a terminal"
 
   # Authenticate while the current layout is still in effect. No password
   # prompt may appear between choosing a layout and activating it.
@@ -109,7 +110,7 @@ activate_install_keyboard() {
   # US-first rule at login so Latin keybindings remain available.
   local non_latin_layouts=" af am ara bd bg by et ge gr il in iq ir kg kh kz la lk mk mm mn mv np rs ru sy th tj ua "
 
-  if [[ $terminal =~ ^/dev/tty[0-9]+$ ]]; then
+  if [[ $terminal =~ ^tty[0-9]+$ ]]; then
     sudo -n loadkeys "$keymap" || fail "could not activate keyboard layout $keymap; reauthenticate and rerun bash install.sh"
     return 0
   fi
@@ -139,12 +140,14 @@ activate_install_keyboard() {
       xkb_layout="us,$xkb_layout"
       xkb_variant=",$xkb_variant"
       kb_options+=",grp:alts_toggle"
-      non_latin=1
     fi
-    if hyprctl keyword input:kb_variant "" >/dev/null &&
-      hyprctl keyword input:kb_layout "$xkb_layout" >/dev/null &&
-      hyprctl keyword input:kb_variant "$xkb_variant" >/dev/null &&
-      hyprctl keyword input:kb_options "$kb_options" >/dev/null; then
+    # These values come from the shared layout table, but still restrict them
+    # before embedding them in Lua sent to the running compositor.
+    if [[ $xkb_layout =~ ^[A-Za-z0-9_,+-]+$ && $xkb_variant =~ ^[A-Za-z0-9_,+-]*$ ]] &&
+      hyprctl eval "hl.config({ input = { kb_layout = \"$xkb_layout\", kb_variant = \"$xkb_variant\", kb_options = \"$kb_options\" } })" >/dev/null &&
+      [[ $(hyprctl getoption input:kb_layout | sed -n 's/^str:[[:space:]]*//p') == "$xkb_layout" ]] &&
+      [[ $(hyprctl getoption input:kb_variant | sed -n 's/^str:[[:space:]]*//p') == "$xkb_variant" ]] &&
+      [[ $(hyprctl getoption input:kb_options | sed -n 's/^str:[[:space:]]*//p') == "$kb_options" ]]; then
       log "Activated desktop keyboard layout $keymap"
       if (( non_latin )); then
         log "US is active first; press Left Alt + Right Alt to switch to $keymap."
@@ -438,6 +441,12 @@ parse_install_options() {
         install_channel="$2"
         shift 2
         ;;
+      --keymap)
+        (( $# >= 2 )) || fail "--keymap needs a console layout, such as us"
+        [[ $2 =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]] || fail "Invalid console keymap: $2"
+        requested_keymap=$2
+        shift 2
+        ;;
       *) fail "Unknown installer argument: $1" ;;
     esac
   done
@@ -480,10 +489,24 @@ cleanup_channel_install() {
 main() {
   parse_install_options "$@"
   check_preconditions
-  install_keymap=$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"' | head -1) || install_keymap=""
-  install_keymap=${install_keymap:-us}
+  install_keymap=${requested_keymap:-}
+  if [[ -z $install_keymap ]]; then
+    install_keymap=$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"' | head -1) || install_keymap=""
+    install_keymap=${install_keymap:-us}
+  fi
   if [[ ${OMARCHY_KEYBOARD_CONFIRMED:-0} != "1" ]]; then
-    prompt_install_keyboard
+    if [[ -z ${requested_keymap:-} ]]; then
+      prompt_install_keyboard
+    else
+      # An explicit keymap also serves unattended VM runs, which have no
+      # controlling terminal. With a terminal, activate it before any prompts.
+      local terminal
+      terminal=$(ps -o tty= -p "$$" | tr -d '[:space:]') || terminal=""
+      if [[ -n $terminal && $terminal != "?" ]]; then
+        sudo -v || fail "sudo authentication is required before activating a keyboard layout"
+        activate_install_keyboard "$install_keymap" "$terminal"
+      fi
+    fi
   fi
   sudo "$checkout/install/helpers/apply-keyboard-layout.sh" "$install_keymap"
   if [[ -n $install_channel ]]; then

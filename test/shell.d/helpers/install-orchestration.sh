@@ -19,7 +19,16 @@ log() { :; }
 fail() { echo "$*" >&2; exit 1; }
 step() { echo "$*" >>"$CALLS"; [[ ${FAIL_AT:-} != "$1" ]]; }
 check_preconditions() { step preconditions; }
-sudo() { [[ $1 == "$checkout/install/helpers/apply-keyboard-layout.sh" ]] || exit 1; step keyboard; }
+sudo() {
+  if [[ $1 == "-v" ]]; then
+    step auth
+  elif [[ $1 == "$checkout/install/helpers/apply-keyboard-layout.sh" ]]; then
+    step keyboard
+  else
+    exit 1
+  fi
+}
+activate_install_keyboard() { step "activate $1 $2"; }
 omarchy_arm_channel_stage_new() { echo "$STAGE"; }
 omarchy_arm_channel_prepare() { step "prepare $2 $3"; printf '4.0.3rc1-1\n' >"$1/pair-version"; }
 omarchy_arm_channel_apply_prepared() { step apply; }

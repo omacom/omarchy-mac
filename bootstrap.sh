@@ -69,7 +69,7 @@ require_root() {
 }
 
 prompt_keyboard() {
-    local keymap answer listed
+    local keymap answer listed terminal
     keymap=$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"' | head -1) || keymap=""
     keymap=${keymap:-us}
 
@@ -95,8 +95,11 @@ prompt_keyboard() {
         print_warning "Unknown keyboard layout: $answer. Type ? to see available layouts."
     done
 
-    if [[ $(tty <"${TTY_IN:-/dev/null}" 2>/dev/null) == /dev/tty* ]]; then
+    terminal=$(ps -o tty= -p "$$" | tr -d '[:space:]') || terminal=""
+    if [[ $terminal =~ ^tty[0-9]+$ ]]; then
         loadkeys "$keymap" || { print_error "Could not activate keyboard layout $keymap"; exit 1; }
+    elif [[ -n ${SSH_CONNECTION:-} || -n ${SSH_TTY:-} ]]; then
+        print_warning "This is an SSH session. Your client's keyboard controls typing here."
     fi
     localectl set-keymap "$keymap" || { print_error "Could not save keyboard layout $keymap"; exit 1; }
 }
