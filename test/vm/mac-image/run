@@ -176,9 +176,7 @@ make_disk() {
   sudo dd if="$admitted/payload/root.img" of="${dev}p3" bs=4M conv=sparse,fsync status=none
   mount_tracked -o subvol=@ "${dev}p3" "$work/mnt"
   # The sole shipping-runtime adaptation is explicit and confined to this disposable root.
-  sudo sha256sum "$work/mnt/usr/share/omarchy/bin/omarchy-hw-apple-silicon" >>"$evidence/vm-adaptations.txt"
-  printf '#!/bin/bash\n# Disposable QEMU qualification override, never shipped.\nexit 0\n' | sudo tee "$work/mnt/usr/share/omarchy/bin/omarchy-hw-apple-silicon" >/dev/null
-  sudo sha256sum "$work/mnt/usr/share/omarchy/bin/omarchy-hw-apple-silicon" >>"$evidence/vm-adaptations.txt"
+  python3 "$harness/adapt_detector.py" "$work/mnt" >>"$evidence/vm-adaptations.txt"
   sudo mkdir -p "$work/mnt/etc/systemd/system/multi-user.target.wants"
   cat <<'UNIT' | sudo tee "$work/mnt/etc/systemd/system/omarchy-vm-evidence.service" >/dev/null
 [Unit]

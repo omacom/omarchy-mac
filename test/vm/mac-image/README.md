@@ -6,6 +6,8 @@ The prepared lanes cover an explicit plain installation, explicit requested in-p
 
 The Apple kernel stays installed in the image and remains the kernel used to regenerate the shipping UKI. QEMU directly launches a separately authenticated generic `linux-aarch64` kernel through AAVMF, with an initramfs built using the admitted image's own conversion and encryption hooks. Only the disposable root receives an explicit Apple-detector override and a VM evidence unit; their purpose is to exercise Apple runtime paths on generic hardware. This cannot qualify m1n1, U-Boot, Limine's loading of an Apple UKI, Apple firmware, the GPU or physical hardware. The native Limine code and generated loader/menu are exercised, but QEMU does not boot the Apple UKI.
 
+The packaged compatibility command `/usr/share/omarchy/bin/omarchy-hw-apple-silicon` is an absolute symlink to `/usr/bin/omarchy-hw-apple-silicon`. The disposable override asserts that exact link and real parent directories, then hashes and modifies only the regular executable inside the mounted guest's `usr/bin`. It never follows the compatibility link from the host namespace. The guest evidence service retains its valid in-guest compatibility path.
+
 ## Inputs and admission
 
 A caller must supply `--inputs-sha256` independently of the descriptor. The descriptor has exactly these fields:
