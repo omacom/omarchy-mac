@@ -43,7 +43,7 @@ PKGBUILD
 
   expected_dependency=$dependency
   [[ $dependency != "absent" ]] || expected_dependency=snapper
-  expected=$(printf '%s\n' gum omarchy-mac-keyring "$expected_dependency" | sort)
+  expected=$(printf '%s\n' gum 'omarchy-mac-keyring>=20260914-2' "$expected_dependency" | sort)
   actual=$(sort "$case_dir/output/omarchy.pkg.tar.zst")
   [[ $actual == "$expected" ]] ||
     fail "Mac build requires Snapper exactly once and preserves other dependencies ($dependency)" "$actual"

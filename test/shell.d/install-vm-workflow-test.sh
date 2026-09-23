@@ -31,13 +31,16 @@ checkout = next(step for step in job['steps'] if step.get('uses', '').startswith
 assert checkout['with'] == {'persist-credentials': 'false'}, 'use the default merge ref without stored credentials'
 assert not any('actions/cache@' in step.get('uses', '') for step in job['steps'])
 assert not (root / '.github/workflows/install-vm-selective-edge.yml').exists()
+harness = (root / 'test/vm/run-selective-edge').read_text()
+assert 'OMARCHY_INSTALL_VM_KEYRING' not in str(workflow), 'hosted nspawn must not claim nested native keyring coverage'
+assert 'omarchy-mac-keyring-package-install-test.sh' not in harness, 'hosted nspawn must not run the bwrap test'
 install_step = next(step for step in job['steps'] if 'bash ./test/vm/run-selective-edge' in step.get('run', ''))
 install_env = {**job['env'], **install_step.get('env', {})}
 for key in ('OMARCHY_INSTALL_VM_PACKAGE_SOURCES', 'OMARCHY_INSTALL_VM_IDEMPOTENCY'):
     assert install_env[key] == '1', f'{key} must be enabled'
 for key in ('OMARCHY_INSTALL_VM_WORK', 'OMARCHY_INSTALL_VM_CACHE'):
     assert 'github.run_id' in install_env[key] and 'github.run_attempt' in install_env[key]
-print('ok - every PR gets isolated ARM install coverage with both validation modes')
+print('ok - every PR gets isolated ARM install coverage with package-source and repeat-install validation')
 
 run = install_step['run']
 preserved = re.search(r'--preserve-env=([^\s]+)', run).group(1).split(',')

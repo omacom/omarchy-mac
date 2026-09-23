@@ -211,6 +211,22 @@ omarchy_arm_channel_key_fingerprints() {
     awk -F: '$1 == "fpr" { print $10 }' | sort
 }
 
+# Trust the pinned new primary only inside the private transaction keyring.
+omarchy_arm_channel_trust_fork() {
+  local keyring="$1"
+  local active_key="FBD6874D423C418DDB6D143EECE19CDDE306DBD2"
+  local fork_keyfile="${OMARCHY_SIGNING_SOURCE:-$OMARCHY_PATH}/default/pacman/keyrings/omarchy-mac.gpg"
+  if ! sudo gpg --homedir "$keyring" --batch --list-keys "$active_key" >/dev/null 2>&1; then
+    [[ -f $fork_keyfile && ! -L $fork_keyfile ]] || {
+      echo "Pinned Omarchy Mac signing key is missing or unsafe: $fork_keyfile" >&2
+      return 1
+    }
+    sudo pacman-key --gpgdir "$keyring" --add "$fork_keyfile" || return 1
+  fi
+  omarchy_arm_channel_key_fingerprints "$keyring" | grep -qxF "$active_key" || return 1
+  sudo pacman-key --gpgdir "$keyring" --lsign-key "$active_key" || return 1
+}
+
 # Preflight has no installed-package/config/keyring side effects. The caller
 # retains this directory until applying or abandoning the captured transaction.
 omarchy_arm_channel_prepare() {
@@ -250,19 +266,7 @@ omarchy_arm_channel_prepare() {
   if [[ $allow_new == "fresh" ]]; then
     sudo pacman-key --gpgdir "$stage/keyring" --lsign-key "$key"
   fi
-  # The fork key is source-pinned. Import exactly those committed bytes rather
-  # than consulting a keyserver, then verify the full primary fingerprint.
-  local fork_key="F3C5AE3FCFFC738C301E30A8F0C548C0D27279F7"
-  local fork_keyfile="${OMARCHY_SIGNING_SOURCE:-$OMARCHY_PATH}/default/pacman/keyrings/omarchy-mac.gpg"
-  if ! sudo gpg --homedir "$stage/keyring" --batch --list-keys "$fork_key" >/dev/null 2>&1; then
-    [[ -f $fork_keyfile && ! -L $fork_keyfile ]] || {
-      echo "Pinned Omarchy Mac signing key is missing or unsafe: $fork_keyfile" >&2
-      return 1
-    }
-    sudo pacman-key --gpgdir "$stage/keyring" --add "$fork_keyfile"
-    omarchy_arm_channel_key_fingerprints "$stage/keyring" | grep -qxF "$fork_key" || return 1
-  fi
-  sudo pacman-key --gpgdir "$stage/keyring" --lsign-key "$fork_key"
+  omarchy_arm_channel_trust_fork "$stage/keyring" || return 1
   omarchy_arm_channel_key_fingerprints "$stage/keyring" >"$stage/keys-before"
   local -a probe=(--config "$stage/resolved.conf" --dbpath "$stage/db" --cachedir "$stage/cache" --gpgdir "$stage/keyring" --logfile "$stage/preflight.log")
   sudo env OMARCHY_UPDATE_PACMAN=1 pacman "${probe[@]}" -Sy --noconfirm

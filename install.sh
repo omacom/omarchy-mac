@@ -11,7 +11,7 @@ set -euo pipefail
 readonly checkout="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly package_output="$checkout/build-output"
 readonly asahi_alarm_key="12CE6799A94A3F1B5DDFFE88F576553597FB8FEB"
-readonly omarchy_mac_key="F3C5AE3FCFFC738C301E30A8F0C548C0D27279F7"
+readonly omarchy_mac_key="FBD6874D423C418DDB6D143EECE19CDDE306DBD2"
 source "$checkout/install/helpers/arm-package-sources.sh"
 source "$checkout/install/helpers/arm-channel.sh"
 install_channel="${OMARCHY_MIRROR:-}"

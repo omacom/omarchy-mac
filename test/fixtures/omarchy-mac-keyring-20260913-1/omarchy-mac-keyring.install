@@ -1,0 +1,11 @@
+post_upgrade() {
+  if [ -x usr/bin/pacman-key ] && usr/bin/pacman-key -l >/dev/null 2>&1; then
+    usr/bin/pacman-key --populate omarchy-mac
+  else
+    echo ' >>> Initialize pacman-key, then run pacman-key --populate omarchy-mac.'
+  fi
+}
+
+post_install() {
+  post_upgrade
+}
