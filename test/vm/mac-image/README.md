@@ -74,6 +74,8 @@ The focused suite covers descriptor substitution, duplicate JSON keys, dirty-ver
 
 `launch_private.py` fixes the approved artifact, VM state, evidence, candidate/dependency and kernel paths for the 2026-09-22 private qualification. It pins the disposable tools image by immutable ID. Docker receives only read-only input mounts plus the dedicated `vm/` evidence/state parent read-write; signing-key directories and unrelated workspaces are absent. The host udev database and host PID 1's mount table are exposed read-only so every tracked loop and partition can be checked before mounting. The temporary host rule must already cover the literal backing paths. No launch action installs a rule or changes host automount settings.
 
+Actual audit/VM launch additionally requires `/run/udev/rules.d/99-omarchy-private-limine-20260922.rules` to be a regular file, not a symbolic link, matching the reviewed v3 SHA256 `52f6603520f1c28ff0805d2a1157abed4391c6b19c44b01c39f8a4331676b054`. Missing or changed rule bytes stop execution before any container or loop is created. The host rule must be explicitly reinstalled, reloaded and probed after cleanup; matching a file alone does not prove that udev loaded it, so the existing per-device exclusion/tag checks remain mandatory. `--print-command` does not create devices and leaves this execution-only rule check to the eventual launch.
+
 Once the parent exports `artifact-image-3` and supplies the descriptor hash, run the audit first:
 
 ```bash

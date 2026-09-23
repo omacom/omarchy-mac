@@ -20,6 +20,15 @@ AUDIT = ROOT / 'tooling/audit-private-limine-trust.py'
 AUDIT_REPORT = ROOT / 'vm/shipping-trust-audit-image-3.json'
 STATE = ROOT / 'vm/state-attempt-1'
 EVIDENCE = ROOT / 'vm/run-attempt-1'
+HOST_RULE = Path('/run/udev/rules.d/99-omarchy-private-limine-20260922.rules')
+HOST_RULE_SHA256 = '52f6603520f1c28ff0805d2a1157abed4391c6b19c44b01c39f8a4331676b054'
+
+
+def require_host_rule():
+    admit.require(HOST_RULE.is_file() and not HOST_RULE.is_symlink(),
+                  'reviewed temporary host loop rule is absent; install and probe it before launching')
+    admit.require(admit.digest_file(HOST_RULE) == HOST_RULE_SHA256,
+                  'temporary host loop rule differs from reviewed v3 bytes; refusing launch')
 
 
 def mount_args(source, *, writable=False):
@@ -79,6 +88,9 @@ def main():
     if args.print_command:
         print(shlex.join(invocation))
         return
+    # Fail before starting a container or attaching its first loop. Post-attach
+    # per-device checks still prove that the loaded host rule actually applied.
+    require_host_rule()
     log = AUDIT_REPORT if args.stage == 'audit' else ROOT / 'vm/vm-attempt-1-launch.log'
     with log.open('x') as output, Path(str(log) + '.stderr').open('x') as errors:
         result = subprocess.run(invocation, stdout=output, stderr=errors)
