@@ -82,7 +82,11 @@ prompt_install_keyboard() {
     answer=${answer:-$keymap}
     listed=$(localectl --no-pager list-keymaps 2>/dev/null || true)
     if [[ -z $listed ]] || grep -qixF "$answer" <<<"$listed"; then
-      keymap=$answer
+      if [[ -n $listed ]]; then
+        keymap=$(grep -ixF "$answer" <<<"$listed" | head -1)
+      else
+        keymap=$answer
+      fi
       break
     fi
     warn "Unknown keyboard layout: $answer. Type ? to see available layouts."
@@ -91,7 +95,7 @@ prompt_install_keyboard() {
   if [[ $(tty </dev/tty 2>/dev/null) == /dev/tty* ]]; then
     sudo loadkeys "$keymap" || fail "could not activate keyboard layout $keymap"
   fi
-  sudo localectl set-keymap "$keymap" || fail "could not save keyboard layout $keymap"
+  install_keymap=$keymap
 }
 
 ensure_aur_helper() {
@@ -405,9 +409,12 @@ cleanup_channel_install() {
 main() {
   parse_install_options "$@"
   check_preconditions
+  install_keymap=$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"' | head -1) || install_keymap=""
+  install_keymap=${install_keymap:-us}
   if [[ ${OMARCHY_KEYBOARD_CONFIRMED:-0} != "1" ]]; then
     prompt_install_keyboard
   fi
+  sudo "$checkout/install/helpers/apply-keyboard-layout.sh" "$install_keymap"
   if [[ -n $install_channel ]]; then
     channel_stage=$(omarchy_arm_channel_stage_new)
     trap cleanup_channel_install EXIT

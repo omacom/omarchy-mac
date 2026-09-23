@@ -85,7 +85,11 @@ prompt_keyboard() {
         answer=${answer:-$keymap}
         listed=$(localectl --no-pager list-keymaps 2>/dev/null || true)
         if [[ -z $listed ]] || grep -qixF "$answer" <<<"$listed"; then
-            keymap=$answer
+            if [[ -n $listed ]]; then
+                keymap=$(grep -ixF "$answer" <<<"$listed" | head -1)
+            else
+                keymap=$answer
+            fi
             break
         fi
         print_warning "Unknown keyboard layout: $answer. Type ? to see available layouts."

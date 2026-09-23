@@ -19,6 +19,7 @@ log() { :; }
 fail() { echo "$*" >&2; exit 1; }
 step() { echo "$*" >>"$CALLS"; [[ ${FAIL_AT:-} != "$1" ]]; }
 check_preconditions() { step preconditions; }
+sudo() { [[ $1 == "$checkout/install/helpers/apply-keyboard-layout.sh" ]] || exit 1; step keyboard; }
 omarchy_arm_channel_stage_new() { echo "$STAGE"; }
 omarchy_arm_channel_prepare() { step "prepare $2 $3"; printf '4.0.3rc1-1\n' >"$1/pair-version"; }
 omarchy_arm_channel_apply_prepared() { step apply; }
@@ -45,5 +46,5 @@ export FUNCTIONS="$work/functions" STAGE="$work/stage" CALLS="$work/calls" TEST_
 mkdir "$STAGE"
 run_case() {
   : >"$CALLS"
-  bash "$work/driver" "$@" >"$work/out" 2>&1
+  OMARCHY_KEYBOARD_CONFIRMED=1 bash "$work/driver" "$@" >"$work/out" 2>&1
 }

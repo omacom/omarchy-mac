@@ -118,7 +118,12 @@ check "half the tools is still refused" \
   refuses_checkout "$work"
 
 touch "$work/bin/omarchy-system-btrfs-migrate"
-check "a checkout with both tools passes" \
+check "checkout without keyboard persistence is refused" \
+  refuses_checkout "$work"
+mkdir -p "$work/install/helpers"
+touch "$work/install/helpers/apply-keyboard-layout.sh"
+chmod +x "$work/install/helpers/apply-keyboard-layout.sh"
+check "a checkout with all setup tools passes" \
   accepts_checkout "$work"
 
 
@@ -379,8 +384,10 @@ make_checkout() {
   git -C "$dir" remote add origin "$url"
   git -C "$dir" checkout -q -b "$branch"
   if [[ $with_tools == "tools" ]]; then
-    mkdir -p "$dir/bin"
+    mkdir -p "$dir/bin" "$dir/install/helpers"
     touch "$dir/bin/omarchy-system-boot-to-esp" "$dir/bin/omarchy-system-btrfs-migrate"
+    touch "$dir/install/helpers/apply-keyboard-layout.sh"
+    chmod +x "$dir/install/helpers/apply-keyboard-layout.sh"
   fi
   git -C "$dir" add -A >/dev/null 2>&1
   git -C "$dir" -c user.email=t@t -c user.name=t commit -qm x --allow-empty

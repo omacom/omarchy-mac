@@ -5,13 +5,13 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 source "$ROOT/test/shell.d/helpers/install-orchestration.sh"
 run_case --channel rc || fail 'published RC orchestration'
-[[ $(cat "$CALLS") == $'preconditions\nprepare rc fresh\nlocale\napply\nenvironment\nprotect\ntrust\ngum\naur\ndefaults\nseed\nsetup\nunprotect\nsnapshot\ncleanup' ]] || fail 'published preflight precedes mutations and never builds different bytes'
+[[ $(cat "$CALLS") == $'preconditions\nkeyboard\nprepare rc fresh\nlocale\napply\nenvironment\nprotect\ntrust\ngum\naur\ndefaults\nseed\nsetup\nunprotect\nsnapshot\ncleanup' ]] || fail 'published preflight precedes package mutations and never builds different bytes'
 pass 'explicit RC installs the preflighted pair and bypasses local builds'
 FAIL_AT='prepare rc fresh' run_case --channel rc && fail 'failed preflight must stop'
-[[ $(cat "$CALLS") == $'preconditions\nprepare rc fresh\ncleanup' ]] || fail 'failed preflight leaves locale and package state untouched'
+[[ $(cat "$CALLS") == $'preconditions\nkeyboard\nprepare rc fresh\ncleanup' ]] || fail 'failed preflight leaves locale and package state untouched'
 pass 'missing or invalid lane stops before system mutation'
 FAIL_AT=apply run_case --channel stable && fail 'failed captured transaction must stop'
-[[ $(cat "$CALLS") == $'preconditions\nprepare stable fresh\nlocale\napply\ncleanup' ]] || fail 'failed captured transaction skips subsequent setup'
+[[ $(cat "$CALLS") == $'preconditions\nkeyboard\nprepare stable fresh\nlocale\napply\ncleanup' ]] || fail 'failed captured transaction skips subsequent setup'
 PAIR_VERSION=4.0.3rc2-1 run_case --channel rc && fail 'pair changed by default phase must fail'
 ! grep -q '^setup$' "$CALLS" || fail 'changed pair aborts before setup/snapshot'
 pass 'transaction failure or pair drift cannot report completed install'

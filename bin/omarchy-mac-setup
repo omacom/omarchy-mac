@@ -134,14 +134,18 @@ current_keymap() {
 # a bad keymap, so an empty list means "cannot check" rather than "wrong" --
 # refusing to proceed there would block an install over a lookup table.
 keymaps_listable() {
-  localectl --no-pager list-keymaps 2>/dev/null | grep -q .
+  local listed
+  listed=$(localectl --no-pager list-keymaps 2>/dev/null) || return 1
+  [[ -n $listed ]]
 }
 
 valid_keymap() {
   local keymap="$1"
   [[ -n $keymap ]] || return 1
   keymaps_listable || return 0
-  localectl --no-pager list-keymaps 2>/dev/null | grep -qix "$keymap"
+  local listed
+  listed=$(localectl --no-pager list-keymaps 2>/dev/null) || return 1
+  grep -qixF "$keymap" <<<"$listed"
 }
 
 # Ask before the encryption and account questions: those answers must be typed
@@ -158,6 +162,9 @@ prompt_keymap() {
     fi
     keymap=${answer:-$default}
     if valid_keymap "$keymap"; then
+      if keymaps_listable; then
+        keymap=$(localectl --no-pager list-keymaps 2>/dev/null | grep -ixF "$keymap" | head -1)
+      fi
       break
     fi
     warn "Unknown keyboard layout: $keymap. Type ? to see available layouts."
@@ -180,19 +187,7 @@ apply_keymap() {
   [[ -n $keymap ]] || return 0
 
   log "Setting the console keymap to $keymap"
-  loadkeys "$keymap" 2>/dev/null || true
-  localectl set-keymap "$keymap" >/dev/null 2>&1 ||
-    systemd-firstboot --keymap="$keymap" --force >/dev/null 2>&1 ||
-    warn "could not persist the keymap; the unlock prompt keeps the current one"
-
-  # localectl writes vconsole.conf itself, but not on every path, and the
-  # initramfs reads that file rather than asking localectl.
-  touch /etc/vconsole.conf
-  if grep -q '^KEYMAP=' /etc/vconsole.conf; then
-    sed -i "s|^KEYMAP=.*|KEYMAP=$keymap|" /etc/vconsole.conf
-  else
-    printf 'KEYMAP=%s\n' "$keymap" >>/etc/vconsole.conf
-  fi
+  "$SRC/install/helpers/apply-keyboard-layout.sh" "$keymap"
 }
 current_hostname() {
   local name
@@ -707,6 +702,10 @@ tools_present() {
       return 1
     fi
   done
+  if [[ ! -x $dir/install/helpers/apply-keyboard-layout.sh ]]; then
+    warn "$dir has no install/helpers/apply-keyboard-layout.sh -- wrong branch? Pass --repo/--ref."
+    return 1
+  fi
   return 0
 }
 
@@ -1185,6 +1184,10 @@ ask_questions() {
   else
     # --keymap and saved answers still need to change this console before the
     # owner enters a password or encryption passphrase.
+    if keymaps_listable; then
+      keymap=$(localectl --no-pager list-keymaps 2>/dev/null | grep -ixF "$keymap" | head -1) ||
+        fail "unknown keymap: $keymap (see localectl list-keymaps)"
+    fi
     if [[ $(tty 2>/dev/null) == /dev/tty* ]]; then
       loadkeys "$keymap" || fail "could not activate keyboard layout $keymap"
     fi
@@ -1269,6 +1272,9 @@ main() {
       --keymap)
         keymap=${2:?--keymap needs a name}
         valid_keymap "$keymap" || fail "unknown keymap: $keymap (see localectl list-keymaps)"
+        if keymaps_listable; then
+          keymap=$(localectl --no-pager list-keymaps 2>/dev/null | grep -ixF "$keymap" | head -1)
+        fi
         shift
         ;;
       --repo) repo=${2:?--repo needs owner/repo}; shift ;;
