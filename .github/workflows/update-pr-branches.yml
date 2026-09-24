@@ -1,0 +1,53 @@
+name: Update quattro PR branches
+
+on:
+  push:
+    branches: [quattro]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-quattro-pr-branches
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Update open PR branches
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const base = 'quattro';
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner, repo, base, state: 'open', per_page: 100,
+            });
+
+            for (const pull of pulls) {
+              if (pull.head.repo?.full_name !== `${owner}/${repo}`) {
+                core.info(`Skipping #${pull.number}: branch is in a fork`);
+                continue;
+              }
+
+              const comparison = await github.rest.repos.compareCommits({
+                owner, repo, base: pull.head.sha, head: context.sha,
+              });
+              if (comparison.data.ahead_by === 0) {
+                core.info(`#${pull.number} is already up to date`);
+                continue;
+              }
+
+              try {
+                await github.rest.pulls.updateBranch({
+                  owner, repo, pull_number: pull.number,
+                  expected_head_sha: pull.head.sha,
+                });
+                core.info(`Updating #${pull.number}`);
+              } catch (error) {
+                core.warning(`Could not update #${pull.number}: ${error.message}`);
+              }
+            }
