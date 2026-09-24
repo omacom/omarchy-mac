@@ -631,7 +631,7 @@ if apple_silicon; then
 fi
 
 # Tests source this file to exercise LUKS staging without confirming a reset.
-if [[ "${OMARCHY_FACTORY_RESET_SOURCE:-}" == "1" ]]; then
+if [[ ${OMARCHY_FACTORY_RESET_SOURCE:-} == "1" ]]; then
   return 0 2>/dev/null || exit 0
 fi
 

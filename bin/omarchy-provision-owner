@@ -871,7 +871,7 @@ show_recovery_key() {
   say "Type '$RECOVERY_ACK_PHRASE' to continue."
   while true; do
     typed=$(gum input --placeholder "$RECOVERY_ACK_PHRASE" --prompt "> ") || true
-    [[ "$typed" == "$RECOVERY_ACK_PHRASE" ]] && break
+    [[ $typed == "$RECOVERY_ACK_PHRASE" ]] && break
     say --foreground 1 "Type exactly: $RECOVERY_ACK_PHRASE"
   done
   printf '\e[3J\e[2J\e[H'
@@ -1377,7 +1377,7 @@ if apple_silicon; then
 fi
 
 # Tests source this file to exercise rekey_luks without the wizard.
-if [[ "${OMARCHY_PROVISION_OWNER_SOURCE:-}" == "1" ]]; then
+if [[ ${OMARCHY_PROVISION_OWNER_SOURCE:-} == "1" ]]; then
   return 0 2>/dev/null || exit 0
 fi
 

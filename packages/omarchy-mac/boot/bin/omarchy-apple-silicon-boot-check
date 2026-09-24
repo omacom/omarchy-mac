@@ -225,7 +225,7 @@ if (( has_crypttab_root )); then
     recovery_slot=$(awk -F= '$1 == "recovery_slot" { print $2; exit }' "$encrypt_state")
     [[ -n $owner_slot && -n $recovery_slot ]] ||
       fail "/boot/omarchy/encrypt.state does not record owner_slot and recovery_slot after provisioning"
-    [[ "$owner_slot" != "$recovery_slot" ]] ||
+    [[ $owner_slot != "$recovery_slot" ]] ||
       fail "/boot/omarchy/encrypt.state records the same slot for owner and recovery"
 
     mapfile -t luks_slots < <(awk '/^[[:space:]]+[0-9]+:[[:space:]]+luks2/ { sub(":", "", $1); print $1 }' <<<"$luks_dump")

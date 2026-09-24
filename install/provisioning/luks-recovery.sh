@@ -169,7 +169,7 @@ luks_kill_other_slots() {
   for slot in $other_slots; do
     keep=0
     for keep_slot in "$@"; do
-      [[ "$slot" == "$keep_slot" ]] && keep=1 && break
+      [[ $slot == "$keep_slot" ]] && keep=1 && break
     done
     (( keep )) && continue
     if ! { cryptsetup luksKillSlot -q --key-file <(printf '%s' "$password") "$device" "$slot" ; } 2>>"$LOG_FILE"; then
