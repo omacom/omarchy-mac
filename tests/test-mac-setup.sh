@@ -849,9 +849,10 @@ echo
 echo "=== the status line reports the disk ==="
 
 status_with() {
-  local encrypted="$1" want="$2"
+  local encrypted="$1" want="$2" recorded="${3:-1}"
   (
     want_encrypt=$want
+    want_encrypt_recorded=$recorded
     banner() { :; }
     current_step() { echo omarchy; }
     current_hostname() { echo box; }
@@ -871,11 +872,21 @@ status_with() {
 check "an encrypted root reports encryption done" \
   matches 'encryption +done' "$(status_with 1 1)"
 
-check "an unencrypted root with the flag set still reports requested" \
+check "an unencrypted root with the recorded flag reports requested" \
   matches 'encryption +requested' "$(status_with 0 1)"
 
 check "an unencrypted root without the flag reports not requested" \
   matches 'encryption +not requested' "$(status_with 0 0)"
+
+# A finished install deletes its config, so the encrypt default (1) is present
+# in want_encrypt without any recorded answer. Reporting it as "requested"
+# invented intent on every finished unencrypted machine.
+check "an unencrypted root with no recorded answer does not claim requested" \
+  matches 'encryption +unknown' "$(status_with 0 1 0)"
+
+no_requested_without_answer() { ! matches 'encryption +requested' "$(status_with 0 1 0)"; }
+check "an unencrypted root with no recorded answer never reports requested" \
+  no_requested_without_answer
 
 echo "=== a finished machine is not worked on before being told it is finished ==="
 
