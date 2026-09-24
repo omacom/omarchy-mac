@@ -11,11 +11,22 @@ if [[ $OMARCHY_PATH != "/usr/share/omarchy" ]]; then
   if [[ -n $upstream ]]; then
     GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$OMARCHY_PATH" fetch --quiet 2>/dev/null || true
 
-    behind=$(git -C "$OMARCHY_PATH" rev-list --count "HEAD..$upstream" 2>/dev/null || echo 0)
-    if (( behind > 0 )); then
-      commit_label=commits
-      (( behind == 1 )) && commit_label=commit
-      updates+=("omarchy-dev-checkout $behind new $commit_label on $upstream")
+    # Only release tags count as updates; routine commits between releases
+    # should not light the update icon. Fall back to counting commits when the
+    # upstream branch carries no tags at all.
+    newest_release=$(git -C "$OMARCHY_PATH" describe --tags --abbrev=0 "$upstream" 2>/dev/null || true)
+
+    if [[ -n $newest_release ]]; then
+      if ! git -C "$OMARCHY_PATH" merge-base --is-ancestor "$newest_release" HEAD; then
+        updates+=("omarchy-dev-checkout new release $newest_release on $upstream")
+      fi
+    else
+      behind=$(git -C "$OMARCHY_PATH" rev-list --count "HEAD..$upstream" 2>/dev/null || echo 0)
+      if (( behind > 0 )); then
+        commit_label=commits
+        (( behind == 1 )) && commit_label=commit
+        updates+=("omarchy-dev-checkout $behind new $commit_label on $upstream")
+      fi
     fi
   fi
 fi
