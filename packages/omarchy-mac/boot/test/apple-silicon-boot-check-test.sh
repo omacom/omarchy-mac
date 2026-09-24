@@ -41,6 +41,12 @@ case "$*" in
   "-Qkk "*)
     # pacman prints warnings on stderr and the summary on stdout.
     [[ ${LC_ALL:-} == C ]] || { echo "pacman -Qkk without LC_ALL=C" >&2; exit 3; }
+    # A fresh image has no sync databases, and pacman says so for each repo.
+    if [[ -n ${TEST_QKK_NODB:-} ]]; then
+      for repo in core extra alarm; do
+        printf "warning: database file for '%s' does not exist (use '-Sy' to download)\n" "$repo" >&2
+      done
+    fi
     case ${TEST_QKK_FAIL:-} in
       "$2")
         printf 'warning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/vmlinuz (Size mismatch)\n' "$2" >&2
@@ -277,6 +283,7 @@ run_check() {
     TEST_ESP_DEVICE="$esp_device" \
     TEST_QKK_FAIL="${TEST_QKK_FAIL:-}" \
     TEST_QKK_DEPMOD="${TEST_QKK_DEPMOD:-}" \
+    TEST_QKK_NODB="${TEST_QKK_NODB:-}" \
     OMARCHY_BOOT_CHECK_ROOT="$root" \
     OMARCHY_BOOT_CHECK_UNAME="${TEST_UNAME:-$kver}" \
     OMARCHY_APPLE_SILICON_CHANNEL_ROOT="$root" \
@@ -563,3 +570,89 @@ expect_fail "a missing modules.* file" "linux-aurora files do not match the pack
 TEST_QKK_FAIL=linux-aurora:silent run_check
 expect_fail "a pacman -Qkk that fails without a word" "pacman -Qkk linux-aurora failed"
 unset TEST_QKK_FAIL
+
+TEST_QKK_NODB=1 run_check
+expect_pass "missing sync databases on a fresh image"
+TEST_QKK_NODB=1 TEST_QKK_FAIL=linux-aurora run_check
+expect_fail "altered files next to missing sync databases" "linux-aurora files do not match the package mtree"
+pass "missing sync database warnings are not altered package files"
+
+# A Limine Mac: the menu, UKI and Limine binary live on the ESP that
+# /etc/default/limine names, the entry's rootflags follow the root
+# filesystem, and the hash-verified UKI carries the installed kernel.
+cat >"$stub_bin/objcopy" <<'SH'
+#!/bin/bash
+# Fixture UKIs are the kernel bytes followed by a marker: .linux is the file.
+[[ $* == "-O binary --only-section=.linux "* ]] || exit 1
+cp "$4" "$5"
+SH
+chmod +x "$stub_bin/objcopy"
+limine_system() {
+  local limine_esp=$1 fstab_row=$2 cmdline=$3 uki
+  system linux-asahi
+  mkdir -p "$root/var/lib/omarchy" "$root/etc" "$root/usr/share/limine" "$root$limine_esp/EFI/Linux" "$root$limine_esp/EFI/BOOT"
+  : >"$root/var/lib/omarchy/limine.enabled"
+  printf 'ESP_PATH="%s"\nENABLE_UKI=yes\n' "$limine_esp" >"$root/etc/default/limine"
+  [[ -z $fstab_row ]] || printf '%s\n' "$fstab_row" >"$root/etc/fstab"
+  printf 'LIMINE\n' >"$root/usr/share/limine/BOOTAA64.EFI"
+  cp "$root/usr/share/limine/BOOTAA64.EFI" "$root$limine_esp/EFI/BOOT/BOOTAA64.EFI"
+  uki="$root$limine_esp/EFI/Linux/omarchy_linux-asahi.efi"
+  { cat "$modules/vmlinuz"; printf 'initrd\n'; } >"$uki"
+  printf '/+Omarchy\n  //linux-asahi\n    protocol: efi\n    path: boot():/EFI/Linux/omarchy_linux-asahi.efi#%s\n    cmdline: %s\n' \
+    "$(b2sum "$uki" | cut -d' ' -f1)" "$cmdline" >"$root$limine_esp/limine.conf"
+  rm -f "$root/boot/grub/grub.cfg"
+}
+
+limine_system /boot/efi 'UUID=r / btrfs rw,subvol=/@ 0 0' 'root=UUID=r rw rootflags=subvol=@,x-systemd.device-timeout=0 quiet'
+run_check
+expect_pass "a Limine Mac with its ESP at /boot/efi"
+limine_system /boot 'UUID=r / btrfs rw,subvol=/@ 0 0' 'root=UUID=r rw rootflags=subvol=@ quiet'
+run_check
+expect_pass "a Limine Mac with its ESP at /boot"
+rm "$root/boot/EFI/Linux/omarchy_linux-asahi.efi"
+run_check
+expect_fail "a Limine Mac missing its UKI on the /boot ESP" "/boot/EFI/Linux/omarchy_linux-asahi.efi (the Limine UKI) is missing"
+pass "the Limine files are checked on the ESP /etc/default/limine names"
+
+limine_system /boot/efi 'UUID=r / btrfs rw,subvol=/@ 0 0' 'root=UUID=r rw rootflags=subvol=@ quiet'
+printf 'stale' >>"$root/boot/efi/EFI/Linux/omarchy_linux-asahi.efi"
+run_check
+expect_fail "a UKI rebuilt after the menu" "does not match the hash in limine.conf"
+limine_system /boot/efi 'UUID=r / btrfs rw,subvol=/@ 0 0' 'root=UUID=r rw rootflags=subvol=@ quiet'
+sed -i 's/#[0-9a-f]*$//' "$root/boot/efi/limine.conf"
+run_check
+expect_fail "an entry without a hash" "does not name a hash-verified omarchy_linux-asahi.efi"
+limine_system /boot/efi 'UUID=r / btrfs rw,subvol=/@ 0 0' 'root=UUID=r rw rootflags=subvol=@ quiet'
+uki="$root/boot/efi/EFI/Linux/omarchy_linux-asahi.efi"
+printf 'an older kernel\n' >"$uki"
+sed -i "s/#[0-9a-f]*$/#$(b2sum "$uki" | cut -d' ' -f1)/" "$root/boot/efi/limine.conf"
+run_check
+expect_fail "a UKI from another kernel" "does not carry the installed $kver kernel"
+# Without binutils the kernel comparison is skipped and said so; only
+# observable where the host has no objcopy of its own.
+if ! command -v objcopy >/dev/null 2>&1; then
+  limine_system /boot/efi 'UUID=r / btrfs rw,subvol=/@ 0 0' 'root=UUID=r rw rootflags=subvol=@ quiet'
+  mv "$stub_bin/objcopy" "$test_tmp/objcopy"
+  run_check
+  mv "$test_tmp/objcopy" "$stub_bin/objcopy"
+  expect_pass "a Limine Mac without binutils"
+  grep -Fq "not checking the kernel inside the UKI" "$test_tmp/err" || fail "a skipped kernel check is named" "$(cat "$test_tmp/err")"
+fi
+pass "the Limine entry's hash and the UKI's kernel are checked"
+
+limine_system /boot/efi 'UUID=r / ext4 rw,relatime 0 1' 'root=UUID=r rw quiet'
+run_check
+expect_pass "an ext4 root with no subvolume flag"
+limine_system /boot/efi 'UUID=r / ext4 rw,relatime 0 1' 'root=UUID=r rw rootflags=subvol=@ quiet'
+run_check
+expect_fail "an ext4 root given subvol=" "selects rootflags=subvol=@, but the root filesystem is ext4"
+limine_system /boot/efi 'UUID=r / btrfs rw,subvol=@root 0 0' 'root=UUID=r rw rootflags=subvol=@ quiet'
+run_check
+expect_fail "a btrfs root booted from another subvolume" "does not select rootflags=subvol=@root"
+limine_system /boot/efi 'UUID=r / btrfs rw,subvol=@root 0 0' 'root=UUID=r rw rootflags=subvol=@root quiet'
+run_check
+expect_pass "a btrfs root booted from its own subvolume"
+limine_system /boot/efi '' 'root=UUID=r rw quiet'
+run_check
+expect_fail "no fstab row (Omarchy's btrfs @) and no subvolume flag" "does not select rootflags=subvol=@"
+pass "the Limine entry's rootflags follow the root filesystem"

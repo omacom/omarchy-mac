@@ -76,7 +76,9 @@ for package in "$kernel" "$bootloader"; do
   mtree_output=$(LC_ALL=C pacman -Qkk "$package" 2>&1)
   mtree_status=$?
   set -e
+  # A fresh image ships no sync databases; pacman warns about each on stderr.
   altered=$(grep -Ev ' altered files$' <<<"$mtree_output" |
+    grep -Ev "^warning: database file for '[^']+' does not exist" |
     grep -Ev '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \(Modification time mismatch\)$' || true)
   [[ -z $altered ]] || fail "installed $package files do not match the package mtree: $(head -n 1 <<<"$altered")"
   # pacman exits 1 for the depmod lines alone; any other failure is one.
@@ -240,26 +242,81 @@ fi
 # the LUKS mapping) the system needs, and the U-Boot slot must hold the
 # installed Limine.
 if (( limine_mac )); then
-  limine_cfg=$(path /boot/efi/limine.conf)
-  limine_uki=$(path "/boot/efi/EFI/Linux/omarchy_$kernel.efi")
+  # The ESP Limine's tooling writes to: ESP_PATH, /boot/efi or on older
+  # installs /boot.
+  limine_esp=$(sudo sed -n -E 's/^ESP_PATH="?([^"]*)"?$/\1/p' "$(path /etc/default/limine)" | tail -n 1)
+  [[ $limine_esp == /* ]] || fail "/etc/default/limine names no ESP_PATH"
+  limine_cfg=$(path "$limine_esp/limine.conf")
+  limine_uki=$(path "$limine_esp/EFI/Linux/omarchy_$kernel.efi")
   limine_efi=$(path /usr/share/limine/BOOTAA64.EFI)
-  sudo test -f "$limine_uki" || fail "/boot/efi/EFI/Linux/omarchy_$kernel.efi (the Limine UKI) is missing"
-  sudo test -f "$limine_cfg" || fail "/boot/efi/limine.conf is missing on a Limine Mac"
+  sudo test -f "$limine_uki" || fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi (the Limine UKI) is missing"
+  sudo test -f "$limine_cfg" || fail "$limine_esp/limine.conf is missing on a Limine Mac"
   sudo grep -Fq "/EFI/Linux/omarchy_$kernel.efi" "$limine_cfg" ||
-    fail "/boot/efi/limine.conf does not boot the $kernel UKI"
-  sudo cmp -s "$limine_efi" "$(path /boot/efi/EFI/BOOT/BOOTAA64.EFI)" ||
-    fail "/boot/efi/EFI/BOOT/BOOTAA64.EFI is not the installed Limine"
+    fail "$limine_esp/limine.conf does not boot the $kernel UKI"
+  sudo cmp -s "$limine_efi" "$(path "$limine_esp/EFI/BOOT/BOOTAA64.EFI")" ||
+    fail "$limine_esp/EFI/BOOT/BOOTAA64.EFI is not the installed Limine"
   # The first kernel entry's cmdline: the tool writes the Omarchy block first.
   limine_cmdline=$(sudo awk -v entry="//$kernel" '
     { line = $0; sub(/^[[:space:]]+/, "", line) }
     line == entry { inside = 1; next }
     inside && $1 == "cmdline:" { sub(/^[[:space:]]*cmdline:[[:space:]]*/, ""); print; exit }
   ' "$limine_cfg")
-  [[ -n $limine_cmdline ]] || fail "/boot/efi/limine.conf has no cmdline for the $kernel entry"
+  [[ -n $limine_cmdline ]] || fail "$limine_esp/limine.conf has no cmdline for the $kernel entry"
+  # The entry's hash must be the UKI's, and the UKI must carry the installed
+  # kernel: limine-entry-tool can keep going after one UKI fails to build.
+  limine_path=$(sudo awk -v entry="//$kernel" '
+    { line = $0; sub(/^[[:space:]]+/, "", line) }
+    line == entry { inside = 1; next }
+    inside && $1 == "path:" { sub(/^[[:space:]]*path:[[:space:]]*/, ""); print; exit }
+  ' "$limine_cfg")
+  [[ $limine_path == "boot():/EFI/Linux/omarchy_$kernel.efi#"* ]] ||
+    fail "the Limine $kernel entry does not name a hash-verified omarchy_$kernel.efi"
+  [[ $(sudo b2sum "$limine_uki" | cut -d' ' -f1) == "${limine_path##*#}" ]] ||
+    fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi does not match the hash in limine.conf"
+  if command -v objcopy >/dev/null 2>&1; then
+    uki_kernel=$workdir/uki.linux
+    sudo objcopy -O binary --only-section=.linux "$limine_uki" "$uki_kernel" 2>/dev/null ||
+      fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi has no kernel section"
+    kernel_size=$(sudo stat -c %s "$(path "${images[0]}")")
+    (( $(sudo stat -c %s "$uki_kernel") >= kernel_size )) && sudo cmp -s -n "$kernel_size" "$(path "${images[0]}")" "$uki_kernel" ||
+      fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi does not carry the installed $kver kernel"
+  else
+    echo "Apple Silicon boot check: objcopy (binutils) is not installed; not checking the kernel inside the UKI" >&2
+  fi
   limine_root=$(grep -Eo 'root=[^[:space:]]+' <<<"$limine_cmdline" | tail -n 1 || true)
   [[ $limine_root == root=UUID=* ]] || fail "the Limine $kernel entry does not set root=UUID="
-  grep -Eq '(^|[[:space:]])rootflags=subvol=@' <<<"$limine_cmdline" ||
-    fail "the Limine $kernel entry does not select rootflags=subvol=@"
+  # The root filesystem as omarchy-mac-limine-cmdline reads it: fstab's row,
+  # else the mounted root, and a snapshot boot's overlay (no fstab row) is
+  # Omarchy's btrfs @. btrfs boots the subvolume fstab mounts; any other
+  # filesystem refuses subvol= and drops to the emergency shell.
+  root_fstype="" root_options=""
+  read -r root_fstype root_options < <(awk '$1 !~ /^#/ && $2 == "/" { print $3, $4; exit }' "$(path /etc/fstab)" 2>/dev/null) || true
+  if [[ -z $root_fstype && -z $root ]]; then
+    read -r root_fstype root_options < <(findmnt -no FSTYPE,OPTIONS / 2>/dev/null) || true
+  fi
+  case $root_fstype in
+    '' | overlay | tmpfs) root_fstype=btrfs root_options=subvol=@ ;;
+  esac
+  # The subvolume selector, subvol= (leading slashes dropped) or subvolid=.
+  subvolume_selector() {
+    local selector
+    selector=$(tr ',' '\n' <<<"$1" | sed -n -E 's/^subvol=\/*([^/].*)$/subvol=\1/p; s/^subvol=\/*$/subvol=\//p' | tail -n 1)
+    [[ -n $selector ]] || selector=$(tr ',' '\n' <<<"$1" | grep -E '^subvolid=[0-9]+$' | tail -n 1 || true)
+    printf '%s' "$selector"
+  }
+  want_selector=""
+  [[ $root_fstype != btrfs ]] || want_selector=$(subvolume_selector "$root_options")
+  limine_rootflags=$(grep -Eo '(^|[[:space:]])rootflags=[^[:space:]]+' <<<"$limine_cmdline" | tail -n 1 || true)
+  limine_selector=$(subvolume_selector "${limine_rootflags#*rootflags=}")
+  if [[ $limine_selector != "$want_selector" ]]; then
+    if [[ -n $want_selector ]]; then
+      fail "the Limine $kernel entry does not select rootflags=$want_selector"
+    elif [[ $root_fstype == btrfs ]]; then
+      fail "the Limine $kernel entry selects rootflags=$limine_selector, but fstab mounts the btrfs root's default subvolume"
+    else
+      fail "the Limine $kernel entry selects rootflags=$limine_selector, but the root filesystem is $root_fstype"
+    fi
+  fi
   if (( has_crypttab_root )); then
     grep -Eq "rd\\.luks\\.name=${crypttab_uuid}=" <<<"$limine_cmdline" ||
       fail "the Limine $kernel entry does not set rd.luks.name= for the encrypted root"
