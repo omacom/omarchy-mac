@@ -154,7 +154,7 @@ answers() {
     encrypt_flag=1 want_encrypt=1 username=scott hostname=pancake keymap=us
     repo=example/repo ref=some-branch
     PATH="$km_stub:$PATH"
-    printf '%s' "$input" | ask_questions >/dev/null 2>&1
+    printf '\n%s' "$input" | ask_questions >/dev/null 2>&1
   )
 }
 
@@ -193,7 +193,7 @@ keyboard_is_first() {
     root_is_encrypted() { echo ENCRYPTION; return 0; }
     boot_is_separate() { return 0; }
     valid_keymap() { return 0; }
-    printf '\n' | ask_questions
+    printf '\n\n' | ask_questions
   )
   [[ $output == *$'KEYBOARD\nENCRYPTION'* ]]
 }
@@ -849,7 +849,7 @@ ask_with() {
       root_is_encrypted() { return 1; }
       boot_is_separate() { return 1; }
     fi
-    printf '%s' "$input" | ask_questions 2>/dev/null
+    printf '\n%s' "$input" | ask_questions 2>/dev/null
     echo "WANT_ENCRYPT=$want_encrypt"
   )
 }

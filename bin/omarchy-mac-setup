@@ -169,12 +169,6 @@ prompt_keymap() {
     fi
     warn "Unknown keyboard layout: $keymap. Type ? to see available layouts."
   done
-
-  # Upstream switches the live console as soon as its keyboard choice is made.
-  # A remote invocation has no local console to change.
-  if [[ $(tty 2>/dev/null) == /dev/tty* ]]; then
-    loadkeys "$keymap" || fail "could not activate keyboard layout $keymap"
-  fi
 }
 
 # The keymap the console uses is the keymap the LUKS passphrase prompt uses:
@@ -1172,7 +1166,7 @@ print_status() {
 }
 
 ask_questions() {
-  local answer
+  local answer terminal
 
   banner "Omarchy Mac setup"
   echo "This installs Omarchy on this machine, rebooting a few times on the way."
@@ -1182,15 +1176,22 @@ ask_questions() {
   if [[ -z $keymap ]]; then
     prompt_keymap
   else
-    # --keymap and saved answers still need to change this console before the
-    # owner enters a password or encryption passphrase.
     if keymaps_listable; then
       keymap=$(localectl --no-pager list-keymaps 2>/dev/null | grep -ixF "$keymap" | head -1) ||
         fail "unknown keymap: $keymap (see localectl list-keymaps)"
     fi
-    if [[ $(tty 2>/dev/null) == /dev/tty* ]]; then
-      loadkeys "$keymap" || fail "could not activate keyboard layout $keymap"
+  fi
+
+  terminal=$(ps -o tty= -p "$$" | tr -d '[:space:]') || terminal=""
+  if [[ $terminal =~ ^tty[0-9]+$ ]]; then
+    loadkeys "$keymap" || fail "could not activate keyboard layout $keymap"
+  else
+    if [[ -n ${SSH_CONNECTION:-} || -n ${SSH_TTY:-} ]]; then
+      warn "This is an SSH session. Set your client's keyboard to match console layout $keymap before answering the next prompts."
+    else
+      warn "Set this desktop's keyboard to match console layout $keymap before answering the next prompts."
     fi
+    read -rp "Press Enter when your keyboard layout is ready: " answer || fail "keyboard confirmation requires a terminal"
   fi
 
   if [[ -n $encrypt_flag ]]; then
