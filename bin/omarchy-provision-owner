@@ -962,9 +962,32 @@ require_finished_luks() {
 #   → phase=finished.
 # Each step is idempotent. A retry continues from the recorded phase and never
 # adds another owner or recovery slot.
+# The account and disk share one password. Once an owner slot is recorded, a
+# retry must use the password that slot holds, or setup would finish with an
+# account password that no longer unlocks the disk.
+recorded_owner_slot() {
+  local slot
+  slot=$(rekey_state_get owner_slot || true)
+  [[ -n $slot ]] || slot=$(encrypt_state_get owner_slot || true)
+  printf '%s' "$slot"
+}
+
+owner_password_opens_recorded_slot() {
+  local device=$1 slot
+  slot=$(recorded_owner_slot)
+  [[ -n $slot ]] || return 0
+  [[ $(luks_slot_for "$password" "$device") == "$slot" ]]
+}
+
 rekey_luks_apple() {
   local device="$1" recovery_slot new_slot phase
   phase=$(encrypt_state_get phase || true)
+
+  if [[ $phase == rekeyed || $phase == finished ]] && ! owner_password_opens_recorded_slot "$device"; then
+    log_step "the password does not open the recorded owner slot; refusing to finish with a different disk password"
+    say --foreground 1 "Use the disk password chosen earlier in setup."
+    return 1
+  fi
 
   if [[ $phase != rekeyed && $phase != finished ]]; then
     new_slot=$(luks_ensure_slot "$password" "$device" owner_slot) || {
@@ -1072,6 +1095,12 @@ rekey_luks() {
   phase=$(encrypt_state_get phase || true)
   if [[ $phase == "finished" ]]; then
     require_finished_luks || status=$?
+    if (( status == 0 )) && apple_silicon && device=$(luks_device) && [[ -e $device ]] &&
+      ! owner_password_opens_recorded_slot "$device"; then
+      log_step "the password does not open the recorded owner slot of the finished re-key"
+      say --foreground 1 "Use the disk password chosen earlier in setup."
+      status=1
+    fi
     if (( xtrace_on )); then set -x; fi
     return "$status"
   fi
@@ -1251,7 +1280,17 @@ run_setup() {
       ((status == OMARCHY_FORM_SIGNAL)) && confirm_reboot && exec systemctl reboot
       continue
     fi
-    confirm_form && break
+    confirm_form || continue
+    # A retry after the disk was re-keyed keeps that password: refuse another
+    # before any account is created or changed.
+    if apple_silicon && [[ -n $(recorded_owner_slot) ]]; then
+      local owner_device
+      if owner_device=$(luks_device) && [[ -e $owner_device ]] && ! owner_password_opens_recorded_slot "$owner_device"; then
+        notice "Setup already set this Mac's disk password. Enter that same password." 4
+        continue
+      fi
+    fi
+    break
   done
 
   touch "$LOG_FILE"

@@ -468,6 +468,27 @@ if (sync() { return 1; }; rekey_luks); then fail "rekey rejects a failed phase s
 grep -Fxq 'phase=configured' "$encrypt_state" || fail "failed phase sync retains prior journal"
 pass "failed rekey journal persistence retains the staged unlock for retry"
 
+# A retry after the boot rebuild failed (keys already shredded) must use the
+# password the recorded owner slot holds; a different one would leave the
+# account and disk passwords diverged.
+printf 'format=1\nphase=rekeyed\npartition=PART-UUID-1\nluks_uuid=abcd-ef\nowner_slot=1\nrecovery_slot=2\n' >"$encrypt_state"
+printf '1 first-pass\n2 recovery-material\n' >"$slots"
+printf 'owner_slot=1\nrecovery_slot=2\nrecovery_shown=1\n' >"$REKEY_STATE"
+rm -f "$prov/luks-key" "$boot_key"
+printf 'GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root root=/dev/mapper/root"\n' >"$grub_default"
+: >"$calls"
+password="second-pass"
+if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "a retry with a different password cannot finish the re-key"; fi
+grep -Fxq 'phase=rekeyed' "$encrypt_state" || fail "a refused retry keeps phase=rekeyed"
+! grep -Eq 'cryptsetup luksKillSlot|mkinitcpio' "$calls" || fail "a refused retry changes neither slots nor boot files"
+owner_password_opens_recorded_slot "$device" && fail "the retry password is reported as the disk password"
+password="first-pass"
+OMARCHY_PROVISION_WORKER=1 rekey_luks || fail "the recorded password finishes the re-key"
+grep -Fxq 'phase=finished' "$encrypt_state" || fail "the recorded password reaches phase=finished"
+password="second-pass"
+if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "a finished re-key refuses a different password"; fi
+pass "re-key retries must use the recorded owner password"
+
 # A failed write while dropping rd.luks.key= reports failure and keeps GRUB's
 # defaults intact rather than truncating them.
 printf 'GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root rd.luks.key=abcd-ef=/omarchy/luks-key:UUID=4F4D-5801"\n' >"$grub_default"
