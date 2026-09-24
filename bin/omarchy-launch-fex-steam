@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# omarchy:summary=Launch Steam with Apple Silicon FEX integration
+# omarchy:group=launch
+# omarchy:name=steam
+# omarchy:args=[steam-args...]
+
+if [[ $(uname -m) == "aarch64" ]]; then
+  exec omarchy-launch-steam "$@"
+else
+  exec steam "$@"
+fi

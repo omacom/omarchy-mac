@@ -17,6 +17,11 @@ printf 'pkg:%s\n' "$*" >>"$OMARCHY_TEST_LOG"
 exit "${OMARCHY_TEST_PKG_STATUS:-0}"
 SH
 
+cat >"$mock_bin/omarchy-pkg-present" <<'SH'
+#!/bin/bash
+exit 0
+SH
+
 cat >"$mock_bin/omarchy-font-set" <<'SH'
 #!/bin/bash
 printf 'font:%s\n' "$*" >>"$OMARCHY_TEST_LOG"

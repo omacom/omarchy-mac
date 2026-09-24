@@ -5,11 +5,22 @@
 
 set -e
 
+architecture=$(uname -m)
+if [[ $architecture == "aarch64" ]] && ! omarchy-pkg-present omarchy-steam-fex && ! omarchy-pkg-available omarchy-steam-fex; then
+  echo "Steam launcher package omarchy-steam-fex is unavailable" >&2
+  exit 1
+fi
+
 echo "Installing Steam..."
 omarchy-pkg-add steam
 omarchy-install-gaming-gpu-lib32
 
-if [[ $(uname -m) == aarch64 ]]; then
+if [[ $architecture == "aarch64" ]]; then
+  omarchy-pkg-add omarchy-steam-fex
+  if ! omarchy-pkg-present omarchy-steam-fex; then
+    echo "Steam launcher package omarchy-steam-fex is unavailable" >&2
+    exit 1
+  fi
   omarchy-launch-steam --prepare
 fi
 

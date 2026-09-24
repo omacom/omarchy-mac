@@ -264,19 +264,18 @@ assert(
 assert(!defaultById['install.ai.crush'], 'menu removes Crush from Install > AI')
 // Software you already have keeps its place in Install, dimmed rather than
 // dropped, so the list reads as a catalog of what Omarchy can install.
-// Chromium Account is the sole Install row with anything left to hide for, so
-// any other `when:` here is a row that went back to vanishing once installed.
+// Install rows can hide for prerequisites, but not because software is installed.
 assertDeepEqual(
   defaultItems
     .filter(item => item.id.startsWith('install.') && item.action && item.when)
     .map(item => item.id),
-  ['install.service.chromium-account'],
+  ['install.service.chromium-account', 'install.gaming.steam'],
   'menu never hides an Install row because the software is already there'
 )
 assert(
-  ['install.browser.zen', 'install.editor.vscode', 'install.gaming.steam', 'install.development.rust', 'install.windows'].every(
+  ['install.browser.zen', 'install.editor.vscode', 'install.development.rust', 'install.windows'].every(
     id => defaultById[id].disabled && !defaultById[id].when
-  ),
+  ) && defaultById['install.gaming.steam'].disabled && defaultById['install.gaming.steam'].when.includes('omarchy-pkg-available omarchy-steam-fex'),
   'menu dims the Install rows for software that is already installed'
 )
 assertEqual(

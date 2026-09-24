@@ -5,7 +5,7 @@
 
 set -e
 
-omarchy-pkg-drop steam
+omarchy-pkg-drop omarchy-steam-fex steam
 
 desktop="$HOME/.local/share/applications/steam.desktop"
 if [[ -f $desktop ]] && grep -q 'omarchy-launch-steam' "$desktop"; then

@@ -93,9 +93,7 @@ The three guards differ in what failure means:
   list stays a catalog of what Omarchy can install. Since a dimmed row means
   "you already have this", it earns the same ✓ as `checked` does elsewhere.
 
-Install rows should therefore carry `disabled:` with the presence check, not
-`when:`; Remove rows are the opposite, hiding via `when:` what is not there
-to remove. `menu-test.sh` enforces the Install side of this convention.
+Install rows should therefore carry `disabled:` with the presence check, not `when:` for installed software. A `when:` may hide a row when a prerequisite is unavailable, as Steam does when its Apple Silicon launcher package is absent from configured repositories. Remove rows are the opposite, hiding via `when:` what is not there to remove. `menu-test.sh` enforces this convention.
 
 ## Providers
 
