@@ -13,7 +13,8 @@ fi
 esp=""
 limine_default=${OMARCHY_LIMINE_DEFAULT:-/etc/default/limine}
 if [[ -f $limine_default ]]; then
-  esp=$(sed -n 's/^ESP_PATH=["'\'']\?\([^"'\'']*\).*/\1/p' "$limine_default" | tail -1)
+  # Double-quoted, single-quoted or bare, with an optional trailing comment.
+  esp=$(sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$limine_default" | tail -1)
 fi
 esp=${esp:-/boot}
 legacy_uki="$esp/EFI/Linux/$(cat /etc/machine-id)_linux.efi"

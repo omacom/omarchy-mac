@@ -59,7 +59,8 @@ run
 assert_refreshed /boot
 pass "missing defaults use /boot and preserve the prior menu as backup"
 
-for declaration in 'ESP_PATH="/boot/efi"' "ESP_PATH='/boot/efi'" 'ESP_PATH=/boot/efi'; do
+for declaration in 'ESP_PATH="/boot/efi"' "ESP_PATH='/boot/efi'" 'ESP_PATH=/boot/efi' \
+  'ESP_PATH="/boot/efi" # the ESP' 'ESP_PATH=/boot/efi # the ESP'; do
   prepare /boot/efi
   printf '%s\n' "$declaration" >"$OMARCHY_LIMINE_DEFAULT"
   run

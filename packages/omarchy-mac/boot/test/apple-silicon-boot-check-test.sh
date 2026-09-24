@@ -609,6 +609,9 @@ expect_pass "a Limine Mac with its ESP at /boot/efi"
 limine_system /boot 'UUID=r / btrfs rw,subvol=/@ 0 0' 'root=UUID=r rw rootflags=subvol=@ quiet'
 run_check
 expect_pass "a Limine Mac with its ESP at /boot"
+printf "ESP_PATH='/boot' # older installs\nENABLE_UKI=yes\n" >"$root/etc/default/limine"
+run_check
+expect_pass "a single-quoted ESP_PATH with a trailing comment"
 rm "$root/boot/EFI/Linux/omarchy_linux-asahi.efi"
 run_check
 expect_fail "a Limine Mac missing its UKI on the /boot ESP" "/boot/EFI/Linux/omarchy_linux-asahi.efi (the Limine UKI) is missing"

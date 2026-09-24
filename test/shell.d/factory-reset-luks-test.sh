@@ -393,6 +393,25 @@ after_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
 rm -f "$stub_bin/omarchy-mac-limine-active"
 pass "a reset failing before activation restores the live menu, UKIs, history, initramfs and GRUB"
 
+# A backup that cannot complete stops the reset before any boot file changes
+# and never arms a rollback that would delete what it failed to copy.
+rm -rf "$tmp"/omarchy-reset-boot.*
+chmod 000 "$live/initramfs-linux-asahi.img"
+cat >"$stub_bin/omarchy-mac-limine-active" <<'SH'
+#!/bin/bash
+exit 0
+SH
+chmod +x "$stub_bin/omarchy-mac-limine-active"
+: >"$calls"
+if (trap cleanup EXIT; rebuild_next_boot "$next"); then test_fail "an incomplete backup fails the reset"; fi
+chmod 644 "$live/initramfs-linux-asahi.img"
+rm -f "$stub_bin/omarchy-mac-limine-active"
+after_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
+[[ $after_tree == "$before_tree" ]] || test_fail "an incomplete backup changes no live boot file" "$(diff <(echo "$before_tree") <(echo "$after_tree"))"
+! grep -Eq '^(mount|chroot)' "$calls" || test_fail "an incomplete backup stops before the rebuild" "$(cat "$calls")"
+! compgen -G "$tmp/omarchy-reset-boot.*" >/dev/null || test_fail "an incomplete backup is removed"
+pass "an incomplete boot-file backup stops the reset without touching the live files"
+
 # The same failure hands back the finished encryption state it reopened.
 printf 'format=1\nphase=finished\npartition=p\nluks_uuid=u\nowner_slot=1\nrecovery_slot=2\n' >"$OMARCHY_ENCRYPT_STATE"
 state_before=$(cat "$OMARCHY_ENCRYPT_STATE")

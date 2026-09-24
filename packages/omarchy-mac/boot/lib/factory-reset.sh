@@ -124,22 +124,41 @@ reset_boot_file_candidates() {
   done
 }
 
+# Rollback is armed (RESET_BOOT_BACKUP set) only once every copy is complete
+# and synced; a failed backup leaves the live files untouched.
 backup_live_boot_files() {
   local boot=${OMARCHY_BOOT_DIR:-/boot} backup rel
   backup=$(mktemp -d "${OMARCHY_RESET_BACKUP_PARENT:-/run}/omarchy-reset-boot.XXXXXX") ||
     fail "could not create a backup of the boot files"
-  RESET_BOOT_BACKUP=$backup
-  reset_boot_file_candidates "$boot" >"$backup/manifest" || fail "could not list the boot files to back up"
-  mkdir -p "$backup/tree" || fail "could not create a backup of the boot files"
+  if ! reset_boot_file_candidates "$boot" >"$backup/manifest.partial" || ! mkdir -p "$backup/tree"; then
+    rm -rf -- "$backup"
+    fail "could not prepare a backup of the boot files"
+  fi
   while IFS= read -r rel; do
-    (cd "$boot" && cp -a --parents -- "$rel" "$backup/tree/") || fail "could not back up $boot/$rel"
-  done <"$backup/manifest"
+    if ! (cd "$boot" && cp -a --parents -- "$rel" "$backup/tree/"); then
+      rm -rf -- "$backup"
+      fail "could not back up $boot/$rel; no boot file was changed"
+    fi
+  done <"$backup/manifest.partial"
+  if ! sync -f "$backup/manifest.partial" || ! mv -- "$backup/manifest.partial" "$backup/manifest"; then
+    rm -rf -- "$backup"
+    fail "could not finish the backup of the boot files"
+  fi
+  RESET_BOOT_BACKUP=$backup
 }
 
+# Stage the saved copy beside the target before replacing it, so a failed copy
+# never leaves the path missing.
 restore_one_boot_file() {
-  local boot=$1 rel=$2
-  rm -rf -- "${boot:?}/$rel" || return 1
-  mkdir -p -- "$(dirname -- "$boot/$rel")" && cp -a -- "$RESET_BOOT_BACKUP/tree/$rel" "$boot/$rel"
+  local boot=$1 rel=$2 staged
+  staged="$boot/$rel.omarchy-restore"
+  rm -rf -- "$staged" || return 1
+  mkdir -p -- "$(dirname -- "$boot/$rel")" || return 1
+  if ! cp -a -- "$RESET_BOOT_BACKUP/tree/$rel" "$staged"; then
+    rm -rf -- "$staged"
+    return 1
+  fi
+  rm -rf -- "${boot:?}/$rel" && mv -- "$staged" "$boot/$rel"
 }
 
 # Put the live boot files back exactly as they were before the rebuild. The

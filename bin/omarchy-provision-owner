@@ -1095,11 +1095,16 @@ rekey_luks() {
   phase=$(encrypt_state_get phase || true)
   if [[ $phase == "finished" ]]; then
     require_finished_luks || status=$?
-    if (( status == 0 )) && apple_silicon && device=$(luks_device) && [[ -e $device ]] &&
-      ! owner_password_opens_recorded_slot "$device"; then
-      log_step "the password does not open the recorded owner slot of the finished re-key"
-      say --foreground 1 "Use the disk password chosen earlier in setup."
-      status=1
+    if (( status == 0 )) && apple_silicon && [[ -n $(recorded_owner_slot) ]]; then
+      if ! device=$(luks_device) || [[ ! -e $device ]]; then
+        log_step "cannot locate the LUKS device to check the recorded owner slot"
+        say --foreground 1 "Could not locate the LUKS device to check the disk password."
+        status=1
+      elif ! owner_password_opens_recorded_slot "$device"; then
+        log_step "the password does not open the recorded owner slot of the finished re-key"
+        say --foreground 1 "Use the disk password chosen earlier in setup."
+        status=1
+      fi
     fi
     if (( xtrace_on )); then set -x; fi
     return "$status"
@@ -1285,7 +1290,11 @@ run_setup() {
     # before any account is created or changed.
     if apple_silicon && [[ -n $(recorded_owner_slot) ]]; then
       local owner_device
-      if owner_device=$(luks_device) && [[ -e $owner_device ]] && ! owner_password_opens_recorded_slot "$owner_device"; then
+      if ! owner_device=$(luks_device) || [[ ! -e $owner_device ]]; then
+        say --foreground 1 "Could not find the encrypted disk to check its password."
+        return 1
+      fi
+      if ! owner_password_opens_recorded_slot "$owner_device"; then
         notice "Setup already set this Mac's disk password. Enter that same password." 4
         continue
       fi

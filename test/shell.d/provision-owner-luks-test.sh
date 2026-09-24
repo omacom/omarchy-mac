@@ -487,6 +487,10 @@ OMARCHY_PROVISION_WORKER=1 rekey_luks || fail "the recorded password finishes th
 grep -Fxq 'phase=finished' "$encrypt_state" || fail "the recorded password reaches phase=finished"
 password="second-pass"
 if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "a finished re-key refuses a different password"; fi
+password="first-pass"
+mv "$device" "$device.hidden"
+if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "a finished re-key cannot skip the password check without its device"; fi
+mv "$device.hidden" "$device"
 pass "re-key retries must use the recorded owner password"
 
 # A failed write while dropping rd.luks.key= reports failure and keeps GRUB's
