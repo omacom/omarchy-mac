@@ -108,9 +108,33 @@ Marcelo's [installer 2.0.7 change](https://github.com/maralcbr/omarchy-mx-mac/pu
 
 **M3 is a candidate for labelled early support in the first release**, potentially without GPU acceleration, subject to package availability and testing. Asahi's [September announcement](https://asahilinux.org/2026/09/m2-episode-1/) describes M3 laptop/iMac support and limitations; it does not establish what our ALARM package set delivers. Naeem is preparing the Hyprland software-renderer fix PR and following its review toward a merge. Record the delivering package, eligible models, usable-desktop results and install/update/recovery evidence before offering this path. M3 MLX/ANE support is a separate capability, not a prerequisite for a software-rendered desktop.
 
-**Chris and the video-acceleration contributors:** please confirm your scope and propose first-release decoder/encoder capabilities, dependencies, packages, hardware coverage and application tests, building on the existing Andreas/Miguel work.
-
 **DJ:** please describe how the working Touch ID implementation joins the shared system: source and packages, kernel/userspace dependencies, tested models, enrollment and authentication. Keep any Secure Enclave disk-encryption work distinct from biometric authentication.
+
+## Video acceleration
+
+Chris Kearney is contributing decoder fixes and maintaining the VA-API driver fork, building on the existing Andreas/Miguel work. The first-release proposal covers H.264, HEVC Main/Main10 and VP9 8/10-bit hardware decoding through VA-API. Encoding is outside these submissions.
+
+### Sources and packages
+
+- [omacom/linux#10](https://github.com/omacom/linux/pull/10) contains the AVD kernel changes and currently targets `tb`.
+- [omarchy-pkgs-aarch64#53](https://github.com/omarchy-mac/omarchy-pkgs-aarch64/pull/53) packages the [libva-v4l2_request driver](https://github.com/iconidentify/libva-v4l2_request). Both PRs are ready for review.
+- Firmware comes from Asahi ALARM's `avd-fw`; [package PR #63](https://github.com/omarchy-mac/omarchy-pkgs-aarch64/pull/63) removes the duplicate Omarchy recipe. The kernel driver, firmware and VA-API userspace driver are all required.
+
+Chris proposes transferring the library to `omacom/libva-v4l2_request`, preserving its history and his maintainer access. That needs org approval; development continues in the current repository until then. Keep the package recipe in `omarchy-pkgs-aarch64` for the initial release.
+
+### Tested so far
+
+The submitted AVD module and userspace package were tested together on a 13-inch M1 MacBook Pro running Asahi `7.1.13-3-1-ARCH`. All 433 selected baseline videos passed, along with mpv OpenGL playback, seeking, concurrent clients, recovery after interruption and an uninterrupted one-hour soak. The [qualification report](https://github.com/iconidentify/omarchy-m1-video/blob/fb2f8678e052c42624bfb437a9bd263c5d9cc333/docs/evidence/m1-submission-2026-09-21/README.md) records the exact revisions, selected tests and limitations.
+
+The complete release kernel still needs to be built and booted. Other M1/M2 models need testing before we claim support. Experimental Chromium testing still shows a color mismatch; browser acceleration remains unfinished.
+
+### Getting it into the release
+
+Ryan/DJ: please confirm whether `tb` is the right integration branch and how these fixes reach the Asahi-based M1/M2 release kernel. An Aurora merge alone would not cover the default Asahi installation.
+
+Scott/Naeem: please confirm who will build and publish the compatible kernel and userspace packages, and who can arrange the library transfer.
+
+Chris will handle the remaining video testing against the agreed release kernel and package set, and keep the results and hardware coverage on the video-acceleration workstream card.
 
 ## MLX and its graphics dependencies
 
