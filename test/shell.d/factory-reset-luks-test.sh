@@ -254,6 +254,23 @@ grep -q 'rd.luks.key=abcd-ef=/omarchy/luks-key:UUID=4f4d5801-424f-4f54-8000-0000
 grep -q 'rd.luks.name=old-uuid=root' "$next/etc/default/grub" ||
   fail "reset keeps the rest of GRUB_CMDLINE_LINUX when replacing rd.luks.key="
 
+printf 'GRUB_TIMEOUT=0\n' >"$next/etc/default/grub"
+grub_add_rd_luks_key "$next/etc/default/grub" abcd-ef
+grep -q '^GRUB_TIMEOUT=0$' "$next/etc/default/grub" &&
+  grep -q '^GRUB_CMDLINE_LINUX="rd.luks.key=abcd-ef=' "$next/etc/default/grub" ||
+  fail "reset appends a command line to defaults without one" "$(cat "$next/etc/default/grub")"
+
+printf 'GRUB_CMDLINE_LINUX="quiet"\n' >"$next/etc/default/grub"
+chmod 555 "$next/etc/default"
+if grub_add_rd_luks_key "$next/etc/default/grub" abcd-ef; then
+  chmod 755 "$next/etc/default"
+  fail "reset reports a GRUB defaults staging failure"
+fi
+chmod 755 "$next/etc/default"
+[[ $(cat "$next/etc/default/grub") == 'GRUB_CMDLINE_LINUX="quiet"' ]] ||
+  fail "a failed staging write leaves the defaults intact" "$(cat "$next/etc/default/grub")"
+pass "reset stages rd.luks.key= atomically and reports failed writes"
+
 factory="$tmp/factory"
 mkdir -p "$factory/etc" \
   "$factory/var/lib/omarchy/mac-first-boot" \

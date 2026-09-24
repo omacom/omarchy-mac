@@ -467,3 +467,17 @@ if (sync() { return 1; }; rekey_luks); then fail "rekey rejects a failed phase s
 ! grep -Fq 'cryptsetup luksKillSlot' "$calls" || fail "failed phase sync retires no slots"
 grep -Fxq 'phase=configured' "$encrypt_state" || fail "failed phase sync retains prior journal"
 pass "failed rekey journal persistence retains the staged unlock for retry"
+
+# A failed write while dropping rd.luks.key= reports failure and keeps GRUB's
+# defaults intact rather than truncating them.
+printf 'GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root rd.luks.key=abcd-ef=/omarchy/luks-key:UUID=4F4D-5801"\n' >"$grub_default"
+before=$(cat "$grub_default")
+chmod 555 "$(dirname "$grub_default")"
+status=0
+grub_drop_rd_luks_key "$grub_default" || status=$?
+chmod 755 "$(dirname "$grub_default")"
+(( status != 0 )) || fail "a failed GRUB defaults write is reported"
+[[ $(cat "$grub_default") == "$before" ]] || fail "a failed GRUB defaults write leaves the file intact"
+grub_drop_rd_luks_key "$grub_default" || fail "rd.luks.key= is dropped when the write succeeds"
+[[ $(cat "$grub_default") == 'GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root"' ]] || fail "only rd.luks.key= is removed" "$(cat "$grub_default")"
+pass "dropping rd.luks.key= is atomic and reports failed writes"

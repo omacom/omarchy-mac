@@ -1,14 +1,20 @@
 # Sourced by the shared Omarchy lifecycle; do not run independently.
 
 grub_drop_rd_luks_key() {
-  local file=${1:-$GRUB_DEFAULT}
+  local file=${1:-$GRUB_DEFAULT} tmp
   [[ -f $file ]] || return 1
   grep -q 'rd.luks.key=' "$file" || return 0
-  local tmp
-  tmp=$(mktemp)
-  sed -E 's/[[:space:]]*rd\.luks\.key=[^[:space:]"]+//g' "$file" >"$tmp"
-  cat "$tmp" >"$file"
+  # Runs under `||`, where errexit is off: check every step and replace the
+  # defaults durably, never truncating them on a failed write.
+  tmp=$(mktemp "$file.XXXXXX") || return 1
+  if sed -E 's/[[:space:]]*rd\.luks\.key=[^[:space:]"]+//g' "$file" >"$tmp" &&
+    ! grep -q 'rd.luks.key=' "$tmp" && grep -q '^GRUB_CMDLINE_LINUX' "$tmp" &&
+    chmod --reference="$file" "$tmp" && sync "$tmp" && mv -f "$tmp" "$file"; then
+    sync "$(dirname "$file")"
+    return
+  fi
   rm -f "$tmp"
+  return 1
 }
 
 apple_rekey_boot() {

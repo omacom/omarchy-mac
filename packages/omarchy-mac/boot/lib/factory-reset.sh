@@ -3,20 +3,23 @@
 grub_add_rd_luks_key() {
   local file=$1 uuid=$2
   local token="rd.luks.key=${uuid}=/omarchy/luks-key:UUID=$BOOT_FS_UUID"
+  local tmp status=0
   [[ -f $file ]] || return 1
+  # Callers may run this where errexit is suppressed: check every step and
+  # replace the defaults only with a complete, verified copy.
+  tmp=$(mktemp "$file.XXXXXX") || return 1
   if grep -q 'rd.luks.key=' "$file"; then
-    local tmp
-    tmp=$(mktemp)
-    sed -E "s|[[:space:]]*rd\\.luks\\.key=[^[:space:]\"]+| ${token}|g" "$file" >"$tmp"
-    cat "$tmp" >"$file"
-    rm -f "$tmp"
+    sed -E "s|[[:space:]]*rd\\.luks\\.key=[^[:space:]\"]+| ${token}|g" "$file" >"$tmp" || status=1
+  elif grep -q '^GRUB_CMDLINE_LINUX=' "$file"; then
+    sed -E "s|^(GRUB_CMDLINE_LINUX=\"[^\"]*)\"|\\1 ${token}\"|" "$file" >"$tmp" || status=1
+  else
+    { cat "$file" && printf 'GRUB_CMDLINE_LINUX="%s"\n' "$token"; } >"$tmp" || status=1
+  fi
+  if (( status == 0 )) && grep -Fq -- "$token" "$tmp" && chmod --reference="$file" "$tmp" && mv -f "$tmp" "$file"; then
     return 0
   fi
-  if grep -q '^GRUB_CMDLINE_LINUX=' "$file"; then
-    sed -i -E "s|^(GRUB_CMDLINE_LINUX=\"[^\"]*)\"|\\1 ${token}\"|" "$file"
-  else
-    printf 'GRUB_CMDLINE_LINUX="%s"\n' "$token" >>"$file"
-  fi
+  rm -f "$tmp"
+  return 1
 }
 
 stage_luks_rekey_apple() {
@@ -36,7 +39,7 @@ stage_luks_rekey_apple() {
   else
     fail "no /etc/default/grub to stage the LUKS cmdline"
   fi
-  grub_add_rd_luks_key "$grub_dst" "$uuid"
+  grub_add_rd_luks_key "$grub_dst" "$uuid" || fail "could not stage the LUKS unlock in $grub_dst"
 }
 
 rebuild_next_boot_apple() {
