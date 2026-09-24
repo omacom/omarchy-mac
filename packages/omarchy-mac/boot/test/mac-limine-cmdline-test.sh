@@ -130,3 +130,22 @@ printf 'UUID=%s / btrfs rw,subvol=/ 0 0\n' "$root_uuid" >"$fstab"
 PATH="$stub_bin:$PATH" run || fail "run on a btrfs top-level root succeeds"
 grep -Fq 'rootflags=subvol=/,x-systemd.device-timeout=0 ' "$limine" || fail "subvol=/ stays the top level" "$(cat "$limine")"
 pass "subvolid= and the top-level subvolume are kept"
+
+# A command line that cannot be written stops limine-entry-tool's rebuild: its
+# hook runner aborts only on 100 and above.
+cp "$limine" "$test_tmp/before"
+printf 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash changed"\n' >"$grub"
+printf '#!/bin/bash\nexit 1\n' >"$stub_bin/install"
+chmod +x "$stub_bin/install"
+status=0
+PATH="$stub_bin:$PATH" run 2>/dev/null || status=$?
+(( status >= 100 )) || fail "a failed write aborts the rebuild (status $status)"
+cmp -s "$limine" "$test_tmp/before" || fail "a failed write leaves the defaults unchanged"
+rm "$stub_bin/install"
+printf '#!/bin/bash\nexit 1\n' >"$stub_bin/mktemp"
+chmod +x "$stub_bin/mktemp"
+status=0
+PATH="$stub_bin:$PATH" run 2>/dev/null || status=$?
+(( status >= 100 )) || fail "a failed staging file aborts the rebuild (status $status)"
+rm "$stub_bin/mktemp"
+pass "write failures abort the UKI rebuild"

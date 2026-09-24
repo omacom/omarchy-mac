@@ -76,13 +76,19 @@ cmdline="root=UUID=$root_uuid rw"
 (( ${#rootflags[@]} == 0 )) || cmdline+=" rootflags=$(IFS=,; printf '%s' "${rootflags[*]}")"
 [[ -z ${words[*]-} ]] || cmdline+=" ${words[*]}"
 
-tmp=$(mktemp) || exit 1
+# A command line that cannot be written must stop the rebuild (100 and
+# above), or the UKI would be built with the previous one.
+write_failed() {
+  echo "omarchy-mac-limine-cmdline: could not update $limine_default; $*" >&2
+  exit 100
+}
+tmp=$(mktemp) || write_failed "no temporary file"
 trap 'rm -f "$tmp"' EXIT
 awk -v line="KERNEL_CMDLINE[default]=\"$cmdline\"" '
   /^KERNEL_CMDLINE\[default\]/ { if (!done) { print line; done = 1 }; next }
   { print }
   END { if (!done) print line }
-' "$limine_default" >"$tmp" || exit 1
+' "$limine_default" >"$tmp" || write_failed "could not stage the new command line"
 if ! cmp -s "$tmp" "$limine_default"; then
-  install -m644 "$tmp" "$limine_default" || exit 1
+  install -m644 "$tmp" "$limine_default" || write_failed "could not install the new command line"
 fi
