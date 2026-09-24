@@ -115,6 +115,14 @@ generate_passphrase() {
 }
 
 cleanup() {
+  # Before the swap the old root still boots: give it back its boot files and
+  # encryption state before revoking the reset's temporary unlock.
+  if [[ ${reset_committed:-0} == 0 ]]; then
+    if declare -F restore_live_boot_files >/dev/null; then
+      restore_live_boot_files || true
+    fi
+    restore_encrypt_state || true
+  fi
   if mountpoint -q "$TOP_MNT" 2>/dev/null; then
     if [[ -d $TOP_MNT/$NEXT_NAME && ${swap_done:-0} == 0 ]]; then
       btrfs subvolume delete --recursive "$TOP_MNT/$NEXT_NAME" >/dev/null 2>&1 || true
@@ -148,9 +156,10 @@ confirm_reset() {
   [[ $typed == "reset" ]] || fail "Reset not confirmed."
 }
 
-# Add the throwaway slot and write the Boot-partition keyfile. Called after
-# mkinitcpio/grub/m1n1 succeed so a failed rebuild cannot leave a plaintext
-# disk key on the unencrypted Boot partition.
+# Add the throwaway slot. Called after mkinitcpio/grub succeed so a failed
+# rebuild adds no credential. Its Boot-partition keyfile is written only once
+# the factory root is active (install_reset_boot_key): a power loss before the
+# swap then leaves the old root asking for its password, never auto-unlocked.
 stage_luks_rekey_apple_commit() {
   local device=$1 passphrase=$2 slot xtrace_on=0
   [[ -n $device && -n $passphrase && -n ${RESET_LUKS_AUTH:-} ]] || fail "reset LUKS commit is missing the throwaway passphrase"
@@ -172,14 +181,25 @@ stage_luks_rekey_apple_commit() {
   [[ -n $slot ]] || fail "could not identify the throwaway LUKS keyslot"
   RESET_LUKS_SLOT=$slot
   RESET_LUKS_DEVICE=$device
-  install -d -m 755 "$(dirname "$BOOT_LUKS_KEY")"
-  local staged_key
-  staged_key=$(mktemp "${BOOT_LUKS_KEY}.XXXXXX") || fail "could not stage the reset key"
-  printf '%s' "$passphrase" >"$staged_key"
-  chmod 600 "$staged_key"
-  sync "$staged_key" || fail "could not persist the reset key"
-  mv -f "$staged_key" "$BOOT_LUKS_KEY"
-  sync "$(dirname "$BOOT_LUKS_KEY")" || fail "could not persist the reset key directory"
+}
+
+# After activation: the keyfile the factory root's first boot unlocks with.
+# Without it that boot asks for the current disk password once, and owner
+# setup still re-keys from the staged provisioning key.
+install_reset_boot_key() {
+  local passphrase=$1 staged_key status=1 xtrace_on=0
+  [[ $- == *x* ]] && xtrace_on=1
+  set +x
+  if install -d -m 755 "$(dirname "$BOOT_LUKS_KEY")" && staged_key=$(mktemp "${BOOT_LUKS_KEY}.XXXXXX"); then
+    if (umask 077 && printf '%s' "$passphrase" >"$staged_key") && chmod 600 "$staged_key" && sync "$staged_key" &&
+      mv -f "$staged_key" "$BOOT_LUKS_KEY" && sync "$(dirname "$BOOT_LUKS_KEY")"; then
+      status=0
+    else
+      rm -f "$staged_key"
+    fi
+  fi
+  if (( xtrace_on )); then set -x; fi
+  return "$status"
 }
 
 revoke_reset_luks() {
@@ -434,6 +454,10 @@ reopen_encrypt_state() {
   # An owner who declined encryption at install time keeps that choice
   # through every reset; only a LUKS root is reopened for the next owner.
   ! grep -Fxq 'phase=declined' "$state" || return 0
+  # Kept for cleanup: a reset that fails before activation hands the old
+  # root back its finished state and slot records.
+  RESET_ENCRYPT_STATE_BEFORE=$(cat "$state") || fail "could not read $state"
+  RESET_ENCRYPT_STATE_REOPENED=1
   tmp=$state.tmp.$$
   sed -e 's/^phase=.*/phase=configured/' -e '/^owner_slot=/d' -e '/^recovery_slot=/d' "$state" >"$tmp" ||
     fail "could not rewrite $state"
@@ -441,6 +465,20 @@ reopen_encrypt_state() {
   sync "$tmp" || fail "could not persist $state"
   mv -f "$tmp" "$state" || fail "could not commit $state"
   sync "$(dirname "$state")" || fail "could not persist the encryption state directory"
+}
+
+restore_encrypt_state() {
+  local state=${OMARCHY_ENCRYPT_STATE:-/boot/omarchy/encrypt.state} tmp
+  [[ ${RESET_ENCRYPT_STATE_REOPENED:-0} == 1 ]] || return 0
+  tmp=$state.tmp.$$
+  if printf '%s\n' "$RESET_ENCRYPT_STATE_BEFORE" >"$tmp" && chmod 0644 "$tmp" && sync "$tmp" &&
+    mv -f "$tmp" "$state" && sync "$(dirname "$state")"; then
+    RESET_ENCRYPT_STATE_REOPENED=0
+    return 0
+  fi
+  rm -f "$tmp"
+  echo "Could not restore $state after the failed reset" >&2
+  return 1
 }
 
 arm_reset_markers() {
@@ -517,6 +555,14 @@ stage_full_reset() {
   mv "$next" "$top/@"
   swap_done=1
   sync
+
+  if encrypted_install && apple_silicon; then
+    install_reset_boot_key "$RESET_THROWAY" ||
+      log "Could not write the temporary unlock key; the next boot asks for the current disk password once"
+  fi
+  if declare -F discard_live_boot_backup >/dev/null; then
+    discard_live_boot_backup
+  fi
 }
 
 # A reset is a clone of @factory, so a machine without one has nothing to

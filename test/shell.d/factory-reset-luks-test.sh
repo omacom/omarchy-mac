@@ -131,6 +131,7 @@ export OMARCHY_ENCRYPT_STATE="$tmp/boot/omarchy/encrypt.state"
 export OMARCHY_GRUB_DEFAULT="$grub_live"
 export OMARCHY_CRYPTTAB="$tmp/live/crypttab"
 export OMARCHY_LUKS_DEVICE="$device"
+export OMARCHY_RESET_BACKUP_PARENT="$tmp"
 : >"$OMARCHY_FACTORY_RESET_LOG"
 mkdir -p "$tmp/omarchy/bin"
 
@@ -226,10 +227,12 @@ SH
 chmod +x "$stub_bin/cryptsetup"
 : >"$calls"
 stage_luks_rekey_apple_commit "$RESET_LUKS_DEVICE" "$RESET_THROWAY"
-[[ -f $boot_key ]] || fail "reset writes the Boot-partition luks-key immediately before activation"
-[[ $(stat -c '%a' "$boot_key") == "600" ]] || fail "Boot-partition luks-key is mode 600"
+[[ ! -e $boot_key ]] || fail "the Boot-partition luks-key waits for activation"
 grep -F 'cryptsetup luksAddKey' "$calls" >/dev/null || fail "reset adds a throwaway LUKS key after rebuilds"
 [[ -n $RESET_LUKS_SLOT ]] || fail "reset records the throwaway slot for cleanup"
+install_reset_boot_key "$RESET_THROWAY" || fail "the activated reset writes its Boot-partition luks-key"
+[[ $(cat "$boot_key") == "$RESET_THROWAY" ]] || fail "the Boot-partition luks-key holds the throwaway passphrase"
+[[ $(stat -c '%a' "$boot_key") == "600" ]] || fail "Boot-partition luks-key is mode 600"
 
 : >"$calls"
 rm -f "$boot_key"
@@ -322,7 +325,7 @@ arm_reset_markers "$cloned"
 [[ ! -e $cloned/var/lib/omarchy/mac-first-boot/install.conf ]] || fail "reset next root does not keep install.conf"
 [[ ! -e $cloned/boot/efi/omarchy/install.conf ]] || fail "reset next root does not keep the ESP install.conf"
 [[ -f $cloned/boot/omarchy/encrypt.state ]] || fail "the next-root scrub leaves boot/omarchy alone"
-pass "LUKS factory reset commits the Boot key after rebuilds, re-arms both markers, and keeps @factory clean"
+pass "LUKS factory reset adds its slot after rebuilds, writes the Boot key after activation, re-arms both markers, and keeps @factory clean"
 
 # Declining a reset before adding its own slot must leave an earlier boot's
 # temporary key intact, including a machine still completing first boot.
@@ -347,3 +350,71 @@ fi
 ! grep -Fq 'cryptsetup luksAddKey' "$calls" || fail "state durability failure adds no key"
 grep -Fxq 'phase=finished' "$OMARCHY_ENCRYPT_STATE" || fail "failed file sync retains the prior journal"
 pass "reset persists an unfinished phase before adding a temporary unlock"
+
+# The sourced reset script replaces fail with its own gum-styled exit; report
+# these assertions visibly.
+test_fail() {
+  printf 'not ok - %s\n' "$1" >&2
+  [[ -z ${2:-} ]] || printf '%s\n' "$2" >&2
+  exit 1
+}
+
+# A reset that fails before activation leaves the old root bootable: every
+# boot file the rebuild touched on the live Boot partition and ESP returns.
+live="$tmp/live-boot"
+rm -rf "$tmp"/omarchy-reset-boot.*
+mkdir -p "$live/efi/EFI/Linux" "$live/efi/EFI/BOOT" "$live/efi/0123456789abcdef0123456789abcdef" "$live/grub"
+printf 'timeout: 3\n/+Omarchy\ncomment: machine-id=0123456789abcdef0123456789abcdef\n  //linux-asahi\n  path: boot():/EFI/Linux/omarchy_linux-asahi.efi#old\n' >"$live/efi/limine.conf"
+printf 'old uki' >"$live/efi/EFI/Linux/omarchy_linux-asahi.efi"
+printf 'limine' >"$live/efi/EFI/BOOT/BOOTAA64.EFI"
+printf 'history' >"$live/efi/0123456789abcdef0123456789abcdef/limine_history"
+printf 'old initramfs' >"$live/initramfs-linux-asahi.img"
+printf 'old grub.cfg' >"$live/grub/grub.cfg"
+before_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
+printf 'kernel' >"$next/usr/lib/modules/test-kernel/vmlinuz"
+rm -rf "$next/boot"
+ln -s "$live" "$next/boot"
+cat >"$stub_bin/omarchy-mac-limine-active" <<'SH'
+#!/bin/bash
+exit 0
+SH
+cat >"$stub_bin/mkinitcpio" <<SH
+#!/bin/bash
+printf 'new initramfs' >"$live/initramfs-linux-asahi.img"
+printf 'fallback' >"$live/initramfs-linux-asahi-fallback.img"
+printf 'new uki' >"$live/efi/EFI/Linux/omarchy_linux-asahi.efi"
+exit 1
+SH
+chmod +x "$stub_bin/omarchy-mac-limine-active" "$stub_bin/mkinitcpio"
+if (trap cleanup EXIT; rebuild_next_boot "$next"); then test_fail "a failed factory rebuild fails the reset"; fi
+after_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
+[[ $after_tree == "$before_tree" ]] || test_fail "a failed reset restores every live boot file" "$(diff <(echo "$before_tree") <(echo "$after_tree"))"
+! compgen -G "$tmp/omarchy-reset-boot.*" >/dev/null || test_fail "a completed restore discards its backup"
+rm -f "$stub_bin/omarchy-mac-limine-active"
+pass "a reset failing before activation restores the live menu, UKIs, history, initramfs and GRUB"
+
+# The same failure hands back the finished encryption state it reopened.
+printf 'format=1\nphase=finished\npartition=p\nluks_uuid=u\nowner_slot=1\nrecovery_slot=2\n' >"$OMARCHY_ENCRYPT_STATE"
+state_before=$(cat "$OMARCHY_ENCRYPT_STATE")
+rm -f "$boot_key"
+cat >"$stub_bin/cryptsetup" <<'SH'
+#!/bin/bash
+[[ $1 == "luksAddKey" ]] && exit 1
+exec "${BASH_SOURCE[0]}.real" "$@"
+SH
+chmod +x "$stub_bin/cryptsetup"
+RESET_AUTH_FIXTURE=current-pass
+if (trap cleanup EXIT; RESET_LUKS_AUTH=$RESET_AUTH_FIXTURE; stage_luks_rekey_apple_commit "$device" throwaway); then
+  test_fail "a failed throwaway slot fails the reset"
+fi
+[[ $(cat "$OMARCHY_ENCRYPT_STATE") == "$state_before" ]] ||
+  test_fail "a failed reset restores the finished encryption state" "$(cat "$OMARCHY_ENCRYPT_STATE")"
+[[ ! -e $boot_key ]] || test_fail "a failed reset writes no Boot-partition key"
+pass "a reset failing before activation restores encrypt.state"
+
+printf 'not a directory' >"$tmp/not-a-dir"
+if BOOT_LUKS_KEY="$tmp/not-a-dir/luks-key" install_reset_boot_key throwaway; then
+  test_fail "an unwritable Boot partition reports the missing key"
+fi
+! compgen -G "$tmp/not-a-dir/luks-key.*" >/dev/null || test_fail "a failed key write leaves no staged key"
+pass "a failed post-activation key write is reported without leftovers"

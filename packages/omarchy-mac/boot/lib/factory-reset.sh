@@ -57,6 +57,10 @@ rebuild_next_boot_apple() {
   (( ${#kernel_images[@]} == 1 )) && cmp -s "${kernel_images[0]}" "$boot_dir/vmlinuz-$kernel" ||
     fail "the factory kernel differs from /boot; a coordinated boot-package restore is required"
 
+  # The rebuild below writes the live Boot partition and ESP while the old
+  # root still boots. Keep their prior state until the reset commits.
+  backup_live_boot_files
+
   for dir in proc sys dev run boot; do
     mkdir -p "$next/$dir"
     if [[ -d /$dir ]]; then
@@ -96,4 +100,73 @@ rebuild_next_boot_apple() {
   for dir in boot run dev sys proc; do
     umount -R "$next/$dir" 2>/dev/null || true
   done
+}
+
+# Boot files the reset rebuild writes, relative to the live /boot: the
+# initramfs images, GRUB's directory, and on the ESP the Limine menu, UKIs,
+# loader slot and per-machine-id history.
+reset_boot_file_owned() {
+  local rel=$1
+  case $rel in
+    initramfs-*.img | grub | efi/limine.conf | efi/EFI/Linux | efi/EFI/BOOT/BOOTAA64.EFI) return 0 ;;
+  esac
+  [[ $rel =~ ^efi/[0-9a-f]{32}$ ]]
+}
+
+reset_boot_file_candidates() {
+  local boot=$1 path
+  for path in "$boot"/initramfs-*.img "$boot/grub" "$boot/efi/limine.conf" "$boot/efi/EFI/Linux" \
+    "$boot/efi/EFI/BOOT/BOOTAA64.EFI" "$boot"/efi/*; do
+    [[ -e $path || -L $path ]] || continue
+    printf '%s\n' "${path#"$boot"/}"
+  done | sort -u | while IFS= read -r rel; do
+    if reset_boot_file_owned "$rel"; then printf '%s\n' "$rel"; fi
+  done
+}
+
+backup_live_boot_files() {
+  local boot=${OMARCHY_BOOT_DIR:-/boot} backup rel
+  backup=$(mktemp -d "${OMARCHY_RESET_BACKUP_PARENT:-/run}/omarchy-reset-boot.XXXXXX") ||
+    fail "could not create a backup of the boot files"
+  RESET_BOOT_BACKUP=$backup
+  reset_boot_file_candidates "$boot" >"$backup/manifest" || fail "could not list the boot files to back up"
+  mkdir -p "$backup/tree" || fail "could not create a backup of the boot files"
+  while IFS= read -r rel; do
+    (cd "$boot" && cp -a --parents -- "$rel" "$backup/tree/") || fail "could not back up $boot/$rel"
+  done <"$backup/manifest"
+}
+
+restore_one_boot_file() {
+  local boot=$1 rel=$2
+  rm -rf -- "${boot:?}/$rel" || return 1
+  mkdir -p -- "$(dirname -- "$boot/$rel")" && cp -a -- "$RESET_BOOT_BACKUP/tree/$rel" "$boot/$rel"
+}
+
+# Put the live boot files back exactly as they were before the rebuild. The
+# menu goes last so it never names a UKI that is not back in place.
+restore_live_boot_files() {
+  local boot=${OMARCHY_BOOT_DIR:-/boot} rel failed=0
+  [[ -n ${RESET_BOOT_BACKUP:-} && -f $RESET_BOOT_BACKUP/manifest ]] || return 0
+  while IFS= read -r rel; do
+    grep -Fxq -- "$rel" "$RESET_BOOT_BACKUP/manifest" || rm -rf -- "${boot:?}/$rel" || failed=1
+  done < <(reset_boot_file_candidates "$boot")
+  while IFS= read -r rel; do
+    [[ $rel == "efi/limine.conf" ]] || restore_one_boot_file "$boot" "$rel" || failed=1
+  done <"$RESET_BOOT_BACKUP/manifest"
+  if grep -Fxq efi/limine.conf "$RESET_BOOT_BACKUP/manifest"; then
+    restore_one_boot_file "$boot" efi/limine.conf || failed=1
+  fi
+  sync
+  if (( failed )); then
+    echo "Could not fully restore the boot files; the previous copies are in $RESET_BOOT_BACKUP until reboot" >&2
+    return 1
+  fi
+  echo "Restored the previous boot files" >&2
+  discard_live_boot_backup
+}
+
+discard_live_boot_backup() {
+  [[ -n ${RESET_BOOT_BACKUP:-} ]] || return 0
+  rm -rf -- "$RESET_BOOT_BACKUP"
+  RESET_BOOT_BACKUP=""
 }
