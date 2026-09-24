@@ -364,8 +364,9 @@ test_fail() {
 live="$tmp/live-boot"
 rm -rf "$tmp"/omarchy-reset-boot.*
 mkdir -p "$live/efi/EFI/Linux" "$live/efi/EFI/BOOT" "$live/efi/0123456789abcdef0123456789abcdef" "$live/grub"
-printf 'timeout: 3\n/+Omarchy\ncomment: machine-id=0123456789abcdef0123456789abcdef\n  //linux-asahi\n  path: boot():/EFI/Linux/omarchy_linux-asahi.efi#old\n' >"$live/efi/limine.conf"
 printf 'old uki' >"$live/efi/EFI/Linux/omarchy_linux-asahi.efi"
+old_uki_hash=$(b2sum "$live/efi/EFI/Linux/omarchy_linux-asahi.efi" | cut -d' ' -f1)
+printf 'timeout: 3\n/+Omarchy\ncomment: machine-id=0123456789abcdef0123456789abcdef\n  //linux-asahi\n  path: boot():/EFI/Linux/omarchy_linux-asahi.efi#%s\n' "$old_uki_hash" >"$live/efi/limine.conf"
 printf 'limine' >"$live/efi/EFI/BOOT/BOOTAA64.EFI"
 printf 'history' >"$live/efi/0123456789abcdef0123456789abcdef/limine_history"
 printf 'old initramfs' >"$live/initramfs-linux-asahi.img"
@@ -425,6 +426,40 @@ if (trap cleanup EXIT; sync() { return 1; }; rebuild_next_boot "$next"); then te
 after_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
 [[ $after_tree == "$before_tree" ]] || test_fail "an unflushed rebuild restores the live boot files" "$(diff <(echo "$before_tree") <(echo "$after_tree"))"
 pass "rebuilt boot files are flushed before the reset continues"
+
+# A rebuild that filled the ESP leaves no room to stage: the verified backup
+# replaces the rebuilt files directly. If a UKI cannot come back, the old menu
+# is not restored over it (the rebuilt menu still matches what is there).
+cat >"$stub_bin/cp" <<'SH'
+#!/bin/bash
+last=${!#}
+[[ -n ${TEST_NO_STAGE:-} && $last == *.omarchy-restore ]] && exit 1
+[[ -n ${TEST_NO_UKI_RESTORE:-} && $last == */efi/EFI/Linux ]] && exit 1
+exec /usr/bin/cp "$@"
+SH
+chmod +x "$stub_bin/cp"
+hash -r
+cat >"$stub_bin/omarchy-mac-limine-active" <<'SH'
+#!/bin/bash
+exit 0
+SH
+cat >"$stub_bin/mkinitcpio" <<SH
+#!/bin/bash
+printf 'new uki' >"$live/efi/EFI/Linux/omarchy_linux-asahi.efi"
+exit 1
+SH
+chmod +x "$stub_bin/omarchy-mac-limine-active" "$stub_bin/mkinitcpio"
+rm -rf "$tmp"/omarchy-reset-boot.*
+if (trap cleanup EXIT; export TEST_NO_STAGE=1; rebuild_next_boot "$next"); then test_fail "a failed rebuild fails the reset"; fi
+after_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
+[[ $after_tree == "$before_tree" ]] || test_fail "without staging room the backup still restores every file" "$(diff <(echo "$before_tree") <(echo "$after_tree"))"
+if (trap cleanup EXIT; export TEST_NO_STAGE=1 TEST_NO_UKI_RESTORE=1; rebuild_next_boot "$next") 2>/dev/null; then test_fail "a failed rebuild fails the reset"; fi
+! grep -q "omarchy_linux-asahi.efi#$old_uki_hash" "$live/efi/limine.conf" ||
+  test_fail "the old menu is not restored over a UKI that could not be restored"
+rm -f "$stub_bin/cp" "$stub_bin/omarchy-mac-limine-active"
+hash -r
+rm -rf "$tmp"/omarchy-reset-boot.*
+pass "restoring without staging room works, and a partial restore keeps the rebuilt menu"
 
 # The same failure hands back the finished encryption state it reopened.
 printf 'format=1\nphase=finished\npartition=p\nluks_uuid=u\nowner_slot=1\nrecovery_slot=2\n' >"$OMARCHY_ENCRYPT_STATE"

@@ -152,32 +152,51 @@ backup_live_boot_files() {
 }
 
 # Stage the saved copy beside the target before replacing it, so a failed copy
-# never leaves the path missing.
+# never leaves the path missing. A full filesystem (the rebuild can fill the
+# ESP) cannot stage: then the rebuilt copy makes room for the verified backup.
 restore_one_boot_file() {
   local boot=$1 rel=$2 staged
   staged="$boot/$rel.omarchy-restore"
   rm -rf -- "$staged" || return 1
   mkdir -p -- "$(dirname -- "$boot/$rel")" || return 1
-  if ! cp -a -- "$RESET_BOOT_BACKUP/tree/$rel" "$staged"; then
-    rm -rf -- "$staged"
-    return 1
+  if cp -a -- "$RESET_BOOT_BACKUP/tree/$rel" "$staged"; then
+    rm -rf -- "${boot:?}/$rel" && mv -- "$staged" "$boot/$rel"
+    return
   fi
-  rm -rf -- "${boot:?}/$rel" && mv -- "$staged" "$boot/$rel"
+  rm -rf -- "$staged" "${boot:?}/$rel" && cp -a -- "$RESET_BOOT_BACKUP/tree/$rel" "$boot/$rel"
+}
+
+# The saved menu may go back only when every UKI it names is on the ESP with
+# the hash it records; otherwise Limine would refuse to boot it.
+old_menu_matches_live_ukis() {
+  local boot=$1 line path hash
+  while IFS= read -r line; do
+    path=${line#boot():}
+    path=${path%%#*}
+    hash=${line##*#}
+    [[ -f $boot/efi$path && $(b2sum "$boot/efi$path" | cut -d' ' -f1) == "$hash" ]] || return 1
+  done < <(grep -o 'boot():/EFI/Linux/[^#[:space:]]*#[0-9a-f]*' "$RESET_BOOT_BACKUP/tree/efi/limine.conf")
 }
 
 # Put the live boot files back exactly as they were before the rebuild. The
-# menu goes last so it never names a UKI that is not back in place.
+# old menu goes back last, and only if the UKIs it names are back too; a
+# partial restore otherwise keeps the rebuilt menu.
 restore_live_boot_files() {
   local boot=${OMARCHY_BOOT_DIR:-/boot} rel failed=0
   [[ -n ${RESET_BOOT_BACKUP:-} && -f $RESET_BOOT_BACKUP/manifest ]] || return 0
   while IFS= read -r rel; do
+    [[ $rel == "efi/limine.conf" ]] && continue
     grep -Fxq -- "$rel" "$RESET_BOOT_BACKUP/manifest" || rm -rf -- "${boot:?}/$rel" || failed=1
   done < <(reset_boot_file_candidates "$boot")
   while IFS= read -r rel; do
     [[ $rel == "efi/limine.conf" ]] || restore_one_boot_file "$boot" "$rel" || failed=1
   done <"$RESET_BOOT_BACKUP/manifest"
-  if grep -Fxq efi/limine.conf "$RESET_BOOT_BACKUP/manifest"; then
+  if ! grep -Fxq efi/limine.conf "$RESET_BOOT_BACKUP/manifest"; then
+    (( failed )) || rm -f -- "$boot/efi/limine.conf" || failed=1
+  elif old_menu_matches_live_ukis "$boot"; then
     restore_one_boot_file "$boot" efi/limine.conf || failed=1
+  else
+    failed=1
   fi
   sync
   if (( failed )); then
