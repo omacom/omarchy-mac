@@ -21,6 +21,8 @@ omarchy-hw-apple-silicon || return 0
   pacman_hooks_dir=${OMARCHY_PACMAN_HOOKS_DIR:-/etc/pacman.d/hooks}
   systemd_dir=${OMARCHY_SYSTEMD_DIR:-/etc/systemd/system}
   grub_target=${OMARCHY_GRUB_TARGET:-/boot/grub/grub-aa64.efi}
+  # update-grub rewrites all of GRUB_DIR (config, env, modules, fonts) too.
+  grub_dir=${OMARCHY_GRUB_DIR:-/boot/grub}
 
   limine_boot_fail() {
     echo "limine-boot: $*; activation failed" >&2
@@ -38,7 +40,7 @@ omarchy-hw-apple-silicon || return 0
   limine_backup=$(mktemp -d) || exit 1
   limine_managed=("$limine_default" "$esp/limine.conf" "$esp/EFI/Linux"
     "$boot_hooks_dir/20-omarchy-mac-cmdline" "$update_grub_default"
-    "$esp/EFI/BOOT/BOOTAA64.EFI" "$grub_target"
+    "$esp/EFI/BOOT/BOOTAA64.EFI" "$grub_dir" "$grub_target"
     "$pacman_hooks_dir/81-omarchy-mac-limine-deploy.hook")
   for index in "${!limine_managed[@]}"; do
     file=${limine_managed[index]}

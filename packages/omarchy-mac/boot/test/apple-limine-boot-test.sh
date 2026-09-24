@@ -37,6 +37,10 @@ echo "update-grub" >>"$TEST_CALLS"
 target=$(sed -n 's/^TARGET="\(.*\)"$/\1/p' "$TEST_UPDATE_GRUB_DEFAULT")
 [[ -n $target ]] || target=$TEST_ESP/EFI/BOOT/BOOTAA64.EFI
 printf 'GRUB image\n' >"$target"
+# It also rewrites GRUB_DIR: config, environment and module directory.
+mkdir -p "$TEST_GRUB_DIR/arm64-efi"
+printf 'regenerated grub.cfg\n' >"$TEST_GRUB_DIR/grub.cfg"
+printf 'regenerated core\n' >"$TEST_GRUB_DIR/arm64-efi/core.efi"
 SH
 # limine-update builds the UKI and writes the Omarchy block, keeping other top-level entries.
 cat >"$stub_bin/limine-update" <<'SH'
@@ -68,6 +72,7 @@ printf 'aaaabbbbccccddddeeeeffff00001111\n' >"$etc/machine-id"
 
 run() {
   TEST_CALLS="$calls" TEST_ESP="$esp" TEST_UPDATE_GRUB_DEFAULT="$etc/update-grub" TEST_LIMINE_DEFAULT="$etc/limine" \
+  TEST_GRUB_DIR="$test_tmp/boot/grub" OMARCHY_GRUB_DIR="$test_tmp/boot/grub" \
   OMARCHY_PATH="$test_tmp/runtime" OMARCHY_ESP="$esp" OMARCHY_LIMINE_EFI="$test_tmp/share/limine/BOOTAA64.EFI" \
   OMARCHY_GRUB_DEFAULT="$etc/grub" OMARCHY_UPDATE_GRUB_DEFAULT="$etc/update-grub" OMARCHY_LIMINE_DEFAULT="$etc/limine" \
   OMARCHY_GRUB_TARGET="$test_tmp/boot/grub/grub-aa64.efi" OMARCHY_LIMINE_BOOT_HOOKS_DIR="$etc/boot/hooks/pre.d" \
@@ -130,6 +135,7 @@ SH
 chmod +x "$stub_bin/install"
 status=0
 TEST_CALLS="$calls" TEST_ESP="$esp" TEST_UPDATE_GRUB_DEFAULT="$etc/update-grub" TEST_LIMINE_DEFAULT="$etc/limine" \
+  TEST_GRUB_DIR="$test_tmp/boot/grub" OMARCHY_GRUB_DIR="$test_tmp/boot/grub" \
   OMARCHY_PATH="$test_tmp/runtime" OMARCHY_ESP="$esp" OMARCHY_LIMINE_EFI="$test_tmp/share/limine/BOOTAA64.EFI" \
   OMARCHY_GRUB_DEFAULT="$etc/grub" OMARCHY_UPDATE_GRUB_DEFAULT="$etc/update-grub" OMARCHY_LIMINE_DEFAULT="$etc/limine" \
   OMARCHY_GRUB_TARGET="$test_tmp/boot/grub/grub-aa64.efi" OMARCHY_LIMINE_BOOT_HOOKS_DIR="$etc/boot/hooks/pre.d" \
@@ -300,11 +306,17 @@ printf '#!/bin/bash\nexit 0\n' >"$stub_bin/grub-mkconfig"
 chmod +x "$stub_bin/grub-probe" "$stub_bin/grub-mkconfig"
 : >"$etc/update-grub"
 printf 'prior unused recovery\n' >"$test_tmp/boot/grub/grub-aa64.efi"
+rm -rf "$test_tmp/boot/grub/arm64-efi"
+printf 'prior grub.cfg\n' >"$test_tmp/boot/grub/grub.cfg"
+printf 'prior env\n' >"$test_tmp/boot/grub/grubenv"
 if FAIL_LIMINE_UPDATE=1 run; then fail "GRUB retarget followed by failed UKI reports failure"; fi
+[[ $(cat "$test_tmp/boot/grub/grub.cfg") == "prior grub.cfg" ]] || fail "rollback restores GRUB's configuration"
+[[ $(cat "$test_tmp/boot/grub/grubenv") == "prior env" ]] || fail "rollback keeps GRUB's environment"
+[[ ! -e $test_tmp/boot/grub/arm64-efi ]] || fail "rollback removes modules the failed regeneration wrote"
 [[ -f $etc/update-grub && ! -s $etc/update-grub ]] || fail "rollback preserves an existing empty update-grub configuration"
 [[ $(cat "$test_tmp/boot/grub/grub-aa64.efi") == "prior unused recovery" ]] || fail "rollback restores the old recovery image"
 cmp -s "$esp/EFI/BOOT/BOOTAA64.EFI" "$test_tmp/prior-loader" || fail "GRUB rollback preserves the actual previous EFI loader"
-pass "rollback restores GRUB target configuration and recovery image verbatim"
+pass "rollback restores GRUB target configuration, GRUB directory and recovery image verbatim"
 
 # A helper that returns success without deploying the packaged bytes does
 # not satisfy activation; image and first-boot callers must see the failure.
