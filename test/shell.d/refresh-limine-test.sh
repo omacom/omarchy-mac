@@ -89,6 +89,15 @@ pass "failed rebuild stops refresh and propagates its status"
 
 prepare /boot
 rm "$TEST_FS/boot/limine.conf"
+run || fail "a missing menu must be recreated"
+[[ $(cat "$TEST_FS/boot/limine.conf") == "new menu" ]] || fail "missing menu recreated from the template"
+[[ $(cat "$TEST_FS/boot/limine.conf.bak") == "older backup" ]] || fail "missing menu keeps the older backup"
+grep -Fxq limine-update "$TEST_CALLS" || fail "recreated menu is rebuilt"
+pass "missing menu is recreated and rebuilt"
+
+prepare /boot
+rm "$TEST_FS/boot/limine.conf.bak"
+mkdir -p "$TEST_FS/boot/limine.conf.bak/limine.conf"
 if run; then fail "failed menu backup must stop refresh"; fi
 ! grep -Fxq limine-update "$TEST_CALLS" || fail "failed menu backup must prevent rebuilding"
 pass "failed menu backup stops before rebuilding"

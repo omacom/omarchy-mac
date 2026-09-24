@@ -24,7 +24,10 @@ if sudo test -f "$esp/EFI/Linux/omarchy_linux.efi" && sudo test -f "$legacy_uki"
 fi
 echo "Resetting limine config"
 
-sudo mv "$esp/limine.conf" "$esp/limine.conf.bak"
+# A missing menu is recreated, as before the configured-ESP support.
+if sudo test -e "$esp/limine.conf"; then
+  sudo mv "$esp/limine.conf" "$esp/limine.conf.bak"
+fi
 
 sudo cp "$OMARCHY_PATH/default/limine/limine.conf" "$esp/limine.conf"
 
