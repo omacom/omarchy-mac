@@ -412,6 +412,20 @@ after_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
 ! compgen -G "$tmp/omarchy-reset-boot.*" >/dev/null || test_fail "an incomplete backup is removed"
 pass "an incomplete boot-file backup stops the reset without touching the live files"
 
+# The rebuilt files are flushed before the reset may add a credential; a
+# failed flush fails the reset and restores the previous files.
+rm -rf "$tmp"/omarchy-reset-boot.*
+cat >"$stub_bin/mkinitcpio" <<SH
+#!/bin/bash
+printf 'new initramfs' >"$live/initramfs-linux-asahi.img"
+exit 0
+SH
+chmod +x "$stub_bin/mkinitcpio"
+if (trap cleanup EXIT; sync() { return 1; }; rebuild_next_boot "$next"); then test_fail "an unflushed rebuild fails the reset"; fi
+after_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
+[[ $after_tree == "$before_tree" ]] || test_fail "an unflushed rebuild restores the live boot files" "$(diff <(echo "$before_tree") <(echo "$after_tree"))"
+pass "rebuilt boot files are flushed before the reset continues"
+
 # The same failure hands back the finished encryption state it reopened.
 printf 'format=1\nphase=finished\npartition=p\nluks_uuid=u\nowner_slot=1\nrecovery_slot=2\n' >"$OMARCHY_ENCRYPT_STATE"
 state_before=$(cat "$OMARCHY_ENCRYPT_STATE")

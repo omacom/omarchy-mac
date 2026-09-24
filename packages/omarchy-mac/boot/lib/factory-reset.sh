@@ -97,6 +97,10 @@ rebuild_next_boot_apple() {
   # m1n1 and U-Boot are outside the snapshot. A factory reset must not
   # select stale DTBs from preserved module directories or replace firmware.
 
+  # The vfat ESP keeps the rebuilt menu in the page cache: flush it before the
+  # reset adds any credential, or a power loss leaves the template menu.
+  sync || fail "could not flush the rebuilt boot files"
+
   for dir in boot run dev sys proc; do
     umount -R "$next/$dir" 2>/dev/null || true
   done
