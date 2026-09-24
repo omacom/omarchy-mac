@@ -85,3 +85,48 @@ OMARCHY_GRUB_DEFAULT="$test_tmp/missing" OMARCHY_LIMINE_DEFAULT="$limine" OMARCH
   fail "a missing GRUB default file is not an error"
 cmp -s "$limine" "$test_tmp/before" || fail "a missing GRUB default file changes nothing"
 pass "no GRUB defaults, no change"
+
+# The root filesystem decides the subvolume: ext4 takes no subvol= (the kernel
+# refuses it and the boot stops in the emergency shell), btrfs its own.
+printf '#!/bin/bash\nexit 1\n' >"$stub_bin/findmnt"
+printf 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"\n' >"$grub"
+printf 'UUID=%s / ext4 rw,relatime 0 1\n' "$root_uuid" >"$fstab"
+PATH="$stub_bin:$PATH" run || fail "run on an ext4 root succeeds"
+grep -Fxq "KERNEL_CMDLINE[default]=\"root=UUID=$root_uuid rw quiet splash\"" "$limine" ||
+  fail "an ext4 root gets no rootflags" "$(cat "$limine")"
+printf 'GRUB_CMDLINE_LINUX_DEFAULT="rootflags=x-systemd.device-timeout=0 quiet"\n' >"$grub"
+PATH="$stub_bin:$PATH" run || fail "run on an ext4 root with GRUB rootflags succeeds"
+grep -Fxq "KERNEL_CMDLINE[default]=\"root=UUID=$root_uuid rw rootflags=x-systemd.device-timeout=0 quiet\"" "$limine" ||
+  fail "an ext4 root keeps GRUB's rootflags without subvol=" "$(cat "$limine")"
+printf 'UUID=%s / btrfs rw,noatime,subvol=/@root 0 0\n' "$root_uuid" >"$fstab"
+PATH="$stub_bin:$PATH" run || fail "run on a btrfs root with its own subvolume succeeds"
+grep -Fxq "KERNEL_CMDLINE[default]=\"root=UUID=$root_uuid rw rootflags=subvol=@root,x-systemd.device-timeout=0 quiet\"" "$limine" ||
+  fail "a btrfs root boots the subvolume fstab mounts" "$(cat "$limine")"
+printf 'UUID=%s / btrfs rw,noatime 0 0\n' "$root_uuid" >"$fstab"
+PATH="$stub_bin:$PATH" run || fail "run on a btrfs root with no subvolume succeeds"
+grep -Fxq "KERNEL_CMDLINE[default]=\"root=UUID=$root_uuid rw rootflags=x-systemd.device-timeout=0 quiet\"" "$limine" ||
+  fail "a btrfs root mounted without a subvolume boots its default one" "$(cat "$limine")"
+# No fstab row: the mounted root.
+printf '# nothing\n' >"$fstab"
+cat >"$stub_bin/findmnt" <<'SH'
+#!/bin/bash
+case "$*" in
+  "-no UUID /") echo mounted-root-uuid ;;
+  "-no FSTYPE,OPTIONS /") echo "ext4 rw,relatime" ;;
+  *) exit 1 ;;
+esac
+SH
+PATH="$stub_bin:$PATH" run || fail "run on a mounted ext4 root succeeds"
+grep -Fxq 'KERNEL_CMDLINE[default]="root=UUID=mounted-root-uuid rw rootflags=x-systemd.device-timeout=0 quiet"' "$limine" ||
+  fail "without an fstab row the mounted root's filesystem decides" "$(cat "$limine")"
+pass "rootflags carry the subvolume only a btrfs root mounts"
+
+# A btrfs root fstab selects by subvolid= keeps that selector; subvol=/ is the
+# top level.
+printf 'UUID=%s / btrfs rw,subvolid=256 0 0\n' "$root_uuid" >"$fstab"
+PATH="$stub_bin:$PATH" run || fail "run on a btrfs root selected by subvolid succeeds"
+grep -Fq 'rootflags=subvolid=256,x-systemd.device-timeout=0 ' "$limine" || fail "subvolid= is kept" "$(cat "$limine")"
+printf 'UUID=%s / btrfs rw,subvol=/ 0 0\n' "$root_uuid" >"$fstab"
+PATH="$stub_bin:$PATH" run || fail "run on a btrfs top-level root succeeds"
+grep -Fq 'rootflags=subvol=/,x-systemd.device-timeout=0 ' "$limine" || fail "subvol=/ stays the top level" "$(cat "$limine")"
+pass "subvolid= and the top-level subvolume are kept"

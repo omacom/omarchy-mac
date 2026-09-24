@@ -7,7 +7,8 @@
 # /etc/default/grub stays the one place the encrypt flow, the owner's re-key
 # and the console leaf write the kernel command line. This turns it into
 # Limine's KERNEL_CMDLINE[default]: root=UUID= of the root filesystem, rw, one
-# rootflags= carrying subvol=@ and every flag GRUB's variables added, then
+# rootflags= carrying the subvolume a btrfs root mounts (fstab's subvol= or
+# subvolid=; none on ext4 and other filesystems) and every flag GRUB's variables added, then
 # GRUB_CMDLINE_LINUX and GRUB_CMDLINE_LINUX_DEFAULT without repeats. Both
 # loaders boot the same line. Linked as /etc/boot/hooks/pre.d/20-omarchy-mac-cmdline
 # it runs before every UKI rebuild; omarchy-mac-boot-update runs it too.
@@ -38,7 +39,22 @@ if [[ -z $root_uuid ]]; then
   exit 100
 fi
 
-rootflags=(subvol=@)
+# The root filesystem the same way: fstab's row, else the mounted root. A
+# snapshot boot (an overlay, no fstab row) is Omarchy's btrfs @. Only btrfs
+# takes subvol=; ext4 refuses it and the boot stops in the emergency shell.
+root_fstype="" root_options=""
+read -r root_fstype root_options < <(awk '$1 !~ /^#/ && $2 == "/" { print $3, $4; exit }' "$fstab" 2>/dev/null) || true
+[[ -n $root_fstype ]] || read -r root_fstype root_options < <(findmnt -no FSTYPE,OPTIONS / 2>/dev/null) || true
+case $root_fstype in
+  '' | overlay | tmpfs) root_fstype=btrfs root_options=subvol=@ ;;
+esac
+# subvol= names it; an fstab that selects it by subvolid= keeps that.
+rootflags=()
+if [[ $root_fstype == btrfs ]]; then
+  selector=$(tr ',' '\n' <<<"$root_options" | sed -n -E 's/^subvol=\/*([^/].*)$/subvol=\1/p; s/^subvol=\/*$/subvol=\//p' | tail -n 1)
+  [[ -n $selector ]] || selector=$(tr ',' '\n' <<<"$root_options" | grep -E '^subvolid=[0-9]+$' | tail -n 1)
+  [[ -z $selector ]] || rootflags=("$selector")
+fi
 words=()
 for word in $(grub_value GRUB_CMDLINE_LINUX) $(grub_value GRUB_CMDLINE_LINUX_DEFAULT); do
   case $word in
@@ -48,7 +64,7 @@ for word in $(grub_value GRUB_CMDLINE_LINUX) $(grub_value GRUB_CMDLINE_LINUX_DEF
       for flag in "${flags[@]}"; do
         case $flag in
           '' | subvol=* | subvolid=*) ;;
-          *) [[ " ${rootflags[*]} " == *" $flag "* ]] || rootflags+=("$flag") ;;
+          *) [[ " ${rootflags[*]-} " == *" $flag "* ]] || rootflags+=("$flag") ;;
         esac
       done
       ;;
@@ -56,7 +72,8 @@ for word in $(grub_value GRUB_CMDLINE_LINUX) $(grub_value GRUB_CMDLINE_LINUX_DEF
   esac
 done
 
-cmdline="root=UUID=$root_uuid rw rootflags=$(IFS=,; printf '%s' "${rootflags[*]}")"
+cmdline="root=UUID=$root_uuid rw"
+(( ${#rootflags[@]} == 0 )) || cmdline+=" rootflags=$(IFS=,; printf '%s' "${rootflags[*]}")"
 [[ -z ${words[*]-} ]] || cmdline+=" ${words[*]}"
 
 tmp=$(mktemp) || exit 1
