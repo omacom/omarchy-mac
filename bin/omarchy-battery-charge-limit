@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# omarchy:summary=Set or show the Apple Silicon battery charge limit
+# omarchy:args=[80|100]
+# omarchy:examples=omarchy battery charge limit | omarchy battery charge limit 80 | omarchy battery charge limit 100
+
+set -euo pipefail
+
+battery_path="/sys/class/power_supply/macsmc-battery"
+start_file="$battery_path/charge_control_start_threshold"
+end_file="$battery_path/charge_control_end_threshold"
+
+usage() {
+  echo "Usage: omarchy battery charge limit [80|100]" >&2
+  exit 2
+}
+
+(( $# <= 1 )) || usage
+limit="${1:-status}"
+case "$limit" in
+  status | 80 | 100) ;;
+  *) usage ;;
+esac
+
+if [[ ! -r $start_file || ! -r $end_file ]]; then
+  echo "Apple Silicon charge thresholds are not available on this system." >&2
+  exit 1
+fi
+
+if [[ $limit == "status" ]]; then
+  printf 'Charge limit: %s%% (restart charging at %s%%)\n' "$(<"$end_file")" "$(<"$start_file")"
+  exit 0
+fi
+
+if [[ $limit == "80" ]]; then
+  expected_start=75
+else
+  expected_start=100
+fi
+
+if (( EUID == 0 )); then
+  printf '%s\n' "$limit" | /usr/bin/tee "$end_file" >/dev/null
+else
+  printf '%s\n' "$limit" | sudo /usr/bin/tee "$end_file" >/dev/null
+fi
+
+actual_start=$(<"$start_file")
+actual_end=$(<"$end_file")
+if [[ $actual_start != "$expected_start" || $actual_end != "$limit" ]]; then
+  echo "Charge threshold update did not stick; the SMC reports ${actual_start}%/${actual_end}%." >&2
+  exit 1
+fi
+
+printf 'Charge limit set to %s%% (restart charging at %s%%).\n' "$actual_end" "$actual_start"

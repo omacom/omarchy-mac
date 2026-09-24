@@ -213,6 +213,37 @@ fi
 BACKUP
 }
 
+# Upstream enumerates user units instead of installing the whole directory.
+# First-run requires the Mac keyboard unit too; omitting it leaves setup
+# incomplete and repeats the update notification on every graphical login.
+ensure_keyboard_backlight_unit() {
+  local pkgbuild="$1"
+  local unit=omarchy-brightness-keyboard-auto.service
+  local anchor='  install -Dm644 default/systemd/user/bt-agent.service "$pkgdir/usr/lib/systemd/user/bt-agent.service"'
+  local install_line="  install -Dm644 default/systemd/user/$unit \"\$pkgdir/usr/lib/systemd/user/$unit\""
+
+  # Accept upstream adopting this install, including when it is nested inside
+  # a source-file guard and therefore indented more deeply than the anchor.
+  # Parse shell words so whitespace and indentation do not make a valid install
+  # look unfamiliar; still require the exact source and package destination.
+  awk -v unit="$unit" '
+    $1 == "install" && $2 == "-Dm644" && $3 == "default/systemd/user/" unit {
+      destination = $4
+      if (substr(destination, 1, 1) == "\"" && substr(destination, length(destination), 1) == "\"") {
+        destination = substr(destination, 2, length(destination) - 2)
+      }
+      if (destination == "$pkgdir/usr/lib/systemd/user/" unit) found = 1
+    }
+    END { exit !found }
+  ' "$pkgbuild" && return 0
+  [[ $(grep -Fxc "$anchor" "$pkgbuild") == 1 ]] ||
+    fail "omarchy-settings user-unit installation changed; re-check $pkgbuild"
+  ! grep -Fq "$unit" "$pkgbuild" ||
+    fail "omarchy-settings has an unfamiliar keyboard-unit installation; re-check $pkgbuild"
+  sed -i "\|^  install -Dm644 default/systemd/user/bt-agent.service |a\\$install_line" "$pkgbuild"
+  grep -Fxq "$install_line" "$pkgbuild" || fail "could not add $unit to $pkgbuild"
+}
+
 # makepkg runs with --nodeps because the runtime dependencies include packages
 # built here, so pacman cannot resolve them yet. That skips makedepends too,
 # leaving the build tools to be installed up front.
@@ -284,6 +315,7 @@ build_package() {
   fi
   if [[ $package == "omarchy-settings" ]]; then
     keep_apple_silicon_mkinitcpio_drop_ins "$build_dir/$package/PKGBUILD"
+    ensure_keyboard_backlight_unit "$build_dir/$package/PKGBUILD"
   fi
   if [[ $package == "omarchy" || $package == "omarchy-settings" ]]; then
     set_pkgrel "$build_dir/$package/PKGBUILD"

@@ -32,6 +32,10 @@ not() {
   ! "$@"
 }
 
+not_in_subshell() {
+  ! ( "$@" )
+}
+
 echo "=== reading the release out of a Server line ==="
 
 check "owner, repo and tag come back" \
@@ -118,6 +122,59 @@ if command -v repo-add >/dev/null && command -v bsdtar >/dev/null; then
     [ "$(grep -A1 '%VERSION%' <<<"$desc" | tail -1)" = "1:2.0-1" ]
 else
   echo "- skipped the repo-add checks (repo-add/bsdtar not installed)"
+fi
+
+echo
+echo "=== migration keyring publication ordering ==="
+
+# The migration code is shipped inside the omarchy archive.  Publishing that
+# archive must be impossible unless the final repository database provides the
+# minimum fork keyring version encoded in the archive metadata.
+if command -v repo-add >/dev/null && command -v bsdtar >/dev/null && command -v vercmp >/dev/null; then
+  make_package() {
+    local package="$1" version="$2" dependency="${3:-}" directory
+
+    directory="$WORK/$package"
+
+    mkdir -p "$directory"
+    {
+      printf 'pkgname = %s\n' "$package"
+      printf 'pkgbase = %s\n' "$package"
+      printf 'pkgver = %s\n' "$version"
+      printf 'pkgdesc = test package\narch = any\nbuilddate = 1\nsize = 1\n'
+      [[ -z $dependency ]] || printf 'depend = %s\n' "$dependency"
+    } >"$directory/.PKGINFO"
+    bsdtar -czf "$WORK/$package-$version-any.pkg.tar.gz" -C "$directory" .PKGINFO
+    printf '%s\n' "$WORK/$package-$version-any.pkg.tar.gz"
+  }
+
+  keyring=$(make_package omarchy-mac-keyring 20260914-2)
+  omarchy=$(make_package omarchy 4.0.3 'omarchy-mac-keyring>=20260914-2')
+  mkdir -p "$WORK/ordered"
+  cp "$keyring" "$omarchy" "$WORK/ordered/"
+  (cd "$WORK/ordered" && repo-add omarchy-aarch64.db.tar.zst ./*.pkg.tar.gz) >/dev/null 2>&1
+  check "omarchy publishes when its required keyring is in the final database" \
+    verify_omarchy_keyring_publication "$WORK/ordered/omarchy-aarch64.db.tar.zst" "$omarchy"
+
+  stale_keyring=$(make_package stale-keyring 20260913-1)
+  # Its archive name may differ, but metadata controls the database identity.
+  mkdir -p "$WORK/stale"
+  cp "$omarchy" "$WORK/stale/"
+  mkdir -p "$WORK/stale-keyring-metadata"
+  sed 's/pkgname = stale-keyring/pkgname = omarchy-mac-keyring/' "$WORK/stale-keyring/.PKGINFO" >"$WORK/stale-keyring-metadata/.PKGINFO"
+  bsdtar -czf "$WORK/stale/omarchy-mac-keyring-20260913-1-any.pkg.tar.gz" -C "$WORK/stale-keyring-metadata" .PKGINFO
+  (cd "$WORK/stale" && repo-add omarchy-aarch64.db.tar.zst ./*.pkg.tar.gz) >/dev/null 2>&1
+  check "omarchy publication fails when the repository keyring is too old" \
+    not_in_subshell verify_omarchy_keyring_publication "$WORK/stale/omarchy-aarch64.db.tar.zst" "$omarchy"
+
+  unbounded=$(make_package unbounded-omarchy 4.0.3)
+  mkdir -p "$WORK/unbounded-metadata"
+  sed 's/pkgname = unbounded-omarchy/pkgname = omarchy/' "$WORK/unbounded-omarchy/.PKGINFO" >"$WORK/unbounded-metadata/.PKGINFO"
+  bsdtar -czf "$WORK/unbounded-omarchy.pkg.tar.gz" -C "$WORK/unbounded-metadata" .PKGINFO
+  check "omarchy publication fails without a minimum keyring dependency" \
+    not_in_subshell verify_omarchy_keyring_publication "$WORK/ordered/omarchy-aarch64.db.tar.zst" "$WORK/unbounded-omarchy.pkg.tar.gz"
+else
+  echo "- skipped the publication-order checks (repo-add/bsdtar/vercmp not installed)"
 fi
 
 echo
