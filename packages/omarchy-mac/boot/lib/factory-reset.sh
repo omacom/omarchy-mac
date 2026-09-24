@@ -175,7 +175,8 @@ old_menu_matches_live_ukis() {
     path=${path%%#*}
     hash=${line##*#}
     [[ -f $boot/efi$path && $(b2sum "$boot/efi$path" | cut -d' ' -f1) == "$hash" ]] || return 1
-  done < <(grep -o 'boot():/EFI/Linux/[^#[:space:]]*#[0-9a-f]*' "$RESET_BOOT_BACKUP/tree/efi/limine.conf")
+  done < <(sed -n -E 's/^[[:space:]]*path:[[:space:]]*(boot\(\):\/EFI\/Linux\/[^#[:space:]]*#[0-9a-f]*).*/\1/p' \
+    "$RESET_BOOT_BACKUP/tree/efi/limine.conf")
 }
 
 # Put the live boot files back exactly as they were before the rebuild. The

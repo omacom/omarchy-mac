@@ -366,7 +366,7 @@ rm -rf "$tmp"/omarchy-reset-boot.*
 mkdir -p "$live/efi/EFI/Linux" "$live/efi/EFI/BOOT" "$live/efi/0123456789abcdef0123456789abcdef" "$live/grub"
 printf 'old uki' >"$live/efi/EFI/Linux/omarchy_linux-asahi.efi"
 old_uki_hash=$(b2sum "$live/efi/EFI/Linux/omarchy_linux-asahi.efi" | cut -d' ' -f1)
-printf 'timeout: 3\n/+Omarchy\ncomment: machine-id=0123456789abcdef0123456789abcdef\n  //linux-asahi\n  path: boot():/EFI/Linux/omarchy_linux-asahi.efi#%s\n' "$old_uki_hash" >"$live/efi/limine.conf"
+printf 'timeout: 3\n# path: boot():/EFI/Linux/removed.efi#0123abcd\n/+Omarchy\ncomment: machine-id=0123456789abcdef0123456789abcdef\n  //linux-asahi\n  path: boot():/EFI/Linux/omarchy_linux-asahi.efi#%s\n' "$old_uki_hash" >"$live/efi/limine.conf"
 printf 'limine' >"$live/efi/EFI/BOOT/BOOTAA64.EFI"
 printf 'history' >"$live/efi/0123456789abcdef0123456789abcdef/limine_history"
 printf 'old initramfs' >"$live/initramfs-linux-asahi.img"
@@ -422,7 +422,11 @@ printf 'new initramfs' >"$live/initramfs-linux-asahi.img"
 exit 0
 SH
 chmod +x "$stub_bin/mkinitcpio"
-if (trap cleanup EXIT; sync() { return 1; }; rebuild_next_boot "$next"); then test_fail "an unflushed rebuild fails the reset"; fi
+: >"$calls"
+if (trap cleanup EXIT; sync() { if [[ ${1:-} == "-f" ]]; then command sync "$@"; else return 1; fi; }; rebuild_next_boot "$next"); then
+  test_fail "an unflushed rebuild fails the reset"
+fi
+grep -q '^chroot .* mkinitcpio' "$calls" || test_fail "the flush failure comes after the rebuild" "$(cat "$calls")"
 after_tree=$(cd "$live" && find . -type f -exec sha256sum {} + | sort)
 [[ $after_tree == "$before_tree" ]] || test_fail "an unflushed rebuild restores the live boot files" "$(diff <(echo "$before_tree") <(echo "$after_tree"))"
 pass "rebuilt boot files are flushed before the reset continues"
