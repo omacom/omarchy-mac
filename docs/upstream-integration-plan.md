@@ -111,10 +111,12 @@ Chris Kearney is contributing decoder fixes and maintaining the VA-API driver fo
 ### Sources and packages
 
 - [omacom/linux#10](https://github.com/omacom/linux/pull/10) contains the AVD kernel changes and currently targets `tb`.
-- [omarchy-pkgs-aarch64#53](https://github.com/omarchy-mac/omarchy-pkgs-aarch64/pull/53) packages the [libva-v4l2_request driver](https://github.com/iconidentify/libva-v4l2_request). Both PRs are ready for review.
+- [omarchy-pkgs-aarch64#53](https://github.com/omarchy-mac/omarchy-pkgs-aarch64/pull/53) updates the Mac package to Chris's [libva-v4l2_request fork](https://github.com/iconidentify/libva-v4l2_request). Both PRs are ready for review.
 - Firmware comes from Asahi ALARM's `avd-fw`; [package PR #63](https://github.com/omarchy-mac/omarchy-pkgs-aarch64/pull/63) removes the duplicate Omarchy recipe. The kernel driver, firmware and VA-API userspace driver are all required.
 
-Chris proposes transferring the library to `omacom/libva-v4l2_request`, preserving its history and his maintainer access. That needs org approval; development continues in the current repository until then. Keep the package recipe in `omarchy-pkgs-aarch64` for the initial release.
+The `libva-v4l2_request-avd` recipe [already exists in `omacom/omarchy-pkgs`](https://github.com/omacom/omarchy-pkgs/tree/master/pkgbuilds/libva-v4l2_request-avd), where it still builds sofus13's 1.3 release. Create a new `omacom/libva-v4l2_request` source repository for Chris's work, preserving its history and his maintainer access, subject to org approval. Development continues in [Chris's fork](https://github.com/iconidentify/libva-v4l2_request) until the shared repository is ready.
+
+Update the existing `omacom/omarchy-pkgs` recipe to build a pinned, tested revision from the new source repository in place of sofus13's release. Point the `omarchy-pkgs-aarch64` recipe at that same revision and publish a version that supersedes the existing package. Mac installations currently install this package from `omarchy-pkgs-aarch64`; their official Omarchy repository is configured for database sync only, so changing the upstream recipe alone will not update them.
 
 ### Tested so far
 
@@ -126,7 +128,7 @@ The complete release kernel still needs to be built and booted. Other M1/M2 mode
 
 Ryan/DJ: please confirm whether `tb` is the right integration branch and how these fixes reach the Asahi-based M1/M2 release kernel. An Aurora merge alone would not cover the default Asahi installation.
 
-Scott/Naeem: please confirm who will build and publish the compatible kernel and userspace packages, and who can arrange the library transfer.
+Scott/Naeem: please confirm who will create the shared driver repository with Chris's maintainer access, update both package recipes, and build and publish the compatible kernel and userspace packages.
 
 Chris will handle the remaining video testing against the agreed release kernel and package set, and keep the results and hardware coverage on the video-acceleration workstream card.
 
