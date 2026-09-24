@@ -465,6 +465,24 @@ hash -r
 rm -rf "$tmp"/omarchy-reset-boot.*
 pass "restoring without staging room works, and a partial restore keeps the rebuilt menu"
 
+# The saved menu's UKI paths are read the way Limine reads them: any key case,
+# the image_path alias, comments ignored, and a path without a hash refused.
+menu_probe="$tmp/menu-probe"
+mkdir -p "$menu_probe/backup/tree/efi" "$menu_probe/boot/efi/EFI/Linux"
+printf 'uki' >"$menu_probe/boot/efi/EFI/Linux/a.efi"
+good=$(b2sum "$menu_probe/boot/efi/EFI/Linux/a.efi" | cut -d' ' -f1)
+probe_menu() {
+  printf '%s\n' "$@" >"$menu_probe/backup/tree/efi/limine.conf"
+  RESET_BOOT_BACKUP="$menu_probe/backup" old_menu_matches_live_ukis "$menu_probe/boot"
+}
+probe_menu "  path: boot():/EFI/Linux/a.efi#$good" "# path: boot():/EFI/Linux/gone.efi#00" ||
+  test_fail "a matching UKI with a commented stale path allows the saved menu"
+for key in PATH Path image_path IMAGE_PATH; do
+  if probe_menu "  $key: boot():/EFI/Linux/a.efi#00ff"; then test_fail "$key: with a stale hash blocks the saved menu"; fi
+done
+if probe_menu "  path: boot():/EFI/Linux/a.efi"; then test_fail "a UKI path without a hash blocks the saved menu"; fi
+pass "the saved menu is checked against every active UKI path form"
+
 # The same failure hands back the finished encryption state it reopened.
 printf 'format=1\nphase=finished\npartition=p\nluks_uuid=u\nowner_slot=1\nrecovery_slot=2\n' >"$OMARCHY_ENCRYPT_STATE"
 state_before=$(cat "$OMARCHY_ENCRYPT_STATE")

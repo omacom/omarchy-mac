@@ -169,14 +169,32 @@ restore_one_boot_file() {
 # The saved menu may go back only when every UKI it names is on the ESP with
 # the hash it records; otherwise Limine would refuse to boot it.
 old_menu_matches_live_ukis() {
-  local boot=$1 line path hash
-  while IFS= read -r line; do
-    path=${line#boot():}
+  local boot=$1 value path hash
+  while IFS= read -r value; do
+    [[ $value == *"#"* ]] || return 1
+    path=${value#boot():}
     path=${path%%#*}
-    hash=${line##*#}
+    hash=${value##*#}
     [[ -f $boot/efi$path && $(b2sum "$boot/efi$path" | cut -d' ' -f1) == "$hash" ]] || return 1
-  done < <(sed -n -E 's/^[[:space:]]*path:[[:space:]]*(boot\(\):\/EFI\/Linux\/[^#[:space:]]*#[0-9a-f]*).*/\1/p' \
-    "$RESET_BOOT_BACKUP/tree/efi/limine.conf")
+  done < <(limine_menu_uki_paths "$RESET_BOOT_BACKUP/tree/efi/limine.conf")
+}
+
+# Active path directives (Limine keys are case-insensitive; image_path is an
+# alias) that name a UKI on the ESP. Comment lines are skipped.
+limine_menu_uki_paths() {
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      if (line ~ /^#/ || index(line, ":") == 0) next
+      key = tolower(substr(line, 1, index(line, ":") - 1))
+      if (key != "path" && key != "image_path") next
+      value = substr(line, index(line, ":") + 1)
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value ~ /^boot\(\):\/EFI\/Linux\//) print value
+    }
+  ' "$1"
 }
 
 # Put the live boot files back exactly as they were before the rebuild. The
