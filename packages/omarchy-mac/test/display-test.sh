@@ -47,3 +47,44 @@ if kill -0 "$waiter" 2>/dev/null; then
 fi
 wait "$waiter" || fail 'the wait never fails the greeter'
 pass 'greeter waits for the display controller and starts when its card appears'
+
+stage="$work/root"
+user_setup="$stage/usr/bin/omarchy-mac-setup-user"
+export HOME="$work/home" XDG_RUNTIME_DIR="$work/no-session"
+unset XDG_CONFIG_HOME XDG_STATE_HOME
+looknfeel="$HOME/.config/hypr/looknfeel.lua"
+marker="$HOME/.local/state/omarchy/mac-cursor-configured"
+wants="$HOME/.config/systemd/user/graphical-session.target.wants/omarchy-asahi-mic.service"
+software_cursor() {
+  if command -v lua >/dev/null; then
+    lua - "$looknfeel" <<'LUA'
+hl = { config = function(c) software = c.cursor and c.cursor.no_hardware_cursors or software end }
+dofile(arg[1])
+os.exit(software == true and 0 or 1)
+LUA
+  else
+    grep -q 'no_hardware_cursors = true' "$looknfeel"
+  fi
+}
+
+"$user_setup" "$stage"
+[[ ! -e $marker && -L $wants ]] || fail 'without a Hyprland config the cursor waits and the microphone is still set up'
+mkdir -p "${looknfeel%/*}"
+printf '%s\n' '-- User look and feel' >"$looknfeel"
+APPLE=0 "$user_setup" "$stage"
+software_cursor && fail 'other platforms keep the hardware cursor'
+"$user_setup" "$stage"
+software_cursor || fail 'Apple Silicon draws the cursor in software'
+"$user_setup" "$stage"
+(( $(grep -c no_hardware_cursors "$looknfeel") == 1 )) || fail 'cursor setup is idempotent'
+pass 'Apple Silicon users get a software cursor once'
+
+printf '%s\n' '-- User look and feel' >"$looknfeel"
+"$user_setup" "$stage"
+software_cursor && fail 'a removed software cursor stays removed'
+rm "$marker"
+printf '%s\n' 'hl.config({ cursor = { no_hardware_cursors = false } })' >"$looknfeel"
+"$user_setup" "$stage"
+[[ $(<"$looknfeel") == 'hl.config({ cursor = { no_hardware_cursors = false } })' && -f $marker ]] ||
+  fail 'an existing cursor choice is kept'
+pass 'a removed or existing cursor choice survives repeated setup'
