@@ -5,13 +5,13 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 migration=$(grep -l 'Draw the pointer in software on every Apple Silicon Mac' "$ROOT"/migrations/*.sh)
-[[ $(wc -l <<<"$migration") == 1 ]] || fail "one migration draws the Apple pointer in software" "$migration"
+(( $(wc -l <<<"$migration") == 1 )) || fail "one migration draws the Apple pointer in software" "$migration"
 
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 cat >"$test_tmp/omarchy-hw-apple-silicon" <<'SH'
 #!/bin/bash
-[[ $APPLE == 1 ]]
+[[ $APPLE == "1" ]]
 SH
 cat >"$test_tmp/omarchy-setup-mac" <<'SH'
 #!/bin/bash

@@ -26,7 +26,7 @@ SH
 # running the suite.
 cat >"$mock_bin/omarchy-hw-apple-silicon" <<'SH'
 #!/bin/bash
-[[ ${APPLE:-0} == 1 ]]
+[[ ${APPLE:-0} == "1" ]]
 SH
 
 cat >"$mock_bin/omarchy-hw-display" <<'SH'
@@ -164,11 +164,11 @@ if APPLE=1 run_brightness --no-osd --monitor USB-1 +5% >/dev/null 2>&1; then
 fi
 [[ ! -s $call_log ]] || fail "a Mac external monitor without DDC probes nothing" "$(<"$call_log")"
 brightness=$(APPLE=1 run_brightness --monitor eDP-1)
-[[ $brightness == "40" ]] || fail "a Mac built-in panel still uses the kernel backlight" "actual: $brightness"
+(( brightness == 40 )) || fail "a Mac built-in panel still uses the kernel backlight" "actual: $brightness"
 pass "a Mac skips DDC for an external monitor without a DDC channel"
 
 rm -f "$runtime_dir/omarchy-brightness-display-ddc/"*
 : >"$test_tmp/drm/card2-USB-1/ddc"
 brightness=$(APPLE=1 DDC_CONNECTOR=USB-1 run_brightness --monitor USB-1)
-[[ $brightness == "50" ]] || fail "a Mac external monitor with a DDC channel uses DDC" "actual: $brightness"
+(( brightness == 50 )) || fail "a Mac external monitor with a DDC channel uses DDC" "actual: $brightness"
 pass "a Mac external monitor with a DDC channel uses DDC"

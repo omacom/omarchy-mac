@@ -15,7 +15,7 @@ pass 'greeter drop-in and helper are staged'
 mkdir -p "$work/bin"
 cat >"$work/bin/omarchy-hw-apple-silicon" <<'STUB'
 #!/bin/bash
-[[ ${APPLE:-1} == 1 ]]
+[[ ${APPLE:-1} == "1" ]]
 STUB
 chmod +x "$work/bin/omarchy-hw-apple-silicon"
 export PATH="$work/bin:$PATH" OMARCHY_PROC_ROOT="$work/proc" OMARCHY_DEV_ROOT="$work/dev"
