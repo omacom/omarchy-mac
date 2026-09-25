@@ -4,7 +4,7 @@
 Each diagram is a list of lanes, nodes and edges placed on a fixed grid. The
 SVGs carry no colours of their own: the page stylesheet themes them through the
 .diagram classes, so they follow the site theme like everything else.
-Run it after editing and commit the SVGs; the Pages workflow checks they match.
+Run it after editing and commit the SVGs; the mac-manual workflow checks they match.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ class Diagram:
                 (
                     l
                     for l in self.lanes
-                    if l.x <= n.x and n.x + n.w <= l.x + l.w + 1
+                    if l.x <= n.x and n.x + n.w <= l.x + l.w + 1 and l.y <= n.y < l.y + l.h
                 ),
                 None,
             )
@@ -183,40 +183,41 @@ class Diagram:
 
 
 def repos() -> Diagram:
-    d = Diagram("repositories", 900, 700, "How the repositories, the package channels and the installer fit together")
+    d = Diagram("repositories", 900, 620, "How the Mac packages, the package repository and the installer fit together")
     d.lanes = [
-        Lane(16, 16, 276, 560, "omarchy-mx-mac", "fork of omacom/omarchy, main"),
-        Lane(312, 16, 276, 560, "omarchy-pkgs", "fork of omacom/omarchy-pkgs"),
-        Lane(608, 16, 276, 560, "Distribution", "Cloudflare R2 and the user's Mac"),
+        Lane(16, 16, 276, 370, "omacom/omarchy-mac", "Mac packages and tooling"),
+        Lane(312, 16, 276, 370, "omacom/omarchy-pkgs", "the signed package repository"),
+        Lane(608, 16, 276, 370, "omacom/omarchy-mac-installer", "the macOS app and the image"),
     ]
     W = 236
     d.nodes = [
-        Node("runtime", 36, 70, "Desktop runtime", ["bin, install, migrations,", "themes, shell, config"], w=W),
-        Node("hw", 36, 170, "Apple Silicon layer", ["install/hardware/apple,", "behind the Apple Silicon gate"], w=W),
-        Node("app", 36, 270, "macOS installer app", ["SwiftPM, Developer ID,", "notarized .pkg"], w=W, tone="tone-brand"),
-        Node("harness", 36, 370, "Acceptance harness", ["test/vm: KVM on the test Macs,", "evidence records"], w=W),
-        Node("recipes", 332, 70, "PKGBUILDs", ["omarchy-dev, omarchy-", "settings-dev, omarchy-", "mac-boot, linux-aurora"], w=W),
-        Node("lanes", 332, 170, "Release lanes", ["arm64 runners: candidate,", "promote, runtime, image"], w=W),
-        Node("repo", 332, 270, "[omarchy] aarch64 repo", ["signed packages, immutable", "releases, pointer on R2"], w=W, tone="tone-blue"),
-        Node("image", 332, 370, "Mac image", ["root.img, boot.img,", "PROVENANCE, IMAGE.sig"], w=W, tone="tone-blue"),
-        Node("r2", 628, 70, "downloads.aicodelabs…", ["channels/<ch>/catalog", "installer/<ch>/…pkg", "releases/… immutable"], w=W, tone="tone-brand"),
-        Node("mac", 628, 270, "User's Mac", ["verifies the catalog,", "writes the image, first", "boot, omarchy update"], w=W),
-        Node("alarm", 628, 470, "Arch Linux ARM + Asahi", ["core, extra, alarm,", "asahi-alarm: linux-asahi,", "mesa, vendor firmware"], w=W, tone="tone-ext"),
+        Node("mac-pkg", 36, 70, "omarchy-mac", ["microphone, Wi-Fi resume,", "notch, Wi-Fi backend"], w=W),
+        Node("boot-pkg", 36, 170, "omarchy-mac-boot", ["initramfs, encryption,", "first boot, Limine"], w=W),
+        Node("tools", 36, 270, "Mac tooling", ["release, VM and hardware", "acceptance"], w=W),
+        Node("recipes", 332, 70, "Recipes", ["commit-pinned sources:", "omarchy, omarchy-mac,", "linux-aurora, m1n1, U-Boot"], w=W),
+        Node("build", 332, 190, "Signed builds", ["aarch64 only, edge first,", "rc and stable once qualified"], w=W),
+        Node("repo", 332, 290, "[omarchy] for aarch64", ["pkgs.omarchy.org, signed", "with the Omarchy key"], w=W, tone="tone-blue"),
+        Node("image", 628, 70, "Mac image", ["signed packages pinned", "to one commit"], w=W, tone="tone-blue"),
+        Node("app", 628, 190, "Installer app", ["notarized .pkg, signed", "channel catalogs"], w=W, tone="tone-brand"),
+        Node("mac", 628, 290, "Your Mac", ["installs, first boot,", "then omarchy update"], w=W),
+        Node("omarchy", 36, 410, "omacom/omarchy", ["the desktop: omarchy,", "omarchy-settings"], w=W, tone="tone-ext"),
+        Node("upstreams", 36, 510, "Aurora and Asahi", ["aurora-silicon/linux, m1n1,", "U-Boot, installer engine"], w=W, tone="tone-ext"),
+        Node("alarm", 628, 410, "Arch Linux ARM", ["core, extra, alarm and", "asahi-alarm mirrors"], w=W, tone="tone-ext"),
     ]
     d.edges = [
-        Edge("runtime", "recipes", "source pin", "right", "left"),
-        Edge("hw", "recipes", src_side="right", dst_side="left"),
-        Edge("recipes", "lanes"),
-        Edge("lanes", "repo"),
-        Edge("repo", "image"),
-        Edge("harness", "image", "VM acceptance", "right", "left", cls="dashed"),
-        Edge("app", "r2", "publish", "right", "left", cls="brand"),
-        Edge("image", "r2", "release + catalog", "right", "left", cls="brand"),
-        Edge("r2", "mac", "signed catalog", cls="brand"),
-        Edge("repo", "mac", "omarchy update", "right", "left"),
-        Edge("alarm", "mac", "live mirrors", src_side="top", dst_side="bottom"),
+        Edge("mac-pkg", "recipes", src_side="right", dst_side="left"),
+        Edge("boot-pkg", "recipes", src_side="right", dst_side="left"),
+        Edge("omarchy", "recipes", src_side="right", dst_side="left"),
+        Edge("upstreams", "recipes", src_side="right", dst_side="left"),
+        Edge("recipes", "build"),
+        Edge("build", "repo"),
+        Edge("repo", "image", src_side="right", dst_side="left"),
+        Edge("image", "app"),
+        Edge("app", "mac", cls="brand"),
+        Edge("repo", "mac", "", "right", "left"),
+        Edge("alarm", "mac", src_side="top", dst_side="bottom"),
     ]
-    d.legend = [("tone-brand", "signed artefact"), ("tone-blue", "package or image release"), ("tone-ext", "external input")]
+    d.legend = [("tone-brand", "signed installer artefact"), ("tone-blue", "signed packages or image"), ("tone-ext", "external source")]
     return d
 
 
@@ -230,7 +231,7 @@ def install_flow() -> Diagram:
         Node("image", 698, 40, "Image written", ["root.img, boot.img,", "m1n1, device trees"], w=W, tone="tone-blue"),
         Node("stage2", 698, 240, "recoveryOS handoff", ["the user sets the boot", "policy, one reboot"], w=W, tone="tone-ext"),
         Node("firstboot", 472, 240, "omarchy-mac-boot", ["vendor firmware, HID,", "optional LUKS"], w=W, tone="tone-blue"),
-        Node("provision", 246, 240, "Owner provisioning", ["user, password, re-key,", "deferred steps"], w=W),
+        Node("provision", 246, 240, "Owner provisioning", ["user, password, re-key,", "recovery passphrase"], w=W),
         Node("desktop", 20, 240, "Omarchy desktop", ["Hyprland + Quickshell,", "omarchy update onward"], w=W, tone="tone-brand"),
     ]
     d.edges = [
@@ -250,10 +251,10 @@ def boot_chain() -> Diagram:
     d = Diagram("boot-chain", 900, 330, "Boot chain from Apple firmware to the Omarchy root file system")
     d.nodes = [
         Node("iboot", 20, 40, "iBoot", ["Apple firmware,", "boot policy"], w=150, tone="tone-ext"),
-        Node("m1n1", 200, 40, "m1n1", ["stage 1 + 2,", "device tree"], w=150, tone="tone-ext"),
-        Node("uboot", 380, 40, "U-Boot", ["the UEFI on Apple", "Silicon, uboot-asahi"], w=220),
-        Node("loader", 630, 40, "GRUB now, Limine next", ["grub.cfg on /boot,", "limine.conf on the ESP"], w=250, tone="tone-purple"),
-        Node("kernel", 630, 190, "Kernel + initramfs", ["linux-asahi or linux-aurora,", "mkinitcpio, vendor firmware"], w=250, tone="tone-blue"),
+        Node("m1n1", 200, 40, "m1n1", ["stage 1 + 2,", "m1n1-aurora"], w=150, tone="tone-blue"),
+        Node("uboot", 380, 40, "U-Boot", ["the UEFI on Apple", "Silicon, uboot-asahi"], w=220, tone="tone-blue"),
+        Node("loader", 630, 40, "Limine", ["on the ESP, one entry", "per kernel and snapshot"], w=250, tone="tone-blue"),
+        Node("kernel", 630, 190, "Kernel + initramfs", ["linux-aurora, mkinitcpio,", "omarchy-mac-boot hooks"], w=250, tone="tone-blue"),
         Node("root", 20, 190, "btrfs root", ["@ subvolume, snapper snapshots, optional LUKS (sd-encrypt)"], w=580),
     ]
     d.edges = [
@@ -263,113 +264,39 @@ def boot_chain() -> Diagram:
         Edge("loader", "kernel"),
         Edge("kernel", "root", "", "left", "right"),
     ]
-    d.legend = [("tone-ext", "Asahi project component"), ("tone-purple", "changing in the next release"), ("tone-blue", "package built in omarchy-pkgs")]
-    return d
-
-
-def release_pipeline() -> Diagram:
-    d = Diagram("release-pipeline", 900, 720, "How a change travels from a commit to a channel")
-    d.lanes = [
-        Lane(16, 16, 420, 620, "omarchy-pkgs lanes", "arm64 runners, gated environment"),
-        Lane(456, 16, 428, 620, "Acceptance and publication", "test Macs, R2 and the owner's signing key"),
-    ]
-    W = 180
-    d.nodes = [
-        Node("commit", 36, 70, "Runtime commit", ["omarchy-mx-mac main"], w=W),
-        Node("plan", 240, 70, "Incremental planner", ["rebuilds only what", "changed, else full"], w=W),
-        Node("candidate", 36, 190, "Candidate", ["asahi-packages-", "candidate-<sha>"], w=W, tone="tone-blue"),
-        Node("vm", 476, 190, "VM acceptance", ["fresh install in KVM", "on a test Mac"], w=W, tone="tone-orange"),
-        Node("hw", 690, 190, "Hardware gate", ["cold boot when a boot", "payload changed"], w=W, tone="tone-orange"),
-        Node("stable", 36, 310, "Promoted packages", ["asahi-packages-stable-", "<sha>, byte-identical"], w=W, tone="tone-blue"),
-        Node("runtime", 240, 310, "Runtime channel", ["asahi-quattro-", "channel-N bundle"], w=W, tone="tone-blue"),
-        Node("img", 36, 430, "Mac image", ["mac-image-<N>-<lane>", "rc and edge lanes"], w=W, tone="tone-blue"),
-        Node("imgvm", 476, 430, "Image acceptance", ["plain + encrypted", "boot, evidence kept"], w=W, tone="tone-orange"),
-        Node("sign", 690, 310, "Owner signs catalog", ["Keychain Ed25519 key,", "never on disk"], w=W, tone="tone-brand"),
-        Node("channel", 690, 430, "Channel promotion", ["os-promote --to rc,", "later --to stable"], w=W, tone="tone-brand"),
-        Node("update", 476, 550, "Installed Macs", ["omarchy update follows", "the runtime pointer"], w=W),
-        Node("newmac", 690, 550, "New installs", ["installer app reads", "catalog.signed.json"], w=W),
-    ]
-    d.edges = [
-        Edge("commit", "plan"),
-        Edge("plan", "candidate", src_side="bottom", dst_side="right"),
-        Edge("candidate", "vm", cls="dashed"),
-        Edge("vm", "hw"),
-        Edge("hw", "stable", "accepted", "bottom", "top", cls="brand"),
-        Edge("stable", "runtime"),
-        Edge("stable", "img", src_side="bottom", dst_side="top"),
-        Edge("img", "imgvm", cls="dashed"),
-        Edge("imgvm", "sign", src_side="right", dst_side="left"),
-        Edge("sign", "channel", cls="brand"),
-        Edge("channel", "newmac", cls="brand"),
-        Edge("runtime", "update", src_side="bottom", dst_side="left"),
-    ]
-    d.legend = [("tone-blue", "signed release"), ("tone-orange", "gate"), ("tone-brand", "owner step or public channel")]
-    return d
-
-
-def test_ladder() -> Diagram:
-    d = Diagram("test-ladder", 900, 680, "The three questions, the evidence for each, and what it leaves unproved")
-    d.lanes = [
-        Lane(16, 16, 520, 620, "Evidence", "these do not substitute for one another"),
-        Lane(556, 16, 328, 620, "Left unproved", ""),
-    ]
-    W = 480
-    G = 300
-    d.nodes = [
-        Node("q1", 36, 62, "1. Does it preserve macOS?", ["the expensive failure"], w=W, tone="tone-purple"),
-        Node("sim", 36, 135, "Installer unit tests", ["engine tests gate the engine build,", "Swift tests have no gate. Neither in CI"], w=W, tone="tone-orange"),
-        Node("simx", 576, 135, "A real APFS resize", ["both VM harnesses start", "from a blank disk"], w=G, tone="tone-ext"),
-        Node("q2", 36, 229, "2. Does the system work?", ["most of the automation is here"], w=W, tone="tone-purple"),
-        Node("src", 36, 302, "Source tests", ["pull requests and main, 4 CI shards.", "Fixtures, not a running machine"], w=W, tone="tone-blue"),
-        Node("srcx", 576, 302, "An installed system", ["and runtime probes skip", "when headless"], w=G, tone="tone-ext"),
-        Node("vm", 36, 392, "VM acceptance", ["fresh install gates a full release;", "the image run is separate"], w=W, tone="tone-blue"),
-        Node("vmx", 576, 392, "The kernel you boot", ["Aurora cannot run on QEMU,", "so a generic kernel stands in"], w=G, tone="tone-ext"),
-        Node("gui", 36, 482, "Graphical acceptance", ["8 tests in a live session in a", "disposable VM. Never in CI"], w=W, tone="tone-orange"),
-        Node("q3", 36, 572, "3. Does it work on your Mac?", ["a person at a real Mac, cold booted"], w=W, tone="tone-purple"),
-        Node("q3x", 576, 572, "Every Mac", ["two machines in the lab"], w=G, tone="tone-ext"),
-    ]
-    d.edges = [
-        Edge("sim", "simx", "", "right", "left", cls="dashed"),
-        Edge("src", "srcx", "", "right", "left", cls="dashed"),
-        Edge("vm", "vmx", "", "right", "left", cls="dashed"),
-        Edge("q3", "q3x", "", "right", "left", cls="dashed"),
-    ]
-    d.legend = [("tone-purple", "the question"), ("tone-blue", "automated and gated"), ("tone-orange", "automated, launched by hand"), ("tone-ext", "the gap it leaves")]
+    d.legend = [("tone-ext", "Apple firmware"), ("tone-blue", "signed package from omacom/omarchy-pkgs")]
     return d
 
 
 def trust_chain() -> Diagram:
-    d = Diagram("trust-chain", 900, 630, "What signs each artefact, and what checks the signature")
+    d = Diagram("trust-chain", 900, 520, "What signs each artefact, and what checks the signature")
     d.lanes = [
-        Lane(16, 16, 420, 570, "Signed by", "keys held by the project and the owner"),
-        Lane(456, 16, 428, 570, "Checked by", "on the user's Mac, before anything is trusted"),
+        Lane(16, 16, 420, 460, "Signed by", "keys held by the project and its maintainers"),
+        Lane(456, 16, 428, 460, "Checked by", "on the user's Mac, before anything is trusted"),
     ]
     W = 380
     d.nodes = [
-        Node("apple", 36, 70, "Apple Developer ID T2C384FJBD", ["notarized installer .pkg and app"], w=W, tone="tone-brand"),
+        Node("apple", 36, 70, "Apple Developer ID", ["notarized installer .pkg and app"], w=W, tone="tone-brand"),
         Node("gk", 476, 70, "Gatekeeper", ["macOS refuses an unsigned or", "un-notarized installer"], w=W),
-        Node("ed", 36, 170, "Ed25519 catalog key", ["lives only in the owner's Keychain,", "signs each channel catalog"], w=W, tone="tone-brand"),
+        Node("ed", 36, 170, "Ed25519 catalog key", ["held in a maintainer's Keychain,", "signs each channel catalog"], w=W, tone="tone-brand"),
         Node("root", 476, 170, "Trust root in the app bundle", ["catalog signature, and a sequence", "that may not go backwards"], w=W),
         Node("hash", 36, 290, "Per-file SHA-256 in the catalog", ["image parts, engine overlay"], w=W, tone="tone-blue"),
         Node("dl", 476, 290, "The installer app", ["hashes every file it downloads,", "reuses a cached file only on a match"], w=W),
-        Node("rel", 36, 400, "Release key 5983B1CA…5959", ["runtime bundle and release", "descriptors"], w=W, tone="tone-blue"),
-        Node("upd", 476, 400, "omarchy-update-asahi-bundle", ["descriptor, six-package manifest,", "checksums and signatures"], w=W),
-        Node("pac", 36, 510, "Repository signing subkey", ["every package in [omarchy]"], w=W, tone="tone-blue"),
-        Node("pm", 476, 510, "pacman and omarchy-keyring", ["refuses an unsigned package"], w=W),
+        Node("pac", 36, 390, "Omarchy package signing key", ["every package in [omarchy],", "the Mac packages included"], w=W, tone="tone-blue"),
+        Node("pm", 476, 390, "pacman and omarchy-keyring", ["SigLevel Required: refuses", "an unsigned package"], w=W),
     ]
     d.edges = [
         Edge("apple", "gk", "", "right", "left", cls="brand"),
         Edge("ed", "root", "", "right", "left", cls="brand"),
         Edge("hash", "dl", "", "right", "left"),
-        Edge("rel", "upd", "", "right", "left"),
         Edge("pac", "pm", "", "right", "left"),
     ]
-    d.legend = [("tone-brand", "owner or Apple key"), ("tone-blue", "project key or digest")]
+    d.legend = [("tone-brand", "maintainer or Apple key"), ("tone-blue", "project key or digest")]
     return d
 
 
 def main() -> None:
-    for build in (repos, install_flow, boot_chain, release_pipeline, trust_chain, test_ladder):
+    for build in (repos, install_flow, boot_chain, trust_chain):
         d = build()
         (OUT / f"{d.name}.svg").write_text(d.render())
         print(f"wrote {d.name}.svg")

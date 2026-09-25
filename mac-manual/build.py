@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Build the Omarchy MX Mac documentation site into docs/site/dist.
+"""Build the Omarchy Mac manual into mac-manual/dist.
 
 Content lives in content/*.md (front matter between --- lines). Diagrams are
 SVG files in diagrams/ pulled in with {{diagram:name}}. Only the `markdown`
-package is required beyond the standard library.
+package is required beyond the standard library. Set MAC_MANUAL_URL to the
+published address to emit canonical links and a sitemap.
 """
 
 from __future__ import annotations
 
 import html
+import os
 import re
 import shutil
 import sys
@@ -24,12 +26,10 @@ ASSETS = ROOT / "assets"
 TEMPLATE = ROOT / "templates" / "page.html"
 DIST = ROOT / "dist"
 
-SITE_TITLE = "Omarchy MX Mac"
-SITE_URL = "https://omarchy-mx-mac.org"
-REPO_URL = "https://github.com/maralcbr/omarchy-mx-mac"
-DOWNLOAD_URL = (
-    "https://downloads.aicodelabs.com.au/installer/stable/Omarchy-MX-Mac-Installer.pkg"
-)
+SITE_TITLE = "Omarchy Mac"
+SITE_URL = os.environ.get("MAC_MANUAL_URL", "").rstrip("/")
+REPO_URL = "https://github.com/omacom/omarchy-mac"
+INSTALLER_URL = "https://github.com/omacom/omarchy-mac-installer"
 
 
 @dataclass
@@ -180,20 +180,23 @@ def build() -> None:
     for page in pages:
         page.html = add_heading_links(render_markdown(resolve_page_links(page.body_md, page, slugs)))
         page.headings = re.findall(r'<h2 id="([^"]+)"><a[^>]*>(.*?)<span', page.html)
-        canonical = SITE_URL + "/" + ("" if page.slug == "index" else f"{page.slug}/")
+        canonical = ""
+        if SITE_URL:
+            href = SITE_URL + "/" + ("" if page.slug == "index" else f"{page.slug}/")
+            canonical = f'<link rel="canonical" href="{href}">'
         title = SITE_TITLE if page.slug == "index" else f"{page.title} - {SITE_TITLE}"
         out = template
         for key, value in {
             "{{title}}": html.escape(title),
             "{{page_title}}": html.escape(page.title),
             "{{description}}": html.escape(page.description),
-            "{{canonical}}": canonical,
+            "{{canonical_link}}": canonical,
             "{{root}}": page.rel_root,
             "{{nav}}": nav_list(pages, page),
             "{{content}}": page.html,
             "{{pager}}": pager(pages, page),
             "{{repo_url}}": REPO_URL,
-            "{{download_url}}": DOWNLOAD_URL,
+            "{{installer_url}}": INSTALLER_URL,
         }.items():
             out = out.replace(key, value)
         leftovers = re.findall(r"\{\{[a-z_]+\}\}", out)
@@ -202,16 +205,17 @@ def build() -> None:
         page.out_path.parent.mkdir(parents=True, exist_ok=True)
         page.out_path.write_text(out)
 
-    sitemap = "\n".join(
-        f"  <url><loc>{SITE_URL}/{'' if p.slug == 'index' else p.slug + '/'}</loc></url>" for p in pages
-    )
-    (DIST / "sitemap.xml").write_text(
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-        f"{sitemap}\n</urlset>\n"
-    )
+    if SITE_URL:
+        sitemap = "\n".join(
+            f"  <url><loc>{SITE_URL}/{'' if p.slug == 'index' else p.slug + '/'}</loc></url>" for p in pages
+        )
+        (DIST / "sitemap.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            f"{sitemap}\n</urlset>\n"
+        )
     check_links()
-    print(f"built {len(pages)} pages into {DIST.relative_to(ROOT.parent.parent)}")
+    print(f"built {len(pages)} pages into {DIST.relative_to(ROOT.parent)}")
 
 
 def check_links() -> None:

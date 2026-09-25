@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{title}}</title>
 <meta name="description" content="{{description}}">
-<link rel="canonical" href="{{canonical}}">
+{{canonical_link}}
 <link rel="icon" href="{{root}}assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,9 +15,9 @@
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <a class="brand" href="{{root}}" aria-label="Omarchy MX Mac home">
+    <a class="brand" href="{{root}}" aria-label="Omarchy Mac manual home">
       <svg class="brand-mark" viewBox="0 0 1215 285" aria-hidden="true"><use href="{{root}}assets/logo.svg#wordmark"/></svg>
-      <span class="brand-tag">MX Mac</span>
+      <span class="brand-tag">Mac</span>
     </a>
     <nav class="topnav" aria-label="Main">
       <a href="{{root}}">Manual</a>
@@ -25,7 +25,7 @@
       <a href="{{repo_url}}">GitHub</a>
     </nav>
     <div class="topbar-actions">
-      <a class="btn-primary" href="{{download_url}}">Download</a>
+      <a class="btn-primary" href="{{root}}install/">Install</a>
     </div>
     <button class="menu-btn" id="menu-btn" type="button" aria-expanded="false" aria-controls="rail">Chapters</button>
   </div>
@@ -42,7 +42,7 @@
     <article class="chapter">
       <header class="page-heading">
         <svg class="page-wordmark" viewBox="0 0 1215 285" role="img" aria-label="Omarchy"><use href="{{root}}assets/logo.svg#wordmark"/></svg>
-        <p class="page-subtitle">MX Mac Manual</p>
+        <p class="page-subtitle">Mac Manual</p>
       </header>
       <h1>{{page_title}}</h1>
       <div class="prose">
@@ -57,8 +57,8 @@
 
 <footer class="footer">
   <div class="footer-inner">
-    <p>Omarchy MX Mac is a community fork of <a href="https://omarchy.org">Omarchy</a> for Apple Silicon Macs. It is not affiliated with Apple, the Asahi Linux project or the Omarchy Foundation.</p>
-    <p><a href="{{repo_url}}">Source on GitHub</a> · <a href="{{repo_url}}/issues">Issues</a> · <a href="{{repo_url}}/blob/main/CHANGELOG.md">Changelog</a></p>
+    <p>Omarchy Mac brings <a href="https://omarchy.org">Omarchy</a> to Apple Silicon Macs. It is not affiliated with Apple or the Asahi Linux project.</p>
+    <p><a href="{{repo_url}}">Source on GitHub</a> · <a href="{{repo_url}}/issues">Issues</a> · <a href="{{installer_url}}">Installer source</a></p>
   </div>
 </footer>
 
