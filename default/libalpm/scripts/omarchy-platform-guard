@@ -39,12 +39,14 @@ case ${1:-} in
     ;;
 esac
 
-# The overrides below exist for unprivileged tests only.
+# The overrides below exist for unprivileged tests only. The detector is the
+# copy of omarchy-hw-platform shipped beside the guard, so it is there before
+# the omarchy runtime is.
 if (( EUID == 0 )); then
   pacman_db=/var/lib/pacman
   proc=/proc
   manifest=/var/lib/omarchy/image-target
-  detector=/usr/bin/omarchy-hw-platform
+  detector=/usr/share/libalpm/scripts/omarchy-hw-platform
 else
   pacman_db=${OMARCHY_PACMAN_DB:-/var/lib/pacman}
   proc=${OMARCHY_PROC_ROOT:-/proc}
@@ -160,7 +162,7 @@ done <<<"$tag_lines"
 # Builders get told where an image names its target.
 build_hint() {
   if image_build && [[ ! -e $manifest && ! -L $manifest ]]; then
-    echo "This root is not the running system's and has no $manifest, so the running machine's hardware decided. An image build names its target there." >&2
+    echo "This root is not the running system's and has no $manifest. An image built for other hardware names its target there; an install on this machine needs none." >&2
   fi
 }
 

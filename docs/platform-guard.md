@@ -23,7 +23,7 @@ That covers `linux-aurora` (top level, so both `linux-aurora` and `linux-aurora-
 
 ## The guard
 
-- `omarchy-settings` installs `default/libalpm/hooks/00-omarchy-platform-guard.hook` to `/usr/share/libalpm/hooks/`, the guard it runs, `default/libalpm/scripts/omarchy-platform-guard`, to `/usr/share/libalpm/scripts/`, and the detector the guard asks, `omarchy-hw-platform`, to `/usr/bin/`. Shipping all three in one package means the hook never points at a missing script, and the guard can tell the platform before the `omarchy` runtime is installed.
+- `omarchy-settings` installs `default/libalpm/hooks/00-omarchy-platform-guard.hook` to `/usr/share/libalpm/hooks/`, the guard it runs, `default/libalpm/scripts/omarchy-platform-guard`, to `/usr/share/libalpm/scripts/`, and its own copy of the `omarchy-hw-platform` detector beside the guard. Shipping all three in one package means the hook never points at a missing script, and the guard can tell the platform before the `omarchy` runtime, which ships the detector everyone else runs, is installed. No file moves between the two packages, which matters for the dev pair: `omarchy-dev` does not pin `omarchy-settings-dev`'s version, and `omarchy dev pkg-test` installs them in separate transactions.
 - The hook runs before every transaction that installs or upgrades a package, with the transaction's package names on stdin, dependencies included. It is `AbortOnFail`: a refusal stops the transaction before anything changes.
 - The guard reads tags from every synced database in `/var/lib/pacman/sync`, not through `pacman.conf`, so a transaction run with another `--config`, as pacstrap and image builders do, is still checked. A transaction without a tagged package passes without asking which machine this is.
 - With a tagged package in the transaction, the guard works out the platform (below) and refuses the transaction when a package's tags do not include it, naming each such package and its platforms. When the platform cannot be told, because the detector reports contradictory identity or the manifest is invalid, tagged packages are refused and untagged ones still install.
@@ -60,18 +60,14 @@ The guard keeps platform packages off other machines; their services and command
 
 ## Packaging
 
-The `omarchy-settings` recipe installs the three files, and links the detector into `/usr/share/omarchy/bin/` where the Apple predicate and the CLI router look for it; the `omarchy` recipe leaves the detector out of its `bin/` loop. Until the upstream source the recipes build carries these files, the lines are conditional:
+The `omarchy-settings` and `omarchy-settings-dev` recipes install the three files. Until the upstream source they build carries them, the lines are conditional:
 
 ```bash
-if [[ -f bin/omarchy-hw-platform ]]; then
-  install -Dm755 bin/omarchy-hw-platform "$pkgdir/usr/bin/omarchy-hw-platform"
-  install -d "$pkgdir/usr/share/omarchy/bin"
-  ln -s /usr/bin/omarchy-hw-platform "$pkgdir/usr/share/omarchy/bin/omarchy-hw-platform"
-fi
 if [[ -f default/libalpm/hooks/00-omarchy-platform-guard.hook ]]; then
   install -Dm644 default/libalpm/hooks/00-omarchy-platform-guard.hook "$pkgdir/usr/share/libalpm/hooks/00-omarchy-platform-guard.hook"
   install -Dm755 default/libalpm/scripts/omarchy-platform-guard "$pkgdir/usr/share/libalpm/scripts/omarchy-platform-guard"
+  install -Dm755 bin/omarchy-hw-platform "$pkgdir/usr/share/libalpm/scripts/omarchy-hw-platform"
 fi
 ```
 
-`omarchy` depends on the `omarchy-settings` of its own version, so the two upgrade in one transaction and the detector moves between them there. `test/shell.d/config-test.sh` checks both recipes.
+`test/shell.d/config-test.sh` checks the settings recipe.

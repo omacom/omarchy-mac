@@ -260,7 +260,7 @@ GUARD_PROC=$(chroot_proc apple-silicon) \
   allows "a chroot without a manifest, such as an installer on the target, uses the hardware" apple-silicon omarchy-mac
 GUARD_PROC=$(chroot_proc generic-aarch64) \
   refuses "a build host's hardware refuses Apple packages when the image names no target" generic-aarch64 omarchy-mac
-grep -Fq "An image build names its target there." "$test_tmp/err" || fail "the refusal points a builder at the manifest" "$(cat "$test_tmp/err")"
+grep -Fq "An image built for other hardware names its target there" "$test_tmp/err" || fail "the refusal points a builder at the manifest" "$(cat "$test_tmp/err")"
 refuses "a booted system refuses Apple packages" generic-aarch64 omarchy-mac
 ! grep -Fq "image build" "$test_tmp/err" || fail "a booted system's refusal says nothing about image builds" "$(cat "$test_tmp/err")"
 hidden_root="$test_tmp/hidden-root"
@@ -361,7 +361,7 @@ pass "hardware setup starts only with the platform guard resident"
 # setup leaves run before hardware setup, and the leaf is hardware setup's first.
 mapfile -t system_leaves < <(sed -n 's|^run_logged "\$OMARCHY_INSTALL/\(.*\)"$|\1|p' "$ROOT/install/config/all.sh")
 (( ${#system_leaves[@]} > 0 )) || fail "system setup leaves are listed"
-installers='omarchy-pkg-(add|install|aur-add|aur-install)|pacman([[:space:]]+-[^[:space:]]+)*[[:space:]]+(-[[:alpha:]]*[SU]|--sync|--upgrade)|omarchy-setup-mac'
+installers='omarchy-pkg-(add|install|aur-add|aur-install)|pacman[^|;&]*[[:space:]](-[[:alpha:]]*[SU][[:alpha:]]*|--sync|--upgrade)([[:space:]]|$)|omarchy-setup-mac'
 for system_leaf in "${system_leaves[@]}"; do
   ! grep -Eq "$installers" "$ROOT/install/$system_leaf" || fail "system setup installs no packages before hardware setup" "$system_leaf"
 done
