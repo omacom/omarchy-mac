@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# omarchy:summary=Run a fixed boot lifecycle operation through the platform's boot package
+# omarchy:args=[--resolve] <operation> [arguments...]
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# Provisioning, factory reset, update and boot rebuild call a fixed set of
+# operations here. A platform whose boot chain needs its own handling registers
+# a directory of root-owned entrypoints below; on every other platform each
+# operation is a no-op and the caller keeps its generic path. The contract is
+# docs/lifecycle-dispatch.md.
+#
+# --resolve prints the entrypoint an operation would run, or nothing when it is
+# a no-op here, so a caller can choose between a platform implementation and
+# its own generic path.
+
+set -euo pipefail
+
+operations=(
+  provision-prepare provision-commit provision-verify
+  reset-prepare reset-verify reset-rollback
+  update-preflight update-verify
+  boot-rebuild
+)
+
+usage() {
+  echo "Usage: omarchy-lifecycle-dispatch [--resolve] <operation> [arguments...]" >&2
+  echo "Operations: ${operations[*]}" >&2
+  exit 2
+}
+
+resolve=0
+if [[ ${1:-} == "--resolve" ]]; then
+  resolve=1
+  shift
+fi
+operation=${1:-}
+[[ -n $operation ]] || usage
+shift
+[[ " ${operations[*]} " == *" $operation "* ]] || usage
+
+# A privileged caller must not let its environment choose what runs as root:
+# root resolves only the fixed paths below, and the detector beside this file
+# ignores its fixture roots. Fixture roots exist for unprivileged tests.
+fixed_path=/usr/local/sbin:/usr/local/bin:/usr/bin
+detector="$(dirname -- "${BASH_SOURCE[0]}")/omarchy-hw-platform"
+if (( EUID == 0 )); then
+  export PATH=$fixed_path
+  root=""
+else
+  root=${OMARCHY_LIFECYCLE_ROOT:-}
+  root=${root%/}
+  if [[ -n $root && $root != /* ]]; then
+    echo "Error: OMARCHY_LIFECYCLE_ROOT must be an absolute path" >&2
+    exit 1
+  fi
+fi
+
+if ! platform=$("$detector"); then
+  echo "Error: cannot determine the hardware platform for $operation" >&2
+  exit 1
+fi
+
+# Generic, generic-aarch64 and Qualcomm machines have no registered boot
+# package: every operation is a no-op there and callers keep their generic path.
+case $platform in
+  apple-silicon)
+    implementation=/usr/lib/omarchy/mac-boot
+    package=omarchy-mac-boot
+    required=(
+      provision-prepare provision-commit provision-verify
+      reset-prepare reset-verify reset-rollback
+      update-verify
+      boot-rebuild
+    )
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+# Every path from the entrypoint up to / (or the fixture root) must be a real
+# file or directory owned by root, or by the unprivileged caller in a fixture,
+# and writable by nobody else.
+trusted() {
+  local path=$1 top=${root:-/} owner mode
+
+  [[ -f $path && -x $path ]] || return 1
+  while true; do
+    [[ ! -L $path ]] || return 1
+    read -r owner mode < <(stat -c '%u %a' -- "$path") || return 1
+    (( owner == 0 || (EUID != 0 && owner == EUID) )) || return 1
+    (( (8#$mode & 8#022) == 0 )) || return 1
+    [[ $path != "$top" ]] || return 0
+    [[ $path != "/" ]] || return 1
+    path=$(dirname -- "$path")
+  done
+}
+
+entrypoint=$root$implementation/$operation
+
+if [[ ! -e $entrypoint && ! -L $entrypoint ]]; then
+  if [[ " ${required[*]} " == *" $operation "* ]]; then
+    echo "Error: $operation on $platform needs $package, which provides $implementation/$operation; it is not installed" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+if ! trusted "$entrypoint"; then
+  echo "Error: refusing $implementation/$operation: it must be a root-owned executable file in root-owned directories, writable by no one else" >&2
+  exit 1
+fi
+
+if (( resolve )); then
+  printf '%s\n' "$entrypoint"
+else
+  exec /usr/bin/env -i PATH="$fixed_path" "$entrypoint" "$@"
+fi
