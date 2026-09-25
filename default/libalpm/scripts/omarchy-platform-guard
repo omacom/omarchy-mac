@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 
 # Refuse to install packages built for another hardware platform.
 #
@@ -7,11 +7,21 @@
 # stdin. A package declares its platform with groups=('omarchy-platform-<name>'),
 # <name> being what omarchy-hw-platform prints, so its tags are read from the
 # synced repository databases. With --installed it checks the installed packages
-# instead, from the local database. docs/platform-guard.md has the contract.
+# instead, from the local database, and --platform prints the platform it
+# checks against. docs/platform-guard.md has the contract.
 #
 # Only tagged packages depend on the platform: a transaction without one passes
 # without asking which machine this is, and a failure to read a database is
 # reported and skipped, so the guard never wedges pacman over untagged packages.
+
+# Pacman runs hooks as root, chrooted into the transaction's root, with its
+# caller's environment. Privileged mode (-p) keeps functions and shell options
+# from that environment out of this shell, and root starts over in an empty one
+# before reading anything, so no variable reaches the guard or what it runs.
+if (( EUID == 0 )) && [[ ${1:-} != --clean-environment ]]; then
+  exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin /bin/bash -p -- "$0" --clean-environment "$@"
+fi
+[[ ${1:-} != --clean-environment ]] || shift
 
 set -euo pipefail
 
@@ -22,16 +32,15 @@ mode=transaction
 case ${1:-} in
   "") ;;
   --installed) mode=installed ;;
+  --platform) mode=platform ;;
   *)
-    echo "Usage: omarchy-platform-guard [--installed]" >&2
+    echo "Usage: omarchy-platform-guard [--installed|--platform]" >&2
     exit 2
     ;;
 esac
 
-# Pacman runs hooks as root, chrooted into the transaction's root. There the
-# environment decides nothing; the overrides below exist for unprivileged tests.
+# The overrides below exist for unprivileged tests only.
 if (( EUID == 0 )); then
-  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
   pacman_db=/var/lib/pacman
   proc=/proc
   manifest=/var/lib/omarchy/image-target
@@ -62,9 +71,18 @@ sync_records() {
   done
 }
 
-# An image build installs into a chroot on whatever host builds it, so there
-# the root-owned image-target manifest names the platform. A booted system
-# shares PID 1's root, and its own hardware decides.
+# An image build installs into a chroot on whatever host builds it, or into a
+# root without /proc; there the root-owned image-target manifest names the
+# platform. A booted system shares PID 1's root, and its own hardware decides,
+# as it does whenever PID 1 is visible but its root cannot be compared.
+image_build() {
+  if [[ -e $proc/1/root ]]; then
+    [[ ! $proc/1/root -ef / ]]
+  else
+    [[ ! -e $proc/1 && ! -L $proc/1 ]]
+  fi
+}
+
 image_target() {
   local owner perms line platform="" count=0
 
@@ -95,12 +113,17 @@ image_target() {
 }
 
 this_platform() {
-  if [[ -e $proc/1/root && $proc/1/root -ef / ]] || [[ ! -e $manifest && ! -L $manifest ]]; then
-    "$detector"
-  else
+  if image_build && [[ -e $manifest || -L $manifest ]]; then
     image_target
+  else
+    "$detector"
   fi
 }
+
+if [[ $mode == "platform" ]]; then
+  this_platform
+  exit
+fi
 
 declare -A wanted=() tags=()
 

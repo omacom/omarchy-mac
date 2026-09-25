@@ -120,23 +120,34 @@ refuses() {
   fi
 }
 
-# The root-environment probe needs a name no real system database carries.
+# The root-environment probes need a name no real system database carries,
+# tagged for no platform so any machine refuses it, and an image build whose
+# manifest names a platform this machine is not.
 probe="omarchy-guard-probe-$$-$RANDOM"
-make_db "$test_tmp/probe/sync/omarchy.db" "$probe:$apple"
+make_db "$test_tmp/probe/sync/omarchy.db" "$probe:omarchy-platform-nowhere"
+live=$("$ROOT/bin/omarchy-hw-platform" 2>/dev/null) || live=unknown
+decoy=apple-silicon
+[[ $live != "apple-silicon" ]] || decoy=qualcomm
+fake_platform "$test_tmp/decoy" "$decoy"
+mkdir -p "$test_tmp/decoy/proc/1" "$test_tmp/decoy-host"
+ln -s "$test_tmp/decoy-host" "$test_tmp/decoy/proc/1/root"
+printf 'platform=%s\n' "$decoy" >"$test_tmp/decoy-manifest"
+chmod 644 "$test_tmp/decoy-manifest"
+decoy_env=(OMARCHY_PACMAN_DB="$test_tmp/probe" OMARCHY_PROC_ROOT="$test_tmp/decoy/proc"
+  OMARCHY_IMAGE_TARGET="$test_tmp/decoy-manifest" PATH="$test_tmp/decoy/bin:$ROOT/bin:$PATH")
 
 # As root, the guard reads the live databases and the live platform, never the
 # fixtures its environment names: a tagged name in a fixture database is only
-# refused when the fixture is honoured.
+# refused, and the decoy platform only reported, when the fixture is honoured.
 root_runner=()
 if (( EUID != 0 )); then
   root_runner=(unshare --user --map-root-user)
 fi
 if (( EUID == 0 )) || unshare --user --map-root-user true 2>/dev/null; then
-  printf '%s\n' "$probe" |
-    OMARCHY_PACMAN_DB="$test_tmp/probe" OMARCHY_PROC_ROOT="$test_tmp/generic-aarch64/proc" \
-      OMARCHY_IMAGE_TARGET="$test_tmp/no-manifest" PATH="$test_tmp/generic-aarch64/bin:$ROOT/bin:$PATH" \
-      "${root_runner[@]}" "$guard" >/dev/null 2>"$test_tmp/err" ||
-    fail "root ignores fixture databases, platforms and manifests in its environment" "$(cat "$test_tmp/err")"
+  printf '%s\n' "$probe" | env "${decoy_env[@]}" "${root_runner[@]}" "$guard" >/dev/null 2>"$test_tmp/err" ||
+    fail "root ignores a fixture database in its environment" "$(cat "$test_tmp/err")"
+  reported=$(env "${decoy_env[@]}" "${root_runner[@]}" "$guard" --platform 2>/dev/null) || reported=unknown
+  [[ $reported != "$decoy" ]] || fail "root ignores fixture platforms and manifests in its environment"
   pass "root ignores fixture databases, platforms and manifests in its environment"
 else
   pass "no unprivileged user namespace; skipping the root override probe"
@@ -144,8 +155,10 @@ fi
 
 require_platform_fixtures "the platform guard fixtures"
 
-# The negative control for the probe above: without root the fixture is honoured.
+# The negative controls for the probes above: without root the fixtures are honoured.
 GUARD_DB="$test_tmp/probe" refuses "the probe package is refused through the fixture" generic-aarch64 "$probe"
+[[ $(env "${decoy_env[@]}" "$guard" --platform) == "$decoy" ]] || fail "the decoy platform is reported through the fixture"
+pass "without root the guard answers from its fixtures"
 
 for platform in apple-silicon qualcomm generic-aarch64 generic; do
   allows "untagged packages install on $platform" "$platform" firefox aquamarine hyprland omarchy-meta
@@ -174,6 +187,15 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
   refuses "a tag naming no platform is refused on $platform" "$platform" typo-package
   pass "the $platform fixture installs only the packages tagged for it"
 done
+
+# Privileged mode keeps exported functions out: one named awk would otherwise
+# swallow every tag.
+if printf 'omarchy-mac\n' | env "BASH_FUNC_awk%%=() { :; }" OMARCHY_PACMAN_DB="$db" \
+  OMARCHY_PROC_ROOT="$test_tmp/generic-aarch64/proc" OMARCHY_IMAGE_TARGET="$test_tmp/no-manifest" \
+  PATH="$test_tmp/generic-aarch64/bin:$ROOT/bin:$PATH" "$guard" 2>/dev/null; then
+  fail "an exported function cannot hide tags from the guard"
+fi
+pass "an exported function cannot hide tags from the guard"
 
 refuses "a transaction mixing platforms is refused" apple-silicon omarchy-mac x1e-firmware firefox
 [[ $(cat "$test_tmp/err") == "Refusing to install packages built for another platform. This machine is apple-silicon:
@@ -234,6 +256,18 @@ GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc apple-silicon) \
   refuses "the build host's Apple device tree never decides the image target" apple-silicon omarchy-mac
 GUARD_PROC=$(chroot_proc apple-silicon) \
   allows "a chroot without a manifest, such as an installer on the target, uses the hardware" apple-silicon omarchy-mac
+hidden_root="$test_tmp/hidden-root"
+cp -a "$test_tmp/generic-aarch64/proc" "$hidden_root"
+rm "$hidden_root/1/root"
+printf 'platform=apple-silicon\n' >"$manifest"
+GUARD_MANIFEST=$manifest GUARD_PROC=$hidden_root \
+  refuses "a system whose PID 1 root cannot be compared uses the hardware, not a manifest" generic-aarch64 omarchy-mac
+GUARD_ARGS=(--platform)
+GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc generic) allows "--platform reports an image build's target" generic
+[[ $(cat "$test_tmp/out") == "apple-silicon" ]] || fail "--platform reports an image build's target" "$(cat "$test_tmp/out")"
+GUARD_MANIFEST=$manifest allows "--platform reports a booted system's hardware" qualcomm
+[[ $(cat "$test_tmp/out") == "qualcomm" ]] || fail "--platform reports a booted system's hardware" "$(cat "$test_tmp/out")"
+GUARD_ARGS=()
 pass "image builds take their platform from the manifest, and only image builds"
 
 bad_manifest() {

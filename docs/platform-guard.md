@@ -29,13 +29,14 @@ That covers `linux-aurora` (top level, so both `linux-aurora` and `linux-aurora-
 - With a tagged package in the transaction, the guard works out the platform (below) and refuses the transaction when a package's tags do not include it, naming each such package and its platforms. When the platform cannot be told, because the detector reports contradictory identity or is not installed, tagged packages are refused and untagged ones still install.
 - A database it cannot read is reported and skipped, so a broken or stale database never wedges pacman.
 - Not covered: `pacman -U` of a tagged package file whose name no synced database carries, and a transaction whose `--dbpath` lies outside its root.
-- No environment variable changes what the guard does. To turn it off on purpose, mask it, as VM acceptance does for an Apple image in a VM whose device tree is not a Mac's: `ln -s /dev/null /etc/pacman.d/hooks/00-omarchy-platform-guard.hook`.
+- No environment variable changes what the guard does: as root it ignores exported shell functions and restarts in an empty environment before reading anything. To turn it off on purpose, mask it, as VM acceptance does for an Apple image in a VM whose device tree is not a Mac's: `ln -s /dev/null /etc/pacman.d/hooks/00-omarchy-platform-guard.hook`.
 
 ## Which platform
 
-- **A booted system**, where the transaction root is PID 1's root: `omarchy-hw-platform`, so the hardware decides. Environment overrides and any image-target manifest in the root are ignored.
+- **A booted system**, where the transaction root is PID 1's root: `omarchy-hw-platform`, so the hardware decides. Environment overrides and any image-target manifest in the root are ignored. The hardware also decides when PID 1 is visible but its root cannot be compared.
 - **An image build**, where the transaction runs in a chroot on a build host or in a root without `/proc`: the image-target manifest at `/var/lib/omarchy/image-target` in the image's root decides. Without a manifest the hardware decides, which is right for an installer running on the target machine, and which refuses Apple packages on a build host that is not a Mac.
 - **The manifest** is a regular file owned by root and writable only by root. It sets `platform=` once, to `apple-silicon`, `qualcomm`, `generic-aarch64` or `generic`. Comments and other `key=value` lines are ignored. Any other manifest refuses tagged packages.
+- `omarchy-platform-guard --platform` prints the platform the guard checks against.
 
 An image builder writes the manifest before the first transaction that installs platform packages:
 
