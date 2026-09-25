@@ -80,6 +80,45 @@ require_compositor() {
   exit 0
 }
 
+# Fake the hardware identity omarchy-hw-platform reads: a device tree under
+# $1/proc and a uname in $1/bin reporting the platform's CPU. Run the code under
+# test with OMARCHY_PROC_ROOT="$1/proc" and PATH="$1/bin:$ROOT/bin:...", so the
+# real detector and its wrappers answer from the fixture.
+fake_platform() {
+  local dir="$1" platform="$2" machine=aarch64
+  local -a compatible=()
+
+  case $platform in
+    apple-silicon) compatible=(apple,j416c apple,t6021 apple,arm-platform) ;;
+    qualcomm) compatible=(lenovo,yoga-slim7x qcom,x1e80100) ;;
+    generic-aarch64) compatible=(raspberrypi,5-model-b brcm,bcm2712) ;;
+    generic) machine=x86_64 ;;
+    *) fail "fake_platform knows the platform $platform" ;;
+  esac
+
+  rm -rf "$dir/proc"
+  mkdir -p "$dir/proc" "$dir/bin"
+  if (( ${#compatible[@]} > 0 )); then
+    mkdir -p "$dir/proc/device-tree"
+    printf '%s\0' "${compatible[@]}" >"$dir/proc/device-tree/compatible"
+  fi
+
+  cat >"$dir/bin/uname" <<SH
+#!/bin/bash
+[[ \${1:-} == -m ]] && { printf '%s\\n' $machine; exit 0; }
+exec /usr/bin/uname "\$@"
+SH
+  chmod +x "$dir/bin/uname"
+}
+
+# omarchy-hw-platform ignores fixture roots when it runs as root, so a root run
+# cannot fake a platform. Skip the rest of the file there.
+require_platform_fixtures() {
+  (( EUID != 0 )) && return 0
+  skip "running as root, where omarchy-hw-platform ignores fixtures; skipping $1"
+  exit 0
+}
+
 run_node_test() {
   require_command node
 

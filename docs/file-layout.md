@@ -320,6 +320,10 @@ finalization. It sources:
 Logging goes to `/var/log/omarchy-install.log` via
 `install/helpers/logging.sh`.
 
+Platform-specific setup asks `omarchy-hw-platform`, which prints `apple-silicon`, `qualcomm`, `generic-aarch64` or `generic`. It reads the vendor prefix of each token in the device tree's root `compatible` (`apple,` or `qcom,`, from `/proc/device-tree` or `/sys/firmware/devicetree/base`) and the CPU architecture, and fails when they contradict each other. Gate a platform on it or on a predicate built on it, such as `omarchy-hw-apple-silicon`, never on `uname -m` alone: `test/shell.d/architecture-gates-test.sh` fails on an architecture check that isn't a reviewed ABI, binary or repository exception.
+
+An image built away from the machine it will run on names its target in a root-owned manifest, `/var/lib/omarchy/image/target` (`format=1`, `platform=<omarchy-hw-platform value>`, unknown keys ignored). While the root is being built rather than booted, the detector answers from the manifest and never reads the build host's device tree. The root counts as built when it shows it: no `/run/systemd/system`, PID 1's root is another one (a chroot), or PID 1 is not systemd (a PID namespace). A booted system always answers from its hardware, even with a manifest left behind, so no unit that asks the detector may use `PrivatePIDs=`. As root the detector restarts in an empty environment and ignores the fixture variables its tests use.
+
 The package lists the ISO pacstraps live at `install/omarchy-base.packages`
 and `install/omarchy-other.packages`; the ISO builder also reads them when
 constructing its offline mirror.
