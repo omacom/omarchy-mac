@@ -117,6 +117,27 @@ grep -q "contradictory platform identity" "$test_tmp/contradiction.err" ||
   fail "a platform the detector cannot place stops the build" "stderr: $(<"$test_tmp/contradiction.err")"
 pass "a platform the detector cannot place stops the build"
 
+# A Mac that set up its own initramfs before the Apple boot package keeps it:
+# busybox encrypt unlocks through cryptdevice=, which sd-encrypt cannot parse,
+# and the asahi hook carries the firmware. The asahi hook marks such a root off
+# a Mac too. Busybox encrypt alone means nothing off Apple Silicon.
+legacy_encrypted="base udev plymouth autodetect microcode modconf kms keyboard keymap consolefont block encrypt asahi filesystems fsck"
+legacy_plain="base udev autodetect microcode modconf kms keyboard keymap consolefont block asahi filesystems fsck"
+for legacy in "$legacy_encrypted" "$legacy_plain" "${legacy_encrypted/ asahi / }"; do
+  new_etc
+  sed -i "s/^HOOKS=.*/HOOKS=($legacy)/" "$etc/mkinitcpio.conf"
+  assert_hooks "a Mac keeps its own HOOKS=($legacy)" apple-silicon "$legacy"
+done
+new_etc
+sed -i "s/^HOOKS=.*/HOOKS=($legacy_plain)/" "$etc/mkinitcpio.conf"
+assert_hooks "an asahi root keeps its HOOKS off a Mac" generic-aarch64 "$legacy_plain"
+new_etc
+sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt filesystems fsck)/" "$etc/mkinitcpio.conf"
+assert_hooks "busybox encrypt off Apple Silicon still gets the Omarchy baseline" generic "$x86_hooks"
+new_etc
+sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf kms keyboard keymap consolefont block filesystems fsck)/" "$etc/mkinitcpio.conf"
+assert_hooks "a Mac with a stock busybox line and no asahi hook gets the systemd baseline" apple-silicon "$apple_hooks"
+
 # A platform fragment sorts after the baseline and before omarchy_hooks.conf,
 # as omarchy-mac-boot's 90- drop-ins do. Its hooks must reach the image.
 new_etc
@@ -145,27 +166,28 @@ assert_hooks "the NVIDIA filter keeps a platform fragment's hooks" generic \
   "base udev plymouth keyboard autodetect microcode modconf keymap consolefont block encrypt platform-firmware filesystems fsck btrfs-overlayfs platform-late"
 
 # Existing x86 configurations build the image they built before the baseline
-# moved: the same HOOKS, MODULES and FILES.
+# moved: the same HOOKS, MODULES and FILES. thunderbolt? is the same module,
+# optional so that a kernel without it (as on ARM) still builds.
 new_etc
 assert_composed "x86 without hardware drop-ins is unchanged" generic \
-  "$x86_hooks" "thunderbolt" ""
+  "$x86_hooks" "thunderbolt?" ""
 
 new_etc
 drop_in nvidia.conf <<<"MODULES+=($nvidia_modules)"
 pci_devices 0x10de:0x030000
 assert_composed "NVIDIA-only x86 drops only kms" generic \
-  "$x86_hooks_without_kms" "$nvidia_modules thunderbolt" ""
+  "$x86_hooks_without_kms" "$nvidia_modules thunderbolt?" ""
 
 new_etc
 drop_in nvidia.conf <<<"MODULES+=($nvidia_modules)"
 pci_devices 0x8086:0x030000 0x10de:0x030200
 assert_composed "hybrid x86 keeps kms for the iGPU" generic \
-  "$x86_hooks" "$nvidia_modules thunderbolt" ""
+  "$x86_hooks" "$nvidia_modules thunderbolt?" ""
 
 new_etc
 pci_devices 0x10de:0x030000
 assert_composed "NVIDIA-only x86 without early nvidia_drm keeps kms" generic \
-  "$x86_hooks" "thunderbolt" ""
+  "$x86_hooks" "thunderbolt?" ""
 
 new_etc
 drop_in nvidia.conf <<<"MODULES+=($nvidia_modules)"
@@ -173,21 +195,21 @@ drop_in omarchy_resume.conf <<<"HOOKS+=(resume)"
 drop_in 99-omarchy-provisioning-key.conf <<<"FILES+=(/etc/omarchy/provisioning.key)"
 pci_devices 0x10de:0x030000
 assert_composed "NVIDIA-only x86 with hibernation and a provisioning key is unchanged" generic \
-  "$x86_hooks_without_kms resume" "$nvidia_modules thunderbolt" "/etc/omarchy/provisioning.key"
+  "$x86_hooks_without_kms resume" "$nvidia_modules thunderbolt?" "/etc/omarchy/provisioning.key"
 
 new_etc
 drop_in apple-t2.conf <<<"MODULES+=(t2bce_vhci usbhid hid_apple hid_generic xhci_pci xhci_hcd)"
 assert_composed "T2 Mac x86 is unchanged" generic \
-  "$x86_hooks" "t2bce_vhci usbhid hid_apple hid_generic xhci_pci xhci_hcd thunderbolt" ""
+  "$x86_hooks" "t2bce_vhci usbhid hid_apple hid_generic xhci_pci xhci_hcd thunderbolt?" ""
 
 new_etc
 drop_in macbook_spi_modules.conf <<<"MODULES=(applespi intel_lpss_pci spi_pxa2xx_platform)"
 assert_composed "SPI keyboard MacBook x86 is unchanged" generic \
-  "$x86_hooks" "applespi intel_lpss_pci spi_pxa2xx_platform thunderbolt" ""
+  "$x86_hooks" "applespi intel_lpss_pci spi_pxa2xx_platform thunderbolt?" ""
 
 new_etc
 drop_in nvidia.conf <<<"MODULES+=($nvidia_modules)"
 drop_in surface_device_modules.conf <<<"MODULES=(pinctrl_tigerlake surface_aggregator surface_aggregator_registry surface_aggregator_hub surface_hid_core surface_hid surface_kbd intel_lpss_pci 8250_dw)"
 pci_devices 0x8086:0x030000
 assert_composed "Surface x86 is unchanged" generic \
-  "$x86_hooks" "pinctrl_tigerlake surface_aggregator surface_aggregator_registry surface_aggregator_hub surface_hid_core surface_hid surface_kbd intel_lpss_pci 8250_dw thunderbolt" ""
+  "$x86_hooks" "pinctrl_tigerlake surface_aggregator surface_aggregator_registry surface_aggregator_hub surface_hid_core surface_hid surface_kbd intel_lpss_pci 8250_dw thunderbolt?" ""
