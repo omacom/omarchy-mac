@@ -23,14 +23,14 @@
 # Runs on an aarch64 Linux host with /dev/kvm, qemu-system-aarch64, losetup,
 # btrfs-progs, dosfstools, gptfdisk, overlayfs and passwordless sudo.
 #
-#   test/vm/mac-image/run --release mac-image-10-rc-… [--repo maralcbr/omarchy-pkgs]
-#   test/vm/mac-image/run --payload omarchy-….zip --lane rc
+#   tools/acceptance/mac-image/run --release mac-image-10-rc-… [--repo maralcbr/omarchy-pkgs]
+#   tools/acceptance/mac-image/run --payload omarchy-….zip --lane rc
 #
 # Evidence goes to ~/vm-evidence/mac-image-<run-id>/ (run.txt, serial logs).
 
 set -euo pipefail
 
-root=$(cd "$(dirname "$0")/../../.." && pwd)
+acceptance=$(cd "$(dirname "$0")/.." && pwd)
 repo=${OMARCHY_VM_IMAGE_REPO:-maralcbr/omarchy-pkgs}
 release=""
 image_file=""
@@ -42,7 +42,7 @@ run_id=${OMARCHY_VM_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
 state=${OMARCHY_VM_IMAGE_STATE_DIR:-$HOME/vm-mac-image}
 evidence_root=${OMARCHY_VM_EVIDENCE_DIR:-$HOME/vm-evidence}
 alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mirror/alarm/20260906/$repo/os/$arch'}
-signing_key=${OMARCHY_VM_IMAGE_KEY_FILE:-$root/default/omarchy-arm-repository.asc}
+signing_key=${OMARCHY_VM_IMAGE_KEY_FILE:-$acceptance/keys/omarchy-arm-repository.asc}
 vm_memory_mb=${OMARCHY_VM_MEMORY_MB:-8192}
 vm_cpus=${OMARCHY_VM_CPUS:-8}
 boot_timeout=${OMARCHY_VM_IMAGE_BOOT_TIMEOUT:-900}
@@ -438,5 +438,6 @@ build_generic_kernel
   echo "generic_kernel=$(cat "$work/generic/generic.version")"
   echo "alarm_mirror=$alarm_mirror"
   echo "host=$(uname -n) $(uname -r)"
+  echo "harness_commit=$(git -C "$acceptance" rev-parse HEAD 2>/dev/null || true)"
 } >>"$evidence_dir/run.txt"
 say "evidence in $evidence_dir"

@@ -2,9 +2,12 @@
 
 set -euo pipefail
 
-root=$(cd "$(dirname "$0")/../../.." && pwd)
-harness="$root/test/vm/asahi-fresh"
+harness=$(cd "$(dirname "$0")" && pwd)
+acceptance=$(dirname "$harness")
 state="${OMARCHY_VM_STATE_DIR:-$harness/test-runs}"
+# The tree under test: an omarchy-mx-mac checkout, whose fresh installer, bundle
+# updater, product version and optional package lists the guest runs.
+source_dir=${OMARCHY_VM_SOURCE_DIR:-}
 image=omarchy-asahi-fresh-vm
 ssh_port=${OMARCHY_VM_SSH_PORT:-22222}
 vnc_port=${OMARCHY_VM_VNC_PORT:-25900}
@@ -24,13 +27,14 @@ candidate_tag=${OMARCHY_VM_CANDIDATE_TAG:-}
 candidate_sha256=${OMARCHY_VM_CANDIDATE_SHA256:-}
 candidate_fingerprint=${OMARCHY_VM_CANDIDATE_FINGERPRINT:-}
 candidate_package_count=${OMARCHY_VM_CANDIDATE_PACKAGE_COUNT:-}
-candidate_key=${OMARCHY_VM_CANDIDATE_KEY_FILE:-$root/default/omarchy-arm-repository.asc}
+candidate_key=${OMARCHY_VM_CANDIDATE_KEY_FILE:-$acceptance/keys/omarchy-arm-repository.asc}
 channel_url=${OMARCHY_VM_ASAHI_CHANNEL_URL:-}
 channel_pointer_url=${OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL:-}
 # The guest installs Arch Linux ARM packages from a dated, immutable copy of the
 # repositories rather than the live mirrors, so a mirror mid-transition cannot
 # fail a run that has nothing to do with it. The date is the one the current
-# payload was built against; see docs/apple-silicon-distribution-channels.md.
+# payload was built against; see omarchy-mx-mac's
+# docs/apple-silicon-distribution-channels.md.
 alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mirror/alarm/20260906/$repo/os/$arch'}
 
 while (($#)); do
@@ -45,9 +49,28 @@ while (($#)); do
       evidence_root=$2
       shift
       ;;
+    --source)
+      (( $# >= 2 )) || { echo "--source needs a directory" >&2; exit 1; }
+      source_dir=$2
+      shift
+      ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
+done
+
+[[ -n $source_dir ]] || {
+  echo "Name the omarchy-mx-mac tree under test with --source DIR or OMARCHY_VM_SOURCE_DIR" >&2
+  exit 1
+}
+source_dir=$(realpath -m -- "$source_dir")
+source_files=(bin/omarchy-install-asahi-fresh bin/omarchy-update-asahi-bundle version)
+(( optional_packages == 0 )) || source_files+=(install/optional-packages.tsv install/optional-packages-aarch64-required)
+for file in "${source_files[@]}"; do
+  [[ -f $source_dir/$file ]] || {
+    echo "The tree under test $source_dir has no $file" >&2
+    exit 1
+  }
 done
 
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || {
@@ -377,7 +400,8 @@ export_evidence() {
     echo "exit_status=$status"
     echo "started_at=$started_at"
     echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "source_commit=$(git -C "$root" rev-parse HEAD 2>/dev/null || true)"
+    echo "source_commit=$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)"
+    echo "harness_commit=$(git -C "$harness" rev-parse HEAD 2>/dev/null || true)"
     echo "container=$container"
     echo "vm_cpus=$vm_cpus"
     echo "vm_memory_mb=$vm_memory_mb"
@@ -551,11 +575,11 @@ if [[ -n $candidate_tag ]]; then
     bash /root/omarchy-vm-candidate-repository |
     tee "$run_dir/candidate-repository.log"
 fi
-scp "${scp_args[@]}" "$root/bin/omarchy-install-asahi-fresh" root@127.0.0.1:/root/omarchy-install-asahi-fresh.candidate
-scp "${scp_args[@]}" "$root/bin/omarchy-update-asahi-bundle" root@127.0.0.1:/root/omarchy-update-asahi-bundle.candidate
+scp "${scp_args[@]}" "$source_dir/bin/omarchy-install-asahi-fresh" root@127.0.0.1:/root/omarchy-install-asahi-fresh.candidate
+scp "${scp_args[@]}" "$source_dir/bin/omarchy-update-asahi-bundle" root@127.0.0.1:/root/omarchy-update-asahi-bundle.candidate
 scp "${scp_args[@]}" "$harness/guest/install" root@127.0.0.1:/root/omarchy-vm-install
 scp "${scp_args[@]}" "$harness/guest/candidate-runtime" root@127.0.0.1:/root/omarchy-vm-candidate-runtime
-stable_version=$(<"$root/version")
+stable_version=$(<"$source_dir/version")
 ssh -tt "${ssh_args[@]}" root@127.0.0.1 \
   env OMARCHY_VM_RUNTIME_MANIFEST_SHA256="${OMARCHY_VM_RUNTIME_MANIFEST_SHA256:-}" OMARCHY_VM_RUNTIME_SOURCE="${OMARCHY_VM_RUNTIME_SOURCE:-}" OMARCHY_VM_STABLE_VERSION="$stable_version" OMARCHY_VM_ALARM_MIRROR="$alarm_mirror_quoted" OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL="$channel_pointer_url_quoted" OMARCHY_VM_ASAHI_PACKAGES_CHANNEL_URL="$packages_channel_url_quoted" bash /root/omarchy-vm-install |
   tee "$run_dir/install.log" || exit 1
@@ -572,10 +596,10 @@ ssh "${ssh_args[@]}" root@127.0.0.1 env \
 
 if (( optional_packages )); then
   scp "${scp_args[@]}" \
-    "$root/install/optional-packages.tsv" \
+    "$source_dir/install/optional-packages.tsv" \
     root@127.0.0.1:/root/optional-packages.tsv
   scp "${scp_args[@]}" \
-    "$root/install/optional-packages-aarch64-required" \
+    "$source_dir/install/optional-packages-aarch64-required" \
     root@127.0.0.1:/root/optional-packages-aarch64-required
   scp "${scp_args[@]}" \
     "$harness/guest/optional-packages" \
