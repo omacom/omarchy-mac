@@ -61,6 +61,31 @@ class Audio:
     def pause(self):
         time.sleep(0.1)
 
+    def signal(self, source, timeout=3.0):
+        # A linked monitor can still carry only digital silence (exact zeros);
+        # a live microphone never does. Samples are inspected, never kept.
+        try:
+            process = subprocess.Popen(['parec', '--device=' + source, '--raw', '--format=s16le', '--channels=2',
+                                        '--rate=48000', '--latency-msec=20', '--client-name=omarchy-asahi-mic-probe'],
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            return False
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    return False
+                chunk = os.read(process.stdout.fileno(), 4096)
+                if not chunk:
+                    return False
+                if chunk.strip(b'\0'):
+                    return True
+        finally:
+            process.kill()
+            process.wait()
+            process.stdout.close()
+
 
 def port(graph, node_name, port_name):
     nodes = {obj['id'] for obj in graph if obj.get('type', '').endswith(':Node')
@@ -85,6 +110,10 @@ def gain(obj):
     if len(values) != 2 or any(type(value) is not int or not 0 <= value < 2**32 - 1 for value in values) or type(obj['mute']) is not bool:
         raise ValueError('Invalid stereo mapping gain state')
     return dict(volume=values, mute=obj['mute'])
+
+
+def audible(obj):
+    return not obj['mute'] and any(channel['value'] for channel in obj['volume'].values())
 
 
 def save_state(audio, path):
@@ -175,6 +204,7 @@ def reconcile(audio, state, save_only=False):
     owner = uuid.uuid4().hex
     module = None
     changed_input = False
+    silent = False
     def restore_input():
         if original_input and audio.run('pactl', 'get-default-source') == MONITOR:
             if original_input in {obj['name'] for obj in audio.objects('sources')}:
@@ -222,16 +252,28 @@ def reconcile(audio, state, save_only=False):
         else:
             raise RuntimeError('Asahi microphone stereo links did not become ready')
         restore_output(audio, original_output)
+        current_input = audio.run('pactl', 'get-default-source')
+        select_monitor = original_input in ('', dsp) and current_input == original_input
+        # Only a monitor that carries the microphone may be the default input;
+        # a linked one can still carry digital silence (#505), for example when
+        # the volume keys muted the mapping sink while WirePlumber briefly made it
+        # the default output. A muted monitor is the user's microphone mute: it
+        # stays selectable and selected, and is never sampled.
+        if select_monitor or current_input == MONITOR:
+            if any(obj['name'] == MONITOR and audible(obj) for obj in audio.objects('sources')):
+                silent = not audio.signal(MONITOR)
         graph = audio.graph()
         validate_endpoints(graph)
         if not all(links(graph, output, input_) for input_ in inputs):
             raise RuntimeError('Asahi microphone links changed before selecting input')
         # Read the user's choice after the final graph query so a device change
         # during that query is not overwritten. Pulse has no atomic compare/set.
-        current_input = audio.run('pactl', 'get-default-source')
-        if original_input in ('', dsp) and current_input == original_input:
-            changed_input = True
-            audio.run('pactl', 'set-default-source', MONITOR)
+        if audio.run('pactl', 'get-default-source') == current_input:
+            if select_monitor and not silent:
+                changed_input = True
+                audio.run('pactl', 'set-default-source', MONITOR)
+            elif current_input == MONITOR and silent:
+                audio.run('pactl', 'set-default-source', dsp)
         # Existing DSP, monitor and sink gain/mute are never reset. Save only
         # the owned mapping so a new module after daemon restart can recover it.
         save_state(audio, state)
@@ -258,6 +300,10 @@ def reconcile(audio, state, save_only=False):
         for action in (restore_changed_input, lambda: restore_output(audio, original_output), remove_links, remove_module):
             cleanup(action)
         raise
+    if silent:
+        # The mapping stays so it is not rebuilt on every event; only the
+        # default input avoids it.
+        raise RuntimeError('Asahi microphone stereo mapping carries no signal; it is not the default input')
 
 
 @contextlib.contextmanager
