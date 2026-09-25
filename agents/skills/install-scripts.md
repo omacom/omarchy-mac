@@ -12,6 +12,7 @@ commands and reusable setup leaves:
 - avoid `exit` in sourced setup scripts unless intentionally aborting setup.
 - use `$OMARCHY_INSTALL` and `$OMARCHY_PATH` instead of hard-coded Omarchy paths.
 - keep root-scoped hardware setup under `install/hardware/` and orchestrate it through `install/hardware/all.sh`.
+- gate platform-specific setup on `omarchy-hw-platform` or a predicate built on it, not on `uname -m`; architecture checks are only for ABI, binary availability or a repository's `$arch` (see `docs/file-layout.md`).
 - keep every per-user setup leaf under `install/user/` (including `install/user/hardware/` and `install/user/first-run/`) so it is clear what must run for each user.
 - The base install supplies matching kernel headers before hardware setup. DKMS installers should install their driver packages and assume the headers exist.
 - prefer helper commands for package and command checks where available.
