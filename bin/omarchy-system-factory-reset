@@ -17,7 +17,9 @@
 # The heavy lifting happens on the next boot via omarchy-system-factory-reset-finish, staged
 # here. On encrypted installs the LUKS volume is re-keyed to a throwaway
 # passphrase with an auto-unlock keyfile for the provisioning window; first-boot setup
-# re-keys it to the new owner's password and removes the keyfile.
+# re-keys it to the new owner's password and removes the keyfile. A platform
+# whose boot chain the Limine UKI path can't drive (Apple Silicon) rebuilds,
+# verifies and unlocks it through omarchy-lifecycle-dispatch.
 #
 # Honest limitations:
 #  - On unencrypted disks this is deletion, not forensic erasure. fstrim helps
@@ -67,14 +69,50 @@ root_is_btrfs_at() {
   [[ $(findmnt -no FSTYPE /) == btrfs ]] && findmnt -no OPTIONS / | grep -q "subvol=/@\(,\|$\)"
 }
 
-apple_silicon() {
-  omarchy-hw-apple-silicon
+DISPATCH="$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch"
+
+# A platform whose boot package implements the reset operations rebuilds,
+# verifies and unlocks the factory root's boot chain itself; everywhere else
+# the Limine UKI path below does. Deciding fails closed.
+RESET_BOOT=""
+
+reset_boot_owner() {
+  [[ -z $RESET_BOOT ]] || return 0
+
+  local operation path found=0 missing=0
+  for operation in reset-prepare reset-verify reset-commit reset-rollback; do
+    path=$("$DISPATCH" --resolve "$operation") || return 1
+    if [[ -n $path ]]; then
+      found=$((found + 1))
+    else
+      missing=$((missing + 1))
+    fi
+  done
+  if (( missing == 0 )); then
+    RESET_BOOT=platform
+  elif (( found == 0 )); then
+    RESET_BOOT=generic
+  else
+    echo "Error: the boot package implements only some of the factory reset operations" >&2
+    return 1
+  fi
 }
 
-BOOT_LUKS_KEY="${OMARCHY_BOOT_LUKS_KEY:-/boot/omarchy/luks-key}"
-BOOT_FS_UUID="${OMARCHY_BOOT_FS_UUID:-4f4d5801-424f-4f54-8000-000000000001}"
-GRUB_DEFAULT="${OMARCHY_GRUB_DEFAULT:-/etc/default/grub}"
-CRYPTTAB="${OMARCHY_CRYPTTAB:-/etc/crypttab}"
+# Runs a reset operation with its output in the log. A failure keeps the
+# operation's last line for the error shown.
+RESET_BOOT_ERROR=""
+
+reset_boot_op() {
+  local output status=0
+  output=$("$DISPATCH" "$@" 2>&1) || status=$?
+  [[ -z $output ]] || printf '%s\n' "$output" >>"$LOG_FILE"
+  if (( status == 0 )); then
+    return 0
+  fi
+  RESET_BOOT_ERROR=$(tail -n 1 <<<"$output")
+  RESET_BOOT_ERROR=${RESET_BOOT_ERROR:-"$1 failed"}
+  return 1
+}
 
 # Resolve the crypto_LUKS partition backing the root, or return non-zero if
 # the root is not on LUKS. Prefers the cmdline cryptdevice= spec (archinstall
@@ -115,13 +153,10 @@ generate_passphrase() {
 }
 
 cleanup() {
-  # Before the swap the old root still boots: give it back its boot files and
-  # encryption state before revoking the reset's temporary unlock.
-  if [[ ${reset_committed:-0} == 0 ]]; then
-    if declare -F restore_live_boot_files >/dev/null; then
-      restore_live_boot_files || true
-    fi
-    restore_encrypt_state || true
+  # Before the swap the old root still boots: the boot package gives it back
+  # its boot state before the reset's temporary unlock is revoked.
+  if [[ ${reset_committed:-0} == 0 && ${RESET_BOOT_PREPARED:-0} == 1 ]]; then
+    reset_boot_op reset-rollback || echo "Error: $RESET_BOOT_ERROR (see $LOG_FILE)" >&2
   fi
   if mountpoint -q "$TOP_MNT" 2>/dev/null; then
     if [[ -d $TOP_MNT/$NEXT_NAME && ${swap_done:-0} == 0 ]]; then
@@ -156,25 +191,31 @@ confirm_reset() {
   [[ $typed == "reset" ]] || fail "Reset not confirmed."
 }
 
-# Add the throwaway slot. Called after mkinitcpio/grub succeed so a failed
-# rebuild adds no credential. Its Boot-partition keyfile is written only once
-# the factory root is active (install_reset_boot_key): a power loss before the
-# swap then leaves the old root asking for its password, never auto-unlocked.
-stage_luks_rekey_apple_commit() {
+# The keyslots, one per line. A luks2-keyring token under "Tokens:" looks like
+# a keyslot, so read only the keyslot section.
+reset_luks_slots() {
+  cryptsetup luksDump "$1" | awk '
+    /^[^ \t]/ { keyslots = ($0 == "Keyslots:") }
+    keyslots && /^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }' | sort
+}
+
+# Add the throwaway slot where the platform's boot package owns the unlock.
+# Called once reset-prepare's rebuild is verified, so a failed rebuild adds no
+# credential. reset-commit writes the boot-time key only once the factory root
+# is active: a power loss before the swap then leaves the old root asking for
+# its password, never auto-unlocked.
+add_reset_luks_slot() {
   local device=$1 passphrase=$2 slot xtrace_on=0
   [[ -n $device && -n $passphrase && -n ${RESET_LUKS_AUTH:-} ]] || fail "reset LUKS commit is missing the throwaway passphrase"
   [[ $- == *x* ]] && xtrace_on=1
   set +x
-  # Reopen durably before the first persistent temporary credential exists.
-  # A power loss after activation must never leave phase=finished behind.
-  reopen_encrypt_state
   local before after
-  before=$(cryptsetup luksDump "$device" | awk '/^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }' | sort)
+  before=$(reset_luks_slots "$device")
   if ! { cryptsetup luksAddKey --key-file <(printf '%s' "$RESET_LUKS_AUTH") "$device" <(printf '%s' "$passphrase") ; } 2>>"$LOG_FILE"; then
     if (( xtrace_on )); then set -x; fi
     fail "could not add the throwaway LUKS keyslot"
   fi
-  after=$(cryptsetup luksDump "$device" | awk '/^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }' | sort)
+  after=$(reset_luks_slots "$device")
   # cryptsetup fills the lowest free slot: the new one is the difference.
   slot=$(comm -13 <(printf '%s\n' $before) <(printf '%s\n' $after) | head -1)
   if (( xtrace_on )); then set -x; fi
@@ -183,39 +224,16 @@ stage_luks_rekey_apple_commit() {
   RESET_LUKS_DEVICE=$device
 }
 
-# After activation: the keyfile the factory root's first boot unlocks with.
-# Without it that boot asks for the current disk password once, and owner
-# setup still re-keys from the staged provisioning key.
-install_reset_boot_key() {
-  local passphrase=$1 staged_key status=1 xtrace_on=0
-  [[ $- == *x* ]] && xtrace_on=1
-  set +x
-  if install -d -m 755 "$(dirname "$BOOT_LUKS_KEY")" && staged_key=$(mktemp "${BOOT_LUKS_KEY}.XXXXXX"); then
-    if (umask 077 && printf '%s' "$passphrase" >"$staged_key") && chmod 600 "$staged_key" && sync "$staged_key" &&
-      mv -f "$staged_key" "$BOOT_LUKS_KEY" && sync "$(dirname "$BOOT_LUKS_KEY")"; then
-      status=0
-    else
-      rm -f "$staged_key"
-    fi
-  fi
-  if (( xtrace_on )); then set -x; fi
-  return "$status"
-}
-
+# Only the slot this attempt added goes. The platform's boot-time key is
+# written only after activation, so a failed reset has none to revoke.
 revoke_reset_luks() {
   local xtrace_on=0
-  # Cleanup may run before reset confirmation. Never remove a pre-existing
-  # first-boot unlock key unless this attempt actually created its slot.
-  [[ -n ${RESET_LUKS_SLOT:-} ]] || return 0
   if [[ -n ${RESET_LUKS_SLOT:-} && -n ${RESET_LUKS_DEVICE:-} && -n ${RESET_LUKS_AUTH:-} ]]; then
     [[ $- == *x* ]] && xtrace_on=1
     set +x
     { cryptsetup luksKillSlot -q --key-file <(printf '%s' "$RESET_LUKS_AUTH") "$RESET_LUKS_DEVICE" "$RESET_LUKS_SLOT" ; } 2>>"$LOG_FILE" || true
     if (( xtrace_on )); then set -x; fi
     RESET_LUKS_SLOT=""
-  fi
-  if [[ -e $BOOT_LUKS_KEY ]]; then
-    shred -u "$BOOT_LUKS_KEY" 2>/dev/null || rm -f "$BOOT_LUKS_KEY"
   fi
 }
 
@@ -234,7 +252,8 @@ stage_luks_rekey() {
   while true; do
     current=$(gum input --password --placeholder "Current disk encryption passphrase" --prompt "Passphrase> ") || exit 1
     set +x
-    if { cryptsetup open --test-passphrase --key-file <(printf '%s' "$current") "$device" ; } 2>>"$LOG_FILE"; then
+    # An enrolled token would answer a bare cryptsetup open for any passphrase.
+    if { cryptsetup open --test-passphrase --token-type passphrase-only --key-file <(printf '%s' "$current") "$device" ; } 2>>"$LOG_FILE"; then
       if (( xtrace_on )); then set -x; fi
       break
     fi
@@ -251,10 +270,10 @@ stage_luks_rekey() {
   printf '%s' "$passphrase" >"$next$PROVISIONING_DIR/luks-key"
   chmod 600 "$next$PROVISIONING_DIR/luks-key"
 
-  if apple_silicon; then
-    stage_luks_rekey_apple "$next" "$device"
-    return
-  fi
+  # The platform's boot package stages the unlock with the rest of the boot
+  # files (reset-prepare); add_reset_luks_slot follows their verification.
+  reset_boot_owner || fail "could not tell how this machine's boot chain is reset"
+  [[ $RESET_BOOT == generic ]] || return 0
 
   set +x
   { cryptsetup luksAddKey --key-file <(printf '%s' "$current") "$device" <(printf '%s' "$passphrase") ; } 2>>"$LOG_FILE"
@@ -342,8 +361,9 @@ verify_limine_hashes() {
 rebuild_next_boot() {
   local next="$1"
 
-  if apple_silicon; then
-    rebuild_next_boot_apple "$next"
+  reset_boot_owner || fail "could not tell how this machine's boot chain is reset"
+  if [[ $RESET_BOOT == platform ]]; then
+    rebuild_next_boot_platform "$next"
     return
   fi
 
@@ -409,6 +429,20 @@ rebuild_next_boot() {
   umount "$next$esp_mount"
 }
 
+# The boot package stages the factory root's boot files and unlock, then proves
+# they boot it; reset-rollback undoes both if the reset fails before activation.
+rebuild_next_boot_platform() {
+  local next="$1"
+  local -a luks=()
+  [[ -z ${RESET_LUKS_DEVICE:-} ]] || luks=("$RESET_LUKS_DEVICE")
+
+  RESET_BOOT_PREPARED=1
+  log "Rebuilding boot files from the factory system (this can take a minute)"
+  reset_boot_op reset-prepare "$next" "${luks[@]}" || fail "$RESET_BOOT_ERROR (see $LOG_FILE)"
+  log "Verifying that the factory system boots"
+  reset_boot_op reset-verify "$next" || fail "$RESET_BOOT_ERROR (see $LOG_FILE)"
+}
+
 # Remove the seller's account material and machine identity from the retained
 # @factory baseline so it can neither be mounted for recovery nor restore the
 # seller's account on a future reset. Idempotent (a scrubbed baseline has no
@@ -433,10 +467,10 @@ sanitize_factory_baseline() {
 }
 
 # @factory must not carry first-boot markers, the fresh-image conversion token
-# or the ESP install.conf (v3 item 2e); the Boot partition's encrypt.state lives
-# outside the subvolume and is reopened before committing the temporary key.
-# The reset re-arms markers on the cloned next root, not on the sealed baseline,
-# and never the conversion token.
+# or the ESP install.conf (v3 item 2e); the Boot partition's encryption state
+# lives outside the subvolume, and the boot package reopens it before the
+# temporary key is added. The reset re-arms markers on the cloned next root,
+# not on the sealed baseline, and never the conversion token.
 scrub_factory_boot_state() {
   local root=$1
   rm -f \
@@ -446,41 +480,6 @@ scrub_factory_boot_state() {
     "$root/var/lib/omarchy/provisioning/pending" \
     "$root/var/lib/omarchy/provisioning/wipe-pending" \
     "$root/boot/efi/omarchy/install.conf"
-}
-
-# The live Boot partition holds encrypt.state (not the subvolume): a finished
-# re-key must go back to configured so the next owner's setup re-keys again.
-reopen_encrypt_state() {
-  local state=${OMARCHY_ENCRYPT_STATE:-/boot/omarchy/encrypt.state} tmp
-  [[ -f $state ]] || return 0
-  # An owner who declined encryption at install time keeps that choice
-  # through every reset; only a LUKS root is reopened for the next owner.
-  ! grep -Fxq 'phase=declined' "$state" || return 0
-  # Kept for cleanup: a reset that fails before activation hands the old
-  # root back its finished state and slot records.
-  RESET_ENCRYPT_STATE_BEFORE=$(cat "$state") || fail "could not read $state"
-  RESET_ENCRYPT_STATE_REOPENED=1
-  tmp=$state.tmp.$$
-  sed -e 's/^phase=.*/phase=configured/' -e '/^owner_slot=/d' -e '/^recovery_slot=/d' "$state" >"$tmp" ||
-    fail "could not rewrite $state"
-  chmod 0644 "$tmp"
-  sync "$tmp" || fail "could not persist $state"
-  mv -f "$tmp" "$state" || fail "could not commit $state"
-  sync "$(dirname "$state")" || fail "could not persist the encryption state directory"
-}
-
-restore_encrypt_state() {
-  local state=${OMARCHY_ENCRYPT_STATE:-/boot/omarchy/encrypt.state} tmp
-  [[ ${RESET_ENCRYPT_STATE_REOPENED:-0} == 1 ]] || return 0
-  tmp=$state.tmp.$$
-  if printf '%s\n' "$RESET_ENCRYPT_STATE_BEFORE" >"$tmp" && chmod 0644 "$tmp" && sync "$tmp" &&
-    mv -f "$tmp" "$state" && sync "$(dirname "$state")"; then
-    RESET_ENCRYPT_STATE_REOPENED=0
-    return 0
-  fi
-  rm -f "$tmp"
-  echo "Could not restore $state after the failed reset" >&2
-  return 1
 }
 
 arm_reset_markers() {
@@ -545,8 +544,8 @@ stage_full_reset() {
 
   rebuild_next_boot "$next"
 
-  if encrypted_install && apple_silicon; then
-    stage_luks_rekey_apple_commit "$RESET_LUKS_DEVICE" "$RESET_THROWAY"
+  if encrypted_install && [[ $RESET_BOOT == platform ]]; then
+    add_reset_luks_slot "$RESET_LUKS_DEVICE" "$RESET_THROWAY"
   fi
 
   log "Activating the factory system"
@@ -558,12 +557,9 @@ stage_full_reset() {
   swap_done=1
   sync
 
-  if encrypted_install && apple_silicon; then
-    install_reset_boot_key "$RESET_THROWAY" ||
-      log "Could not write the temporary unlock key; the next boot asks for the current disk password once"
-  fi
-  if declare -F discard_live_boot_backup >/dev/null; then
-    discard_live_boot_backup
+  # The unlock key reaches the boot package on standard input, never argv.
+  if [[ $RESET_BOOT == platform ]] && ! reset_boot_op reset-commit < <(printf '%s' "${RESET_THROWAY:-}"); then
+    log "$RESET_BOOT_ERROR"
   fi
 }
 
@@ -602,6 +598,10 @@ main() {
 
   require_factory_snapshot
 
+  # Decided before anything is asked: a platform whose boot package is missing
+  # stops here, with the dispatcher's error naming the package.
+  reset_boot_owner || fail "this machine's boot package cannot factory-reset it"
+
   confirm_reset
 
   # The running system's limine-snapper-sync must not rewrite the ESP's
@@ -622,15 +622,6 @@ main() {
     gum style --foreground 3 "Do not keep using this machine — changes made now will be lost."
   fi
 }
-
-# The shared lifecycle calls these boot operations only on Apple Silicon.
-# Never continue with generic boot handling when the required package is absent.
-if apple_silicon; then
-  source "${OMARCHY_MAC_BOOT_LIB:-/usr/lib/omarchy-mac/boot}/factory-reset.sh" || {
-    echo "Required omarchy-mac-boot factory-reset support is unavailable" >&2
-    exit 1
-  }
-fi
 
 # Tests source this file to exercise LUKS staging without confirming a reset.
 if [[ ${OMARCHY_FACTORY_RESET_SOURCE:-} == "1" ]]; then
