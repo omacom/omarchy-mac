@@ -57,9 +57,22 @@ if [[ $flags == *y* ]]; then
     source_db=${server#file://}/$repo.db
     [[ $server == file://* && -f $source_db ]] || { echo "error: failed to synchronize all databases ($repo)" >&2; exit 1; }
     cp "$source_db" "$dbpath/sync/$repo.db"
+    if [[ -f $source_db.sig ]]; then
+      cp "$source_db.sig" "$dbpath/sync/$repo.db.sig"
+    else
+      rm -f "$dbpath/sync/$repo.db.sig"
+    fi
   done < <(repositories)
   [[ $flags == *u* || ${#args[@]} -gt 0 ]] || exit 0
 fi
+
+# A database signature reads "signed <sha256 of the database>"; pacman rejects a
+# database beside one that does not match it.
+while read -r repo server; do
+  sig=$dbpath/sync/$repo.db.sig
+  [[ ! -f $sig || $(<"$sig") == "signed $(sha256sum "$dbpath/sync/$repo.db" | cut -d' ' -f1)" ]] ||
+    { echo "error: database '$repo' is not valid (invalid or corrupted database (PGP signature))" >&2; exit 1; }
+done < <(repositories)
 
 lookup() { # name [repo] -> "repo version"
   local name=$1 wanted=${2:-} repo server

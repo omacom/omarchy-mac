@@ -447,7 +447,6 @@ detect_cohort() {
 
 cohort_refusal() {
   case $1 in
-    mx-mac) echo "this is an mx-mac install (omarchy-dev): its adapter (ticket 43) is not available yet" ;;
     legacy-checkout) echo "Omarchy is not installed as a package here (a legacy omarchy-mac checkout): its adapter (ticket 44) is not available yet" ;;
     legacy-channel) echo "this Mac follows omarchy-mac's rc4 channel (omarchy-mac-keyring): its adapter (ticket 44) is not available yet" ;;
     *) echo "no adapter handles the $1 cohort" ;;
@@ -820,11 +819,17 @@ restart_from_prefetch() {
 }
 
 # The sync databases the rehearsal resolved against, over any a later sync left.
+# A signature the rehearsal has none of belongs to the database it replaces
+# (a fork's signed [omarchy]), and pacman rejects a database beside a
+# signature that does not match it.
 install_rehearsed_databases() {
   local repo extension
   for repo in $(repositories_in "$cache/transaction.conf"); do
     for extension in db db.sig; do
-      [[ -f $cache/db/sync/$repo.$extension ]] || continue
+      if [[ ! -f $cache/db/sync/$repo.$extension ]]; then
+        [[ $extension != "db.sig" || ! -f $cache/db/sync/$repo.db ]] || rm -f "$pacman_db/sync/$repo.db.sig"
+        continue
+      fi
       cmp -s "$cache/db/sync/$repo.$extension" "$pacman_db/sync/$repo.$extension" && continue
       durable_write "$pacman_db/sync/$repo.$extension" 644 <"$cache/db/sync/$repo.$extension" ||
         die "cannot install the $repo database"
@@ -868,6 +873,18 @@ step_repositories() {
   done
 }
 
+# Something rewrote pacman.conf or trusted a retired key again since the
+# switch: on an mx-mac Mac, the fork's own omarchy update, whose channel
+# updaters stay until the transaction removes them.
+switch_undone() {
+  local fpr
+  cmp -s "$plan/pacman.conf" "$pacman_conf" || return 0
+  for fpr in "${retired_keys[@]}"; do
+    ! key_present "$fpr" || return 0
+  done
+  return 1
+}
+
 # One transaction from the prefetched cache and databases, without a new sync:
 # it installs exactly what was verified and rehearsed. Same-name packages are
 # named explicitly, so a higher installed version is replaced too. A lock left
@@ -885,6 +902,10 @@ step_transaction() {
   fi
   # Kept across a new rehearsal until a transaction has run to its end.
   [[ ! -e $interrupted_marker ]] || interrupted=1
+  if switch_undone; then
+    restart_from_prefetch "the repository switch was undone"
+    return 0
+  fi
   if system_moved && ! cmp -s "$state/installed.now" "$expected"; then
     restart_from_prefetch "before the transaction"
     return 0
@@ -932,6 +953,7 @@ step_loader() {
   if [[ $(<"$plan/boot") == "limine" ]]; then
     [[ -s $uki ]] && grep -Fq "boot():/EFI/Linux/omarchy_linux-aurora.efi" "$R$esp/limine.conf" ||
       die "Limine has no linux-aurora UKI entry; the active loader was left alone"
+    interrupt_for_test mid loader
     omarchy-mac-limine-deploy || die "cannot put Limine on the ESP"
   else
     install -D -m 644 /dev/null "$limine_gate" || die "cannot mark this Mac for Limine"
