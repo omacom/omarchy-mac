@@ -20,55 +20,59 @@ grep -Fq 'hyprland-preview-share-picker-git' "$git_drop" ||
   fail "shipped Chromium flags must not force the PipeWire capturer on x86"
 pass "fresh and existing installs are wired to the screen-share picker"
 
+require_platform_fixtures "the share-picker platform gates"
+
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
-stub_bin="$test_tmp/bin"
 calls="$test_tmp/calls.log"
-mkdir -p "$stub_bin"
+for platform in apple-silicon qualcomm generic; do
+  fake_platform "$test_tmp/$platform" "$platform"
+done
 
-cat >"$stub_bin/uname" <<'SH'
-#!/bin/bash
-[[ ${1:-} == -m ]] && { printf '%s\n' "${TEST_ARCH:-x86_64}"; exit 0; }
-exec /usr/bin/uname "$@"
-SH
-chmod +x "$stub_bin"/*
-
-run_leaf() {
+# $1 is the platform, $2 the script, $3 how to run it.
+run_on() {
+  local platform="$1" script="$2" mode="${3:-source}" fixture="$test_tmp/$1"
   : >"$calls"
-  TEST_ARCH="${1:-x86_64}" TEST_LOG="$calls" \
-    HOME="$test_tmp/home" PATH="$stub_bin:$PATH" bash -c 'source "$1"' _ "$leaf"
+  if [[ $mode == "source" ]]; then
+    TEST_LOG="$calls" HOME="$test_tmp/home" OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:$ROOT/bin:$PATH" \
+      bash -c 'source "$1"' _ "$script"
+  else
+    TEST_LOG="$calls" HOME="$test_tmp/home" OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:$ROOT/bin:$PATH" \
+      bash -euo pipefail "$script"
+  fi
 }
 
-run_leaf x86_64
+run_on generic "$leaf"
 [[ ! -s $calls ]] || fail "x86 does not touch the share picker" "$(cat "$calls")"
 pass "x86 leaves the packaged picker alone"
 
 ! grep -Fq 'hyprland-preview-share-picker-git' "$leaf" "$migration" ||
   fail "the share-picker leaf and migration no longer AUR-build -git"
-pass "aarch64 uses the packaged hyprland-preview-share-picker"
+pass "Apple Silicon uses the packaged hyprland-preview-share-picker"
 
 conf="$test_tmp/home/.config/chromium-flags.conf"
 mkdir -p "$(dirname "$conf")"
-printf '%s\n' '--enable-features=TouchpadOverscrollHistoryNavigation' >"$conf"
-run_leaf x86_64 0
-! grep -Fq 'WebRTCPipeWireCapturer' "$conf" ||
-  fail "the share-picker leaf must not rewrite x86 Chromium flags"
-pass "the share-picker leaf leaves x86 Chromium flags alone"
+for platform in generic qualcomm; do
+  printf '%s\n' '--enable-features=TouchpadOverscrollHistoryNavigation' >"$conf"
+  run_on "$platform" "$leaf"
+  ! grep -Fq 'WebRTCPipeWireCapturer' "$conf" ||
+    fail "the share-picker leaf must not rewrite $platform Chromium flags"
+
+  printf '%s\n' '--enable-features=TouchpadOverscrollHistoryNavigation' >"$conf"
+  run_on "$platform" "$migration" run
+  ! grep -Fq 'WebRTCPipeWireCapturer' "$conf" ||
+    fail "the migration must not rewrite $platform Chromium flags"
+done
+pass "the share-picker leaf and migration leave x86 and Qualcomm Chromium flags alone"
 
 printf '%s\n' '--enable-features=TouchpadOverscrollHistoryNavigation' >"$conf"
-run_leaf aarch64
+run_on apple-silicon "$leaf"
 grep -Fq 'WebRTCPipeWireCapturer' "$conf" ||
-  fail "a fresh aarch64 install enables PipeWire capture on existing Chromium flags"
-pass "a fresh aarch64 install enables PipeWire capture on existing Chromium flags"
+  fail "a fresh Apple Silicon install enables PipeWire capture on existing Chromium flags"
+pass "a fresh Apple Silicon install enables PipeWire capture on existing Chromium flags"
 
 printf '%s\n' '--enable-features=TouchpadOverscrollHistoryNavigation' >"$conf"
-HOME="$test_tmp/home" TEST_ARCH=x86_64 TEST_LOG="$calls" PATH="$stub_bin:$PATH" bash "$migration"
-! grep -Fq 'WebRTCPipeWireCapturer' "$conf" ||
-  fail "the migration must not rewrite x86 Chromium flags"
-pass "the migration leaves x86 Chromium flags alone"
-
-printf '%s\n' '--enable-features=TouchpadOverscrollHistoryNavigation' >"$conf"
-HOME="$test_tmp/home" TEST_ARCH=aarch64 TEST_LOG="$calls" PATH="$stub_bin:$PATH" bash "$migration"
+run_on apple-silicon "$migration" run
 grep -Fq 'WebRTCPipeWireCapturer' "$conf" ||
-  fail "the migration enables PipeWire capture on existing aarch64 Chromium flags"
-pass "the migration enables PipeWire capture on existing aarch64 Chromium flags"
+  fail "the migration enables PipeWire capture on existing Apple Silicon Chromium flags"
+pass "the migration enables PipeWire capture on existing Apple Silicon Chromium flags"
