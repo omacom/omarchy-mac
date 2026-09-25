@@ -84,6 +84,7 @@ Use these instead of raw shell commands:
 - `omarchy-pkg-available` - check whether packages exist in the configured pacman repositories
 - `omarchy-pkg-add` - install packages (handles both pacman and AUR)
 - `omarchy-pkg-drop` - remove packages; use this instead of raw `pacman -R*`
+- `omarchy-pkg-kernel-headers` - name the headers package DKMS modules need for the running kernel; do not hardcode `linux-headers` or a platform's kernel
 - `omarchy-notification-send` - send desktop notifications; do not call `notify-send` directly
 - `omarchy-hw-asus-rog` - detect ASUS ROG hardware (and similar `hw-*` commands)
 
