@@ -1,0 +1,507 @@
+#!/bin/bash
+#
+# Release Mac packages through omacom/omarchy-pkgs, or run the fork lane.
+#
+#   mac-release [--dry-run] [--to rc|stable] [--package NAME]...
+#               [--vm-evidence FILE] [--hardware-evidence FILE] [OMARCHY_MAC_COMMIT]
+#   mac-release --lane fork [fork options] OMARCHY_MX_MAC_COMMIT
+#
+# The omacom lane (the default) orchestrates; omacom/omarchy-pkgs publishes
+# and promotes with its own interfaces. Each run reads where things stand and
+# takes the next step, then stops:
+#
+#   1. pin: with a commit of omacom/omarchy-mac quattro-upstream, open a pull
+#      request moving _commit of the recipes built from it (omarchy-mac,
+#      omarchy-mac-boot). Merging it is the owner's; CI's publish.yml then
+#      signs and publishes the build to edge with bin/publish-artifact
+#   2. wait until the source channel (edge for --to rc, rc for --to stable)
+#      serves master's version of every package in the set
+#   3. gates: VM acceptance evidence naming the set's digest, and hardware
+#      evidence naming every boot package the promotion moves
+#   4. widen: a pull request adding the target to the channels of the
+#      packages that are not members yet
+#   5. advance: bin/repo advance --from <source> --to <target> --arch aarch64
+#      --package <set> on the build host (OMARCHY_REPO_HOST), after the
+#      source channel still holds the qualified set and the host's dry run of
+#      the same advance lists exactly its files; then check the target serves
+#      the set and no x86_64 database moved
+#
+# The set defaults to every Apple package; --package narrows it. --dry-run
+# prints the plan and changes nothing. There is no state to resume: running
+# the same command again continues from what it finds. Settings come from
+# KEY=value lines in $MAC_RELEASE_CONFIG (else $ASAHI_RELEASE_CONFIG, else
+# ${XDG_CONFIG_HOME:-~/.config}/omarchy/mac-release.conf) or the environment:
+# MAC_RELEASE_AUTHOR_NAME and MAC_RELEASE_AUTHOR_EMAIL (the fork lane's
+# ASAHI_RELEASE_* keys are read too). See tools/release/README.md.
+
+set -euo pipefail
+
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "mac-release: needs bash 4 or newer (on macOS, run it with Homebrew bash)" >&2
+  exit 1
+fi
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+lane=omacom
+args=()
+while (( $# > 0 )); do
+  if [[ $1 == "--lane" ]]; then
+    (( $# > 1 )) || { echo "mac-release: --lane needs omacom or fork" >&2; exit 64; }
+    lane=$2
+    shift 2
+  else
+    args+=("$1")
+    shift
+  fi
+done
+case $lane in
+  fork) exec "$BASH" "$ROOT/fork/asahi-release" "${args[@]}" ;;
+  omacom) set -- "${args[@]}" ;;
+  *) echo "mac-release: unknown lane $lane (omacom or fork)" >&2; exit 64 ;;
+esac
+
+source_repo=${MAC_RELEASE_SOURCE_REPO:-omacom/omarchy-mac}
+source_git=${MAC_RELEASE_SOURCE_GIT:-https://github.com/$source_repo.git}
+source_branch=${MAC_RELEASE_SOURCE_BRANCH:-quattro-upstream}
+config_file=${MAC_RELEASE_CONFIG:-${ASAHI_RELEASE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/mac-release.conf}}
+read -r -a source_packages <<<"${MAC_RELEASE_SOURCE_PACKAGES:-omarchy-mac omarchy-mac-boot}"
+default_packages=(omarchy-mac omarchy-mac-boot linux-aurora m1n1-aurora uboot-asahi)
+
+usage() {
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2
+  exit "${1:-64}"
+}
+
+say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+die() { echo "mac-release: $*" >&2; exit 1; }
+stop() {
+  printf 'mac-release: STOP: %s\n' "$1" >&2
+  printf 'mac-release: then run the same command again\n' >&2
+  exit 1
+}
+
+source "$ROOT/lib/omacom.sh"
+
+# ── inputs ──────────────────────────────────────────────────────────────────
+source_sync() {
+  local dir=$work/omarchy-mac.git
+  git clone --quiet --bare --filter=blob:none --single-branch --branch "$source_branch" "$source_git" "$dir" 2>"$work/git.err" ||
+    die "could not clone $source_git: $(tail -n 3 "$work/git.err")"
+  source_dir=$dir
+  git -C "$dir" cat-file -e "$commit^{commit}" 2>/dev/null && git -C "$dir" merge-base --is-ancestor "$commit" "refs/heads/$source_branch" ||
+    die "$commit is not on $source_repo $source_branch"
+}
+
+# What master says about each package in the set.
+read_recipes() {
+  local package
+  declare -gA present=() version=() channels=() ring=() pinned=() arches=() pkgbase=()
+  for package in "${packages[@]}"; do
+    recipe_exists "$package" || continue
+    recipe_dir "$package"
+    present[$package]=$recipe
+    version[$package]=$(pkgbuild_var "$recipe" version)
+    channels[$package]=$(recipe_channels "$recipe")
+    ring[$package]=$(metadata "$recipe" .release_ring "")
+    pinned[$package]=$(metadata "$recipe" .pinned false)
+    arches[$package]=$(pkgbuild_var "$recipe" arch)
+    pkgbase[$package]=$(pkgbuild_var "$recipe" pkgbase)
+    [[ -n ${pkgbase[$package]} ]] || pkgbase[$package]=$package
+  done
+}
+
+# The pins a release of $commit moves, into pin_moves ("package old new"),
+# with each recipe edited in $work/pinned/<package>.
+plan_pins() {
+  local package dir old
+  pin_moves=()
+  pin_gaps=()
+  [[ -n $commit ]] || return 0
+  for package in "${source_packages[@]}"; do
+    [[ " ${packages[*]} " == *" $package "* ]] || continue
+    if [[ -z ${present[$package]:-} ]]; then
+      pin_gaps+=("$package: no pkgbuilds/$package on $omacom_repo $omacom_branch")
+      continue
+    fi
+    dir=$work/pinned/$package
+    rm -rf "$dir"
+    mkdir -p "$(dirname "$dir")"
+    cp -R "${present[$package]}" "$dir"
+    [[ $(grep -cE '^_commit=[0-9a-f]{40}$' "$dir/PKGBUILD") == 1 ]] ||
+      { pin_gaps+=("$package: pkgbuilds/$package has no single _commit=<sha> pin line"); continue; }
+    old=$(pkgbuild_var "$dir" _commit)
+    [[ $old != "$commit" ]] || continue
+    git -C "$source_dir" cat-file -e "$old^{commit}" 2>/dev/null || git -C "$source_dir" fetch --quiet origin "$old" 2>/dev/null ||
+      die "cannot read $source_repo $old, which pkgbuilds/$package pins"
+    git -C "$source_dir" merge-base --is-ancestor "$old" "$commit" ||
+      die "pkgbuilds/$package pins $old, which $commit does not descend from; this would move Macs backwards"
+    pin_recipe "$dir" "$commit"
+    pin_moves+=("$package $pin_old_version $pin_new_version")
+  done
+}
+
+# The set on the source and target channels, and what advancing moves.
+plan_promotion() {
+  local package name base ver file sum tver
+  local -A target_version=() target_file=() base_moves=()
+  channel_set "$from" "$work/from.set" "${packages[@]}"
+  channel_set "$to" "$work/to.set" "${packages[@]}"
+  while IFS=$'\t' read -r name base ver file sum; do
+    target_version[$name]=$ver
+    target_file[$name]="$file $sum"
+  done <"$work/to.set"
+  moves=()
+  move_files=()
+  boot_moves=()
+  conflicts=()
+  unpublished=()
+  declare -gA conflict_base=()
+  while IFS=$'\t' read -r name base ver file sum; do
+    tver=${target_version[$name]:-}
+    if [[ -z $tver ]]; then
+      moves+=("$name $ver (new in $to)")
+    elif [[ $tver != "$ver" ]]; then
+      moves+=("$name $tver -> $ver")
+    elif [[ ${target_file[$name]} != "$file $sum" ]]; then
+      conflicts+=("$name $ver: $to holds other bytes under that version; bin/repo advance keeps them")
+      conflict_base[$base]=1
+      continue
+    else
+      continue
+    fi
+    base_moves[$base]=1
+    move_files+=("$file")
+    [[ ! $name =~ $boot_package_pattern ]] || boot_moves+=("$name $ver")
+  done <"$work/from.set"
+  # Master's version of a package that is not on the source channel yet is
+  # still being published (or waits for a pin to merge).
+  for package in "${packages[@]}"; do
+    [[ -n ${present[$package]:-} ]] || continue
+    if [[ " ${pin_moves[*]} " == *" $package "* ]]; then
+      unpublished+=("$package $(pin_new "$package") (after the pin merges)")
+    elif ! awk -F'\t' -v base="${pkgbase[$package]}" -v ver="${version[$package]}" '$2 == base && $3 == ver { found = 1 } END { exit !found }' "$work/from.set"; then
+      unpublished+=("$package ${version[$package]} (master's version; $from has $(awk -F'\t' -v base="${pkgbase[$package]}" '$2 == base { print $3; exit }' "$work/from.set" | grep . || echo nothing))")
+    fi
+  done
+  advance_packages=()
+  widen=()
+  blocked=()
+  # A package moves now, or once its pending pin is published: either way
+  # its recipe must let bin/repo advance carry it.
+  for package in "${packages[@]}"; do
+    if [[ -n ${base_moves[${pkgbase[$package]:-$package}]:-} ]]; then
+      advance_packages+=("$package")
+    elif [[ " ${pin_moves[*]} " != *" $package "* ]]; then
+      continue
+    fi
+    if [[ -z ${present[$package]:-} ]]; then
+      blocked+=("$package: no recipe on $omacom_branch, so bin/repo advance cannot tell whether $to may carry it")
+      continue
+    fi
+    if native_build "$to" "${ring[$package]}" "${pinned[$package]}"; then
+      blocked+=("$package: $([[ ${pinned[$package]} == true ]] && echo "pinned" || echo "release_ring=fast") builds natively for $to (helpers/package-metadata.sh), so bin/repo advance never copies it and widening would publish master's build there on merge")
+      continue
+    fi
+    [[ " ${channels[$package]} " == *" $to "* ]] || widen+=("$package")
+    [[ ${arches[$package]} == "$mac_arch" ]] ||
+      notes+=("$package: arch=(${arches[$package]}), not aarch64 only")
+  done
+  if [[ -s $work/from.set ]]; then
+    set_sha256=$(set_digest "$work/from.set")
+  else
+    set_sha256=""
+  fi
+}
+
+pin_new() {
+  local line
+  for line in "${pin_moves[@]}"; do
+    [[ ${line%% *} == "$1" ]] && { awk '{ print $3 }' <<<"$line"; return 0; }
+  done
+}
+
+# ── evidence ────────────────────────────────────────────────────────────────
+required_vm_lines() {
+  printf '%s\n' format=1 "set_sha256=$set_sha256" status=accepted
+}
+
+# Each reserved key once, with this set's value.
+vm_record_matches() {
+  local line
+  while IFS= read -r line; do
+    [[ $(grep -c "^${line%%=*}=" "$1") == 1 ]] && grep -qxF "$line" "$1" || return 1
+  done < <(required_vm_lines)
+}
+
+required_hardware_lines() {
+  printf 'set_sha256=%s\n' "$set_sha256"
+  local move
+  for move in "${boot_moves[@]}"; do printf 'boot=%s\n' "$move"; done
+}
+
+hardware_record_matches() {
+  cmp -s <(required_hardware_lines | LC_ALL=C sort) <(grep -E '^(set_sha256|boot)=' "$1" | LC_ALL=C sort)
+}
+
+# ── x86_64 ──────────────────────────────────────────────────────────────────
+# The digest of every x86_64 channel database, read fresh, in x86_state.
+read_x86_state() {
+  local channel
+  x86_state=""
+  for channel in "${channel_order[@]}"; do
+    rm -f "$work/db/$channel-x86_64.db"
+    if fetch_db "$channel" x86_64; then
+      x86_state+="$channel=$(sha256_of "$work/db/$channel-x86_64.db") "
+    else
+      x86_state+="$channel=none "
+    fi
+  done
+  x86_state=${x86_state% }
+}
+
+# ── plan ────────────────────────────────────────────────────────────────────
+print_plan() {
+  local line package
+  say "lane:            omacom ($omacom_repo $omacom_branch ${pkgs_head:0:12}, $db_base $mac_arch)"
+  say "set:             ${packages[*]}"
+  for package in "${packages[@]}"; do
+    if [[ -n ${present[$package]:-} ]]; then
+      say "recipe:          $package ${version[$package]} channels=[${channels[$package]}]${ring[$package]:+ release_ring=${ring[$package]}} arch=(${arches[$package]})"
+    else
+      say "recipe:          $package absent on $omacom_branch"
+    fi
+  done
+  if [[ -n $commit ]]; then
+    say "source:          $source_repo $source_branch $commit"
+    (( ${#pin_moves[@]} + ${#pin_gaps[@]} )) || say "pin:             nothing to move"
+    for line in "${pin_moves[@]}"; do
+      read -r package old new <<<"$line"
+      say "pin:             $package $old -> $new (_commit -> ${commit:0:12}; a pull request on $omacom_repo, merged by the owner; CI publishes it to edge)"
+    done
+    for line in "${pin_gaps[@]}"; do say "pin:             blocked: $line"; done
+  fi
+  say "promotion:       $from -> $to on $mac_arch"
+  for line in "${unpublished[@]}"; do say "waits for:       $line on $from"; done
+  (( ${#moves[@]} )) || say "moves:           nothing ($to already serves $from's set)"
+  for line in "${moves[@]}"; do say "moves:           $line"; done
+  for line in "${conflicts[@]}"; do say "conflict:        $line"; done
+  if [[ -n $set_sha256 ]]; then
+    say "set digest:      $set_sha256 ($(wc -l <"$work/from.set" | tr -d ' ') packages on $from)"
+  fi
+  if (( ${#moves[@]} )); then
+    say "VM acceptance:   needs a record with $(required_vm_lines | tr '\n' ' ')(--vm-evidence)"
+    if (( ${#boot_moves[@]} )); then
+      say "kernel or boot:  ${boot_moves[*]} (nothing is promoted unless --hardware-evidence names exactly these, cold boots on the M1 Pro and the M2 Max)"
+    else
+      say "kernel or boot:  none"
+    fi
+    (( ${#widen[@]} == 0 )) || say "widen:           ${widen[*]} to $to (a pull request on $omacom_repo editing .omarchy/package.json channels)"
+    if (( ${#blocked[@]} )); then
+      say "advance:         blocked until the above is fixed"
+    else
+      say "advance:         bin/repo advance --from $from --to $to --arch $mac_arch --package ${advance_packages[*]} --skip-prod-check (on the build host)"
+      for line in "${move_files[@]}"; do say "would copy:      $line (+ .sig)"; done
+    fi
+    read_x86_state
+    say "x86_64:          untouched (scoped to $mac_arch); now $x86_state"
+  fi
+  for line in "${blocked[@]}"; do say "blocked:         $line"; done
+  for line in "${notes[@]}"; do say "note:            $line"; done
+}
+
+# ── steps ───────────────────────────────────────────────────────────────────
+step_pin() {
+  local line package number branch body names=()
+  (( ${#pin_gaps[@]} == 0 )) || stop "the release of $commit cannot pin: ${pin_gaps[*]}"
+  (( ${#pin_moves[@]} )) || return 0
+  for line in "${pin_moves[@]}"; do names+=("${line%% *}"); done
+  branch=mac-release/pin-${commit:0:12}-$(words_digest "${names[@]}")
+  pr_lookup "$branch"
+  case $pr_state in
+    OPEN) stop "pull request #$pr_number pins ${commit:0:12}; once the owner merges it, CI publishes the packages to edge" ;;
+    MERGED) stop "pull request #$pr_number is merged, but $omacom_branch does not pin ${commit:0:12} yet; fetch again shortly" ;;
+  esac
+  checkout_sparse "$branch" "${names[@]/#/pkgbuilds/}"
+  body="Pins the Mac recipes to $source_repo $source_branch $commit:"
+  for line in "${pin_moves[@]}"; do
+    read -r package _ _ <<<"$line"
+    cp "$work/pinned/$package/PKGBUILD" "$pkgs/pkgbuilds/$package/PKGBUILD"
+    body+=$'\n'"- $line"
+  done
+  number=$(open_pr "$branch" "Pin the Mac packages to omarchy-mac ${commit:0:8}" "$body")
+  stop "opened pull request #$number pinning ${commit:0:12}; once the owner merges it, CI publishes the packages to edge"
+}
+
+check_gates() {
+  [[ -n $vm_evidence ]] || stop "promoting $set_sha256 needs VM acceptance evidence; pass --vm-evidence FILE holding these lines:
+$(required_vm_lines | sed 's/^/  /')"
+  vm_record_matches "$vm_evidence" || stop "$vm_evidence does not record acceptance of this set; it needs:
+$(required_vm_lines | sed 's/^/  /')"
+  (( ${#boot_moves[@]} == 0 )) && return 0
+  [[ -n $hardware_evidence ]] || stop "this promotion moves ${boot_moves[*]}; VM acceptance cannot qualify a kernel or boot package. Cold boot exactly this set on the M1 Pro and the M2 Max, then pass --hardware-evidence FILE with these lines, no more and no fewer:
+$(required_hardware_lines | sed 's/^/  /')"
+  hardware_record_matches "$hardware_evidence" || stop "$hardware_evidence does not record exactly what this promotion moves; its set_sha256= and boot= lines must be:
+$(required_hardware_lines | sed 's/^/  /')"
+}
+
+step_widen() {
+  local package branch number file
+  (( ${#widen[@]} )) || return 0
+  branch=mac-release/widen-$to-${set_sha256:0:12}-$(words_digest "${widen[@]}")
+  pr_lookup "$branch"
+  case $pr_state in
+    OPEN) stop "pull request #$pr_number widens ${widen[*]} to $to; the owner merges it, then run again" ;;
+    MERGED) stop "pull request #$pr_number is merged, but $omacom_branch does not list $to for ${widen[*]} yet; fetch again shortly" ;;
+  esac
+  checkout_sparse "$branch" "${widen[@]/#/pkgbuilds/}"
+  for package in "${widen[@]}"; do
+    file=$pkgs/pkgbuilds/$package/.omarchy/package.json
+    [[ -f $file ]] || die "pkgbuilds/$package has no .omarchy/package.json to widen"
+    jq --arg to "$to" --argjson order '["edge","rc","stable"]' \
+      '.channels = ([(.channels // ["edge"])[], $to] | unique | sort_by(. as $c | $order | index($c)))' "$file" >"$file.new"
+    mv "$file.new" "$file"
+  done
+  number=$(open_pr "$branch" "Widen ${widen[*]} to $to" "Channel membership only: the packages reach $to through bin/repo advance --arch $mac_arch, copying the qualified $from builds (set $set_sha256).")
+  stop "opened pull request #$number widening ${widen[*]} to $to; the owner merges it, then run again"
+}
+
+# advance-channel takes package names and copies what the build host's own
+# tree holds, so what it will copy is checked twice first: the source channel
+# still has the qualified set, and the host's dry run of the same advance
+# would copy exactly its files.
+step_advance() {
+  local host
+  host=${OMARCHY_REPO_HOST:-}
+  [[ -n $host ]] || stop "set OMARCHY_REPO_HOST to the build host (bin/repo forwards the advance there), or run this on it:
+  cd /root/omarchy-pkgs && bin/repo advance --from $from --to $to --arch $mac_arch --package ${advance_packages[*]} --skip-prod-check"
+  rm -f "$work/db/$from-$mac_arch.db"
+  channel_set "$from" "$work/now.set" "${packages[@]}"
+  [[ -s $work/now.set && $(set_digest "$work/now.set") == "$set_sha256" ]] ||
+    stop "$from/$mac_arch changed since this set was qualified: it no longer holds set $set_sha256"
+  read_x86_state
+  local before=$x86_state
+  checkout_sparse "mac-release-advance" bin helpers
+  say "advance: $from -> $to on $mac_arch for ${advance_packages[*]} via $host (dry run first)"
+  advance --dry-run >"$work/host-dry-run" 2>&1 ||
+    stop "the build host's dry run of the advance failed: $(tail -n 5 "$work/host-dry-run" | tr '\n' ' ')"
+  host_matches_set ||
+    stop "the build host's dry run does not advance the qualified set: $host_problem. Its tree is not the channel that was qualified"
+  advance >"$work/host-advance" 2>&1 ||
+    stop "bin/repo advance failed; nothing is retried on its own: $(tail -n 5 "$work/host-advance" | tr '\n' ' ')"
+  rm -f "$work/db/$to-$mac_arch.db"
+  channel_set "$to" "$work/after.set" "${packages[@]}"
+  awk -F'\t' '{ print $1, $3, $4, $5 }' "$work/from.set" | LC_ALL=C sort >"$work/want"
+  awk -F'\t' '{ print $1, $3, $4, $5 }' "$work/after.set" | LC_ALL=C sort >"$work/have"
+  [[ -z $(LC_ALL=C comm -23 "$work/want" "$work/have") ]] ||
+    stop "$to/$mac_arch does not serve the promoted set after the advance: $(LC_ALL=C comm -23 "$work/want" "$work/have" | head -n 3 | tr '\n' ' ')"
+  read_x86_state
+  [[ $before == "$x86_state" ]] || stop "an x86_64 database moved during the advance (before: $before; after: $x86_state)"
+  say "advance: $to/$mac_arch serves set $set_sha256; x86_64 databases unchanged"
+}
+
+# The host's dry run must carry exactly the qualified set: it copies every
+# qualified move and nothing else, withholds nothing as differing or
+# ineligible, and finds already present only what the published target
+# already serves unchanged. advance-channel names only the files it copies,
+# so a host tree that already holds a move (after a sync that failed) is a
+# stop for the operator, not something to guess around.
+host_matches_set() {
+  local summary copied present differing ineligible entries unchanged extra missing want
+  host_problem=""
+  summary=$(sed 's/\x1b\[[0-9;]*m//g' "$work/host-dry-run" | grep -E 'Copied: [0-9]+ \| Already present: [0-9]+ \| Differing \(kept\): [0-9]+ \| Not eligible: [0-9]+' | tail -n 1)
+  [[ $summary =~ Copied:\ ([0-9]+)\ \|\ Already\ present:\ ([0-9]+)\ \|\ Differing\ \(kept\):\ ([0-9]+)\ \|\ Not\ eligible:\ ([0-9]+) ]] ||
+    { host_problem="it printed no summary"; return 1; }
+  copied=${BASH_REMATCH[1]} present=${BASH_REMATCH[2]} differing=${BASH_REMATCH[3]} ineligible=${BASH_REMATCH[4]}
+  want=$(printf '%s\n' "${move_files[@]}" | LC_ALL=C sort)
+  sed -n 's/^ *would copy: \(.*\) (+ \.sig)$/\1/p' "$work/host-dry-run" | LC_ALL=C sort >"$work/host-copies"
+  extra=$(LC_ALL=C comm -23 "$work/host-copies" <(printf '%s\n' "$want") | tr '\n' ' ')
+  missing=$(LC_ALL=C comm -13 "$work/host-copies" <(printf '%s\n' "$want") | tr '\n' ' ')
+  awk -F'\t' -v want=" ${advance_packages[*]} " 'index(want, " " $1 " ") || index(want, " " $2 " ")' "$work/from.set" >"$work/advanced.set"
+  entries=$(wc -l <"$work/advanced.set" | tr -d ' ')
+  unchanged=$(awk -F'\t' 'NR == FNR { held[$1 "\t" $4 "\t" $5] = 1; next } held[$1 "\t" $4 "\t" $5]' "$work/to.set" "$work/advanced.set" | wc -l | tr -d ' ')
+  [[ -z $extra ]] || host_problem="it would copy ${extra% }, which were not qualified"
+  [[ -z $missing ]] ||
+    host_problem+="${host_problem:+; }it would not copy ${missing% }: the host's tree lacks them in $from, or already holds them in $to though $to does not serve them (an advance whose sync failed: run bin/repo sync --mirror $to --arch $mac_arch on the host, check what $to serves, then run again)"
+  (( differing == 0 )) || host_problem+="${host_problem:+; }$differing file(s) differ in $to"
+  (( ineligible == 0 )) || host_problem+="${host_problem:+; }$ineligible package(s) are not eligible for $to"
+  (( copied == ${#move_files[@]} && present == unchanged && copied + present == entries )) ||
+    host_problem+="${host_problem:+; }it copies $copied and finds $present present, where the published channels have ${#move_files[@]} to copy and $unchanged unchanged"
+  [[ -z $host_problem ]]
+}
+
+advance() {
+  OMARCHY_REPO_HOST=$host "$pkgs/bin/repo" advance --from "$from" --to "$to" --arch "$mac_arch" \
+    --package "${advance_packages[@]}" --skip-prod-check "$@" </dev/null
+}
+
+# ── main ────────────────────────────────────────────────────────────────────
+dry_run=0
+to=rc
+packages=()
+vm_evidence=""
+hardware_evidence=""
+commit=""
+notes=()
+while (( $# > 0 )); do
+  case $1 in
+    --dry-run) dry_run=1 ;;
+    --to)
+      (( $# > 1 )) && [[ $2 == rc || $2 == stable ]] || usage
+      to=$2
+      shift
+      ;;
+    --package)
+      (( $# > 1 )) && [[ $2 =~ ^[a-z0-9@._+-]+$ ]] || usage
+      packages+=("$2")
+      shift
+      ;;
+    --vm-evidence|--hardware-evidence)
+      (( $# > 1 )) && [[ -s $2 && -r $2 ]] || die "$1 needs a readable, non-empty file"
+      if [[ $1 == "--vm-evidence" ]]; then vm_evidence=$2; else hardware_evidence=$2; fi
+      shift
+      ;;
+    -h|--help) usage 0 ;;
+    -*) usage ;;
+    *)
+      [[ -z $commit && $1 =~ ^[0-9a-f]{40}$ ]] || die "OMARCHY_MAC_COMMIT must be one full 40-hex commit"
+      commit=$1
+      ;;
+  esac
+  shift
+done
+(( ${#packages[@]} )) || packages=("${default_packages[@]}")
+if [[ $to == rc ]]; then from=edge; else from=rc; fi
+
+for tool in git gh jq curl tar awk; do
+  command -v "$tool" >/dev/null || die "missing command: $tool"
+done
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+load_mac_settings "$config_file"
+omacom_clone
+[[ -z $commit ]] || source_sync
+read_recipes
+plan_pins
+plan_promotion
+
+if (( dry_run )); then
+  print_plan
+  say "dry run: nothing was changed"
+  exit 0
+fi
+
+print_plan
+(( ${#blocked[@]} == 0 )) || stop "cannot promote: ${blocked[*]}"
+for base in "${!conflict_base[@]}"; do
+  [[ " ${pin_moves[*]} " == *" $base "* ]] || stop "${conflicts[*]}"
+done
+step_pin
+(( ${#unpublished[@]} == 0 )) || stop "$from does not serve master's set yet: ${unpublished[*]}"
+(( ${#conflicts[@]} == 0 )) || stop "${conflicts[*]}"
+(( ${#moves[@]} )) || { say "nothing to promote: $to/$mac_arch already serves $from's set"; exit 0; }
+check_gates
+step_widen
+step_advance
+say "promoted ${advance_packages[*]} to $to/$mac_arch (set $set_sha256)"

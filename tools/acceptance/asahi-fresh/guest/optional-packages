@@ -1,0 +1,50 @@
+#!/bin/bash
+
+set -u
+
+manifest=${OMARCHY_OPTIONAL_PACKAGES_FILE:-/root/optional-packages.tsv}
+required_file=${OMARCHY_OPTIONAL_REQUIRED_FILE:-/root/optional-packages-aarch64-required}
+log_dir=${OMARCHY_OPTIONAL_LOG_DIR:-/root/optional-package-logs}
+installed=0
+failed=0
+
+declare -A transactions=()
+while IFS='|' read -r id packages; do
+  [[ $id == install.* ]] && transactions[$id]=$packages
+done <"$manifest"
+
+rm -rf "$log_dir"
+mkdir -p "$log_dir"
+
+bash /root/omarchy-vm-alarm-snapshot || exit 1
+
+while read -r id; do
+  [[ $id == install.* ]] || continue
+  packages=${transactions[$id]-}
+  if [[ -z $packages ]]; then
+    printf 'not ok - required transaction is missing from manifest: %s\n' "$id" >&2
+    ((failed++))
+    continue
+  fi
+
+  read -ra package_names <<<"$packages"
+  log="$log_dir/${id//./-}.log"
+  if pacman -S --noconfirm --needed "${package_names[@]}" >"$log" 2>&1; then
+    missing=()
+    for package in "${package_names[@]}"; do
+      pacman -Q "$package" &>/dev/null || missing+=("$package")
+    done
+    if (( ${#missing[@]} == 0 )); then
+      printf 'ok - %s\n' "$id"
+      ((installed++))
+      continue
+    fi
+    printf 'registration check failed: %s\n' "${missing[*]}" >>"$log"
+  fi
+
+  printf 'not ok - %s failed to install (log: %s)\n' "$id" "$log" >&2
+  ((failed++))
+done <"$required_file"
+
+printf '\nOptional VM package installs: %d installed, %d failed\n' "$installed" "$failed"
+(( failed == 0 ))

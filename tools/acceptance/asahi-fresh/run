@@ -1,0 +1,618 @@
+#!/bin/bash
+
+set -euo pipefail
+
+harness=$(cd "$(dirname "$0")" && pwd)
+acceptance=$(dirname "$harness")
+state="${OMARCHY_VM_STATE_DIR:-$harness/test-runs}"
+# The tree under test: an omarchy-mx-mac checkout, whose fresh installer, bundle
+# updater, product version and optional package lists the guest runs.
+source_dir=${OMARCHY_VM_SOURCE_DIR:-}
+image=omarchy-asahi-fresh-vm
+ssh_port=${OMARCHY_VM_SSH_PORT:-22222}
+vnc_port=${OMARCHY_VM_VNC_PORT:-25900}
+keep=0
+rebuild=0
+optional_packages=0
+wait_for_lease=0
+discard_failed_run=0
+vm_memory_mb=${OMARCHY_VM_MEMORY_MB:-6144}
+# The guest has always had 8 vCPUs; benchmark a run before changing the default.
+vm_cpus=${OMARCHY_VM_CPUS:-8}
+# Every run gets its own container, run directory and evidence directory, so a
+# retained or failed run is never reused or removed by the next one.
+run_id=${OMARCHY_VM_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
+evidence_root=${OMARCHY_VM_EVIDENCE_DIR:-$HOME/vm-evidence}
+candidate_tag=${OMARCHY_VM_CANDIDATE_TAG:-}
+candidate_sha256=${OMARCHY_VM_CANDIDATE_SHA256:-}
+candidate_fingerprint=${OMARCHY_VM_CANDIDATE_FINGERPRINT:-}
+candidate_package_count=${OMARCHY_VM_CANDIDATE_PACKAGE_COUNT:-}
+candidate_key=${OMARCHY_VM_CANDIDATE_KEY_FILE:-$acceptance/keys/omarchy-arm-repository.asc}
+channel_url=${OMARCHY_VM_ASAHI_CHANNEL_URL:-}
+channel_pointer_url=${OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL:-}
+# The guest installs Arch Linux ARM packages from a dated, immutable copy of the
+# repositories rather than the live mirrors, so a mirror mid-transition cannot
+# fail a run that has nothing to do with it. The date is the one the current
+# payload was built against; see omarchy-mx-mac's
+# docs/apple-silicon-distribution-channels.md.
+alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mirror/alarm/20260906/$repo/os/$arch'}
+
+while (($#)); do
+  case "$1" in
+    --keep) keep=1 ;;
+    --optional-packages) optional_packages=1 ;;
+    --rebuild-base) rebuild=1 ;;
+    --wait-for-lease) wait_for_lease=1 ;;
+    --discard-failed-run) discard_failed_run=1 ;;
+    --evidence-dir)
+      (( $# >= 2 )) || { echo "--evidence-dir needs a directory" >&2; exit 1; }
+      evidence_root=$2
+      shift
+      ;;
+    --source)
+      (( $# >= 2 )) || { echo "--source needs a directory" >&2; exit 1; }
+      source_dir=$2
+      shift
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+[[ -n $source_dir ]] || {
+  echo "Name the omarchy-mx-mac tree under test with --source DIR or OMARCHY_VM_SOURCE_DIR" >&2
+  exit 1
+}
+source_dir=$(realpath -m -- "$source_dir")
+source_files=(bin/omarchy-install-asahi-fresh bin/omarchy-update-asahi-bundle version)
+(( optional_packages == 0 )) || source_files+=(install/optional-packages.tsv install/optional-packages-aarch64-required)
+for file in "${source_files[@]}"; do
+  [[ -f $source_dir/$file ]] || {
+    echo "The tree under test $source_dir has no $file" >&2
+    exit 1
+  }
+done
+
+[[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || {
+  echo "OMARCHY_VM_RUN_ID must be 1-64 letters, digits, dots, dashes or underscores" >&2
+  exit 1
+}
+[[ $vm_cpus =~ ^[1-9][0-9]*$ ]] || {
+  echo "OMARCHY_VM_CPUS must be a positive integer" >&2
+  exit 1
+}
+[[ -n $evidence_root ]] || {
+  echo "The evidence directory must not be empty" >&2
+  exit 1
+}
+# Cleanup deletes run directories inside the state directory, so evidence kept
+# anywhere beneath it, directly or through a symlink, could be deleted with the
+# disk it describes. Compare the paths with every symlink resolved.
+state_real=$(realpath -m -- "$state")
+evidence_root=$(realpath -m -- "$evidence_root")
+if [[ $evidence_root == "$state_real" || $evidence_root == "$state_real"/* ]]; then
+  echo "The evidence directory $evidence_root is inside the VM state directory $state_real, whose run directories are deleted; choose one outside it" >&2
+  exit 1
+fi
+container=omarchy-asahi-fresh-vm-$run_id
+run_dir=$state/runs/$run_id
+guest_run=/work/runs/$run_id
+evidence_dir=$evidence_root/$run_id
+
+[[ $alarm_mirror == https://* && $alarm_mirror == *'$repo'* && $alarm_mirror == *'$arch'* ]] || {
+  echo 'OMARCHY_VM_ALARM_MIRROR must be an https URL containing $repo and $arch' >&2
+  exit 1
+}
+# ssh hands the command to the guest's shell, which would expand $repo/$arch.
+alarm_mirror_quoted=$(printf '%q' "$alarm_mirror")
+# ssh hands these to the guest's shell, which would split a URL carrying & or ?.
+channel_pointer_url_quoted=$(printf '%q' "$channel_pointer_url")
+channel_url_quoted=$(printf '%q' "$channel_url")
+[[ $vm_memory_mb =~ ^[1-9][0-9]*$ ]] || {
+  echo "OMARCHY_VM_MEMORY_MB must be a positive integer" >&2
+  exit 1
+}
+[[ -z $channel_url || $channel_url =~ ^https://github\.com/maralcbr/omarchy-pkgs/releases/download/asahi-quattro-channel-[1-9][0-9]*/asahi-quattro-channel$ ]] || {
+  echo "OMARCHY_VM_ASAHI_CHANNEL_URL must be an asahi-quattro-channel-<N>/asahi-quattro-channel release asset of maralcbr/omarchy-pkgs" >&2
+  exit 1
+}
+[[ -z $channel_pointer_url || ( $channel_pointer_url == https://* && $channel_pointer_url != *[[:space:]]* ) ]] || {
+  echo "OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL must be an https URL" >&2
+  exit 1
+}
+
+if [[ -n $candidate_tag || -n $candidate_sha256 || -n $candidate_fingerprint || -n $candidate_package_count ]]; then
+  [[ $candidate_tag =~ ^asahi-packages-candidate-[0-9a-f]{40}$ ]] || {
+    echo "OMARCHY_VM_CANDIDATE_TAG must identify an exact candidate commit" >&2
+    exit 1
+  }
+  [[ $candidate_sha256 =~ ^[0-9a-fA-F]{64}$ ]] || {
+    echo "OMARCHY_VM_CANDIDATE_SHA256 must be an exact descriptor checksum" >&2
+    exit 1
+  }
+  [[ $candidate_fingerprint =~ ^[0-9a-fA-F]{40}$ ]] || {
+    echo "OMARCHY_VM_CANDIDATE_FINGERPRINT must be an exact signing fingerprint" >&2
+    exit 1
+  }
+  [[ $candidate_package_count =~ ^[1-9][0-9]*$ ]] || {
+    echo "OMARCHY_VM_CANDIDATE_PACKAGE_COUNT must be the exact repository package count of the candidate" >&2
+    exit 1
+  }
+  [[ -r $candidate_key ]] || {
+    echo "OMARCHY_VM_CANDIDATE_KEY_FILE is not readable" >&2
+    exit 1
+  }
+fi
+
+if [[ -n ${OMARCHY_VM_RUNTIME_MANIFEST_SHA256:-} || -n ${OMARCHY_VM_RUNTIME_SOURCE:-} ]]; then
+  [[ -n $candidate_tag && ${OMARCHY_VM_RUNTIME_MANIFEST_SHA256:-} =~ ^[0-9a-f]{64}$ && ${OMARCHY_VM_RUNTIME_SOURCE:-} =~ ^[0-9a-f]{40}$ ]] || {
+    echo 'Candidate runtime requires a package candidate, manifest checksum and source commit' >&2
+    exit 1
+  }
+fi
+
+command -v flock >/dev/null || {
+  echo "flock (util-linux) is required for the VM lease" >&2
+  exit 1
+}
+
+# One lock for the whole host, from whichever checkout: every run drives the
+# same Docker daemon, forwarded ports, container names and KVM. The path is
+# fixed, never derived from HOME or TMPDIR, which differ between users and
+# under sudo; OMARCHY_VM_HOST_LOCK exists for tests. One user runs VM acceptance
+# on a host: the lock file must belong to that user, because in a sticky /tmp
+# whoever owns the file can unlink and recreate it while another run holds the
+# old inode. The lock is held until the evidence is exported and the run cleaned
+# up. It lives on the descriptor, which the commands started from here inherit,
+# so it ends once this script and anything still holding the descriptor exit.
+host_lock=${OMARCHY_VM_HOST_LOCK:-/tmp/omarchy-asahi-fresh-vm.lock}
+host_lock_fd=""
+
+refuse_host_lock() {
+  echo "$1" >&2
+  exit 1
+}
+
+# Opens the lock (created 0644 when absent) and validates what was opened, not
+# the path: a regular file this user owns.
+open_host_lock() {
+  local owner mode uid previous_umask
+
+  if [[ -n $host_lock_fd ]]; then
+    exec {host_lock_fd}<&-
+  fi
+  if [[ -L $host_lock ]]; then
+    refuse_host_lock "The host VM lock $host_lock is a symlink; remove it to let the next run recreate it"
+  fi
+  previous_umask=$(umask)
+  umask 022
+  if ! { exec {host_lock_fd}<>"$host_lock"; } 2>/dev/null; then
+    umask "$previous_umask"
+    owner=$(stat -c %u -- "$host_lock" 2>/dev/null) || owner=""
+    if [[ -n $owner && $owner != "$EUID" ]]; then
+      refuse_host_lock "The host VM lock $host_lock is another user's lock ($(stat -c %U -- "$host_lock")); one user runs VM acceptance on this host"
+    fi
+    refuse_host_lock "Cannot open the host VM lock $host_lock for writing"
+  fi
+  umask "$previous_umask"
+
+  read -r mode uid host_lock_id < <(stat -L -c '%f %u %d:%i' "/proc/self/fd/$host_lock_fd")
+  if (( (16#$mode & 16#F000) != 16#8000 )); then
+    refuse_host_lock "The host VM lock $host_lock is not a regular file; remove it to let the next run recreate it"
+  fi
+  if [[ $uid != "$EUID" ]]; then
+    refuse_host_lock "The host VM lock $host_lock is another user's lock ($(stat -L -c %U "/proc/self/fd/$host_lock_fd")); one user runs VM acceptance on this host"
+  fi
+}
+
+# The holder is read through a fresh description of the locked inode, never the
+# path. It may have exited while a process it started still holds the lock.
+lock_holder() {
+  local holder=""
+
+  read -r holder <"/proc/self/fd/$host_lock_fd" || true
+  if [[ -z $holder ]]; then
+    printf 'unknown holder'
+    return
+  fi
+  printf '%s' "$holder"
+  if [[ $holder =~ (^|[[:space:]])pid=([0-9]+) && ! -d /proc/${BASH_REMATCH[2]} ]]; then
+    printf ' (no longer running; a process it started still holds the lock)'
+  fi
+}
+
+take_host_lock() {
+  if flock -n "$host_lock_fd"; then
+    return
+  fi
+  if (( wait_for_lease == 0 )); then
+    echo "Another VM run holds the host lock $host_lock: $(lock_holder)" >&2
+    echo "Wait for it to finish, or pass --wait-for-lease to queue behind it." >&2
+    exit 1
+  fi
+  echo "Waiting for the host lock $host_lock, held by: $(lock_holder)" >&2
+  flock "$host_lock_fd"
+}
+
+# The lock only counts while the path still names the locked inode.
+host_lock_current() {
+  [[ ! -L $host_lock && $(stat -c '%d:%i' -- "$host_lock" 2>/dev/null) == "$host_lock_id" ]]
+}
+
+open_host_lock
+take_host_lock
+if ! host_lock_current; then
+  echo "The host VM lock $host_lock changed while it was being taken; taking it again" >&2
+  open_host_lock
+  take_host_lock
+  host_lock_current ||
+    refuse_host_lock "The host VM lock $host_lock changed again while it was being taken; is something replacing it?"
+fi
+# One line at offset 0 of the locked inode, through the validated descriptor.
+# Readers take the first line, so a longer earlier record needs no truncation.
+printf 'run_id=%s pid=%s user=%s state=%s started_at=%s\n' "$run_id" "$$" "$(id -un)" "$state" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >&"$host_lock_fd"
+
+# The state directory also has one owner and one run at a time. A run under
+# another identity (sudo, another docker-group user) would leave files the
+# owner's runs cannot replace, so it is refused rather than shared.
+mkdir -p "$state"
+if [[ ! -O $state ]]; then
+  echo "The VM state directory $state belongs to $(stat -c %U -- "$state"), not $(id -un); run as that user or set OMARCHY_VM_STATE_DIR" >&2
+  exit 1
+fi
+exec {state_lock_fd}<>"$state/lease"
+if ! flock -n "$state_lock_fd"; then
+  echo "Another VM run is using the state directory $state" >&2
+  exit 1
+fi
+
+[[ ! -e $run_dir && ! -e $evidence_dir && ! -e $evidence_dir.partial ]] || {
+  echo "Run $run_id already has a run or evidence directory; choose another OMARCHY_VM_RUN_ID" >&2
+  exit 1
+}
+# A retained (--keep) VM from an earlier run keeps its name after the lease is
+# released. docker run would refuse the name anyway; this says why up front.
+if docker container inspect "$container" >/dev/null 2>&1; then
+  echo "Container $container already exists; choose another OMARCHY_VM_RUN_ID" >&2
+  exit 1
+fi
+
+# Another state directory's retained VM (a --keep run) still owns these ports.
+busy_ports=$(docker ps --format '{{.Names}} {{.Ports}}' | grep -E "127\.0\.0\.1:($ssh_port|$vnc_port)->" || true)
+if [[ -n $busy_ports ]]; then
+  echo "Port $ssh_port or $vnc_port is already forwarded by a running container:" >&2
+  printf '  %s\n' "$busy_ports" >&2
+  echo "Remove it (docker rm -f <name>) or set OMARCHY_VM_SSH_PORT and OMARCHY_VM_VNC_PORT." >&2
+  exit 1
+fi
+
+# The package channel is resolved once, here, before the guest runs. The fresh
+# installer's repository bootstrap is handed this exact channel and guest/verify
+# expects its stable set, so a promotion between the two cannot fail a run, and
+# verify never learns the expected pin from the system it is checking.
+packages_releases=https://github.com/maralcbr/omarchy-pkgs/releases/download
+packages_channel_tag=""
+packages_pointer=$(curl --proto '=https' --tlsv1.2 --fail --location --silent --connect-timeout 15 --max-time 20 \
+  --max-filesize 256 https://downloads.aicodelabs.com.au/pointers/asahi-packages-channel || true)
+if [[ $packages_pointer =~ ^format=1$'\n'sequence=([1-9][0-9]{0,8})$'\n'tag=asahi-packages-channel-([1-9][0-9]{0,8})$ &&
+  ${BASH_REMATCH[1]} == "${BASH_REMATCH[2]}" ]]; then
+  packages_channel_tag=asahi-packages-channel-${BASH_REMATCH[1]}
+else
+  echo "Package channel pointer unusable; falling back to the GitHub release listing" >&2
+  packages_channel_tag=$(curl --fail --location --silent --connect-timeout 15 --max-time 60 --retry 3 --retry-all-errors \
+    "https://api.github.com/repos/maralcbr/omarchy-pkgs/releases?per_page=100" |
+    grep -oE '"tag_name": *"asahi-packages-channel-[1-9][0-9]*"' |
+    grep -oE 'asahi-packages-channel-[0-9]+' | sort -u -t- -k4,4n | tail -1 || true)
+fi
+[[ $packages_channel_tag =~ ^asahi-packages-channel-[1-9][0-9]*$ ]] || {
+  echo "Could not resolve the Apple Silicon package channel" >&2
+  exit 1
+}
+packages_channel_url="$packages_releases/$packages_channel_tag/asahi-packages-channel"
+packages_channel=$(curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --connect-timeout 15 \
+  --max-time 60 --retry 3 --retry-all-errors --max-filesize 131072 "$packages_channel_url")
+expected_repository=$(sed -n 's/^stable_tag=//p' <<<"$packages_channel")
+[[ $expected_repository =~ ^asahi-packages-stable-[0-9a-f]{40}$ ]] || {
+  echo "$packages_channel_url does not name one stable package set" >&2
+  exit 1
+}
+expected_repository_quoted=$(printf '%q' "$expected_repository")
+packages_channel_url_quoted=$(printf '%q' "$packages_channel_url")
+
+mkdir -p "$state/cache" "$state/ssh" "$state/runs"
+chmod 0700 "$state/ssh"
+if [[ ! -f $state/ssh/id_ed25519 ]]; then
+  ssh-keygen -q -t ed25519 -N '' -f "$state/ssh/id_ed25519"
+fi
+(( rebuild == 0 )) || rm -f "$state/cache/archarm-base.qcow2"
+
+shopt -s nullglob
+retained_runs=("$state"/runs/*)
+shopt -u nullglob
+[[ ! -d $state/run ]] || retained_runs+=("$state/run")
+if (( ${#retained_runs[@]} > 0 )); then
+  echo "Retained VM run directories (remove them once they are no longer needed):" >&2
+  du -sh "${retained_runs[@]}" >&2 || true
+fi
+
+# The logs an acceptance record hashes, plus the final screen. Each run's copy
+# lands in its own evidence directory, which outlives the run directory.
+evidence_files=(
+  candidate-repository.log
+  install.log
+  serial.log
+  verify.log
+  optional-packages.log
+  rerun.log
+  desktop.ppm
+)
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# docker run writes the ID of the container it created here, even when starting
+# it fails. Cleanup acts on that ID alone, so a run whose docker run lost a name
+# race never touches the container that won it.
+scratch=$(mktemp -d)
+cid_file=$scratch/container-id
+container_id=""
+
+vm_monitor() {
+  printf '%s\n' "$1" | docker exec -i "$container_id" socat - "UNIX-CONNECT:$guest_run/monitor.sock" >/dev/null
+}
+
+# The sources are hashed first, the copy is checked against those hashes, and
+# only a checked copy is renamed into place, so an evidence directory without
+# the .partial suffix always matches the run it came from.
+export_evidence() {
+  local status=$1 partial=$evidence_dir.partial file key sum
+  local -a files=()
+
+  rm -rf "$partial"
+  mkdir -p "$partial" || return 1
+
+  if [[ -d $run_dir ]]; then
+    for file in "${evidence_files[@]}"; do
+      if [[ -f $run_dir/$file ]]; then
+        files+=("$file")
+      fi
+    done
+    if [[ -d $run_dir/optional-package-logs ]]; then
+      mapfile -t -O "${#files[@]}" files < <(cd "$run_dir" && find optional-package-logs -type f | LC_ALL=C sort)
+    fi
+  fi
+
+  : >"$partial/SHA256SUMS"
+  if (( ${#files[@]} > 0 )); then
+    (cd "$run_dir" && sha256sum -- "${files[@]}") >"$partial/SHA256SUMS" || return 1
+    for file in "${files[@]}"; do
+      mkdir -p "$partial/$(dirname "$file")" || return 1
+      cp -- "$run_dir/$file" "$partial/$file" || return 1
+    done
+    (cd "$partial" && sha256sum --check --strict --quiet SHA256SUMS) || {
+      echo "The exported evidence does not match $run_dir" >&2
+      return 1
+    }
+  fi
+
+  {
+    echo format=1
+    echo "run_id=$run_id"
+    if (( status == 0 )); then echo status=passed; else echo status=failed; fi
+    echo "exit_status=$status"
+    echo "started_at=$started_at"
+    echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "source_commit=$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)"
+    echo "harness_commit=$(git -C "$harness" rev-parse HEAD 2>/dev/null || true)"
+    echo "container=$container"
+    echo "vm_cpus=$vm_cpus"
+    echo "vm_memory_mb=$vm_memory_mb"
+    echo "alarm_mirror=$alarm_mirror"
+    echo "packages_channel_url=$packages_channel_url"
+    echo "expected_repository=$expected_repository"
+    echo "candidate_tag=$candidate_tag"
+    echo "candidate_sha256=$candidate_sha256"
+    echo "runtime_manifest_sha256=${OMARCHY_VM_RUNTIME_MANIFEST_SHA256:-}"
+    echo "runtime_source=${OMARCHY_VM_RUNTIME_SOURCE:-}"
+    # The same keys as the acceptance record, e.g. install_log_sha256.
+    while read -r sum file; do
+      if [[ $file != */* ]]; then
+        key=${file//[-.]/_}
+        echo "${key}_sha256=$sum"
+      fi
+    done <"$partial/SHA256SUMS"
+  } >"$partial/run.txt" || return 1
+
+  mv -T "$partial" "$evidence_dir"
+}
+
+# A failed docker rm, or a daemon that cannot answer, leaves the guest possibly
+# still running on the run directory; only an empty listing counts as gone.
+container_gone() {
+  local listed
+
+  listed=$(docker ps --all --quiet --no-trunc --filter "id=$container_id") || return 1
+  [[ -z $listed ]]
+}
+
+remove_run_dir() {
+  # Files qemu created before the ownership hand-back belong to root.
+  rm -rf "$run_dir" 2>/dev/null ||
+    docker run --rm -v "$state/runs:/runs" "$image" rm -rf "/runs/$run_id" >/dev/null 2>&1 || true
+  if [[ -e $run_dir ]]; then
+    echo "Could not remove $run_dir; remove it by hand" >&2
+  else
+    echo "Removed run directory $run_dir"
+  fi
+}
+
+# Runs with the lease still held: stop the guest so its serial log is final,
+# export and verify the evidence, then drop the run directory only when the run
+# passed (or --discard-failed-run asked for it) and the export verified.
+finish() {
+  local status=$? delete_run=0 gone=1
+  set +e
+  # A second Ctrl-C must not cut cleanup short and leave the VM running.
+  trap '' INT TERM
+
+  if [[ -z $container_id && -s $cid_file ]]; then
+    container_id=$(<"$cid_file")
+  fi
+  if [[ -n $container_id ]]; then
+    docker exec "$container_id" chown -R "$(id -u):$(id -g)" "$guest_run" >/dev/null 2>&1
+    if (( keep == 0 )); then
+      docker rm -f "$container_id" >/dev/null 2>&1
+      container_gone || gone=0
+    else
+      # The retained guest keeps writing its serial log; pause it for the copy.
+      vm_monitor stop
+    fi
+  fi
+
+  if (( gone == 0 )); then
+    echo "Could not confirm that container $container ($container_id) is gone; its guest may still be using $run_dir." >&2
+    echo "Kept $run_dir and exported no evidence: remove the container, then copy the evidence by hand." >&2
+    (( status != 0 )) || status=1
+    rm -rf "$scratch"
+    exit "$status"
+  fi
+
+  if export_evidence "$status"; then
+    echo "VM evidence: $evidence_dir"
+    if (( keep == 0 && ( status == 0 || discard_failed_run ) )); then
+      delete_run=1
+    fi
+  else
+    echo "Evidence export failed; keeping $run_dir and $evidence_dir.partial" >&2
+    (( status != 0 )) || status=1
+  fi
+
+  if (( keep )) && [[ -n $container_id ]]; then
+    vm_monitor cont
+    echo "VM retained in Docker container $container (run directory $run_dir)"
+  elif (( delete_run )); then
+    remove_run_dir
+  elif [[ -d $run_dir ]]; then
+    echo "Failed run retained for debugging: $run_dir" >&2
+    echo "Remove it when done, or pass --discard-failed-run to drop a failed run's disk." >&2
+  fi
+  rm -rf "$scratch"
+  exit "$status"
+}
+trap finish EXIT
+trap 'trap "" INT TERM; exit 130' INT
+trap 'trap "" INT TERM; exit 143' TERM
+
+docker build -t "$image" "$harness"
+docker run -d \
+  --cidfile "$cid_file" \
+  --name "$container" \
+  --label org.omarchy.vm-harness=asahi-fresh \
+  --label "org.omarchy.vm-run-id=$run_id" \
+  --privileged \
+  --device /dev/kvm \
+  -p "127.0.0.1:$ssh_port:22" \
+  -p "127.0.0.1:$vnc_port:5900" \
+  -v "$state:/work" \
+  "$image" sleep infinity >/dev/null
+container_id=$(<"$cid_file")
+
+docker exec -e ARCHARM_MIRROR_URL="$alarm_mirror" \
+  "$container_id" /usr/local/lib/omarchy-asahi-vm/build-base
+docker exec -e OMARCHY_VM_MEMORY_MB="$vm_memory_mb" -e OMARCHY_VM_CPUS="$vm_cpus" -e OMARCHY_VM_RUN_DIR="$guest_run" \
+  "$container_id" /usr/local/lib/omarchy-asahi-vm/start-vm
+docker exec "$container_id" chown -R "$(id -u):$(id -g)" "$guest_run"
+
+ssh_args=(
+  -i "$state/ssh/id_ed25519"
+  -p "$ssh_port"
+  -o BatchMode=yes
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ConnectTimeout=5
+)
+scp_args=(
+  -i "$state/ssh/id_ed25519"
+  -P "$ssh_port"
+  -o BatchMode=yes
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ConnectTimeout=5
+)
+
+wait_for_ssh() {
+  local attempts=120
+  while (( attempts-- )); do
+    if ssh "${ssh_args[@]}" root@127.0.0.1 true 2>/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+wait_for_reboot() {
+  local previous_boot_id=$1 attempts=120 current_boot_id
+  while (( attempts-- )); do
+    current_boot_id=$(ssh "${ssh_args[@]}" root@127.0.0.1 cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+    if [[ -n $current_boot_id && $current_boot_id != "$previous_boot_id" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+wait_for_ssh || { tail -200 "$run_dir/serial.log"; exit 1; }
+scp "${scp_args[@]}" "$harness/guest/alarm-snapshot" root@127.0.0.1:/root/omarchy-vm-alarm-snapshot
+ssh "${ssh_args[@]}" root@127.0.0.1 env OMARCHY_VM_ALARM_MIRROR="$alarm_mirror_quoted" bash /root/omarchy-vm-alarm-snapshot
+if [[ -n $candidate_tag ]]; then
+  scp "${scp_args[@]}" "$candidate_key" root@127.0.0.1:/root/omarchy-arm-repository.asc
+  scp "${scp_args[@]}" "$harness/guest/candidate-repository" root@127.0.0.1:/root/omarchy-vm-candidate-repository
+  ssh "${ssh_args[@]}" root@127.0.0.1 env \
+    OMARCHY_VM_CANDIDATE_TAG="$candidate_tag" \
+    OMARCHY_VM_CANDIDATE_SHA256="$candidate_sha256" \
+    OMARCHY_VM_CANDIDATE_FINGERPRINT="$candidate_fingerprint" \
+    OMARCHY_VM_CANDIDATE_PACKAGE_COUNT="$candidate_package_count" \
+    bash /root/omarchy-vm-candidate-repository |
+    tee "$run_dir/candidate-repository.log"
+fi
+scp "${scp_args[@]}" "$source_dir/bin/omarchy-install-asahi-fresh" root@127.0.0.1:/root/omarchy-install-asahi-fresh.candidate
+scp "${scp_args[@]}" "$source_dir/bin/omarchy-update-asahi-bundle" root@127.0.0.1:/root/omarchy-update-asahi-bundle.candidate
+scp "${scp_args[@]}" "$harness/guest/install" root@127.0.0.1:/root/omarchy-vm-install
+scp "${scp_args[@]}" "$harness/guest/candidate-runtime" root@127.0.0.1:/root/omarchy-vm-candidate-runtime
+stable_version=$(<"$source_dir/version")
+ssh -tt "${ssh_args[@]}" root@127.0.0.1 \
+  env OMARCHY_VM_RUNTIME_MANIFEST_SHA256="${OMARCHY_VM_RUNTIME_MANIFEST_SHA256:-}" OMARCHY_VM_RUNTIME_SOURCE="${OMARCHY_VM_RUNTIME_SOURCE:-}" OMARCHY_VM_STABLE_VERSION="$stable_version" OMARCHY_VM_ALARM_MIRROR="$alarm_mirror_quoted" OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL="$channel_pointer_url_quoted" OMARCHY_VM_ASAHI_PACKAGES_CHANNEL_URL="$packages_channel_url_quoted" bash /root/omarchy-vm-install |
+  tee "$run_dir/install.log" || exit 1
+
+boot_id=$(ssh "${ssh_args[@]}" root@127.0.0.1 cat /proc/sys/kernel/random/boot_id)
+ssh "${ssh_args[@]}" root@127.0.0.1 systemctl reboot --no-block || true
+wait_for_reboot "$boot_id" || { tail -200 "$run_dir/serial.log"; exit 1; }
+scp "${scp_args[@]}" "$harness/guest/verify" root@127.0.0.1:/root/omarchy-vm-verify
+ssh "${ssh_args[@]}" root@127.0.0.1 env \
+  OMARCHY_VM_ASAHI_CHANNEL_URL="$channel_url_quoted" \
+  OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL="$channel_pointer_url_quoted" \
+  OMARCHY_VM_EXPECTED_REPOSITORY="$expected_repository_quoted" \
+  bash /root/omarchy-vm-verify | tee "$run_dir/verify.log"
+
+if (( optional_packages )); then
+  scp "${scp_args[@]}" \
+    "$source_dir/install/optional-packages.tsv" \
+    root@127.0.0.1:/root/optional-packages.tsv
+  scp "${scp_args[@]}" \
+    "$source_dir/install/optional-packages-aarch64-required" \
+    root@127.0.0.1:/root/optional-packages-aarch64-required
+  scp "${scp_args[@]}" \
+    "$harness/guest/optional-packages" \
+    root@127.0.0.1:/root/omarchy-vm-optional-packages
+
+  optional_status=0
+  ssh "${ssh_args[@]}" root@127.0.0.1 env OMARCHY_VM_ALARM_MIRROR="$alarm_mirror_quoted" bash /root/omarchy-vm-optional-packages |
+    tee "$run_dir/optional-packages.log" || optional_status=$?
+  scp -r "${scp_args[@]}" root@127.0.0.1:/root/optional-package-logs "$run_dir/"
+  (( optional_status == 0 )) || exit "$optional_status"
+fi
+
+scp "${scp_args[@]}" "$harness/guest/rerun" root@127.0.0.1:/root/omarchy-vm-rerun
+ssh -tt "${ssh_args[@]}" root@127.0.0.1 bash /root/omarchy-vm-rerun | tee "$run_dir/rerun.log"
+
+vm_monitor "screendump $guest_run/desktop.ppm"
