@@ -1,8 +1,10 @@
 echo "Enable Wi-Fi resume recovery on Apple Silicon Macs with BCM4388"
 
-omarchy-hw-apple-silicon || exit 0
-# grep without -q reads all of lspci's output; see migrations/1789140994.sh.
-lspci -nn | grep -E '14e4:4434' >/dev/null || exit 0
+# A failed detector or lspci keeps the migration pending instead of skipping it.
+platform=$(omarchy-hw-platform)
+[[ $platform == "apple-silicon" ]] || exit 0
+devices=$(lspci -nn)
+grep -E '14e4:4434' <<<"$devices" >/dev/null || exit 0
 
 omarchy-setup-mac --system
 # Setup skips the chip when the installed add-on predates it; stay pending until it doesn't.

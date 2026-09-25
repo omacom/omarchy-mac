@@ -33,7 +33,7 @@ SH
 # platform it runs on rather than inherit the machine running the suite.
 cat >"$stub_bin/omarchy-hw-platform" <<'SH'
 #!/bin/bash
-[[ ${PLATFORM:-generic} != error ]] || { echo "Error: contradictory platform identity" >&2; exit 1; }
+[[ ${PLATFORM:-generic} != "error" ]] || { echo "Error: contradictory platform identity" >&2; exit 1; }
 echo "${PLATFORM:-generic}"
 SH
 
