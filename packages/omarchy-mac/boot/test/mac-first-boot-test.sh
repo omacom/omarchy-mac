@@ -255,7 +255,7 @@ echo 'ok - the unit logs to the journal and holds no terminal; the script owns t
 # The generic deferred-hardware service runs after first boot, which drains the
 # queue once the keyring exists.
 [[ $(grep -v '^#' "$hardware_dropin") == \
-  $'[Unit]\nWants=network-online.target\nAfter=omarchy-mac-first-boot.service network-online.target\nConditionPathExists=!/var/lib/omarchy/mac-first-boot/pending' ]] ||
+  $'[Unit]\nAfter=omarchy-mac-first-boot.service NetworkManager.service\nConditionPathExists=!/var/lib/omarchy/mac-first-boot/pending\n\n[Service]\nExecStartPre=-/usr/bin/nm-online -q -s -t 30' ]] ||
   fail "omarchy-provision-hardware.service waits for first boot and the network, and never starts while first boot is pending"
 grep -Fq 'provision=$root/usr/bin/omarchy-provision-hardware' "$script" ||
   fail "first boot runs omarchy-provision-hardware"
