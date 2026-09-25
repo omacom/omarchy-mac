@@ -12,6 +12,8 @@ RUNTIME_HOOK=$FILES/usr/lib/initcpio/hooks/omarchy-mac-encrypt
 ESP_UUID=4F4D-5801
 BOOT_UUID=4f4d5801-424f-4f54-8000-000000000001
 REDUCE_BYTES=$((32 * 1024 * 1024))
+# The drop-ins ask omarchy-hw-platform; the stand-in answers apple-silicon.
+export PATH="$ROOT/test/helpers:$PATH"
 
 fail() {
   echo "not ok - $1" >&2
@@ -77,6 +79,11 @@ hooks_after() {
 [[ $(hooks_after base udev autodetect keyboard keymap block encrypt filesystems fsck) == \
   "base udev autodetect keyboard keymap block encrypt filesystems fsck" ]] ||
   fail "a cryptdevice= Mac (busybox encrypt hook) keeps its HOOKS line untouched"
+for platform in qualcomm generic-aarch64 generic "" fail; do
+  [[ $(OMARCHY_TEST_HW_PLATFORM=$platform hooks_after base udev autodetect keyboard keymap block filesystems fsck) == \
+    "base udev autodetect keyboard keymap block filesystems fsck" ]] ||
+    fail "the drop-in leaves HOOKS alone off Apple Silicon (detector: ${platform:-empty})"
+done
 
 grep -Fq 'cryptsetup reencrypt --encrypt' "$SCRIPT" &&
   grep -Fq -- '--reduce-device-size' "$SCRIPT" && grep -Fq -- '--device-size' "$SCRIPT" &&

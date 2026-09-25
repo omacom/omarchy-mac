@@ -11,6 +11,8 @@ late_unit=$files/usr/lib/omarchy/initcpio/omarchy-vendorfw.service
 early_sh=$files/usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.sh
 early_unit=$files/usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.service
 cryptsetup_dropin=$files/usr/lib/omarchy/initcpio/omarchy-vendorfw-cryptsetup.conf
+# The drop-ins ask omarchy-hw-platform; the stand-in answers apple-silicon.
+export PATH="$ROOT/test/helpers:$PATH"
 
 fail() {
   echo "not ok - $1" >&2
@@ -165,6 +167,14 @@ mapfile -t sourced < <(source_hid hid_apple=/lib/modules/x/hid-apple.ko)
 [[ ${sourced[1]} == "btrfs hid_apple" ]] ||
   fail "a driver the kernel does not build is left out" "MODULES=(${sourced[1]})"
 echo 'ok - a driver the kernel does not build is left out'
+
+for platform in qualcomm generic-aarch64 generic "" fail; do
+  mapfile -t sourced < <(OMARCHY_TEST_HW_PLATFORM=$platform source_hid \
+    hid_apple=/lib/modules/x/hid-apple.ko usbhid=/lib/modules/x/usbhid.ko thunderbolt=/lib/modules/x/thunderbolt.ko)
+  [[ ${sourced[0]} == 0 && ${sourced[1]} == btrfs && ${sourced[2]} == unset ]] ||
+    fail "the drop-in adds no module off Apple Silicon (detector: ${platform:-empty})" "status ${sourced[0]} MODULES=(${sourced[1]})"
+done
+echo 'ok - off Apple Silicon the drop-in adds no module'
 
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${IN_OMARCHY_MAC_HID_TEST:-0} != "1" ]]; then
   echo 'ok - source checks passed; disposable initramfs/block tests not run (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in)'
