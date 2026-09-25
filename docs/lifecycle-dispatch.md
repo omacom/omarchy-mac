@@ -36,7 +36,7 @@ The set is fixed in the dispatcher; adding one is an upstream change. The operat
 | `reset-rollback` | Factory reset, when anything fails after `reset-prepare` | Restores the previous boot state | required | ticket 34 |
 | `update-preflight` | Update, before the keyring and package transaction | Refuses an update the platform can't boot afterwards. A failure stops the update. | optional | `omarchy-update-boot preflight` (`omarchy update`) |
 | `update-verify` | Update, after the last package step: the transaction, migrations, the post-update hook, AUR, mise and orphans | Read-only. Verifies the boot chain boots the updated system, whose new kernel may still wait for its reboot. A failure leaves the update unfinished: it exits non-zero and offers no reboot. | required | `omarchy-update-boot verify` (`omarchy update`) |
-| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | required | `omarchy-provision-owner`; ticket 36 |
+| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | required | `omarchy-provision-owner` |
 
 ## Platform registration
 
@@ -95,6 +95,10 @@ A dispatch point takes one of two shapes:
 - **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #503 put them and are sourced by absolute path.
 - **Owner and recovery slots:** #503's `rekey_luks_apple` sequence folds into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`). Only its boot step is `provision-commit`.
 - **Recovery passphrase:** #503 prepares it (`prepare_luks_recovery`) only on Apple. Whether every encrypted install gets one is a core decision for ticket 33, not a dispatch operation.
+
+## Snapshots
+
+Snapshot restore is not a dispatch operation. A Limine Mac restores through `limine-snapper-restore`, as x86 does, and a restored snapshot needs no boot file rebuilt: the restore only goes ahead when the boot files already match it. `omarchy-mac-boot` refuses a snapshot they do not match from limine-snapper-sync's own pre hook interface (`/etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check`), the interface its Limine activation gate already uses. `omarchy-snapshot restore` sends a Mac that still boots GRUB to `omarchy-system-snapshot-restore`, which refuses a Limine Mac and asks `omarchy-mac-snapshot-check` about the chosen snapshot on a GRUB one.
 
 ## Qualcomm
 

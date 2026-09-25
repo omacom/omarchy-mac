@@ -11,13 +11,17 @@ Snapshots work as they do on x86 Omarchy, described in [System snapshots](https:
 1. Restart and pick the snapshot in the Limine menu by its date and Omarchy version.
 2. Once it is up, click the notification to restore it, or run `omarchy-snapshot restore`.
 
-A snapshot holds the root file system, not `/home`, so it undoes a broken update but does not bring back lost files.
+A Mac restores only the snapshot it booted: run from the current system, the restore tells you to boot the snapshot first. A snapshot holds the root file system, not `/home`, so it undoes a broken update but does not bring back lost files.
+
+Snapshots taken before Limine was activated on your Mac are not in the Limine menu. Limine saved no kernel for them, so they can't be booted or restored. `limine-snapper-list` shows the snapshots the menu offers.
 
 ## What a snapshot does not hold on a Mac
 
 Part of what boots a Mac lives outside the root file system: the kernel and initramfs on the boot partition, Limine on the EFI system partition, and m1n1, U-Boot and the device trees. A snapshot does not roll those back.
 
-So before a restore, the snapshot is compared with the current boot files, and you are told when it predates them, for example when it was taken before a kernel update. That keeps you from restoring a root the installed kernel cannot boot.
+So before a restore, the snapshot is checked against the current boot files, and the restore is refused when they don't match it, for example when the snapshot was taken before a kernel or m1n1 update. The message says what differs and lists the snapshot's kernel and boot firmware packages. To restore that snapshot anyway, boot the current system, install those package versions with `pacman`, then boot the snapshot again and restore it.
+
+A Mac that still boots GRUB, from before the move to Limine, has no snapshot menu. There `omarchy-snapshot restore` runs from the current system, lets you pick a snapshot, and refuses one that doesn't carry the kernel on the boot partition.
 
 ## The boot menu stays
 
