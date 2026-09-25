@@ -14,7 +14,9 @@ lsblk() {
   [[ ${*: -1} == "/dev/mapper/root" ]] || return 98
   printf '%s\n' "$*" >>"$test_tmp/lsblk-calls"
   [[ $disk_state != "failure" ]] || return 1
-  if [[ $disk_state == "encrypted" ]]; then
+  if [[ $disk_state == "lvm" ]]; then
+    printf '/dev/mapper/root btrfs\n/dev/mapper/cryptlvm LVM2_member\n/dev/nvme0n1p2 crypto_LUKS\n/dev/nvme0n1 \n'
+  elif [[ $disk_state == "encrypted" ]]; then
     if [[ $1 == -*r* ]]; then
       printf '/dev/mapper/root btrfs\n/dev/nvme0n1p6 crypto_LUKS\n/dev/nvme0n1 \n'
     else
@@ -37,6 +39,11 @@ for script in omarchy-provision-owner omarchy-system-factory-reset; do
   actual=$(luks_device) || fail "$script resolves a crypttab root"
   [[ $actual == "/dev/nvme0n1p6" ]] || fail "$script returns the raw partition path" "$actual"
   pass "$script strips the btrfs subvolume and returns the LUKS parent without tree glyphs"
+
+  disk_state=lvm
+  actual=$(luks_device) || fail "$script resolves a root on LVM on LUKS"
+  [[ $actual == "/dev/nvme0n1p2" ]] || fail "$script walks past the LVM layer to the LUKS partition" "$actual"
+  pass "$script finds the LUKS partition beneath an LVM volume group"
 
   for disk_state in plain failure; do
     if actual=$(luks_device); then
