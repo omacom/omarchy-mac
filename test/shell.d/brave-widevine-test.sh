@@ -15,11 +15,12 @@ omarchy_path="$test_tmp/omarchy"
 opt_path="$test_tmp/opt"
 cdm="$opt_path/WidevineCdm/chromium"
 calls="$test_tmp/calls.log"
-mkdir -p "$stub_bin" "$test_tmp/home" "$omarchy_path/install/helpers" "$omarchy_path/config"
+mkdir -p "$stub_bin" "$test_tmp/home" "$omarchy_path/install/helpers" "$omarchy_path/install/user/hardware/apple" "$omarchy_path/config"
 
 # The real policy helper writes under /etc without sudo when run as root, so
-# stand it in; this test covers only the CDM link.
+# stand it and the Apple decode flag in; this test covers only the CDM link.
 printf 'browser_policy_setup_dir() { :; }\n' >"$omarchy_path/install/helpers/browser-policy.sh"
+: >"$omarchy_path/install/user/hardware/apple/browser-video-decode.sh"
 cp "$ROOT/config/chromium-flags.conf" "$omarchy_path/config/"
 
 for command in omarchy-pkg-add omarchy-pkg-aur-add omarchy-install-chromium-copy-url omarchy-install-chromium-ytdlp omarchy-theme-set-browser; do
