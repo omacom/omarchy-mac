@@ -13,7 +13,7 @@ direction="${1:-up}"
 
 # Find keyboard backlight device (look for *kbd_backlight* pattern in leds class).
 device=""
-for candidate in /sys/class/leds/*kbd_backlight*; do
+for candidate in "${OMARCHY_LEDS_DIR:-/sys/class/leds}"/*kbd_backlight*; do
   if [[ -e $candidate ]]; then
     device="$(basename "$candidate")"
     break
@@ -53,6 +53,11 @@ else
   (( new_brightness < 0 )) && new_brightness=0
 fi
 
-# Set the new brightness.
+# Record a change as a key press before making it, so
+# omarchy-brightness-keyboard-auto can tell a deliberate off from a lock blank.
+# A press that changes nothing (down at 0) records nothing.
+if (( new_brightness != current_brightness )); then
+  printf '%s\n' "$new_brightness" >"${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-keyboard-manual"
+fi
 brightnessctl -d "$device" set "$new_brightness" >/dev/null
 (( no_osd )) || omarchy-osd -i keyboard -p "$(( new_brightness * 100 / max_brightness ))"

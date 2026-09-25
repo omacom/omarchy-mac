@@ -5,8 +5,11 @@
 # omarchy:examples=omarchy brightness keyboard auto --once | omarchy brightness keyboard auto --map-lux 12
 
 # Inverse of display auto-brightness: dark rooms need the keys lit, bright
-# rooms do not. Manual Shift+F1/F2 (or any other write to the LED) pauses
-# auto until ambient light moves enough that the old choice no longer fits.
+# rooms do not. Manual Shift+F1/F2 (or another tool leaving a visible level)
+# pauses auto until ambient light moves enough that the old choice no longer
+# fits; keys turned off with Shift+F1/F2 are left off until the next key press.
+# Anything else that turns the keys off (lock-screen blank, a saved near-zero
+# restore) is not a choice: auto resumes.
 
 set -euo pipefail
 
@@ -16,6 +19,8 @@ BRIGHT_LUX=180
 DEADBAND_PERCENT=4
 OVERRIDE_LUX_DELTA=20
 OVERRIDE_LUX_RATIO=40
+# At or below 2% the keys are invisible (a 1% leftover is 2/255): off.
+EFFECTIVELY_OFF_PERCENT=2
 
 once=0
 available_only=0
@@ -143,6 +148,8 @@ max=$(<"$kbd_path/max_brightness")
 last_set=""
 paused=0
 pause_lux=0
+# omarchy-brightness-keyboard records each level a key press sets here.
+manual_file=${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-keyboard-manual
 
 session_locked() {
   omarchy-hyprland-session-locked >/dev/null 2>&1
@@ -177,7 +184,22 @@ apply_percent() {
   fi
 
   brightnessctl -d "$device" set "$target" >/dev/null
+  # Our write supersedes the last key press; a later blank must not match it.
+  rm -f "$manual_file"
   last_set=$(brightnessctl -d "$device" get || echo "$target")
+}
+
+led_effectively_off() {
+  local current=$1
+  (( current * 100 <= max * EFFECTIVELY_OFF_PERCENT ))
+}
+
+last_key_turned_off() {
+  local level
+  [[ -r $manual_file ]] || return 1
+  level=$(<"$manual_file")
+  # Digits only: anything else would be evaluated as arithmetic.
+  [[ $level =~ ^[0-9]+$ ]] && led_effectively_off "$level"
 }
 
 tick() {
@@ -192,13 +214,22 @@ tick() {
   current=$(brightnessctl -d "$device" get) || return 0
 
   if [[ -n $last_set && $current != "$last_set" ]]; then
-    paused=1
-    pause_lux=$lux
     last_set=$current
-    return 0
+    # A visible level from any writer is a manual choice, and so is any off
+    # level after a key press turned the keys off. Any other off level is a
+    # blank or restore: resume.
+    if ! led_effectively_off "$current" || last_key_turned_off; then
+      paused=1
+      pause_lux=$lux
+    else
+      paused=0
+    fi
   fi
 
   if (( paused )); then
+    # Only a key press pauses on an off LED, so the keys were turned off on
+    # purpose: hold that until the next key press, whatever the room does.
+    led_effectively_off "$current" && return 0
     delta=$(( lux - pause_lux ))
     (( delta < 0 )) && delta=$(( -delta ))
     threshold=$OVERRIDE_LUX_DELTA
@@ -219,6 +250,9 @@ tick
 if (( once )); then
   exit 0
 fi
+
+# The first poll applied ALS over any key press from before this daemon ran.
+rm -f "$manual_file"
 
 while true; do
   sleep "$POLL_SECONDS"

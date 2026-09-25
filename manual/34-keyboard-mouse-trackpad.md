@@ -59,7 +59,7 @@ The Mac-specific brightness and capture combinations are listed in
 
 ### Keyboard backlight
 
-Laptops with a keyboard backlight LED and an ambient light sensor light the keys in the dark and dim them as the room brightens. `Shift + Brightness Up/Down` still sets the level by hand; automatic control resumes when the ambient light changes enough that the old choice no longer fits. Automatic control pauses while the screen is locked or the lid is closed.
+Laptops with a keyboard backlight LED and an ambient light sensor light the keys in the dark and dim them as the room brightens. `Shift + Brightness Up/Down` still sets the level by hand; automatic control resumes when the ambient light changes enough that the old choice no longer fits. If you turn the keys off by hand, automatic control leaves them off until you change the keyboard brightness again or log back in. Automatic control pauses while the screen is locked or the lid is closed; if the lock screen or a restored backlight setting leaves the keys dark, automatic control lights them again.
 
 Apple trackpads default to natural scrolling, physical clicks instead of
 tap-to-click, two-finger right-click, and a `0.4` scroll factor. Override any
