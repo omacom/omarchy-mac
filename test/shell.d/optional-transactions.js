@@ -29,6 +29,7 @@ function probe(mode, value, platform, missing = '') {
   const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-euc', String.raw`
     uname() { [[ $1 == "-m" ]] && printf '%s\n' "$TEST_ARCH"; }
     omarchy-hw-apple-silicon() { [[ $TEST_APPLE == "1" ]]; }
+    omarchy-pkg-kernel-headers() { if [[ $TEST_APPLE == "1" ]]; then echo linux-aurora-headers; else echo linux-headers; fi; }
     gum() { [[ $1 == "confirm" ]]; }
     omarchy-refresh-applications() { :; }
     omarchy-pkg-add() { printf '%s\n' "$@" >&3; exit 0; }

@@ -6,7 +6,9 @@ set -euo pipefail
 root=${1:-/}
 root=${root%/}
 [[ -z $root || $root == /* ]] || exit 2
-omarchy-hw-apple-silicon || exit 0
+# A detector failure stops setup rather than reading as another platform.
+platform=$(omarchy-hw-platform)
+[[ $platform == "apple-silicon" ]] || exit 0
 share="$root/usr/share/omarchy-mac"
 
 # Retire only byte-identical generated files, never links (including masks).
@@ -14,7 +16,10 @@ retire() {
   local file=$1 original=$2
   if [[ -f $file && ! -L $file ]] && cmp -s "$file" "$original"; then
     if [[ -e $file.omarchy-mac-retired || -L $file.omarchy-mac-retired ]]; then
-      cmp -s "$file" "$file.omarchy-mac-retired" || return 1
+      if ! cmp -s "$file" "$file.omarchy-mac-retired"; then
+        echo "Error: $file.omarchy-mac-retired differs from $file; move it aside and rerun." >&2
+        return 1
+      fi
       rm -- "$file"
     else
       mv -- "$file" "$file.omarchy-mac-retired"
@@ -47,10 +52,33 @@ if "$root/usr/lib/omarchy-mac/wifi-supported" && [[ ! -f $marker ]]; then
     install -Dm644 /dev/null "$marker"
   fi
 fi
+
+# The kernel keeps the speakers muted until speakersafetyd runs. This package is
+# its only enabler: apply the vendor preset once, so earlier-sorting or
+# same-name /etc presets, masks and later explicit disables stay the
+# administrator's choice.
+safety=speakersafetyd.service
+safety_marker="$root/var/lib/omarchy-mac/speaker-safety-configured"
+if [[ ! -f $safety_marker ]]; then
+  if [[ ! -f $root/usr/lib/systemd/system/$safety ]]; then
+    echo "Deferring speaker safety: speakersafetyd is not installed"
+  elif [[ $(systemctl --root="${root:-/}" is-enabled "$safety" 2>/dev/null) == masked* ]]; then
+    echo "Preserving masked speaker safety unit: $safety"
+  else
+    systemctl --root="${root:-/}" preset "$safety"
+    install -Dm644 /dev/null "$safety_marker"
+  fi
+fi
+
 if [[ -z $root && -d /run/systemd/system ]]; then
   systemctl daemon-reload
   # cat exits nonzero for an intentional mask; report it without failing setup.
   systemctl cat "$unit" || true
   NetworkManager --print-config
   modprobe --showconfig | grep -E '^options appledrm ' || true
+  # A start-limit-hit after bad IV-sense data leaves the speakers locked at -100 dB.
+  if systemctl is-enabled --quiet "$safety" && ! systemctl is-active --quiet "$safety"; then
+    systemctl reset-failed "$safety" || true
+    systemctl start "$safety" || echo "Warning: speakersafetyd did not start; the speakers stay muted." >&2
+  fi
 fi

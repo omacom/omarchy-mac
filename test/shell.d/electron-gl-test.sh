@@ -280,32 +280,10 @@ run_apple_gl() {
 }
 
 run_apple_gl
-
-grep -F 'no_hardware_cursors = true' "$looknfeel" >/dev/null ||
-  fail "Apple Electron GL setup enables software cursors without a render GPU"
-pass "Apple Electron GL setup enables software cursors without a render GPU"
-
-run_apple_gl
-(( $(grep -c 'no_hardware_cursors = true' "$looknfeel") == 1 )) ||
-  fail "Apple software cursor setup is idempotent"
-pass "Apple software cursor setup is idempotent"
-
-printf '%s\n' '-- User look and feel' >"$looknfeel"
-touch "$dri/renderD128"
-run_apple_gl
 if grep -q 'no_hardware_cursors' "$looknfeel"; then
-  fail "Apple software cursors are skipped when a render GPU exists"
+  fail "Apple Electron GL setup leaves the software cursor to omarchy-mac"
 fi
-pass "Apple software cursors are skipped when a render GPU exists"
-
-printf 'intel,something\n' >"$compatible"
-printf '%s\n' '-- User look and feel' >"$looknfeel"
-rm -f "$dri/renderD128"
-run_apple_gl
-if grep -q 'no_hardware_cursors' "$looknfeel"; then
-  fail "Apple Electron GL setup ignores non-Apple machines"
-fi
-pass "Apple Electron GL setup ignores non-Apple machines"
+pass "Apple Electron GL setup leaves the software cursor to omarchy-mac"
 
 migration=$(grep -rl 'Wrap Electron apps when Apple Silicon has no render GPU' "$ROOT/migrations" | head -n 1 || true)
 [[ -n $migration ]] || fail "existing installs get the Electron GL wrapper migration"

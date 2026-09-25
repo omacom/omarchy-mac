@@ -1,0 +1,15 @@
+# Package names that exist only for Apple Silicon, as globs. Non-Apple platforms
+# fail when one appears in their closure, as their linux provider, or as a
+# dependency of anything else in their repositories.
+omarchy-mac
+omarchy-mac-*
+linux-aurora
+linux-aurora-*
+linux-asahi
+linux-asahi-*
+m1n1
+m1n1-*
+uboot-asahi
+asahi-*
+avd-fw
+libva-v4l2_request-avd
