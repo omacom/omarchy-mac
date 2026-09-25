@@ -112,12 +112,14 @@ allows() {
   run_guard "$@" || fail "$description" "$(cat "$test_tmp/err")"
 }
 
+# A refusal is exit 1 with the guard's explanation, never a crash.
 refuses() {
-  local description="$1"
+  local description="$1" status=0
   shift
-  if run_guard "$@"; then
-    fail "$description"
-  fi
+  run_guard "$@" || status=$?
+  (( status == 1 )) || fail "$description" "exit $status: $(cat "$test_tmp/err")"
+  grep -Eq '^(Refusing to install packages built for another platform|Installed packages are built for another platform|Cannot tell which platform this machine is)' "$test_tmp/err" ||
+    fail "$description is explained" "$(cat "$test_tmp/err")"
 }
 
 # The root-environment probes need a name no real system database carries,
@@ -256,6 +258,11 @@ GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc apple-silicon) \
   refuses "the build host's Apple device tree never decides the image target" apple-silicon omarchy-mac
 GUARD_PROC=$(chroot_proc apple-silicon) \
   allows "a chroot without a manifest, such as an installer on the target, uses the hardware" apple-silicon omarchy-mac
+GUARD_PROC=$(chroot_proc generic-aarch64) \
+  refuses "a build host's hardware refuses Apple packages when the image names no target" generic-aarch64 omarchy-mac
+grep -Fq "An image build names its target there." "$test_tmp/err" || fail "the refusal points a builder at the manifest" "$(cat "$test_tmp/err")"
+refuses "a booted system refuses Apple packages" generic-aarch64 omarchy-mac
+! grep -Fq "image build" "$test_tmp/err" || fail "a booted system's refusal says nothing about image builds" "$(cat "$test_tmp/err")"
 hidden_root="$test_tmp/hidden-root"
 cp -a "$test_tmp/generic-aarch64/proc" "$hidden_root"
 rm "$hidden_root/1/root"
@@ -354,7 +361,7 @@ pass "hardware setup starts only with the platform guard resident"
 # setup leaves run before hardware setup, and the leaf is hardware setup's first.
 mapfile -t system_leaves < <(sed -n 's|^run_logged "\$OMARCHY_INSTALL/\(.*\)"$|\1|p' "$ROOT/install/config/all.sh")
 (( ${#system_leaves[@]} > 0 )) || fail "system setup leaves are listed"
-installers='omarchy-pkg-add|pacman[[:space:]]+(-[[:alpha:]]*[SU]|--sync|--upgrade)|omarchy-setup-mac'
+installers='omarchy-pkg-(add|install|aur-add|aur-install)|pacman([[:space:]]+-[^[:space:]]+)*[[:space:]]+(-[[:alpha:]]*[SU]|--sync|--upgrade)|omarchy-setup-mac'
 for system_leaf in "${system_leaves[@]}"; do
   ! grep -Eq "$installers" "$ROOT/install/$system_leaf" || fail "system setup installs no packages before hardware setup" "$system_leaf"
 done

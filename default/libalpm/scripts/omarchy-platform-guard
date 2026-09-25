@@ -157,11 +157,19 @@ done <<<"$tag_lines"
 
 (( ${#tags[@]} > 0 )) || exit 0
 
+# Builders get told where an image names its target.
+build_hint() {
+  if image_build && [[ ! -e $manifest && ! -L $manifest ]]; then
+    echo "This root is not the running system's and has no $manifest, so the running machine's hardware decided. An image build names its target there." >&2
+  fi
+}
+
 if ! platform=$(this_platform); then
   echo "Cannot tell which platform this machine is, so packages built for one platform are refused:" >&2
   for name in "${!tags[@]}"; do
     echo "  $name:${tags[$name]}"
   done | sort >&2
+  build_hint
   exit 1
 fi
 
@@ -178,4 +186,5 @@ else
   echo "Refusing to install packages built for another platform. This machine is $platform:" >&2
 fi
 printf '%s\n' "${refused[@]}" | sort >&2
+build_hint
 exit 1
