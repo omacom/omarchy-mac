@@ -36,18 +36,3 @@ for app in chromium 1password cursor; do
     fi
   fi
 done
-
-looknfeel=$HOME/.config/hypr/looknfeel.lua
-if ! omarchy-hw-render-gpu && [[ -f $looknfeel ]] &&
-  ! grep -q 'no_hardware_cursors' "$looknfeel"; then
-  cat >>"$looknfeel" <<'EOF'
-
--- Apple Silicon without AGX has no DRM render node. Hardware cursors never
--- appear; draw the pointer in software like the nouveau workaround.
-hl.config({
-  cursor = {
-    no_hardware_cursors = true,
-  },
-})
-EOF
-fi
