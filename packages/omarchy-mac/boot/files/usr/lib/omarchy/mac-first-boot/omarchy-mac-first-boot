@@ -39,6 +39,25 @@ fail() {
 
 pause() { sleep "$1"; }
 
+# Progress on the splash (the theme's system-update mode: a bar and one line
+# under it) until account setup or the display manager takes over. When the
+# initramfs encrypted the root this boot, the bar carries on from where it
+# stopped; otherwise first boot has the whole bar. STEP is first boot's own
+# share, 0 to 100. Without a running splash nothing is shown.
+encrypt_progress_file=${OMARCHY_MAC_ENCRYPT_PROGRESS_FILE:-/run/omarchy-mac-encrypt.progress}
+splash_progress() {
+  local step=$1 text=${2:-} base=0
+  command -v plymouth >/dev/null 2>&1 && plymouth --ping 2>/dev/null || return 0
+  if [[ -f $encrypt_progress_file ]]; then
+    base=$(<"$encrypt_progress_file")
+  fi
+  if [[ ! $base =~ ^[0-9]{1,3}$ ]] || (( 10#$base > 100 )); then
+    base=0
+  fi
+  plymouth system-update --progress=$((base + (100 - base) * step / 100)) 2>/dev/null || true
+  [[ -z $text ]] || plymouth display-message --text="$text" 2>/dev/null || true
+}
+
 # Writes bytes to a root-owned file in one rename, so a power loss leaves the old
 # file or the new one. The directory is fsynced after the rename so the dirent
 # is durable before the caller may delete a source copy.
@@ -120,6 +139,7 @@ make_keyring() {
     return 0
   fi
   say "Creating this Mac's package keyring..."
+  splash_progress 20 "Setting up secure updates..."
   rm -f "$keyring_record"
   rm -rf "$keyring_dir"
   local -a keyrings=(archlinuxarm asahi-alarm)
@@ -154,6 +174,7 @@ run_deferred_steps() {
   # the service retries it once first boot is done and on every later boot. Any
   # other failure (an untrusted manifest or queue) means no setup ran at all.
   local status=0
+  splash_progress 50 "Setting up your Mac's hardware..."
   "$provision" >>"$log_file" 2>&1 || status=$?
   case $status in
     0) ;;
@@ -219,8 +240,10 @@ attempt() {
   consume_install_conf
   make_keyring
   run_deferred_steps
+  splash_progress 90 "Almost ready..."
   stage_provisioning
   say "Ready for account setup."
+  splash_progress 100
   commit
 }
 

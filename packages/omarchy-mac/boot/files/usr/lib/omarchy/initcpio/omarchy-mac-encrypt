@@ -15,10 +15,73 @@ REDUCE=32M
 REDUCE_BYTES=$((32 * 1024 * 1024))
 KEY_BYTES=64
 PROVISIONING_DIR=/var/lib/omarchy/provisioning
+PROGRESS_FILE=${OMARCHY_MAC_ENCRYPT_PROGRESS_FILE:-/run/omarchy-mac-encrypt.progress}
 
 omarchy_mac_encrypt_say() {
     printf 'omarchy-mac-encrypt: %s\n' "$*"
 }
+
+# First-boot progress on the splash: plymouth's system-update channel moves the
+# theme's bar and display-message sets the line under it. The bar spans the
+# whole first boot: encryption takes it to 70%, the boot files to 94%, and
+# omarchy-mac-first-boot carries on from the value left in PROGRESS_FILE.
+# Without a running splash nothing is shown.
+omarchy_mac_encrypt_splash() {
+    command -v plymouth >/dev/null 2>&1 && plymouth --ping 2>/dev/null
+}
+
+omarchy_mac_encrypt_progress() {
+    local percent=$1 text=${2:-}
+    { printf '%s\n' "$percent" >"$PROGRESS_FILE"; } 2>/dev/null || true
+    omarchy_mac_encrypt_splash || return 0
+    plymouth system-update --progress="$percent" 2>/dev/null || true
+    [[ -z $text ]] || plymouth display-message --text="$text" 2>/dev/null || true
+}
+
+# The boot files take seconds with nothing to measure, so the bar eases toward
+# the end of their band meanwhile, like the installer's time-based floor.
+omarchy_mac_encrypt_progress_creep() {
+    local percent=$1 end=$2
+    omarchy_mac_encrypt_splash || return 0
+    (
+        set +e
+        while (( percent < end )); do
+            sleep 1
+            percent=$(( percent + (end - percent + 3) / 4 ))
+            plymouth system-update --progress="$percent" 2>/dev/null
+        done
+    ) &
+    PROGRESS_CREEP=$!
+}
+
+omarchy_mac_encrypt_progress_creep_stop() {
+    [[ -n ${PROGRESS_CREEP:-} ]] || return 0
+    kill "$PROGRESS_CREEP" 2>/dev/null || true
+    wait "$PROGRESS_CREEP" 2>/dev/null || true
+    PROGRESS_CREEP=""
+}
+
+# cryptsetup --progress-json prints a JSON line about once a second; anything
+# else it prints goes on to the journal. A subshell that never stops reading:
+# a closed pipe would interrupt the reencryption.
+omarchy_mac_encrypt_follow_reencrypt() (
+    set +e
+    local line percent shown=-1
+    while IFS= read -r line; do
+        if [[ $line =~ \"device_bytes\":\"([0-9]+)\".*\"device_size\":\"([0-9]+)\" ]] &&
+           (( BASH_REMATCH[2] > 0 )); then
+            percent=$(( BASH_REMATCH[1] * 100 / BASH_REMATCH[2] ))
+            (( percent <= 100 )) || percent=100
+            if (( percent != shown )); then
+                shown=$percent
+                omarchy_mac_encrypt_progress $(( percent * 70 / 100 )) "Encrypting your drive... ${percent}%"
+            fi
+        else
+            printf '%s\n' "$line"
+        fi
+    done
+    return 0
+)
 
 # The unit no longer owns the console, so a failure is recorded where the
 # installed system's greeter can read it and shown on the splash when there is one.
@@ -443,11 +506,13 @@ omarchy_mac_encrypt_require_key() {
 omarchy_mac_encrypt_reencrypt() {
     local mode=${1:-encrypt} start now elapsed
     omarchy_mac_encrypt_ensure_key
+    omarchy_mac_encrypt_progress 0 "Encrypting your drive... 0%"
     if [[ $mode == resume ]]; then
         omarchy_mac_encrypt_say "resuming interrupted LUKS2 reencrypt"
         start=$(date +%s)
         cryptsetup reencrypt --batch-mode --resume-only --key-file "$BOOT_KEY" \
-            --progress-frequency 1 "$ROOT_DEV" || omarchy_mac_encrypt_fail "cryptsetup reencrypt --resume-only failed"
+            --progress-frequency 1 --progress-json "$ROOT_DEV" | omarchy_mac_encrypt_follow_reencrypt ||
+            omarchy_mac_encrypt_fail "cryptsetup reencrypt --resume-only failed"
         now=$(date +%s)
         elapsed=$((now - start))
         omarchy_mac_encrypt_say "resume finished in ${elapsed}s"
@@ -459,7 +524,8 @@ omarchy_mac_encrypt_reencrypt() {
     cryptsetup reencrypt --encrypt --type luks2 --batch-mode \
         --reduce-device-size "$REDUCE" --device-size "$DEVICE_SIZE" \
         --resilience checksum --key-file "$BOOT_KEY" --keyfile-size "$KEY_BYTES" \
-        --progress-frequency 1 "$ROOT_DEV" || omarchy_mac_encrypt_fail "cryptsetup reencrypt --encrypt failed"
+        --progress-frequency 1 --progress-json "$ROOT_DEV" | omarchy_mac_encrypt_follow_reencrypt ||
+        omarchy_mac_encrypt_fail "cryptsetup reencrypt --encrypt failed"
     now=$(date +%s)
     elapsed=$((now - start))
     if (( elapsed > 0 )); then
@@ -524,9 +590,9 @@ omarchy_mac_encrypt_umount_root() {
 }
 
 # install.conf is read from a read-only ESP mount, so nothing touches the ESP
-# before the decision. update-grub reinstalls EFI/BOOT/BOOTAA64.EFI through a
-# bind of /boot/efi (asahi-scripts mount_boot_esp), which is that same mount:
-# the finish step makes it writable and hands it back read-only.
+# before the decision. The boot files (Limine's UKI and entries, or GRUB's
+# EFI/BOOT/BOOTAA64.EFI) are written through a bind of /boot/efi, which is that
+# same mount: the finish step makes it writable and hands it back read-only.
 omarchy_mac_encrypt_esp_writable() {
     local options
     ESP_WAS_RO=0
@@ -535,13 +601,13 @@ omarchy_mac_encrypt_esp_writable() {
     [[ ,$options, == *,ro,* ]] || return 0
     ESP_WAS_RO=1
     mount -o remount,rw "$ESP_MNT" ||
-        omarchy_mac_encrypt_fail "could not remount the ESP read-write for update-grub"
+        omarchy_mac_encrypt_fail "could not remount the ESP read-write for the boot files"
 }
 
 omarchy_mac_encrypt_esp_readonly() {
     [[ ${ESP_WAS_RO:-0} == 1 ]] || return 0
     mount -o remount,ro "$ESP_MNT" ||
-        omarchy_mac_encrypt_say "could not remount the ESP read-only after update-grub"
+        omarchy_mac_encrypt_say "could not remount the ESP read-only after the boot files"
 }
 
 omarchy_mac_encrypt_bind_chroot() {
@@ -604,9 +670,11 @@ omarchy_mac_encrypt_finish() {
     uuid=$(cryptsetup luksUUID "$ROOT_DEV") || omarchy_mac_encrypt_fail "could not read the LUKS UUID"
     LUKS_UUID=$uuid
     omarchy_mac_encrypt_write_state encrypted
+    omarchy_mac_encrypt_progress 70 "Preparing your Mac for first boot..."
     omarchy_mac_encrypt_open
     omarchy_mac_encrypt_resize_luks
     omarchy_mac_encrypt_mount_opened
+    omarchy_mac_encrypt_progress 74
 
     # A Limine image must have its complete boot-update path before anything
     # rewrites the ESP. Missing runtime/defaults are an incomplete image.
@@ -625,24 +693,30 @@ omarchy_mac_encrypt_finish() {
     printf 'root UUID=%s none luks\n' "$uuid" >"$ROOT_MNT/etc/crypttab"
     chmod 0644 "$ROOT_MNT/etc/crypttab"
 
+    # A Limine Mac's command line is derived from GRUB's defaults file too.
     omarchy_mac_encrypt_set_grub_cmdline "$uuid"
     omarchy_mac_encrypt_esp_writable
     omarchy_mac_encrypt_bind_chroot
-    omarchy_mac_encrypt_say "regenerating GRUB configuration"
-    chroot "$ROOT_MNT" update-grub || omarchy_mac_encrypt_fail "update-grub failed"
-    omarchy_mac_encrypt_say "rebuilding the initramfs"
-    # /usr/bin: the limine-mkinitcpio-hook wrapper on PATH asks a question.
-    chroot "$ROOT_MNT" /usr/bin/mkinitcpio -P </dev/null || omarchy_mac_encrypt_fail "mkinitcpio -P failed"
-    # A Limine Mac (omarchy-mx-mac install/hardware/apple/limine-boot.sh) boots
-    # a UKI whose command line is derived from GRUB's defaults: rebuild it.
+    omarchy_mac_encrypt_progress_creep 74 92
     if (( limine )); then
+        # A Limine Mac boots the UKI, and building it is the one initramfs
+        # build this needs. GRUB is not part of a Limine boot: nothing runs it.
         omarchy_mac_encrypt_say "rebuilding the Limine UKI and entries"
-        chroot "$ROOT_MNT" omarchy-mac-boot-update || omarchy_mac_encrypt_fail "omarchy-mac-boot-update failed"
+        OMARCHY_MAC_BOOT_UPDATE_GRUB=0 chroot "$ROOT_MNT" omarchy-mac-boot-update </dev/null ||
+            omarchy_mac_encrypt_fail "omarchy-mac-boot-update failed"
+    else
+        omarchy_mac_encrypt_say "regenerating GRUB configuration"
+        chroot "$ROOT_MNT" update-grub || omarchy_mac_encrypt_fail "update-grub failed"
+        omarchy_mac_encrypt_say "rebuilding the initramfs"
+        # /usr/bin: the limine-mkinitcpio-hook wrapper on PATH asks a question.
+        chroot "$ROOT_MNT" /usr/bin/mkinitcpio -P </dev/null || omarchy_mac_encrypt_fail "mkinitcpio -P failed"
     fi
+    omarchy_mac_encrypt_progress_creep_stop
     sync
     omarchy_mac_encrypt_umount_root
     omarchy_mac_encrypt_esp_readonly
     omarchy_mac_encrypt_write_state configured
+    omarchy_mac_encrypt_progress 94
 }
 
 omarchy_mac_encrypt_point_sysroot() {
@@ -712,6 +786,7 @@ omarchy_mac_encrypt_surface_unexpected() {
 }
 
 omarchy_mac_encrypt_cleanup() {
+    omarchy_mac_encrypt_progress_creep_stop || true
     omarchy_mac_encrypt_umount_root lenient || true
     omarchy_mac_encrypt_esp_readonly || true
     if [[ ${PROBE_MOUNTED:-0} == 1 ]] && findmnt /run/omarchy-mac-encrypt/probe >/dev/null 2>&1; then
@@ -739,6 +814,7 @@ omarchy_mac_encrypt_main() {
     PROBE_MOUNTED=0
     DEVICE_SIZE=""
     THROUGHPUT_MIB=""
+    PROGRESS_CREEP=""
     CONF_ENCRYPT=""
     STATE_FORMAT=""
     STATE_PHASE=""
