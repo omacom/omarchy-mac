@@ -16,7 +16,8 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # kept while the package ships none, has its own tests.
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+token_key=""
+trap 'rm -rf "$tmp"; [[ -z $token_key ]] || keyctl unlink "$token_key" @s >/dev/null 2>&1 || true' EXIT
 
 fake_platform "$tmp/x86" generic
 fake_platform "$tmp/apple" apple-silicon
@@ -140,11 +141,12 @@ shred() {
 }
 
 fake_cryptsetup() {
-  local op=$1 key_file="" target="" extra="" material slot next
+  local op=$1 key_file="" token_type="" target="" extra="" material slot next
   shift
   while (( $# )); do
     case $1 in
       --key-file) key_file=$2; shift 2 ;;
+      --token-type) token_type=$2; shift 2 ;;
       -*) shift ;;
       *)
         if [[ -z $target ]]; then target=$1; else extra=$1; fi
@@ -157,13 +159,23 @@ fake_cryptsetup() {
   if [[ $op == "luksDump" ]]; then
     echo "Keyslots:"
     awk '{ printf "  %s: luks2\n", $1 }' "$TMP/slots"
-    printf 'Segments:\n  0: crypt\n'
+    if [[ -s $TMP/token-slot ]]; then
+      printf 'Tokens:\n  0: luks2-keyring\n\tKeyslot:    %s\n' "$(cat "$TMP/token-slot")"
+    fi
+    printf 'Digests:\n  0: pbkdf2\n'
     return 0
   fi
   if [[ $op == "luksKillSlot" ]]; then
     [[ ! -e $TMP/kill-noop ]] || return 0
     awk -v s="$extra" '$1 != s' "$TMP/slots" >"$TMP/slots.next"
     command mv -f "$TMP/slots.next" "$TMP/slots"
+    return 0
+  fi
+
+  # An enrolled token unlocks its slot whatever key is given, unless the
+  # allowed token types exclude it, as with cryptsetup.
+  if [[ $op == "open" && -z $token_type && -s $TMP/token-slot ]]; then
+    echo "Key slot $(cat "$TMP/token-slot") unlocked."
     return 0
   fi
 
@@ -258,12 +270,12 @@ run() {
   } >>"$tmp/output" 2>&1
 }
 
-# The slot the key opens on the volume, or nothing.
+# The slot the key opens on the volume, or nothing. Tokens never answer.
 opens() {
   if [[ $backend == "fake" ]]; then
     awk -v m="$1" '$2 == m { print $1; exit }' "$tmp/slots"
   else
-    LC_ALL=C cryptsetup open --test-passphrase --verbose --key-file <(printf '%s' "$1") "$device" 2>&1 |
+    LC_ALL=C cryptsetup open --test-passphrase --verbose --token-type passphrase-only --key-file <(printf '%s' "$1") "$device" 2>&1 |
       grep -o 'Key slot [0-9]* unlocked' | grep -o '[0-9]*' || true
   fi
 }
@@ -272,14 +284,14 @@ slot_count() {
   if [[ $backend == "fake" ]]; then
     wc -l <"$tmp/slots"
   else
-    cryptsetup luksDump "$device" | grep -cE '^ +[0-9]+: luks2|^Key Slot [0-9]+: ENABLED'
+    cryptsetup luksDump "$device" 2>/dev/null | grep -cE '^ +[0-9]+: luks2$|^Key Slot [0-9]+: ENABLED'
   fi
 }
 
 fixture() {
   local format=${1:-luks2}
   rm -rf "$tmp/provisioning" "$tmp/etc" "$tmp/boot" "$tmp/log" "$tmp/output" "$tmp/trace" "$tmp/rebuilds" "$tmp/adds" "$tmp/rebuild-fail" "$tmp/kill-noop" \
-    "$tmp/prepare-fail" "$tmp/screen" "$tmp/stale"
+    "$tmp/prepare-fail" "$tmp/screen" "$tmp/stale" "$tmp/token-slot"
   mkdir -p "$tmp/provisioning"
   chmod 755 "$tmp/provisioning"
   touch "$tmp/provisioning/pending"
@@ -312,6 +324,22 @@ fixture() {
     cryptsetup luksFormat -q --type "$format" "${pbkdf[@]}" "$device" <(printf '%s' "$staged_key")
     cryptsetup luksAddKey "${pbkdf[@]}" --key-file <(printf '%s' "$staged_key") "$device" <(printf '%s' "$seller_key")
   fi
+}
+
+# What a previous owner can leave on the real volume: a systemd-tpm2 token and
+# a luks2-keyring token on slot $1, the second answered from the session keyring
+# with $2. Fails when the kernel keyring is out of reach (no keyctl, or a
+# container's seccomp profile), so that a bare cryptsetup open does not take the
+# token in place of any key.
+enroll_tokens() {
+  local slot=$1 key=$2 description=omarchy-test-token-$$
+  command -v keyctl >/dev/null || return 1
+  token_key=$(printf '%s' "$key" | keyctl padd user "$description" @s 2>/dev/null) || return 1
+  keyctl timeout "$token_key" 600 >/dev/null 2>&1 || true
+  printf '{"type":"systemd-tpm2","keyslots":["%s"],"tpm2-blob":"AA==","tpm2-pcrs":[7],"tpm2-pcr-bank":"sha256","tpm2-primary-alg":"ecc","tpm2-policy-hash":"00","tpm2-pin":false}' "$slot" |
+    cryptsetup token import --disable-external-tokens "$device" || return 1
+  cryptsetup token add --key-description "$description" --key-slot "$slot" "$device" >/dev/null || return 1
+  LC_ALL=C cryptsetup open --test-passphrase --verbose --key-file <(printf 'not-a-key') "$device" 2>&1 | grep -qx "Key slot $slot unlocked."
 }
 
 unlock_files_present() {
@@ -460,6 +488,26 @@ rm "$tmp/rebuild-fail"
 run rekey "$owner_password" || fail "the retry after a failed rebuild completes" "$(cat "$tmp/log")"
 assert_finished "retry after a failed rebuild" "$owner_password"
 pass "a failed boot rebuild keeps the unattended unlock and every slot for the retry"
+
+fixture
+printf '2 %s\n' tpm-sealed-key >>"$tmp/slots"
+echo 2 >"$tmp/token-slot"
+run provision "$owner_password" || fail "setup completes beside an enrolled token" "$(cat "$tmp/log")"
+assert_provisioned "beside the previous owner's token" "$owner_password"
+pass "a token the previous owner enrolled never answers for a key and is retired with its slot"
+
+if [[ " ${backends[*]} " == *" luks2 "* ]]; then
+  backend=luks2
+  fixture luks2
+  if enroll_tokens 1 "$seller_key"; then
+    run provision "$owner_password" || fail "luks2: setup completes beside live tokens" "$(cat "$tmp/log" "$tmp/output")"
+    assert_provisioned "beside the previous owner's live tokens" "$owner_password"
+    pass "luks2: with a live keyring token and a TPM2 token on the previous owner's slot, only real keys count"
+  else
+    pass "the kernel keyring is out of reach; skipping the live token run"
+  fi
+  backend=fake
+fi
 
 fixture
 touch "$tmp/kill-noop"

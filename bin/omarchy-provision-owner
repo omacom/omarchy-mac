@@ -1078,13 +1078,14 @@ rekey_luks_apple() {
       return 1
     fi
 
-    if ! { cryptsetup open --test-passphrase --key-file <(printf '%s' "$password") "$device" ; } 2>>"$LOG_FILE"; then
+    # Each key must open its own slot: an enrolled token would answer a bare
+    # cryptsetup open for any key.
+    if [[ $(luks_slot_for "$password" "$device") != "$new_slot" ]]; then
       log_step "owner slot does not unlock $device; will retry"
       say --foreground 1 "Could not confirm the LUKS re-key; will retry."
       return 1
     fi
-    if [[ -n ${recovery_key:-} ]] &&
-      ! { cryptsetup open --test-passphrase --key-file <(printf '%s' "$recovery_key") "$device" ; } 2>>"$LOG_FILE"; then
+    if [[ -n ${recovery_key:-} && $(luks_slot_for "$recovery_key" "$device") != "$recovery_slot" ]]; then
       log_step "recovery slot does not unlock $device; will retry"
       say --foreground 1 "Could not confirm the LUKS re-key; will retry."
       return 1

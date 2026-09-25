@@ -156,6 +156,14 @@ confirm_reset() {
   [[ $typed == "reset" ]] || fail "Reset not confirmed."
 }
 
+# The keyslots, one per line. A luks2-keyring token under "Tokens:" looks like
+# a keyslot, so read only the keyslot section.
+reset_luks_slots() {
+  cryptsetup luksDump "$1" | awk '
+    /^[^ \t]/ { keyslots = ($0 == "Keyslots:") }
+    keyslots && /^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }' | sort
+}
+
 # Add the throwaway slot. Called after mkinitcpio/grub succeed so a failed
 # rebuild adds no credential. Its Boot-partition keyfile is written only once
 # the factory root is active (install_reset_boot_key): a power loss before the
@@ -169,12 +177,12 @@ stage_luks_rekey_apple_commit() {
   # A power loss after activation must never leave phase=finished behind.
   reopen_encrypt_state
   local before after
-  before=$(cryptsetup luksDump "$device" | awk '/^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }' | sort)
+  before=$(reset_luks_slots "$device")
   if ! { cryptsetup luksAddKey --key-file <(printf '%s' "$RESET_LUKS_AUTH") "$device" <(printf '%s' "$passphrase") ; } 2>>"$LOG_FILE"; then
     if (( xtrace_on )); then set -x; fi
     fail "could not add the throwaway LUKS keyslot"
   fi
-  after=$(cryptsetup luksDump "$device" | awk '/^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }' | sort)
+  after=$(reset_luks_slots "$device")
   # cryptsetup fills the lowest free slot: the new one is the difference.
   slot=$(comm -13 <(printf '%s\n' $before) <(printf '%s\n' $after) | head -1)
   if (( xtrace_on )); then set -x; fi
@@ -234,7 +242,8 @@ stage_luks_rekey() {
   while true; do
     current=$(gum input --password --placeholder "Current disk encryption passphrase" --prompt "Passphrase> ") || exit 1
     set +x
-    if { cryptsetup open --test-passphrase --key-file <(printf '%s' "$current") "$device" ; } 2>>"$LOG_FILE"; then
+    # An enrolled token would answer a bare cryptsetup open for any passphrase.
+    if { cryptsetup open --test-passphrase --token-type passphrase-only --key-file <(printf '%s' "$current") "$device" ; } 2>>"$LOG_FILE"; then
       if (( xtrace_on )); then set -x; fi
       break
     fi
