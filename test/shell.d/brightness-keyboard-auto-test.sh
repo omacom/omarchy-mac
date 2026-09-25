@@ -224,3 +224,16 @@ keys off
 tick
 (( $(led) == 226 )) || fail "a restarted loop forgets the earlier deliberate off" "got $(led)"
 pass "a restarted loop forgets the earlier deliberate off"
+
+lux 400
+tick
+(( $(led) == 0 )) || fail "a bright room turns the keys off" "got $(led)"
+keys down
+tick
+lux 26
+for _ in 1 2; do tick; done
+(( $(led) == 226 )) || fail "the room darkening lights the keys again" "got $(led)"
+keys off
+tick
+(( $(led) == 226 )) || fail "a level auto changed forgets the earlier key press" "got $(led)"
+pass "any level auto sets forgets an earlier key press"

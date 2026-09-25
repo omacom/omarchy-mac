@@ -182,6 +182,8 @@ apply_percent() {
   fi
 
   brightnessctl -d "$device" set "$target" >/dev/null
+  # Auto has overridden any level set by hand, so that record is stale.
+  rm -f "$MANUAL_LEVEL_FILE"
   last_set=$(brightnessctl -d "$device" get || echo "$target")
 }
 
@@ -196,7 +198,7 @@ left_off() {
 }
 
 tick() {
-  local lux current delta threshold took_over=0
+  local lux current delta threshold
 
   lux=$(read_lux) || return 0
 
@@ -206,13 +208,10 @@ tick() {
 
   current=$(brightnessctl -d "$device" get) || return 0
 
-  if [[ -z $last_set ]]; then
-    took_over=1
-  elif [[ $current != "$last_set" ]]; then
+  if [[ -n $last_set && $current != "$last_set" ]]; then
     last_set=$current
     if left_off "$current"; then
       paused=0
-      took_over=1
     else
       paused=1
       pause_lux=$lux
@@ -231,12 +230,6 @@ tick() {
       return 0
     fi
     paused=0
-    took_over=1
-  fi
-
-  # Auto has the keys again, so an earlier hand-set level is no longer a choice.
-  if (( took_over )); then
-    rm -f "$MANUAL_LEVEL_FILE"
   fi
 
   apply_percent "$(lux_to_percent "$lux")"
