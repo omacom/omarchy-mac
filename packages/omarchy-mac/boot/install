@@ -1,0 +1,9 @@
+#!/bin/bash
+# Install boot support separately from the kernel-neutral hardware package.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+destination=${1:?Usage: ./install DESTDIR}
+[[ $destination == /* && $destination != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
+for file in bin/*; do install -Dm755 "$file" "$destination/usr/bin/${file##*/}"; done
+for file in lib/*; do install -Dm644 "$file" "$destination/usr/lib/omarchy-mac/boot/${file##*/}"; done
+for file in setup/*; do install -Dm644 "$file" "$destination/usr/lib/omarchy-mac/boot/setup/${file##*/}"; done

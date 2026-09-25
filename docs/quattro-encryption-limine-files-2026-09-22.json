@@ -1,0 +1,1769 @@
+{
+  "schema": 1,
+  "status": "draft source slices ported; image finalization and VM integration pending; no boot qualification",
+  "runtime_source": "d418ab7f95e8ba447df4fb368ddd838a5ffc7943",
+  "package_source": "68a61cef1aba768c6aae20a0feda2a42e19de6e8",
+  "files": [
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "README.md",
+      "pull_requests": [],
+      "owner": "reference-only",
+      "disposition": "Retain source provenance; upstream evidence does not qualify this candidate",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Packaging/Info.plist",
+      "pull_requests": [
+        195,
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Packaging/build-app.sh",
+      "pull_requests": [
+        195,
+        197,
+        198
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Release/README.md",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Release/release.json",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Sources/OmarchyAppleInstaller/InstallConf.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Sources/OmarchyAppleInstaller/InstallerReleaseConfiguration.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Sources/OmarchyAppleInstallerApp/OmarchyAppleInstallerApp.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Sources/OmarchyAppleInstallerApp/SimulationDashboard.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Sources/OmarchyInstallerUXCore/PlainLanguage.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallConfESPWriterTests.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallConfTests.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallerAssetPreparerTests.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallerPlanReviewTests.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Tests/OmarchyAppleInstallerTrustCoreTests/InstallerReleaseConfigurationTests.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/Tests/OmarchyInstallerUXCoreTests/PlainLanguageTests.swift",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "apps/omarchy-apple-installer/scripts/make-release-descriptor",
+      "pull_requests": [
+        197
+      ],
+      "owner": "standalone-app",
+      "disposition": "Exclude version/channel-only net delta; preserve existing encryption choice, paths, .17 engine and trust",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-apple-platform-stack-verify",
+      "pull_requests": [
+        211
+      ],
+      "owner": "image-builder",
+      "disposition": "Translate target setup/closure/content contract; do not import whole fork orchestration",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-apple-silicon-boot-check",
+      "pull_requests": [
+        185,
+        192,
+        199,
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-channel-set",
+      "pull_requests": [
+        211
+      ],
+      "owner": "excluded",
+      "disposition": "Upstream channel/update/trust implementation outside scope; image contract reference only",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-drive-password",
+      "pull_requests": [
+        185
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-install-asahi-fresh",
+      "pull_requests": [
+        211,
+        212,
+        213,
+        218,
+        219
+      ],
+      "owner": "image-builder",
+      "disposition": "Translate target setup/closure/content contract; do not import whole fork orchestration",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-mac-boot-update",
+      "pull_requests": [
+        211,
+        219
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-mac-limine-active",
+      "pull_requests": [
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-mac-limine-cmdline",
+      "pull_requests": [
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-mac-limine-deploy",
+      "pull_requests": [
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-mac-snapshot-menu",
+      "pull_requests": [
+        203,
+        211
+      ],
+      "owner": "desktop-runtime/fallback-review",
+      "disposition": "Older GRUB snapshot prerequisites; defer unless shared Limine path demonstrably needs them",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-mac-snapshot-restore",
+      "pull_requests": [
+        202,
+        203,
+        211
+      ],
+      "owner": "desktop-runtime/fallback-review",
+      "disposition": "Older GRUB snapshot prerequisites; defer unless shared Limine path demonstrably needs them",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-mac-snapshot-restore-finish",
+      "pull_requests": [
+        202,
+        203
+      ],
+      "owner": "desktop-runtime/fallback-review",
+      "disposition": "Older GRUB snapshot prerequisites; defer unless shared Limine path demonstrably needs them",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-migrate",
+      "pull_requests": [
+        202,
+        208,
+        210,
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Review only snapshot/update seam; exclude channel policy and automatic migration import",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-provision-owner",
+      "pull_requests": [
+        185,
+        196,
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-snapshot",
+      "pull_requests": [
+        202,
+        203,
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-system-factory-reset",
+      "pull_requests": [
+        185,
+        196,
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-update",
+      "pull_requests": [
+        202
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Review only snapshot/update seam; exclude channel policy and automatic migration import",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-update-asahi-bundle",
+      "pull_requests": [
+        219
+      ],
+      "owner": "excluded",
+      "disposition": "Upstream channel/update/trust implementation outside scope; image contract reference only",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "bin/omarchy-update-keyring",
+      "pull_requests": [],
+      "owner": "excluded",
+      "disposition": "Upstream channel/update/trust implementation outside scope; image contract reference only",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "default/grub/omarchy/theme.txt",
+      "pull_requests": [
+        210
+      ],
+      "owner": "excluded",
+      "disposition": "GRUB visual polish outside encryption/Limine scope",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "default/omarchy/omarchy-menu.jsonc",
+      "pull_requests": [
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "docs/apple-silicon-deployment.md",
+      "pull_requests": [],
+      "owner": "reference-only",
+      "disposition": "Retain source provenance; upstream evidence does not qualify this candidate",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "docs/apple-silicon-distribution-channels.md",
+      "pull_requests": [],
+      "owner": "reference-only",
+      "disposition": "Retain source provenance; upstream evidence does not qualify this candidate",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "docs/apple-silicon-hardware-validation.md",
+      "pull_requests": [
+        202,
+        203,
+        211
+      ],
+      "owner": "reference-only",
+      "disposition": "Retain source provenance; upstream evidence does not qualify this candidate",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "docs/apple-silicon-limine.md",
+      "pull_requests": [
+        211
+      ],
+      "owner": "reference-only",
+      "disposition": "Retain source provenance; upstream evidence does not qualify this candidate",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "docs/releases/asahi-packages-candidate-2949b88c-acceptance.txt",
+      "pull_requests": [
+        216
+      ],
+      "owner": "reference-only",
+      "disposition": "Retain source provenance; upstream evidence does not qualify this candidate",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "docs/releases/asahi-packages-candidate-2949b88c-hardware-evidence.txt",
+      "pull_requests": [
+        216
+      ],
+      "owner": "reference-only",
+      "disposition": "Retain source provenance; upstream evidence does not qualify this candidate",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "docs/releases/asahi-packages-candidate-8dc54d16-acceptance.txt",
+      "pull_requests": [],
+      "owner": "reference-only",
+      "disposition": "Retain source provenance; upstream evidence does not qualify this candidate",
+      "present_at_source_ceiling": true,
+      "implementation": "excluded or reference-only"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/apple-silicon-platform-stack.json",
+      "pull_requests": [
+        211
+      ],
+      "owner": "image-builder",
+      "disposition": "Translate target setup/closure/content contract; do not import whole fork orchestration",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/config/all.sh",
+      "pull_requests": [
+        202
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/config/snapper.sh",
+      "pull_requests": [
+        202,
+        205,
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/hardware/all.sh",
+      "pull_requests": [
+        202,
+        208,
+        211
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/hardware/apple/grub-console.sh",
+      "pull_requests": [
+        208,
+        209,
+        210,
+        219
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "selectively adapted #208/#209 GOP and encrypted-root device wait at 979ed031191ee7388d1536cb3ec1a6e583909254; retain no-GRUB support; omit font/theme/splash polish; runtime integration 18880961b"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/hardware/apple/limine-boot.sh",
+      "pull_requests": [
+        211,
+        217,
+        218,
+        219,
+        220
+      ],
+      "owner": "desktop-runtime",
+      "disposition": "Adapt only encryption/Limine/snapshot slice; preserve generic Quattro behavior and add-on ownership",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted from pinned ceiling; local strict-return, required-hook ordering and exact prior EFI/config/UKI rollback follow-up in 5d4c0f8e2; not power-loss qualified"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/hardware/apple/snapshots-subvolume.sh",
+      "pull_requests": [
+        202,
+        205
+      ],
+      "owner": "desktop-runtime/fallback-review",
+      "disposition": "Older GRUB snapshot prerequisites; defer unless shared Limine path demonstrably needs them",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/helpers/mac-image-build.sh",
+      "pull_requests": [
+        211
+      ],
+      "owner": "image-builder",
+      "disposition": "Translate target setup/closure/content contract; do not import whole fork orchestration",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/omarchy-base-asahi.packages",
+      "pull_requests": [
+        211
+      ],
+      "owner": "image-builder",
+      "disposition": "Translate target setup/closure/content contract; do not import whole fork orchestration",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/omarchy-other-asahi.packages",
+      "pull_requests": [
+        202,
+        203
+      ],
+      "owner": "image-builder",
+      "disposition": "Translate target setup/closure/content contract; do not import whole fork orchestration",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "install/provisioning/omarchy-mac-snapshot-restore-finish.service",
+      "pull_requests": [
+        202
+      ],
+      "owner": "desktop-runtime/fallback-review",
+      "disposition": "Older GRUB snapshot prerequisites; defer unless shared Limine path demonstrably needs them",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "migrations/1789999316.sh",
+      "pull_requests": [
+        202
+      ],
+      "owner": "deferred-existing-user-migration",
+      "disposition": "Not needed for fresh private image; review separately",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "migrations/1790003445.sh",
+      "pull_requests": [
+        219
+      ],
+      "owner": "deferred-existing-user-migration",
+      "disposition": "Not needed for fresh private image; review separately",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "migrations/1790009252.sh",
+      "pull_requests": [
+        219
+      ],
+      "owner": "deferred-existing-user-migration",
+      "disposition": "Not needed for fresh private image; review separately",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "migrations/1790030337.sh",
+      "pull_requests": [
+        208
+      ],
+      "owner": "deferred-existing-user-migration",
+      "disposition": "Not needed for fresh private image; review separately",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "migrations/1790037110.sh",
+      "pull_requests": [
+        210
+      ],
+      "owner": "deferred-existing-user-migration",
+      "disposition": "Not needed for fresh private image; review separately",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "migrations/1790055026.sh",
+      "pull_requests": [
+        211,
+        217
+      ],
+      "owner": "deferred-existing-user-migration",
+      "disposition": "Not needed for fresh private image; review separately",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/fixtures/grub/10_linux",
+      "pull_requests": [
+        210
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/apple-grub-btrfs-migration-test.sh",
+      "pull_requests": [],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/apple-grub-console-test.sh",
+      "pull_requests": [
+        208,
+        209,
+        210,
+        219
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "selectively adapted #208/#209 GOP and encrypted-root device wait at 979ed031191ee7388d1536cb3ec1a6e583909254; retain no-GRUB support; omit font/theme/splash polish; runtime integration 18880961b"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/apple-limine-boot-test.sh",
+      "pull_requests": [
+        211,
+        217,
+        218,
+        219,
+        220
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted from pinned ceiling; local strict-return, required-hook ordering and exact prior EFI/config/UKI rollback follow-up in 5d4c0f8e2; not power-loss qualified"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/apple-platform-stack-test.sh",
+      "pull_requests": [
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/apple-quiet-grub-migration-test.sh",
+      "pull_requests": [
+        219
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/apple-silicon-boot-check-test.sh",
+      "pull_requests": [
+        185,
+        192,
+        199
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/apple-silicon-test.sh",
+      "pull_requests": [
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/apple-update-keyring-test.sh",
+      "pull_requests": [],
+      "owner": "excluded",
+      "disposition": "Upstream distribution/trust policy outside scope",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/asahi-fresh-deferred-test.sh",
+      "pull_requests": [
+        211,
+        212
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/asahi-fresh-install-test.sh",
+      "pull_requests": [
+        212,
+        213
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/asahi-fresh-offline-test.sh",
+      "pull_requests": [
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/asahi-packages-test.sh",
+      "pull_requests": [
+        202,
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/asahi-update-test.sh",
+      "pull_requests": [],
+      "owner": "excluded",
+      "disposition": "Upstream distribution/trust policy outside scope",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/boot-check-luks-test.sh",
+      "pull_requests": [
+        185
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/channel-test.sh",
+      "pull_requests": [
+        211
+      ],
+      "owner": "excluded",
+      "disposition": "Upstream distribution/trust policy outside scope",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/drive-password-apple-test.sh",
+      "pull_requests": [
+        185
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/drive-password-test.sh",
+      "pull_requests": [
+        185
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/factory-reset-luks-test.sh",
+      "pull_requests": [
+        185,
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/mac-boot-update-test.sh",
+      "pull_requests": [
+        211,
+        219
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/mac-image-build-test.sh",
+      "pull_requests": [
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/mac-limine-cmdline-test.sh",
+      "pull_requests": [
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/mac-snapshot-menu-test.sh",
+      "pull_requests": [
+        203
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/mac-snapshot-restore-test.sh",
+      "pull_requests": [
+        202
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/provision-owner-luks-test.sh",
+      "pull_requests": [
+        185,
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/snapper-test.sh",
+      "pull_requests": [
+        202,
+        205
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/shell.d/snapshot-limine-dispatch-test.sh",
+      "pull_requests": [
+        211
+      ],
+      "owner": "tests/runtime-or-image",
+      "disposition": "Carry cases with owning functional slice; do not execute live entrypoints",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/vm/asahi-fresh/guest/install",
+      "pull_requests": [
+        212,
+        213,
+        214,
+        218
+      ],
+      "owner": "tests/disposable-vm",
+      "disposition": "Adapt guest boot configuration and private input authentication; no Apple hardware proof",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/vm/asahi-fresh/guest/verify",
+      "pull_requests": [
+        193,
+        214,
+        218
+      ],
+      "owner": "tests/disposable-vm",
+      "disposition": "Adapt guest boot configuration and private input authentication; no Apple hardware proof",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/vm/mac-image/README.md",
+      "pull_requests": [
+        194
+      ],
+      "owner": "tests/disposable-vm",
+      "disposition": "Adapt guest boot configuration and private input authentication; no Apple hardware proof",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-mx-mac",
+      "path": "test/vm/mac-image/run",
+      "pull_requests": [
+        194
+      ],
+      "owner": "tests/disposable-vm",
+      "disposition": "Adapt guest boot configuration and private input authentication; no Apple hardware proof",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "bin/build-mac-image",
+      "pull_requests": [
+        194
+      ],
+      "owner": "image-builder",
+      "disposition": "Adapt activation/content checks to existing builder and tests",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "bin/mac-image-check",
+      "pull_requests": [
+        194
+      ],
+      "owner": "image-builder",
+      "disposition": "Adapt activation/content checks to existing builder and tests",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/limine-mkinitcpio-hook/.omarchy/package.json",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/limine-mkinitcpio-hook/0001-allow-aarch64-uki-and-efi-entries.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/limine-mkinitcpio-hook/PKGBUILD",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/limine-snapper-sync/.omarchy/package.json",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/limine-snapper-sync/PKGBUILD",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/.omarchy/package.json",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/LICENSE",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/PKGBUILD",
+      "pull_requests": [
+        170
+      ],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/etc/boot/hooks/pre.d/05-omarchy-mac-limine-gate",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/etc/initcpio/install/omarchy-vendorfw",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/etc/mkinitcpio.conf.d/90-omarchy-mac.conf",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/etc/mkinitcpio.conf.d/91-omarchy-mac-encrypt.conf",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/etc/mkinitcpio.conf.d/92-omarchy-mac-hid.conf",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/etc/mkinitcpio.conf.d/93-omarchy-mac-plymouth.conf",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/etc/systemd/system/kmod-static-nodes.service.d/10-before-tmpfiles-setup-dev.conf",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/etc/systemd/system/omarchy-vendor-firmware.service",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/bin/apple-image-finalize",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/bin/mac-image-finalize",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/initcpio/hooks/.gitkeep",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/initcpio/install/.gitkeep",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/initcpio/install/omarchy-mac-encrypt",
+      "pull_requests": [
+        170
+      ],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/apple-image-finalize",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-mac-encrypt",
+      "pull_requests": [
+        170
+      ],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "ported with local Limine prerequisite refusal before boot rewrite; coordinated image integration pending"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-mac-encrypt-keydev.conf",
+      "pull_requests": [
+        170
+      ],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-mac-encrypt.service",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-mac-snapshot-overlay",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-mac-snapshot-overlay.service",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-vendorfw-cryptsetup.conf",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.service",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.sh",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-vendorfw.service",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-vendorfw.sh",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/mac-first-boot/.gitkeep",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/mac-first-boot/omarchy-arm-repository.key",
+      "pull_requests": [],
+      "owner": "excluded",
+      "disposition": "Do not import repository trust material",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/omarchy/mac-first-boot/omarchy-mac-first-boot",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/systemd/system-preset/80-omarchy-apple.preset",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/systemd/system-preset/80-omarchy-mac.preset",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/systemd/system/omarchy-mac-first-boot.service",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/systemd/system/omarchy-provision-owner.service.d/20-mac-first-boot.conf",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/lib/systemd/system/sddm.service.d/20-mac-first-boot.conf",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/share/libalpm/hooks/91-omarchy-mac-boot-initramfs.hook",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/share/libalpm/hooks/92-omarchy-mac-snapshot-menu.hook",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/files/usr/share/licenses/omarchy-mac-boot/LICENSE",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-mac-boot/omarchy-mac-boot.install",
+      "pull_requests": [],
+      "owner": "package-recipes/boot",
+      "disposition": "Review all installed paths and adapt first-boot trust; keep separate from omarchy-mac add-on",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-settings-dev/.omarchy/package.json",
+      "pull_requests": [],
+      "owner": "package-recipes/settings",
+      "disposition": "Adapt ARM64 menu-template retention only; preserve destination recipe identity",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-settings-dev/PKGBUILD",
+      "pull_requests": [],
+      "owner": "package-recipes/settings",
+      "disposition": "Adapt ARM64 menu-template retention only; preserve destination recipe identity",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/omarchy-settings-dev/omarchy-settings-dev.install",
+      "pull_requests": [],
+      "owner": "package-recipes/settings",
+      "disposition": "Adapt ARM64 menu-template retention only; preserve destination recipe identity",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/.omarchy/package.json",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/Allwinner-fix-booting-on-a-number-of-devices.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/Fix-NVMe-not-only-on-Raspberry-Pi-5.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/JetsonTX2-Fix-upstream-device-tree-naming.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/PKGBUILD",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/USB-PD-TCPM-improvements.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/disable-VBE-by-default.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/enable-bootmenu-by-default.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/openssl-no-engine.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/p3450-fix-board.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/pylibfdt-Replace-removed-SWIG-Python-2-compatibility-macros.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/quiet-console.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/raspberrypi-Add-quirk-for-RPi5-2Gb-rev-1.0.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/rockchip-Enable-preboot-start-for-pci-usb.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/rockchip-rk3568-nanopi-r5-Drop-duplicated-extra-sdhc.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/rockchip-rk356x-Stop-overriding-sdhci-mmc-aliases.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/uefi-Add-all-options-for-EFI-System-Partitions.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/uefi-distro-load-FDT-from-any-partition-on-boot-device.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/uefi-enable-SetVariableRT-with-volotile-storage.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/uefi-enable-https-boot-by-default.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "pkgbuilds/uboot-asahi/uefi-initial-find_fdt_location-for-finding-the-DT-on-disk.patch",
+      "pull_requests": [],
+      "owner": "package-recipes/boot-tooling",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "test/mac-image",
+      "pull_requests": [
+        194
+      ],
+      "owner": "image-builder",
+      "disposition": "Adapt activation/content checks to existing builder and tests",
+      "present_at_source_ceiling": true,
+      "implementation": "pending review or implementation; not imported by this checkpoint"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "test/omarchy-mac-boot",
+      "pull_requests": [
+        170
+      ],
+      "owner": "package-recipes/tests",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "test/omarchy-mac-encrypt",
+      "pull_requests": [
+        170
+      ],
+      "owner": "package-recipes/tests",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "test/omarchy-mac-first-boot",
+      "pull_requests": [],
+      "owner": "package-recipes/tests",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    },
+    {
+      "repository": "maralcbr/omarchy-pkgs",
+      "path": "test/omarchy-mac-hid-initramfs",
+      "pull_requests": [],
+      "owner": "package-recipes/tests",
+      "disposition": "Adapt pinned source and test in full candidate transaction",
+      "present_at_source_ceiling": true,
+      "implementation": "adapted in draft source checkpoint; see implementation record for deviations and test limits"
+    }
+  ]
+}

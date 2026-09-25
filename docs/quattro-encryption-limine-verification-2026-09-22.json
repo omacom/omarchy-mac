@@ -1,0 +1,386 @@
+{
+  "schema": 1,
+  "kind": "draft-encryption-limine-source-verification",
+  "date": "2026-09-22",
+  "source_commits": {
+    "runtime": "12308e1ca57d35abf38ff801df589da5e4754823",
+    "package": "c71c8c93180d05c1c96e6d560dcfb4b35c627bb6",
+    "image": "655283a460a7cf6d62fcd255188ef852f267a2a5"
+  },
+  "qualification": "source suites, native four boot-package builds, focused legacy boot-package replacement, and real LUKS2 regular-file check; no complete signed thirteen-package image, VM boot or physical encrypted installation",
+  "results": {
+    "runtime_aggregate": {
+      "result": "passed",
+      "shell_test_files": 299,
+      "cli": "passed",
+      "implementation_commit": "5d4c0f8e20c3b2690c97c55a7bc19dc3124a7f54",
+      "environment": "unset LC_ALL, NO_COLOR, WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE, DISPLAY; OMARCHY_PATH=checkout; TERM=xterm-256color; fixture commit.gpgsign=false",
+      "final_delta": "12308e1ca57d35abf38ff801df589da5e4754823 adds linked-destination refusal after this aggregate started; the full activation failure-injection fixture passed separately at that final implementation commit"
+    },
+    "runtime_focused": "passed: root environment, kernel query, owner rekey, reset, Limine activation/update, drive password and boot checks",
+    "native_luks_file": "passed: cryptsetup 2.8.8, disposable 32 MiB regular file, PBKDF2 with reduced fixture iterations; interrupted unacknowledged slot replacement, owner/recovery authentication, acknowledged retry without slot growth; no block device or mount",
+    "recovery_screen": "current retry notice not visually verified: desktop monitor reported disabled, captures stalled; temporary preview/capture processes stopped. Earlier dummy-key preview covers the prior screen only.",
+    "package_boot_source": "passed including strict deferred-step contract and dormant/active Limine package hook coverage",
+    "package_self_test": {
+      "passed": 92
+    },
+    "package_candidate": {
+      "passed": 17
+    },
+    "package_signing": {
+      "passed": 13,
+      "keys": "disposable only, disk-backed TMPDIR"
+    },
+    "image_candidate": {
+      "passed": 32
+    },
+    "image_aggregate": {
+      "result": "passed",
+      "test_files": 74,
+      "implementation_commit": "655283a460a7cf6d62fcd255188ef852f267a2a5",
+      "ledger": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/unit-test-results.json",
+      "prior_failures": "old schema-less package-install fixture and source-impact CLI timing regression; explicit schema/full schema4 regression coverage and invocation-local discovery caching added before green rerun"
+    },
+    "schema_4_image_guard": "retained before builder trust changes; marker writers and artifact checks implemented, awaiting exact signed closure, new U-Boot/m1n1 branding/product contract and real image/VM qualification",
+    "preservation": "four original worktrees retain HEAD/status/dirty-file hashes; private tester source and bundle unchanged; no remote publication or installed-system changes",
+    "runtime_integration": {
+      "gop_cmdline_commit": "18880961b",
+      "activation_transaction_commit": "5d4c0f8e20c3b2690c97c55a7bc19dc3124a7f54",
+      "linked_destination_commit": "12308e1ca57d35abf38ff801df589da5e4754823",
+      "source": "GRUB #208/#209 exact head 979ed031191ee7388d1536cb3ec1a6e583909254; no-GRUB behavior from unchanged runtime ceiling d418ab7f95e8ba447df4fb368ddd838a5ffc7943",
+      "focused": "passed: GOP effective assignments, regeneration retry, no-GRUB and active-Limine dispatch; activation prerequisites, required writes, conditional-source failures, hook ordering, exact EFI/config/menu/UKI rollback, foreign history and staging retention, linked-destination refusal; cmdline, boot-update and privileged-heredoc checks",
+      "limits": "No native EFI/UKI boot or power-loss qualification. GRUB display behavior remains a target boot check. Cross-kernel reset remains refused. Image guard and marker contract are owned by the coordinated image/package integration."
+    },
+    "package_dependency": {
+      "passed": 7
+    },
+    "package_native_build": {
+      "result": "passed",
+      "recipes": [
+        "uboot-asahi",
+        "limine-mkinitcpio-hook",
+        "limine-snapper-sync",
+        "omarchy-mac-boot"
+      ],
+      "artifacts": "unsigned qualification only"
+    },
+    "package_replacement": "focused real legacy-to-new boot-package transaction passed; complete thirteen-package/ESP/kernel transaction remains unqualified",
+    "image_dependency": {
+      "passed": 17
+    },
+    "image_finalizer": {
+      "passed": 17,
+      "native_format": "real cpio listing and authenticated native Limine ARM64 PE; synthetic UKI section fixtures"
+    },
+    "image_source_impact": {
+      "result": "passed",
+      "stage_input_cases": 38,
+      "source_impact_cases": 14,
+      "implementation_commit": "af03af5fb0af390c0687671704c34603db921bf7",
+      "cli_seconds": "0.56-0.60 on this host",
+      "timeout_seconds": 2.0,
+      "evidence": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/source-impact-performance/verification.json"
+    }
+  },
+  "files": [
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/.image-unit-results.json.lock",
+      "sha256": "7fa387500a660b0e9e8e01eac8769eace9320aac2288b7d04417636e673b8343"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/aggregate.log",
+      "sha256": "074c84f35675a1aa4453c03a5de2bb71405acf17603de0b7678c6b8be312c571"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/apple-limine-boot.log",
+      "sha256": "0238bec8950ce91206f85528d71f9a18b474616145cc26645d8ee185adf9d000"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/apple-silicon-boot-check.log",
+      "sha256": "b3bc1ac94c053e4ba31b1f8af4ab348e1d09c8a271a3ea4e7ea1685f225fdf5a"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/boot-check-luks.log",
+      "sha256": "eb937b6a38e44bc9ad60054e6d72023331cd0b9986e9ed01581ae24a2a33f1f4"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/cli.log",
+      "sha256": "c10849af12eb6d9186db6b455fd40e2c662e4eb18e8e747b5c47f8b54e119f62"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/drive-password-apple.log",
+      "sha256": "99b43da43948c09957da3fdb95afec163d7e79593306ef991e6bd913470c04a4"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/drive-password.log",
+      "sha256": "92ddd751bcd4f05e3bbad86dd1d29940635ba2e4204b6caa641b8feabee65a7d"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/factory-reset-luks-test.sh.log",
+      "sha256": "380472f5e971cbb09aa00ce0c740d8304d9e3560c6bd965c8c9a20a4ca768aa6"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/factory-reset-luks.log",
+      "sha256": "b2b62eb9ec9b021700843cf0489f12a07184537e2493f14e289959ab488a9bec"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/hermes-desktop-install.log",
+      "sha256": "ef66e0a70a948c6ecc5f7399e5159b2b23309a0c7af3a3b5fef5128f585b0958"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/image-all.log",
+      "sha256": "fbe2c76a2ad0b5b9feb7d56fc561462699af4dadba0176164af6251e52df27c9"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/image-candidate.log",
+      "sha256": "35a42f087e1f7da925453c36a12973847c2b87f10f741569a9b1c2092942ea06"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/image-lifecycle.log",
+      "sha256": "9921503823416960d682ed06c7fa321bc66d4016020ef90763ab2a83e273dc0f"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/image-unit-results.json",
+      "sha256": "aeaee7e22f7ebe1e967e3eb5ecea032798897b5487732d1af2b9c5a60cded699"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/luks-parent-detection.log",
+      "sha256": "19e900c19229b1dcb6084c1bd9163682bbfc56b82d8817841b6d62754a1592ba"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/mac-boot-update.log",
+      "sha256": "ee8df5769c2e0dfd2c6a4fec087ffe1e5868d101ecc425d488764cdda5b4c0e2"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/mac-limine-cmdline.log",
+      "sha256": "5d34ef181945e9e3dcea0768e43dd4942858a97de56fb2be66f72495d7170d03"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/network-qr.log",
+      "sha256": "3b2775041287cf90d6c3c65e25eab32801862d80b3923ba701b8fecbb24b7985"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/omarchy-mac-boot.log",
+      "sha256": "702eb0fa9cc9b65e9699b7250dcebb86e1d5eb2603166e9f9112ab4f96089e46"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/omarchy-mac-encrypt.log",
+      "sha256": "436df8b6991810baea02a69d56f51a621d36d1dffe4021e69b0539cd9e8c3aaf"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/omarchy-mac-first-boot.log",
+      "sha256": "41672ead87186af6f2b951307f27f9d0bf50d43556f4bc71c4a64a0c84c4e66f"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/omarchy-mac-hid-initramfs.log",
+      "sha256": "fac970cf1d51367ad67752f8c333164f65dbcf100f66e2033376819b16446c46"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/package-boot-source.log",
+      "sha256": "936ce84fbdfa5750a374354ecb53ea9145ef8bd6edc9e741878fd8ed77da1c81"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/package-candidate.log",
+      "sha256": "8b519f9cc5c43acbdc83da7450db1dd89992c87ba70c48c0060e46ff81b65c7d"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/package-candidates.log",
+      "sha256": "c0e3387940a5d4f563f6e2f8e64939baaaf24b285ce7046ffcdd627fe669f657"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/package-self-test.log",
+      "sha256": "5f64a0c342eef58edcd8dca0f4b0cf1f850bdbb6a1056a97289115b9d795cc58"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/package-signing.log",
+      "sha256": "e81836faf45f231282b25bce0e24423a58188e3582bda8f71fdc0029fd95febf"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/plugin-add.log",
+      "sha256": "0a4df244684f570b15bff12fab713739529ee78993074eb8b3916b8240e24f37"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/privileged-heredoc.log",
+      "sha256": "329a20bf8c0151c0ac78caf3beef3252ba51d96b43da71bcac5b2838aac1ed35"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/provision-owner-luks.log",
+      "sha256": "8897fecf91c5dfe3ca58467f291134d0f1a63e8e709fb1865a16e0cce71a9eef"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/reset-debug.log",
+      "sha256": "d661a7e6b366d4d670233b1a6666ef7a5588f70408150c9c7fa4119a9754f7b0"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/snapper.log",
+      "sha256": "9a74f92f67b8787b0b9964e7cb72e316be59d62b9c2fad55f17d0775ddc50573"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-20260922/visual/screenshot-2026-09-22_10-08-12.png",
+      "sha256": "978ad126d9d14d2aca6e9388aaee1725cf8584b6bdf454ba5b35aabb05798149"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/runtime-all.log",
+      "sha256": "973480bfea6137f5fc1f465e0491f486789050198dc4276622be930f639d4fc5"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/runtime-all-clean.log",
+      "sha256": "9512d166c6e1f7e7e03de1590f730e74a07ae54ceb784aded4b44e76f1633e3e"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/launch-about-clean.log",
+      "sha256": "59ff18e1d36c32bfffdc62fb7a9cb0f2877812d04b43aa5f7c65d9d412ccb0a1"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/update-pacman-clean.log",
+      "sha256": "16e80478403885ccb828a8787ab648395871c6b6e8fb35ad3c14d7f5c8ab1398"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/provision-root-environment.log",
+      "sha256": "d4a95eddaca79cc168f6ff1bab11fbb60926a70f55c852c91683d5357d2e5599"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/mac-kernel.log",
+      "sha256": "0271014afb8447c5de7276535af0bcd94f155245d02b04081b55e10357f4f075"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/provision-owner-luks.log",
+      "sha256": "676850d345da54db239ad046c23c0835a491bc5e5efe46201449c30bf221d6e1"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/factory-reset-luks.log",
+      "sha256": "f294156aebaad722fc400c3bc4a3a76aca8a1b3795c88852b8ef14d7b754d235"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/apple-limine-boot.log",
+      "sha256": "aa57fd642511e5a6f7b65b11650160526294c3b909fd59e28fbba0fdab124159"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/mac-boot-update.log",
+      "sha256": "c2443e80842f190217234d818a31c069bf05dcfff2423c1cdbaff04a3746bdaa"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/drive-password-apple.log",
+      "sha256": "99b43da43948c09957da3fdb95afec163d7e79593306ef991e6bd913470c04a4"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/boot-check-luks.log",
+      "sha256": "eb937b6a38e44bc9ad60054e6d72023331cd0b9986e9ed01581ae24a2a33f1f4"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/cli.log",
+      "sha256": "ba35680ebfdb02efbe22b18030667d1e87bc727f2242c489778f8cbc0938895c"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/boot-source.log",
+      "sha256": "bf180bc1d0475bbdf6e95d39cd5f91f24ee3bd1f9261606de507976c37634318"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/package-self-test.log",
+      "sha256": "4fab71d4ed2c920870e9fe705c59934123214ceea9d3aa2c5155a5a5fc3d4aea"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/package-candidate.log",
+      "sha256": "bd9e2461e37898cf4f481acaaf410ff65a0bf36c5b89e6612c3005aa92aa351b"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/package-signing.log",
+      "sha256": "dcb04ee5ea6ec0a334d450d9b75f8a77fcecbf53c62ea8a7e87a2a146706b514"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/image-candidate.log",
+      "sha256": "9e92f74f6d10ef9ded31f456b38f60f6379e3add7252972024c852cbd3f8af28"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/native-luks.sh",
+      "sha256": "5356e6b993ff972e5f690940f2c393998f944a878515e7e1184e56b8bcbde96f"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-review-20260922/native-luks.log",
+      "sha256": "257e3a1f2036b7a0a555c745dae3b63b6f88c24f493f6008f7246188ec765ace"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-runtime-integration-20260922/aggregate.log",
+      "sha256": "5b8a68b0c232535cbf7040bd76afa31ec044b476e5b0b7150da45fe960943a9c"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-runtime-integration-20260922/activation-final.log",
+      "sha256": "cb8131c3ee0f64ab960230ee87b56630ef2c139df715b198186595c82c925ca6"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/aggregate.log",
+      "sha256": "1b29028a23b745103fc2898831978125b5ce1e0fe06d862a1cd938a3b930360f"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/unit-test-results.json",
+      "sha256": "9a6695a23c0596e40e89bc6a8413b9d9e27d091a525a719d08b7fbda8ef95cb8"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/aggregate-fixture-failure.log",
+      "sha256": "751d8bf9aab166839dbab148a19c82e6a667c1ef315fe909af581e008e896879"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/fixture-failure-results.json",
+      "sha256": "eaecec36331890feb6e8ba2611b196d77a1888b9a2479b4feb2caa581e6886a3"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/aggregate-timing-failure.log",
+      "sha256": "f9b85bd69e63500a10fa563ac390c78f6e7cd92821e9e0ebefcb35f042f34ba2"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/timing-failure-results.json",
+      "sha256": "c3e07644015eb0d8702d660204051fa9582bbdcd9ec36dc728f9991650de954f"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/source-impact-rerun.log",
+      "sha256": "264e48494de16053c2f1a89a3ef96189129389095a8c75a774444bc9820b24c2"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-image-integration-20260922/source-impact-performance/verification.json",
+      "sha256": "267ec9c8c7fbcdab3d3e1af2168e234f9ffd488023c3a9d08b5f5807264d8928"
+    },
+    {
+      "path": "/home/scott/code/omarchy-integration-evidence/encryption-limine-packages-integration-20260922/evidence.json",
+      "sha256": "d52fe62cbf3ba96f6a96d280d053ad1ddf83d6d78471b6667f005f1197deae47"
+    }
+  ],
+  "initial_checkpoint": {
+    "source_commits": {
+      "runtime": "08b0da7bd3da1b7ba5b268c9df8e98075834e81f",
+      "package": "8abb8a6afaba8601ffe0c482b6386ed8a91bfccd",
+      "image": "ae81ba75bffcca6799f79284a173dba5f6161135"
+    },
+    "results": {
+      "runtime_aggregate": "initial failure: metadata, privileged heredoc and three environment-sensitive fixtures; all affected checks passed after focused corrections; whole aggregate not rerun",
+      "runtime_focused": "passed",
+      "recovery_screen": "dummy-key desktop terminal preview passed; not Apple VT qualification",
+      "package_boot_source": "passed; container/block tests explicitly disabled",
+      "package_self_test": {
+        "passed": 92
+      },
+      "package_candidate": {
+        "passed": 16
+      },
+      "package_signing": {
+        "passed": 13,
+        "keys": "disposable fixtures only; includes schemas 3 and 4"
+      },
+      "image_candidate": {
+        "passed": 31
+      },
+      "image_aggregate": "incomplete: existing lifecycle test rejects sandbox root owner UID 65534; runner cancelled remaining tests"
+    }
+  },
+  "source_commit_meaning": "Implementation commits whose source was tested; later documentation-only commits do not change these pins. Image implementation is unchanged.",
+  "reviewed_at_utc": "2026-09-22T20:24:28.745852+00:00",
+  "runtime_review_checkpoint": {
+    "source_commit": "eceaaaeb8adbc156dd46681983f0df27bd67d20c",
+    "aggregate": {
+      "result": "passed",
+      "shell_test_files": 298,
+      "cli": "passed",
+      "environment": "unset LC_ALL, NO_COLOR, WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE, DISPLAY; OMARCHY_PATH=checkout; TERM=xterm-256color; fixture commit.gpgsign=false",
+      "initial_run": "296/298; untouched launch-about and update-pacman fixtures failed under inherited NO_COLOR/LC_ALL; both passed with a clean environment, then the entire aggregate passed"
+    }
+  }
+}

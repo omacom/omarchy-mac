@@ -20,7 +20,7 @@ case $1 in
 esac`)
   stub('uname', 'echo uname >> "$CALLS"; echo "${ARCH:-x86_64}"')
   stub('omarchy-hw-apple-silicon', '[[ ${APPLE:-0} == 1 ]]')
-  stub('omarchy-hw-apple-kernel', 'echo linux-asahi')
+  stub('omarchy-mac-kernel', 'echo linux-asahi')
   const env = {...process.env, OMARCHY_PATH:root, CALLS:calls, PATH:bin+':'+root+'/bin:'+process.env.PATH}
   function run(script, extra={}) { return cp.spawnSync('bash', ['-euo','pipefail','-c',script], {env:{...env,...extra},encoding:'utf8'}) }
   const prelude = menu.guardScript({probe:{id:'probe',when:'true'}}).split('\n').filter(l=>!l.startsWith('if {')).join('\n')

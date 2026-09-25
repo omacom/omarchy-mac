@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# omarchy:summary=Regenerate the boot loader files of an Apple Silicon Mac (GRUB, and Limine when it boots the Mac)
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# Every flow that changes the kernel command line or the initramfs (the
+# encrypt flow, the owner's re-key, a fresh install, the factory reset) calls
+# this instead of update-grub. A Limine Mac gets its command line re-derived
+# from GRUB's defaults file, its UKI and entries rebuilt, and the packaged
+# Limine on the ESP; a GRUB Mac regenerates GRUB.
+
+set -uo pipefail
+
+if ! omarchy-mac-limine-active; then
+  update-grub || { echo "omarchy-mac-boot-update: update-grub failed" >&2; exit 1; }
+  exit 0
+fi
+# A Limine Mac that still carries GRUB keeps its (unused) image current, so a
+# rollback to GRUB has something to boot; an image without GRUB has none.
+# update-grub ships with asahi-scripts even where GRUB itself does not, and
+# fails without grub-probe, so GRUB's own tools are the test.
+if omarchy-cmd-present grub-probe && omarchy-cmd-present grub-mkconfig; then
+  update-grub >/dev/null || echo "omarchy-mac-boot-update: update-grub failed; Limine is unaffected" >&2
+fi
+omarchy-mac-limine-cmdline || { echo "omarchy-mac-boot-update: could not derive the Limine command line" >&2; exit 1; }
+limine-update || { echo "omarchy-mac-boot-update: limine-update failed" >&2; exit 1; }
+omarchy-mac-limine-deploy || exit 1
