@@ -10,7 +10,10 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # a slot-table fake or the real binary on a file-backed volume. The callbacks
 # reach the platform through the real omarchy-lifecycle-dispatch: on an x86
 # fixture it is a no-op and the Limine UKI path runs; on an Apple fixture a fake
-# omarchy-mac-boot owns the unlock on the boot partition and GRUB command line.
+# omarchy-mac-boot with provisioning entrypoints owns the unlock on the boot
+# partition and GRUB command line. The Apple runs take the shared re-key, as a
+# boot package that ships those entrypoints does; #527's direct Apple re-key,
+# kept while the package ships none, has its own tests.
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -82,8 +85,8 @@ sed -n '/^PROVISIONING_UNLOCK_FILES=(/,/^)/p; /^UNLOCK_OWNER=/p; /^limine_auto_u
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/unlock.sh"
 grep -q '^luks_auto_unlock_drop() {' "$tmp/unlock.sh" && grep -q '^limine_auto_unlock_drop() {' "$tmp/unlock.sh" ||
   fail "omarchy-provision-owner defines the dispatched and Limine auto-unlock callbacks"
-sed -n '/^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p; /^platform_ready() {/,/^}/p; /^run_setup() {/,/^}/p
-  /^refresh_boot_entries() {/,/^}/p' \
+sed -n '/^encrypt_state_get() {/,/^}/p; /^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p
+  /^platform_ready() {/,/^}/p; /^run_setup() {/,/^}/p; /^refresh_boot_entries() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/provision.sh"
 grep -q '^run_provisioning() {' "$tmp/provision.sh" && grep -q '^run_setup() {' "$tmp/provision.sh" ||
   fail "omarchy-provision-owner defines its setup and provisioning worker"
@@ -216,6 +219,10 @@ provision() {
   }
   luks_device() { echo "$DEVICE"; }
   systemctl() { :; }
+  # The generic path: no Apple encrypt.state or Boot-partition key.
+  apple_silicon() { return 1; }
+  ENCRYPT_STATE=$TMP/boot/encrypt.state
+  BOOT_LUKS_KEY=$TMP/boot/luks-key
   run_provisioning
 }
 
@@ -582,28 +589,20 @@ if [[ " ${platforms[*]} " == *" apple "* ]]; then
     fail "apple: the boot package's reason reaches the screen and the log" "$(cat "$tmp/screen" "$tmp/log" 2>/dev/null)"
   pass "apple: setup stops before the owner form when the boot package is not ready"
 
-  # Apple without omarchy-mac-boot: setup stops before the owner form naming the
-  # package, and a worker that got past it anyway never finishes while any part
-  # of the staged unlock remains.
+  # A boot package that ships no provisioning entrypoints yet (#527's
+  # omarchy-mac-boot): the check before the owner form is a no-op, and
+  # provisioning keeps its direct Apple path.
   mv "$mac_boot" "$tmp/mac-boot.off"
+  mkdir -p "$mac_boot"
+  chmod 755 "$mac_boot"
   fixture
-  rm -f "$tmp/limine-ran"
-  if run setup "$owner_password"; then fail "apple: setup refuses without the boot package"; fi
-  ! grep -qx 'owner form' "$tmp/screen" || fail "apple: the owner is asked nothing without the boot package"
-  grep -q 'provision-prepare on apple-silicon needs omarchy-mac-boot' "$tmp/screen" ||
-    fail "apple: the missing boot package is named on the screen" "$(cat "$tmp/screen" 2>/dev/null)"
-  grep -q '/usr/lib/omarchy/mac-boot/provision-prepare' "$tmp/log" || fail "apple: the log names the missing entrypoint" "$(cat "$tmp/log")"
-  if run provision "$owner_password"; then fail "apple: provisioning without the boot package fails"; fi
-  [[ -e $tmp/provisioning/pending && -f $tmp/provisioning/luks-key ]] && unlock_files_present ||
-    fail "apple: provisioning without the boot package keeps its state and the staged unlock"
-  [[ -n $(opens "$staged_key") && -n $(opens "$seller_key") ]] || fail "apple: provisioning without the boot package retires no slot"
-  fixture
-  rm "$tmp/provisioning/luks-key"
-  if run provision "$owner_password"; then fail "apple: a leftover boot-partition unlock without the boot package fails provisioning"; fi
-  [[ -e $tmp/provisioning/pending ]] && unlock_files_present || fail "apple: a leftover boot-partition unlock keeps provisioning pending"
-  [[ ! -e $tmp/limine-ran ]] || fail "apple: the Limine UKI path is no fallback for a missing boot package"
+  rm -f "$tmp/mac-boot-ran"
+  run setup "$owner_password" || fail "apple: setup reaches the owner form before the package ships entrypoints" "$(cat "$tmp/output")"
+  [[ $(cat "$tmp/screen") == "owner form" && ! -e $tmp/mac-boot-ran ]] ||
+    fail "apple: nothing runs before the owner form without provisioning entrypoints" "$(cat "$tmp/screen")"
+  rmdir "$mac_boot"
   mv "$tmp/mac-boot.off" "$mac_boot"
-  pass "apple: without omarchy-mac-boot setup stops naming it, and the worker fails closed"
+  pass "apple: before omarchy-mac-boot ships provisioning entrypoints, setup reaches the owner form"
 fi
 
 # A boot package that implements only one of the commit/verify pair owns

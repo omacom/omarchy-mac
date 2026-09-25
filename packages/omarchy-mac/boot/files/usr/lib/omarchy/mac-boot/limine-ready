@@ -1,0 +1,12 @@
+#!/bin/bash
+# Called before Limine reads its defaults. Status 100 means the Mac still uses
+# its pre-activation boot path; ordinary mkinitcpio updates must keep running.
+if [[ ! -e /var/lib/omarchy/limine.enabled && ! -L /var/lib/omarchy/limine.enabled ]]; then
+  echo "Limine is not active on this Mac; keeping the existing boot path" >&2
+  exit 100
+fi
+if [[ ! -f /var/lib/omarchy/limine.enabled || -L /var/lib/omarchy/limine.enabled ||
+      ! -f /etc/default/limine || -L /etc/default/limine ]]; then
+  echo "Limine is enabled but its activation marker or defaults are invalid" >&2
+  exit 1
+fi

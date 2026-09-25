@@ -1,0 +1,4 @@
+#!/bin/bash
+# The pacman entrypoints check readiness before reading ESP defaults; this
+# also keeps direct Limine updates behind the same Apple activation contract.
+/usr/lib/omarchy/mac-boot/limine-ready

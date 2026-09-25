@@ -77,16 +77,14 @@ fi
 
 # Generic, generic-aarch64 and Qualcomm machines have no registered boot
 # package: every operation is a no-op there and callers keep their generic path.
+# omarchy-mac-boot does not ship its provisioning or boot-rebuild entrypoints
+# yet, and provisioning keeps its direct Apple path until it does, so those
+# stay optional here until the package ships them.
 case $platform in
   apple-silicon)
     implementation=/usr/lib/omarchy/mac-boot
     package=omarchy-mac-boot
-    required=(
-      provision-prepare provision-commit provision-verify
-      reset-prepare reset-verify reset-rollback
-      update-verify
-      boot-rebuild
-    )
+    required=(reset-prepare reset-verify reset-rollback update-verify)
     ;;
   *)
     exit 0

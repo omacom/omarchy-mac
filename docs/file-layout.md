@@ -56,6 +56,10 @@ user on tty1 and runs the finalize step itself.
 
 On an encrypted install `omarchy-provision-owner` then re-keys LUKS from the staged install key to the owner's password through `install/provisioning/luks-rekey.sh`, which journals each step (phase and slot numbers, never keys) in `/var/lib/omarchy/provisioning/luks-rekey.state` so an interrupted first boot resumes. Setup finishes only once the staged key opens nothing, and removes the journal with `pending`, so a retry before then must use the password the disk holds. On a platform whose boot package owns the boot chain (Apple Silicon), the check before the owner form and the boot-time unlock go through `omarchy-lifecycle-dispatch`; see [lifecycle-dispatch.md](lifecycle-dispatch.md).
 
+`omarchy-drive-password` reuses those journal helpers when the owner changes the password of the disk holding `/`: it changes the LUKS key, confirms the new key opens the disk and the old one no longer does, and only then sets the login and root passwords. `~/.local/state/omarchy/drive-password.state` records the disk's UUID, the key slots and the phase (never a password) until the accounts match, and the next run finishes an interrupted change with whichever of the old or new password the disk opens with.
+
+Prebuilt images are set up away from the machine they will run on, so their hardware setup waits for that machine. The builder writes a root-owned manifest, `/var/lib/omarchy/image/target` (`format=1`, `platform=<omarchy-hw-platform value>`), before `omarchy-apply-system`. While it exists, `omarchy-apply-hardware` runs no hardware leaf: it queues each one in `/var/lib/omarchy/image/deferred-steps` and arms `omarchy-provision-hardware.service` (shipped from `install/provisioning/`). On the machine's first boot, before owner setup and the login screen, `bin/omarchy-provision-hardware` renames the manifest to `target.booted` and runs the queue in order, dropping each step that succeeds. A failed step stays queued for the next boot; once the queue is empty it rebuilds the initramfs if a step changed it and disarms the service, so later runs do nothing. `install/helpers/image-target.sh` holds the contract. The manifest is also the one source of an image's platform: while the root is being built, `omarchy-hw-platform` prints the manifest's platform and never reads the build host's device tree, so the initramfs HOOKS, services and package lists the build sets up are the target's. The root counts as built, not booted, when it shows it: no `/run/systemd/system` (arch-chroot, pacstrap and the image builder give it a `/run` of its own), PID 1's root is another one (a chroot), or PID 1 is not systemd (a PID namespace whose PID 1 is the build). What the caller cannot see, such as PID 1's root to a normal user or `/proc/1` behind `hidepid`, counts for a booted system, so a booted system always answers from its hardware, even with a stale or broken manifest, and builds run as root with a `/run` of their own. A caller in a private PID namespace looks like a build, so no unit that asks the detector uses `PrivatePIDs=`. Root always uses these fixed paths, and the detector restarts in an empty environment first; no environment variable turns a live system into an image build or changes the platform it reports.
+
 Current generated theme state lives under
 `~/.local/state/omarchy/current/`. Keep `~/.config/omarchy/` for files a user
 may intentionally version in a dotfile manager, such as user themes, hooks,
@@ -96,7 +100,7 @@ default/applications/battlenet.desktop
 applications/icons/*           ──►  omarchy-settings    /usr/share/icons/hicolor/{48,256,scalable}/apps/
 
 etc/**                         ──►  omarchy-settings    /etc/**           (drop-ins we own outright)
-  ├─ mkinitcpio.conf.d/{omarchy_hooks,thunderbolt_module}.conf
+  ├─ mkinitcpio.conf.d/{00-omarchy-hooks,omarchy_hooks,thunderbolt_module}.conf
   ├─ limine-entry-tool.d/{omarchy-defaults,omarchy-uki}.conf
   ├─ NetworkManager/, sudoers.d/, sysctl.d/, tmpfiles.d/,
   │  profile.d/omarchy.sh, …                            (a summary — `ls etc/` for the full ~17-entry tree)
@@ -326,6 +330,10 @@ Logging goes to `/var/log/omarchy-install.log` via
 The package lists the ISO pacstraps live at `install/omarchy-base.packages`
 and `install/omarchy-other.packages`; the ISO builder also reads them when
 constructing its offline mirror.
+
+A platform's default package set is the base list plus its architecture's and its platform's additions: `install/omarchy-aarch64.packages` on every aarch64 platform, then `install/omarchy-apple.packages` on Apple Silicon or `install/omarchy-qualcomm.packages` on Qualcomm. `omarchy-pkg-defaults [platform]` prints the composed set (for the running machine by default, via `omarchy-hw-platform`), and `omarchy-reinstall-pkgs` installs it. The pacman repositories follow the platform the same way: `default/pacman/` on x86_64, `default/pacman/aarch64/` on other aarch64 platforms, and `default/pacman/apple-silicon/`, the only one with the Asahi repository, on Apple Silicon.
+
+`omarchy-settings` ships the same files on every architecture. The platform-specific ones (the mkinitcpio, Limine, zram and oomd drop-ins) decide at runtime whether they apply; `default/settings-runtime-profile` lists each one and tells the package recipe the source works this way.
 
 ## Explicit resync (`omarchy-reinstall-configs`)
 

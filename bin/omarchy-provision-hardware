@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# omarchy:summary=Finish the hardware setup an image build deferred to this machine
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# Started by omarchy-provision-hardware.service on every boot while an image's
+# deferred steps remain (see install/helpers/image-target.sh), and safe to call
+# from a platform's own first boot as well: runs are serialised. The first run
+# retires the image's build manifest, so from then on this machine is itself.
+# Steps run in order and each one that succeeds leaves the queue, so a failure
+# stops the run and the next run resumes at that step. Once the queue is empty
+# the initramfs is rebuilt if any step changed its configuration, and the
+# service disarms itself. With nothing deferred this does nothing.
+
+set -euo pipefail
+
+fail() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+if (( EUID == 0 )); then
+  export OMARCHY_PATH=/usr/share/omarchy
+  export PATH=/usr/share/omarchy/bin:/usr/local/sbin:/usr/local/bin:/usr/bin
+elif [[ -z ${OMARCHY_IMAGE_ROOT:-} || -z ${OMARCHY_PATH:-} ]]; then
+  fail "omarchy-provision-hardware must run as root"
+fi
+export OMARCHY_INSTALL=$OMARCHY_PATH/install
+export OMARCHY_INSTALL_USER=""
+
+source "$OMARCHY_INSTALL/helpers/logging.sh"
+source "$OMARCHY_INSTALL/helpers/image-target.sh"
+omarchy_image_init
+export OMARCHY_INSTALL_LOG_FILE=$omarchy_image_root/var/log/omarchy-install.log
+
+queue_present() {
+  [[ -e $omarchy_image_queue || -L $omarchy_image_queue ]]
+}
+
+omarchy_image_manifest_present || queue_present || exit 0
+omarchy_image_lock || exit 1
+# Another run may have finished while this one waited for the lock.
+omarchy_image_manifest_present || queue_present || exit 0
+
+if omarchy_image_manifest_present; then
+  omarchy_image_read_manifest || exit 1
+  mv -f "$omarchy_image_manifest" "$omarchy_image_manifest.booted" || fail "could not retire $omarchy_image_manifest"
+  live_platform=$(omarchy-hw-platform) || live_platform=unknown
+  echo "First boot of an image built for $omarchy_image_platform, on $live_platform hardware"
+fi
+
+remaining=()
+if queue_present; then
+  [[ -f $omarchy_image_queue ]] && omarchy_image_trusted "$omarchy_image_queue" ||
+    fail "$omarchy_image_queue is not a root-owned regular file"
+  mapfile -t queued <"$omarchy_image_queue"
+  for step in "${queued[@]}"; do
+    [[ -z $step ]] || remaining+=("$step")
+  done
+fi
+
+# What mkinitcpio builds from.
+initramfs_inputs() {
+  local file
+
+  for file in "$omarchy_image_root/etc/mkinitcpio.conf" "$omarchy_image_root/etc/mkinitcpio.conf.d/"*; do
+    [[ -e $file ]] || continue
+    printf '%s\0' "$file"
+    cat -- "$file"
+  done | cksum
+}
+
+# Recorded before the first step and kept until a rebuild lands, so a step that
+# changed the initramfs and then failed or lost power still gets one.
+if [[ ! -f $omarchy_image_initramfs_baseline ]]; then
+  baseline=$(mktemp "$omarchy_image_dir/.initramfs-inputs.XXXXXX") &&
+    initramfs_inputs >"$baseline" && chmod 0644 "$baseline" && mv -f "$baseline" "$omarchy_image_initramfs_baseline" ||
+    fail "could not record the initramfs inputs"
+fi
+
+mkdir -p "$(dirname "$OMARCHY_INSTALL_LOG_FILE")"
+
+while (( ${#remaining[@]} )); do
+  step=${remaining[0]}
+  [[ $step == install/hardware/*.sh && $step != *..* ]] || fail "Deferred step is not a hardware setup step: $step"
+  script=$OMARCHY_PATH/$step
+
+  if [[ -L $script ]]; then
+    fail "Deferred step is a symlink: $step"
+  elif [[ ! -e $script ]]; then
+    echo "Skipping deferred hardware step $step: this Omarchy no longer ships it"
+  else
+    echo "Running deferred hardware step $step"
+    run_logged "$script" ||
+      fail "Deferred hardware step failed: $step (see $OMARCHY_INSTALL_LOG_FILE); the next run resumes here"
+  fi
+
+  remaining=("${remaining[@]:1}")
+  omarchy_image_write_queue "${remaining[@]}" || fail "could not update $omarchy_image_queue"
+done
+
+if [[ $(initramfs_inputs) != "$(<"$omarchy_image_initramfs_baseline")" ]]; then
+  echo "Rebuilding the initramfs for the deferred hardware setup"
+  if omarchy-cmd-present limine-mkinitcpio; then
+    limine-mkinitcpio </dev/null >>"$OMARCHY_INSTALL_LOG_FILE" 2>&1
+  else
+    mkinitcpio -P </dev/null >>"$OMARCHY_INSTALL_LOG_FILE" 2>&1
+  fi || fail "Initramfs rebuild failed (see $OMARCHY_INSTALL_LOG_FILE); the next run retries it"
+  # The new image must be on disk before the queue that owes it is cleared.
+  sync || fail "could not flush the rebuilt initramfs to disk"
+fi
+rm -f "$omarchy_image_initramfs_baseline"
+
+rm -f "$omarchy_image_systemd_dir/multi-user.target.wants/$omarchy_image_unit" "$omarchy_image_systemd_dir/$omarchy_image_unit"
+rm -f "$omarchy_image_queue"
+if (( EUID == 0 )); then
+  systemctl daemon-reload 2>/dev/null || true
+fi
+echo "Deferred hardware setup is complete"

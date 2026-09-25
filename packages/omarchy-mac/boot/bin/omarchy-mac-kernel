@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# omarchy:summary=Print the installed Apple Silicon kernel package.
+# omarchy:hidden=true
+
+set -euo pipefail
+
+# Query the target package database: uname can describe the builder's host,
+# and old module directories can survive a kernel-family replacement.
+packages=$(pacman -Qq) || {
+  echo "Cannot read the installed kernel packages" >&2
+  exit 1
+}
+mapfile -t kernels < <(printf '%s\n' "$packages" | awk '/^linux-(asahi|aurora)$/')
+if (( ${#kernels[@]} == 1 )); then
+  printf '%s\n' "${kernels[0]}"
+else
+  echo "Expected exactly one installed Apple Silicon kernel package" >&2
+  exit 1
+fi

@@ -1,0 +1,49 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Origin: pkgbuilds/omarchy-apple-boot/omarchy-vendorfw.initcpio-install
+# Combined hook: original post-mount omarchy-vendorfw.service plus the
+# pre-unlock omarchy-vendorfw-initrd.service predecessor. Do not create
+# /vendorfw/apple here — that made the early helper skip ESP extraction.
+
+build() {
+    add_binary tr
+    add_binary cpio
+    add_binary blkid
+    add_binary cp
+    add_binary sleep
+    add_file /usr/lib/omarchy/initcpio/omarchy-vendorfw.sh
+    add_file /usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.sh
+    add_file /usr/lib/omarchy/initcpio/omarchy-vendorfw.service \
+        /usr/lib/systemd/system/omarchy-vendorfw.service 644
+    add_file /usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.service \
+        /usr/lib/systemd/system/omarchy-vendorfw-initrd.service 644
+    add_file /usr/lib/omarchy/initcpio/omarchy-vendorfw-cryptsetup.conf \
+        /usr/lib/systemd/system/systemd-cryptsetup@.service.d/omarchy-vendorfw-initrd.conf 644
+    add_symlink /usr/lib/systemd/system/initrd.target.wants/omarchy-vendorfw.service \
+        ../omarchy-vendorfw.service
+    add_symlink /usr/lib/systemd/system/cryptsetup-pre.target.wants/omarchy-vendorfw-initrd.service \
+        ../omarchy-vendorfw-initrd.service
+    add_symlink /usr/lib/systemd/system/initrd-root-device.target.wants/omarchy-vendorfw-initrd.service \
+        ../omarchy-vendorfw-initrd.service
+    add_symlink /usr/lib/systemd/system/sysinit.target.wants/omarchy-vendorfw-initrd.service \
+        ../omarchy-vendorfw-initrd.service
+    add_dir /lib/firmware
+    add_symlink /lib/firmware/vendor /vendorfw
+}
+
+help() {
+    cat <<HELPEOF
+Systemd-initrd counterpart of the asahi hook's early/late runscripts: unpacks
+the vendor firmware from the ESP before cryptsetup-pre.target so the internal
+keyboard and MTP trackpad work at the sd-encrypt passphrase prompt, then the
+original omarchy-vendorfw.service copies it onto /lib/firmware/vendor of the
+unlocked sysroot after sysroot.mount. The early unit is After/Wants the image
+ESP device (4F4D-5801) with JobTimeoutSec so a missing ESP cannot hang the
+job forever. If the ESP or vendorfw/firmware.cpio is absent it logs loudly,
+records /run/omarchy-vendorfw-initrd.status=missing, and still exits 0 so
+the passphrase prompt is never blocked (keyboard needs no firmware). The
+early unit is WantedBy initrd-root-device.target and sysinit.target;
+systemd-cryptsetup@.service Wants/After it so the passphrase prompt pulls
+firmware in.
+HELPEOF
+}

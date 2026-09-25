@@ -44,8 +44,8 @@ create)
   echo "Snapshots can be selected during boot."
   ;;
 restore)
-  # limine-snapper-restore ships with limine-snapper-sync, which Apple Silicon
-  # never installs because Limine cannot boot a Mac.
+  # Limine Macs use the same restore tool as other Limine installations.
+  # Keep the existing restore fallback for images without that package.
   if omarchy-cmd-missing limine-snapper-restore; then
     sudo omarchy-system-snapshot-restore
   else

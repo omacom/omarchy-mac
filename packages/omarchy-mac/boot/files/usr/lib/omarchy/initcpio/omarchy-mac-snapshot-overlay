@@ -1,0 +1,43 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Runs in the initrd after sysroot.mount. When the kernel command line's
+# rootflags select a snapper snapshot (subvol=…/.snapshots/N/snapshot), the
+# mounted root is read-only history: put a tmpfs overlay on it so the boot
+# behaves like a normal system while writing nothing into the snapshot.
+set -euo pipefail
+
+cmdline=${OMARCHY_MAC_SNAPSHOT_CMDLINE:-/proc/cmdline}
+sysroot=${OMARCHY_MAC_SNAPSHOT_SYSROOT:-/sysroot}
+overlay=${OMARCHY_MAC_SNAPSHOT_OVERLAY:-/run/omarchy-snapshot-overlay}
+marker=${OMARCHY_MAC_SNAPSHOT_MARKER:-/run/omarchy-snapshot-boot}
+
+subvol=""
+for word in $(cat "$cmdline"); do
+    case $word in
+        rootflags=*)
+            IFS=, read -r -a flags <<<"${word#rootflags=}"
+            for flag in "${flags[@]}"; do
+                [[ $flag == subvol=* ]] && subvol=${flag#subvol=}
+            done
+            ;;
+    esac
+done
+
+case $subvol in
+    */.snapshots/*/snapshot | */.snapshots/*/snapshot/) ;;
+    *) exit 0 ;;
+esac
+
+echo "omarchy-mac-snapshot-overlay: booting snapshot $subvol with a tmpfs overlay"
+mkdir -p "$overlay"
+mountpoint -q "$overlay" || mount -t tmpfs -o mode=0755 omarchy-snapshot-overlay "$overlay"
+mkdir -p "$overlay/upper" "$overlay/work"
+mount -t overlay overlay -o "lowerdir=$sysroot,upperdir=$overlay/upper,workdir=$overlay/work" "$sysroot"
+# The snapshot's fstab still names the root as btrfs subvol=@; after
+# switch-root systemd-remount-fs would replay those options onto the
+# overlay, which rejects them. The row is neutralised in the tmpfs upper,
+# so the snapshot itself stays untouched.
+if [[ -f $sysroot/etc/fstab ]]; then
+    sed -i -E 's@^([[:space:]]*[^#[:space:]][^[:space:]]*[[:space:]]+/[[:space:]]+btrfs([[:space:]].*)?)$@# omarchy-mac-snapshot-overlay: \1@' "$sysroot/etc/fstab"
+fi
+printf 'subvol=%s\n' "$subvol" >"$marker"

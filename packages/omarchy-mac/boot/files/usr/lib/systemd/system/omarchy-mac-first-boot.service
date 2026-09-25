@@ -1,0 +1,26 @@
+# Finishes a Mac image the first time it boots: consume the app's install.conf,
+# run deferred hardware steps, then hand off to owner provisioning. Progress goes
+# to the journal so the splash stays up; the script takes tty1 only for its
+# failure screen (plymouth quits there).
+[Unit]
+Description=Omarchy first boot: finish this Mac's image, then owner setup
+ConditionPathExists=/var/lib/omarchy/mac-first-boot/pending
+After=systemd-user-sessions.service omarchy-vendor-firmware.service
+After=omarchy-first-boot.service
+Before=getty@tty1.service
+Conflicts=getty@tty1.service
+Conflicts=omarchy-first-boot.service
+
+[Service]
+Type=oneshot
+Environment=OMARCHY_PATH=/usr/share/omarchy
+Environment=PATH=/usr/share/omarchy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/usr/lib/omarchy/mac-first-boot/omarchy-mac-first-boot
+Restart=no
+TimeoutStartSec=infinity
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

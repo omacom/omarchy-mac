@@ -1,0 +1,9 @@
+# What an Apple Silicon image enables when its builder applies presets. The
+# first-boot hand-off enables the display manager and owner provisioning once
+# their packages are installed.
+enable omarchy-vendor-firmware.service
+enable speakersafetyd.service
+enable NetworkManager.service
+enable systemd-resolved.service
+enable systemd-timesyncd.service
+enable omarchy-mac-first-boot.service
