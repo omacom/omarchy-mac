@@ -6,7 +6,7 @@ Apple Silicon defaults and support services for Omarchy. Version: `0.1.0` (candi
 
 This directory is self-contained. Copy it anywhere, run `./test/all`, then `./install /absolute/staging/root`. Staging requires Bash, coreutils and findutils; tests also use Python and systemd. Nothing is enabled or started by staging. The Arch recipe lives in `omarchy-mac/omarchy-pkgs-aarch64`, on `feature/omarchy-mac-package`, and pins a full collaboration-repository commit.
 
-Runtime dependencies: `omarchy` (the `omarchy-hw-platform` detector and its Apple predicate), Bash, coreutils, diffutils (cmp), grep, sed, gawk, systemd, pciutils, kmod, NetworkManager, iwd, Python, PipeWire, pipewire-pulse, libpulse (pactl), and WirePlumber. The existing desktop audio leaf still installs the protected Asahi speaker stack. See `ORIGINS.md` for extraction attribution.
+Runtime dependencies: `omarchy` (the `omarchy-hw-platform` detector and its Apple predicate), Bash, coreutils, diffutils (cmp), grep, sed, gawk, systemd, pciutils, kmod, mkinitcpio, NetworkManager, iwd, Python, PipeWire, pipewire-pulse, libpulse (pactl), and WirePlumber. The existing desktop audio leaf still installs the protected Asahi speaker stack. See `ORIGINS.md` for extraction attribution.
 
 ## Setup contract
 
@@ -18,8 +18,20 @@ Run `omarchy-mac-setup-user` as each target user with their HOME/XDG directories
 
 Vendor defaults use NetworkManager's `/usr/lib/NetworkManager/conf.d`, systemd's `/usr/lib/systemd`, modprobe's `/usr/lib/modprobe.d`, and WirePlumber's `/usr/share/wireplumber/wireplumber.conf.d`. Same-name `/etc` or user fragments retain precedence. Setup reports effective live NetworkManager/module configuration and systemd fragments. Review those reports and any drop-ins when diagnosing overrides; custom policy is never normalized to the package default.
 
+## Battery charge limit
+
+`omarchy battery charge limit [80|100]` shows or sets the `macsmc-battery` charge thresholds and refuses unless `omarchy-hw-platform` reports `apple-silicon`. It writes only the end threshold through `sudo`, since the driver derives the start threshold (80 restarts charging at 75; 100 restores full charging), and checks the SMC's readback. Full charging stays the default.
+
+A set limit is saved as `CHARGE_CONTROL_END_THRESHOLD=` in `/etc/udev/macsmc-battery.conf`, the file asahi-scripts' own rule restores from, so both agree on one value. The package's udev rule runs `/usr/lib/omarchy-mac/battery-charge-limit-restore` when the SMC battery appears at boot; it reapplies a saved 80 or 100 on Apple Silicon and otherwise leaves the SMC alone. Nothing needs enabling.
+
+## Keyboard function-key mode
+
+The built-in keyboard binds to `hid_apple`, whose `fnmode` decides what the top row sends. Apple Silicon uses the kernel's default, `fnmode=3` (auto): Apple keyboards send mute, volume, brightness and media first with F1-F12 behind Fn, as in macOS, and the non-Apple boards `hid_apple` recognises (Keychron and similar) keep F-keys first. The package ships no `hid_apple` option and the desktop install leaf writes none on Apple Silicon, so any option the owner sets wins, whatever its file name. For F-keys first on the Mac, write `options hid_apple fnmode=2` to `/etc/modprobe.d/hid_apple.conf` and rebuild the boot image (`sudo mkinitcpio -P`, or `sudo omarchy-mac-boot-update` on a Limine Mac): `hid_apple` loads from the initramfs with the options it was built with.
+
+The desktop keyboard migration runs `omarchy-mac-setup-keyboard` on upgraded Macs, naming the line Omarchy generated there according to the updating user's migration history: `fnmode=2` from the install leaf, replaced once by `fnmode=1` (quattro-upstream migration `1789132067`) or `fnmode=3` (mx-mac migration `1790305681`). While a fork migration still owes its rebuild, its own line is the generated one; a stock `fnmode=2` left by a fork run interrupted before it wrote its line looks the same as an owner's restored choice and stays. The first run retires `/etc/modprobe.d/hid_apple.conf` only when it holds exactly that line, keeping a `.omarchy-mac-retired` backup; any other file is the owner's and stays, and later runs, by any user, never retire. It then rebuilds the boot image once, including a rebuild the fork migration still owes, and switches the running keyboard to the configured mode. A failed or interrupted run retries both.
+
 ## Candidate qualification
 
-The mocked behavioral tests cover Wi-Fi health, disabled radio, journal cursor/backstop recovery, unload/load failures and chipset gates; microphone gain/mute, device choices, missing endpoints, rollback and daemon loss; setup covers fresh/upgrade/repeated/interrupted operations, two users, first-session activation, masks and overrides. The desktop retains migration and audio restart integration coverage.
+The mocked behavioral tests cover Wi-Fi health, disabled radio, journal cursor/backstop recovery, unload/load failures and chipset gates; microphone gain/mute, device choices, missing endpoints, rollback and daemon loss; setup covers fresh/upgrade/repeated/interrupted operations, two users, first-session activation, masks and overrides. Keyboard setup covers each fork's generated line, owner files and links, a single first decision across runs and users, one rebuild, rebuild retry, owed fork rebuilds, the Limine rebuild path and the live switch. The desktop retains migration and audio restart integration coverage.
 
-Before release promotion, record physical M1/M2 suspend/resume (including lid close on a BCM4388 Mac) and microphone tests, effective configuration, package transaction, source/recipe revisions, and reboot evidence. Aurora needs separate evidence. A successful source test run or candidate build is not physical hardware qualification. Do not publish this candidate to the rolling feed automatically.
+Before release promotion, record physical M1/M2 suspend/resume (including lid close on a BCM4388 Mac) and microphone tests, the top row after an upgrade (F10 mutes, Fn+F10 sends F10, before and after a reboot), effective configuration, package transaction, source/recipe revisions, and reboot evidence. Aurora needs separate evidence. A successful source test run or candidate build is not physical hardware qualification. Do not publish this candidate to the rolling feed automatically.

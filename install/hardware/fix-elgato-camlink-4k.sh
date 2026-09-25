@@ -4,7 +4,13 @@
 # v4l2-relayd re-exposes it at 1280x720 under the same name.
 
 if omarchy-hw-elgato-camlink-4k; then
-  mapfile -t kernel_headers < <(pacman -Qqs '^linux(-zen|-lts|-hardened|-t2|-ptl|-omarchy(-bore|-ptl-novrr-mm)?)?$' | sed 's/$/-headers/')
+  # omarchy-pkg-kernel-headers names one kernel's headers, but an x86 install
+  # keeps several kernels and each needs its own, so x86 keeps the list.
+  if omarchy-hw-apple-silicon; then
+    mapfile -t kernel_headers < <(omarchy-pkg-kernel-headers)
+  else
+    mapfile -t kernel_headers < <(pacman -Qqs '^linux(-zen|-lts|-hardened|-t2|-ptl|-omarchy(-bore|-ptl-novrr-mm)?)?$' | sed 's/$/-headers/')
+  fi
   omarchy-pkg-add "${kernel_headers[@]}" v4l2loopback-dkms v4l2loopback-utils v4l2-relayd
 
   sudo install -Dm644 "$OMARCHY_PATH/default/udev/elgato-camlink-4k.rules" /etc/udev/rules.d/71-elgato-camlink-4k.rules
