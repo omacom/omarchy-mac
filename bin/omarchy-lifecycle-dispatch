@@ -79,8 +79,8 @@ fi
 # package: every operation is a no-op there and callers keep their generic path.
 # omarchy-mac-boot ships the provisioning and factory reset entrypoints, and
 # neither flow has another Apple path, so they are required. It does not ship
-# boot-rebuild yet, so that stays optional until it does. Moving an operation to required
-# also changes: apple_optional in test/shell.d/lifecycle-dispatch-test.sh,
+# boot-rebuild yet, so that stays optional until it does. Moving an operation
+# to required also changes: apple_optional in test/shell.d/lifecycle-dispatch-test.sh,
 # the empty mac-boot case in test/shell.d/luks-rekey-journal-test.sh, and the
 # Apple column and registration table in docs/lifecycle-dispatch.md.
 # /usr/lib/omarchy/mac-boot/limine-ready already lives in that directory as a
