@@ -10,7 +10,7 @@ Runtime dependencies: `omarchy` (shared Apple hardware detector), Bash, coreutil
 
 ## Setup contract
 
-Install the matching runtime, settings and add-on candidates in one pacman transaction. Their transferred commands and user unit must have only one owner. On Apple Silicon, include `install/omarchy-apple.packages` alongside the desktop base package list before calling `omarchy-apply-system`. The desktop checks the package is already present before its network hardware setup; offline setup never downloads it.
+Install the matching runtime, settings and add-on candidates in one pacman transaction. Their transferred commands and user unit must have only one owner. On Apple Silicon, install the platform's default set (`omarchy-pkg-defaults apple-silicon`: the base, aarch64 and Apple lists) before calling `omarchy-apply-system`. The desktop checks the package is already present before its network hardware setup; offline setup never downloads it.
 
 Run `omarchy-mac-setup-system` as root on the target hardware (inside its target chroot for offline provisioning). An optional absolute root argument supports staging against the same target hardware without a bus. It retires only exact generated Wi-Fi, module and service files, retaining a `.omarchy-mac-retired` backup. It enables resume recovery only for BCM4378/BCM4387 on Apple Silicon; BCM4388 and Intel/T2 are excluded. No NetworkManager restart or driver reload occurs during setup. The backend applies when NetworkManager next starts; notch changes apply when appledrm next loads.
 
