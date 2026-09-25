@@ -11,12 +11,12 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # reach the platform through the real omarchy-lifecycle-dispatch: on an x86
 # fixture it is a no-op and the Limine UKI path runs; on an Apple fixture a fake
 # omarchy-mac-boot with provisioning entrypoints owns the unlock on the boot
-# partition and GRUB command line. The Apple runs take the shared re-key, as a
-# boot package that ships those entrypoints does; #527's direct Apple re-key,
-# kept while the package ships none, has its own tests.
+# partition and GRUB command line; provision-owner-luks-test.sh runs the real
+# ones.
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+token_key=""
+trap 'rm -rf "$tmp"; [[ -z $token_key ]] || keyctl unlink "$token_key" @s >/dev/null 2>&1 || true' EXIT
 
 fake_platform "$tmp/x86" generic
 fake_platform "$tmp/apple" apple-silicon
@@ -85,7 +85,7 @@ sed -n '/^PROVISIONING_UNLOCK_FILES=(/,/^)/p; /^UNLOCK_OWNER=/p; /^limine_auto_u
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/unlock.sh"
 grep -q '^luks_auto_unlock_drop() {' "$tmp/unlock.sh" && grep -q '^limine_auto_unlock_drop() {' "$tmp/unlock.sh" ||
   fail "omarchy-provision-owner defines the dispatched and Limine auto-unlock callbacks"
-sed -n '/^encrypt_state_get() {/,/^}/p; /^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p
+sed -n '/^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p
   /^platform_ready() {/,/^}/p; /^run_setup() {/,/^}/p; /^refresh_boot_entries() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/provision.sh"
 grep -q '^run_provisioning() {' "$tmp/provision.sh" && grep -q '^run_setup() {' "$tmp/provision.sh" ||
@@ -140,11 +140,12 @@ shred() {
 }
 
 fake_cryptsetup() {
-  local op=$1 key_file="" target="" extra="" material slot next
+  local op=$1 key_file="" token_type="" target="" extra="" material slot next
   shift
   while (( $# )); do
     case $1 in
       --key-file) key_file=$2; shift 2 ;;
+      --token-type) token_type=$2; shift 2 ;;
       -*) shift ;;
       *)
         if [[ -z $target ]]; then target=$1; else extra=$1; fi
@@ -157,13 +158,23 @@ fake_cryptsetup() {
   if [[ $op == "luksDump" ]]; then
     echo "Keyslots:"
     awk '{ printf "  %s: luks2\n", $1 }' "$TMP/slots"
-    printf 'Segments:\n  0: crypt\n'
+    if [[ -s $TMP/token-slot ]]; then
+      printf 'Tokens:\n  0: luks2-keyring\n\tKeyslot:    %s\n' "$(cat "$TMP/token-slot")"
+    fi
+    printf 'Digests:\n  0: pbkdf2\n'
     return 0
   fi
   if [[ $op == "luksKillSlot" ]]; then
     [[ ! -e $TMP/kill-noop ]] || return 0
     awk -v s="$extra" '$1 != s' "$TMP/slots" >"$TMP/slots.next"
     command mv -f "$TMP/slots.next" "$TMP/slots"
+    return 0
+  fi
+
+  # An enrolled token unlocks its slot whatever key is given, unless the
+  # allowed token types exclude it, as with cryptsetup.
+  if [[ $op == "open" && -z $token_type && -s $TMP/token-slot ]]; then
+    echo "Key slot $(cat "$TMP/token-slot") unlocked."
     return 0
   fi
 
@@ -219,10 +230,6 @@ provision() {
   }
   luks_device() { echo "$DEVICE"; }
   systemctl() { :; }
-  # The generic path: no Apple encrypt.state or Boot-partition key.
-  apple_silicon() { return 1; }
-  ENCRYPT_STATE=$TMP/boot/encrypt.state
-  BOOT_LUKS_KEY=$TMP/boot/luks-key
   run_provisioning
 }
 
@@ -258,12 +265,12 @@ run() {
   } >>"$tmp/output" 2>&1
 }
 
-# The slot the key opens on the volume, or nothing.
+# The slot the key opens on the volume, or nothing. Tokens never answer.
 opens() {
   if [[ $backend == "fake" ]]; then
     awk -v m="$1" '$2 == m { print $1; exit }' "$tmp/slots"
   else
-    LC_ALL=C cryptsetup open --test-passphrase --verbose --key-file <(printf '%s' "$1") "$device" 2>&1 |
+    LC_ALL=C cryptsetup open --test-passphrase --verbose --token-type passphrase-only --key-file <(printf '%s' "$1") "$device" 2>&1 |
       grep -o 'Key slot [0-9]* unlocked' | grep -o '[0-9]*' || true
   fi
 }
@@ -272,14 +279,14 @@ slot_count() {
   if [[ $backend == "fake" ]]; then
     wc -l <"$tmp/slots"
   else
-    cryptsetup luksDump "$device" | grep -cE '^ +[0-9]+: luks2|^Key Slot [0-9]+: ENABLED'
+    cryptsetup luksDump "$device" 2>/dev/null | grep -cE '^ +[0-9]+: luks2$|^Key Slot [0-9]+: ENABLED'
   fi
 }
 
 fixture() {
   local format=${1:-luks2}
   rm -rf "$tmp/provisioning" "$tmp/etc" "$tmp/boot" "$tmp/log" "$tmp/output" "$tmp/trace" "$tmp/rebuilds" "$tmp/adds" "$tmp/rebuild-fail" "$tmp/kill-noop" \
-    "$tmp/prepare-fail" "$tmp/screen" "$tmp/stale"
+    "$tmp/prepare-fail" "$tmp/screen" "$tmp/stale" "$tmp/token-slot"
   mkdir -p "$tmp/provisioning"
   chmod 755 "$tmp/provisioning"
   touch "$tmp/provisioning/pending"
@@ -312,6 +319,22 @@ fixture() {
     cryptsetup luksFormat -q --type "$format" "${pbkdf[@]}" "$device" <(printf '%s' "$staged_key")
     cryptsetup luksAddKey "${pbkdf[@]}" --key-file <(printf '%s' "$staged_key") "$device" <(printf '%s' "$seller_key")
   fi
+}
+
+# What a previous owner can leave on the real volume: a systemd-tpm2 token and
+# a luks2-keyring token on slot $1, the second answered from the session keyring
+# with $2. Fails when the kernel keyring is out of reach (no keyctl, or a
+# container's seccomp profile), so that a bare cryptsetup open does not take the
+# token in place of any key.
+enroll_tokens() {
+  local slot=$1 key=$2 description=omarchy-test-token-$$
+  command -v keyctl >/dev/null || return 1
+  token_key=$(printf '%s' "$key" | keyctl padd user "$description" @s 2>/dev/null) || return 1
+  keyctl timeout "$token_key" 600 >/dev/null 2>&1 || true
+  printf '{"type":"systemd-tpm2","keyslots":["%s"],"tpm2-blob":"AA==","tpm2-pcrs":[7],"tpm2-pcr-bank":"sha256","tpm2-primary-alg":"ecc","tpm2-policy-hash":"00","tpm2-pin":false}' "$slot" |
+    cryptsetup token import --disable-external-tokens "$device" || return 1
+  cryptsetup token add --key-description "$description" --key-slot "$slot" "$device" >/dev/null || return 1
+  LC_ALL=C cryptsetup open --test-passphrase --verbose --key-file <(printf 'not-a-key') "$device" 2>&1 | grep -qx "Key slot $slot unlocked."
 }
 
 unlock_files_present() {
@@ -462,6 +485,26 @@ assert_finished "retry after a failed rebuild" "$owner_password"
 pass "a failed boot rebuild keeps the unattended unlock and every slot for the retry"
 
 fixture
+printf '2 %s\n' tpm-sealed-key >>"$tmp/slots"
+echo 2 >"$tmp/token-slot"
+run provision "$owner_password" || fail "setup completes beside an enrolled token" "$(cat "$tmp/log")"
+assert_provisioned "beside the previous owner's token" "$owner_password"
+pass "a token the previous owner enrolled never answers for a key and is retired with its slot"
+
+if [[ " ${backends[*]} " == *" luks2 "* ]]; then
+  backend=luks2
+  fixture luks2
+  if enroll_tokens 1 "$seller_key"; then
+    run provision "$owner_password" || fail "luks2: setup completes beside live tokens" "$(cat "$tmp/log" "$tmp/output")"
+    assert_provisioned "beside the previous owner's live tokens" "$owner_password"
+    pass "luks2: with a live keyring token and a TPM2 token on the previous owner's slot, only real keys count"
+  else
+    pass "the kernel keyring is out of reach; skipping the live token run"
+  fi
+  backend=fake
+fi
+
+fixture
 touch "$tmp/kill-noop"
 if run rekey "$owner_password"; then fail "a slot kill that changes nothing fails the re-key"; fi
 [[ -f $tmp/provisioning/luks-key && -f $tmp/provisioning/luks-rekey.state ]] || fail "an unverified retirement keeps the staged key and journal"
@@ -565,6 +608,28 @@ for platform in "${platforms[@]}"; do
 done
 pass "stale boot entries are rebuilt by limine-update on x86 and by the boot package on Apple"
 
+# omarchy-mac-boot does not ship boot-rebuild yet: on Apple the stale-entry
+# refresh falls back to limine-update, and setup still finishes only once the
+# boot package verifies nothing of the staged unlock remains.
+if [[ " ${platforms[*]} " == *" apple "* ]]; then
+  platform=apple
+  mv "$mac_boot/boot-rebuild" "$tmp/boot-rebuild.off"
+  fixture
+  rm -rf "$tmp/provisioning/luks-key" "$tmp/etc" "$tmp/boot" "$tmp/limine-ran" "$tmp/mac-boot-ran"
+  touch "$tmp/stale"
+  run provision "$owner_password" || fail "apple without boot-rebuild: stale entries are refreshed" "$(cat "$tmp/log" "$tmp/output")"
+  [[ ! -e $tmp/provisioning/pending && $(cat "$tmp/limine-ran") == $'reset\nupdate' ]] ||
+    fail "apple without boot-rebuild: the menu is reset and limine-update rebuilds" "$(cat "$tmp/limine-ran")"
+  grep -qx provision-verify "$tmp/mac-boot-ran" || fail "apple without boot-rebuild: the boot package still has the last word"
+  fixture
+  rm -rf "$tmp/provisioning/luks-key" "$tmp/limine-ran"
+  touch "$tmp/stale"
+  if run provision "$owner_password"; then fail "apple without boot-rebuild: a leftover boot-partition unlock still stops setup"; fi
+  [[ -e $tmp/provisioning/pending ]] || fail "apple without boot-rebuild: setup stays pending"
+  mv "$tmp/boot-rebuild.off" "$mac_boot/boot-rebuild"
+  pass "apple: until omarchy-mac-boot ships boot-rebuild, stale entries fall back to limine-update behind the boot package's verify"
+fi
+
 # Before the owner form: a no-op on x86 even with Mac entrypoints on disk, the
 # boot package's own answer on Apple.
 platform=x86
@@ -589,25 +654,37 @@ if [[ " ${platforms[*]} " == *" apple "* ]]; then
     fail "apple: the boot package's reason reaches the screen and the log" "$(cat "$tmp/screen" "$tmp/log" 2>/dev/null)"
   pass "apple: setup stops before the owner form when the boot package is not ready"
 
-  # A boot package that ships no provisioning entrypoints yet (#527's
-  # omarchy-mac-boot): the check before the owner form is a no-op, and
-  # provisioning keeps its direct Apple path.
+  # Apple without omarchy-mac-boot, or with one older than its provisioning
+  # entrypoints: setup stops before the owner form naming the package, and a
+  # worker that got past it anyway never finishes while any part of the staged
+  # unlock remains.
   mv "$mac_boot" "$tmp/mac-boot.off"
-  mkdir -p "$mac_boot"
-  chmod 755 "$mac_boot"
-  fixture
-  rm -f "$tmp/mac-boot-ran"
-  run setup "$owner_password" || fail "apple: setup reaches the owner form before the package ships entrypoints" "$(cat "$tmp/output")"
-  [[ $(cat "$tmp/screen") == "owner form" && ! -e $tmp/mac-boot-ran ]] ||
-    fail "apple: nothing runs before the owner form without provisioning entrypoints" "$(cat "$tmp/screen")"
-  # The worker's last check sees only the built-in unlock there, as before
-  # dispatch; #527's direct re-key checks the boot-partition key itself.
-  rm "$tmp/provisioning/luks-key"
-  if run remains "$owner_password"; then fail "apple: the final check does not block setup without provisioning entrypoints"; fi
-  [[ ! -e $tmp/mac-boot-ran ]] || fail "apple: the final check runs no Mac entrypoint without provisioning entrypoints"
-  rmdir "$mac_boot"
+  for package in missing old; do
+    # #527's package already ships the Limine boot hook in that directory.
+    if [[ $package == old ]]; then
+      install -d -m 755 "$mac_boot"
+      install -m 755 /dev/null "$mac_boot/limine-ready"
+    fi
+    fixture
+    rm -f "$tmp/limine-ran" "$tmp/mac-boot-ran"
+    if run setup "$owner_password"; then fail "apple ($package package): setup refuses without provisioning entrypoints"; fi
+    ! grep -qx 'owner form' "$tmp/screen" || fail "apple ($package package): the owner is asked nothing"
+    grep -q 'provision-prepare on apple-silicon needs omarchy-mac-boot' "$tmp/screen" ||
+      fail "apple ($package package): the boot package is named on the screen" "$(cat "$tmp/screen" 2>/dev/null)"
+    grep -q '/usr/lib/omarchy/mac-boot/provision-prepare' "$tmp/log" || fail "apple ($package package): the log names the entrypoint" "$(cat "$tmp/log")"
+    if run provision "$owner_password"; then fail "apple ($package package): provisioning fails"; fi
+    [[ -e $tmp/provisioning/pending && -f $tmp/provisioning/luks-key ]] && unlock_files_present ||
+      fail "apple ($package package): provisioning keeps its state and the staged unlock"
+    [[ -n $(opens "$staged_key") && -n $(opens "$seller_key") ]] || fail "apple ($package package): no slot is retired"
+    fixture
+    rm "$tmp/provisioning/luks-key"
+    if run provision "$owner_password"; then fail "apple ($package package): a leftover boot-partition unlock fails provisioning"; fi
+    [[ -e $tmp/provisioning/pending ]] && unlock_files_present || fail "apple ($package package): a leftover boot-partition unlock keeps provisioning pending"
+    [[ ! -e $tmp/limine-ran && ! -e $tmp/mac-boot-ran ]] || fail "apple ($package package): the Limine UKI path is no fallback"
+    [[ $package == missing ]] || rm -r "$mac_boot"
+  done
   mv "$tmp/mac-boot.off" "$mac_boot"
-  pass "apple: before omarchy-mac-boot ships provisioning entrypoints, setup reaches the owner form"
+  pass "apple: without omarchy-mac-boot's provisioning entrypoints setup stops naming the package, and the worker fails closed"
 fi
 
 # A boot package that implements only one of the commit/verify pair owns
@@ -628,3 +705,24 @@ if run provision "$owner_password"; then fail "a half-implemented unlock fails p
   fail "a half-implemented unlock runs neither the platform nor the Limine path" "$(cat "$tmp/half-ran")"
 runtime=$ROOT
 pass "a boot package implementing only half of the unlock pair fails closed"
+
+# A recovery slot the owner acknowledged (luks-recovery.sh) survives the
+# retirement; one whose key was never acknowledged is retired with the rest.
+platform=x86
+backend=fake
+for acknowledged in 1 0; do
+  fixture
+  printf '2 recovery-key\n' >>"$tmp/slots"
+  printf 'recovery_slot=2\n' >"$tmp/provisioning/luks-rekey.state"
+  (( acknowledged )) && echo 'recovery_shown=1' >>"$tmp/provisioning/luks-rekey.state"
+  chmod 600 "$tmp/provisioning/luks-rekey.state"
+  run rekey "$owner_password" || fail "the re-key with a recorded recovery slot completes" "$(cat "$tmp/log")"
+  [[ -z $(opens "$staged_key") && -z $(opens "$seller_key") && -n $(opens "$owner_password") ]] ||
+    fail "the staged and previous owner's keys are retired beside a recovery slot"
+  if (( acknowledged )); then
+    [[ $(opens recovery-key) == 2 && $(slot_count) == 2 ]] || fail "an acknowledged recovery slot is kept" "$(cat "$tmp/slots")"
+  else
+    [[ -z $(opens recovery-key) && $(slot_count) == 1 ]] || fail "an unacknowledged recovery slot is retired" "$(cat "$tmp/slots")"
+  fi
+done
+pass "the re-key keeps an acknowledged recovery slot and retires an unacknowledged one"

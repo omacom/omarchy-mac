@@ -30,6 +30,7 @@ cryptsetup() {
     case $1 in
       --key-file) key_file=$2; shift 2 ;;
       --key-slot) requested=$2; shift 2 ;;
+      --token-type) shift 2 ;;
       --*|-q) shift ;;
       *)
         if [[ -z $target ]]; then target=$1; else newfile=$1; fi
@@ -39,6 +40,7 @@ cryptsetup() {
   done
   [[ $target == "$device" ]] || return 1
   if [[ $operation == "luksDump" ]]; then
+    echo "Keyslots:"
     awk '{printf "  %s: luks2\n", $1}' "$slots"
     return
   fi
