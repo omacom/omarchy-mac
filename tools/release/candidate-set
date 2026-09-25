@@ -1,0 +1,236 @@
+#!/bin/bash
+#
+# Sign and verify an Apple Silicon test candidate set.
+#
+#   candidate-set sign MANIFEST [DIR]
+#   candidate-set verify MANIFEST FINGERPRINT [DIR]
+#
+# MANIFEST is tools/release/candidates/<set>/manifest.json. Without DIR the
+# files come from the draft release the manifest names, and sign uploads its
+# output there; with DIR they are local files and nothing touches the network.
+#
+# sign checks every package against the manifest, then signs it with the test
+# lane key in $CANDIDATE_SIGNING_GNUPGHOME (default
+# ${XDG_DATA_HOME:-~/.local/share}/omarchy/candidate-signing), creating that
+# key on first use: an ed25519 signing key without a passphrase that no Omarchy
+# keyring trusts, kept apart from personal keyrings. It writes a detached .sig
+# per package, a signing.json receipt binding the manifest and set digest, the
+# receipt's signature and the public key, then verifies all of it. From a
+# release it uploads those files and copies signing.json beside MANIFEST.
+#
+# verify trusts FINGERPRINT only, never a key that travels with the files. It
+# checks hashes, the set digest, the receipt and every signature, then flips a
+# byte of a copy of one package and requires that signature check to fail.
+#
+# Needs bash 4+, jq, gpg and, without DIR, gh. On macOS run it with Homebrew bash.
+
+set -euo pipefail
+
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "candidate-set: needs bash 4 or newer (on macOS, run it with Homebrew bash)" >&2
+  exit 1
+fi
+
+die() {
+  echo "candidate-set: $*" >&2
+  exit 1
+}
+
+usage() {
+  sed -n '3,6p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  exit 2
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+work=$(mktemp -d)
+cleanup() {
+  [[ -d $work/verify-home ]] && gpgconf --homedir "$work/verify-home" --kill gpg-agent 2>/dev/null
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+# The set digest of tools/release: "name version filename sha256" lines, sorted.
+set_digest() {
+  jq -r '.packages[] | "\(.name) \(.version) \(.filename) \(.sha256)"' "$1" | LC_ALL=C sort >"$work/set.lines"
+  sha256_of "$work/set.lines"
+}
+
+check_files() {
+  local manifest=$1 dir=$2 name expected actual
+  [[ $(jq -r '.set_sha256' "$manifest") == "$(set_digest "$manifest")" ]] || die "manifest set_sha256 does not match its packages"
+  while IFS=$'\t' read -r name expected; do
+    [[ $name =~ ^[A-Za-z0-9@._+:-]+$ && $name != .* ]] || die "unsafe filename in manifest: $name"
+    [[ -f $dir/$name ]] || die "missing $name"
+    actual=$(sha256_of "$dir/$name")
+    [[ $actual == "$expected" ]] || die "$name: sha256 $actual, manifest says $expected"
+  done < <(jq -r '.packages[] | "\(.filename)\t\(.sha256)"' "$manifest")
+}
+
+release_of() {
+  local manifest=$1
+  repository=$(jq -r '.location.repository // empty' "$manifest")
+  tag=$(jq -r '.location.release // empty' "$manifest")
+  [[ -n $repository && -n $tag ]] || die "manifest names no release; pass DIR"
+}
+
+# Fetches the release's files and refuses any the set does not account for.
+download() {
+  local manifest=$1 dir=$2 file
+  release_of "$manifest"
+  gh release download "$tag" -R "$repository" -D "$dir" >/dev/null
+  jq -r '.packages[].filename | ., . + ".sig"' "$manifest" >"$work/expected"
+  printf '%s\n' manifest.json signing.json signing.json.sig candidate-signing-key.asc >>"$work/expected"
+  for file in "$dir"/*; do
+    grep -qxF -- "${file##*/}" "$work/expected" || die "release $tag holds ${file##*/}, which is not part of the set"
+  done
+}
+
+# Checks a detached signature and prints the primary fingerprint that made it.
+# A revoked or expired key or signature does not count.
+signer_of() {
+  local home=$1 file=$2 signature=$3 status
+  status=$(gpg --batch --homedir "$home" --status-fd 1 --verify "$signature" "$file" 2>/dev/null) || return 1
+  awk '$1 != "[GNUPG:]" { next }
+    $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED|KEYREVOKED)$/ { bad = 1 }
+    $2 == "GOODSIG" { good = 1 }
+    $2 == "VALIDSIG" { primary = $NF; valid++ }
+    END { if (!good || valid != 1 || bad) exit 1; print primary }' <<<"$status"
+}
+
+verify_dir() {
+  local manifest=$1 fingerprint=$2 dir=$3 home=$work/verify-home receipt=$3/signing.json name first offset byte
+  fingerprint=${fingerprint^^}
+  [[ $fingerprint =~ ^[0-9A-F]{40}$ ]] || die "FINGERPRINT must be 40 hex digits"
+  check_files "$manifest" "$dir"
+  [[ -f $dir/candidate-signing-key.asc && -f $receipt && -f $receipt.sig ]] || die "set is not signed: no key, signing.json or signing.json.sig"
+
+  rm -rf "$home"
+  mkdir -m 700 "$home"
+  gpg --batch --homedir "$home" --import "$dir/candidate-signing-key.asc" 2>/dev/null
+  gpg --batch --homedir "$home" --with-colons --list-keys | awk -F: '$1 == "fpr" { print $10 }' | grep -qx "$fingerprint" ||
+    die "candidate-signing-key.asc is not the key $fingerprint"
+
+  [[ $(signer_of "$home" "$receipt" "$receipt.sig") == "$fingerprint" ]] || die "signing.json is not signed by $fingerprint"
+  [[ $(jq -r '.signer.fingerprint' "$receipt") == "$fingerprint" ]] || die "signing.json names another signer"
+  [[ $(jq -r '.manifest_sha256' "$receipt") == "$(sha256_of "$manifest")" ]] || die "signing.json was made for another manifest"
+  [[ $(jq -r '.set_sha256' "$receipt") == "$(jq -r '.set_sha256' "$manifest")" ]] || die "signing.json was made for another set"
+  [[ $(jq -r '[.signatures[].file] | sort | join(" ")' "$receipt") == "$(jq -r '[.packages[].filename] | sort | join(" ")' "$manifest")" ]] ||
+    die "signing.json does not cover exactly the manifest's packages"
+
+  while read -r name; do
+    [[ -f $dir/$name.sig ]] || die "missing $name.sig"
+    [[ $(signer_of "$home" "$dir/$name" "$dir/$name.sig") == "$fingerprint" ]] || die "$name: signature does not verify with $fingerprint"
+  done < <(jq -r '.packages[].filename' "$manifest")
+
+  first=$(jq -r '.packages[0].filename' "$manifest")
+  cp "$dir/$first" "$work/tampered"
+  offset=$(( $(wc -c <"$work/tampered") / 2 ))
+  byte=$(od -An -tu1 -j "$offset" -N1 "$work/tampered" | tr -d ' ')
+  printf "\\$(printf '%03o' $(( byte ^ 1 )))" | dd of="$work/tampered" bs=1 seek="$offset" conv=notrunc 2>/dev/null
+  ! cmp -s "$dir/$first" "$work/tampered" || die "tamper check could not modify the copy"
+  if signer_of "$home" "$work/tampered" "$dir/$first.sig" >/dev/null; then
+    die "tamper check: a modified $first still verified"
+  fi
+  echo "verified $(jq -r '.packages | length' "$manifest") packages of $(jq -r '.set' "$manifest") signed by $fingerprint; tampered copy rejected"
+}
+
+signing_home() {
+  local home=${CANDIDATE_SIGNING_GNUPGHOME:-${XDG_DATA_HOME:-$HOME/.local/share}/omarchy/candidate-signing} keys
+  if [[ ! -d $home ]]; then
+    mkdir -p "$(dirname "$home")"
+    mkdir -m 700 "$home"
+  fi
+  keys=$(gpg --batch --homedir "$home" --with-colons --list-secret-keys 2>/dev/null | awk -F: '$1 == "sec"' | wc -l)
+  if (( keys == 0 )); then
+    gpg --batch --homedir "$home" --pinentry-mode loopback --passphrase '' \
+      --quick-gen-key "Omarchy Mac candidate test lane (not for installed systems)" ed25519 sign 1y 2>"$work/keygen.log" ||
+      { cat "$work/keygen.log" >&2; die "could not create the signing key in $home"; }
+    echo "created the test lane signing key in $home" >&2
+  elif (( keys > 1 )); then
+    die "$home holds more than one secret key"
+  fi
+  printf '%s\n' "$home"
+}
+
+sign() {
+  local manifest=$1 dir=${2:-} upload=0 home fingerprint name uid
+  if [[ -z $dir ]]; then
+    upload=1
+    dir=$work/files
+    mkdir "$dir"
+    download "$manifest" "$dir"
+    [[ ! -e $dir/signing.json ]] || die "the release is already signed; run verify"
+  fi
+  check_files "$manifest" "$dir"
+  home=$(signing_home)
+  fingerprint=$(gpg --batch --homedir "$home" --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+  [[ $fingerprint =~ ^[0-9A-F]{40}$ ]] || die "no usable signing key in $home"
+  uid=$(gpg --batch --homedir "$home" --with-colons --list-secret-keys | awk -F: '$1 == "uid" { print $10; exit }')
+
+  while read -r name; do
+    rm -f "$dir/$name.sig"
+    gpg --batch --homedir "$home" --local-user "$fingerprint" --detach-sign --no-armor -o "$dir/$name.sig" "$dir/$name"
+  done < <(jq -r '.packages[].filename' "$manifest")
+  gpg --batch --homedir "$home" --armor --export "$fingerprint" >"$dir/candidate-signing-key.asc"
+
+  jq -n --slurpfile manifest "$manifest" \
+    --arg manifest_sha256 "$(sha256_of "$manifest")" \
+    --arg fingerprint "$fingerprint" --arg uid "$uid" \
+    --arg key_sha256 "$(sha256_of "$dir/candidate-signing-key.asc")" \
+    --arg signed_at "$(TZ=Australia/Brisbane date +%Y-%m-%dT%H:%M:%S%z)" \
+    --argjson signatures "$(while read -r name; do
+      jq -n --arg file "$name" --arg sha256 "$(sha256_of "$dir/$name")" --arg signature_sha256 "$(sha256_of "$dir/$name.sig")" \
+        '{file: $file, sha256: $sha256, signature: ($file + ".sig"), signature_sha256: $signature_sha256}'
+    done < <(jq -r '.packages[].filename' "$manifest") | jq -s .)" \
+    '{schema: 1, set: $manifest[0].set, manifest_sha256: $manifest_sha256, set_sha256: $manifest[0].set_sha256,
+      signer: {fingerprint: $fingerprint, uid: $uid, key: "candidate-signing-key.asc", key_sha256: $key_sha256},
+      signed_at: $signed_at, signatures: $signatures}' >"$dir/signing.json"
+  rm -f "$dir/signing.json.sig"
+  gpg --batch --homedir "$home" --local-user "$fingerprint" --detach-sign --no-armor -o "$dir/signing.json.sig" "$dir/signing.json"
+
+  verify_dir "$manifest" "$fingerprint" "$dir"
+  if (( upload )); then
+    # The receipt goes last: until it is there the release counts as unsigned,
+    # so an interrupted upload is simply run again.
+    local assets=("$dir/candidate-signing-key.asc")
+    while read -r name; do assets+=("$dir/$name.sig"); done < <(jq -r '.packages[].filename' "$manifest")
+    gh release upload "$tag" -R "$repository" --clobber "${assets[@]}" >/dev/null
+    gh release upload "$tag" -R "$repository" --clobber "$dir/signing.json.sig" >/dev/null
+    gh release upload "$tag" -R "$repository" "$dir/signing.json" >/dev/null
+    echo "uploaded $(( ${#assets[@]} + 2 )) signing files to $repository release $tag"
+    cp "$dir/signing.json" "$(dirname "$manifest")/signing.json"
+    echo "wrote $(dirname "$manifest")/signing.json; commit it beside the manifest"
+  fi
+  echo "signer fingerprint: $fingerprint"
+}
+
+verify() {
+  local manifest=$1 fingerprint=$2 dir=${3:-}
+  if [[ -z $dir ]]; then
+    dir=$work/files
+    mkdir "$dir"
+    download "$manifest" "$dir"
+  fi
+  verify_dir "$manifest" "$fingerprint" "$dir"
+}
+
+(( $# >= 2 )) || usage
+command -v jq >/dev/null || die "needs jq"
+command -v gpg >/dev/null || die "needs gpg"
+command=$1
+manifest=$2
+shift 2
+[[ -f $manifest ]] || die "no manifest $manifest"
+[[ $(jq -r '.schema' "$manifest") == 1 && $(jq -r '.candidate_only' "$manifest") == true ]] || die "$manifest is not a schema 1 candidate manifest"
+case $command in
+  sign) (( $# <= 1 )) || usage; sign "$manifest" "$@" ;;
+  verify) (( $# == 1 || $# == 2 )) || usage; verify "$manifest" "$@" ;;
+  *) usage ;;
+esac
