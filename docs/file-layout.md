@@ -54,7 +54,7 @@ behind, which arms `omarchy-provision-owner.service` (shipped from
 `setup-form.sh`). On first boot `bin/omarchy-provision-owner` creates the
 user on tty1 and runs the finalize step itself.
 
-On an encrypted install `omarchy-provision-owner` then re-keys LUKS from the staged install key to the owner's password through `install/provisioning/luks-rekey.sh`, which journals each step (phase and slot numbers, never keys) in `/var/lib/omarchy/provisioning/luks-rekey.state` so an interrupted first boot resumes. Setup finishes only once the staged key opens nothing, and removes the journal with `pending`, so a retry before then must use the password the disk holds.
+On an encrypted install `omarchy-provision-owner` then re-keys LUKS from the staged install key to the owner's password through `install/provisioning/luks-rekey.sh`, which journals each step (phase and slot numbers, never keys) in `/var/lib/omarchy/provisioning/luks-rekey.state` so an interrupted first boot resumes. Setup finishes only once the staged key opens nothing, and removes the journal with `pending`, so a retry before then must use the password the disk holds. On a platform whose boot package owns the boot chain (Apple Silicon), the check before the owner form and the boot-time unlock go through `omarchy-lifecycle-dispatch`; see [lifecycle-dispatch.md](lifecycle-dispatch.md).
 
 Current generated theme state lives under
 `~/.local/state/omarchy/current/`. Keep `~/.config/omarchy/` for files a user
