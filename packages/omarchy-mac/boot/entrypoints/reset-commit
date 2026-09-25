@@ -1,0 +1,21 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch reset-commit < key. Factory reset runs this once
+# the factory root is the active root: it writes the temporary unlock key from
+# standard input to the Boot partition, so the first boot unlocks unattended
+# until the next owner's setup re-keys the disk, and drops the saved boot
+# files.
+
+set -euo pipefail
+
+# Root reads only the live system and a fixed PATH; unprivileged tests may
+# stage the package under a fixture root.
+MAC_BOOT_ROOT=""
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+else
+  MAC_BOOT_ROOT=${OMARCHY_MAC_BOOT_ROOT:-}
+fi
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/provision.sh"
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/factory-reset.sh"
+reset_commit "$@"

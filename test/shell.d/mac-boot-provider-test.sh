@@ -10,29 +10,29 @@ printf '#!/bin/bash\nexit 0\n' >"$work/bin/omarchy-hw-apple-silicon"
 chmod +x "$work/bin/omarchy-hw-apple-silicon"
 export PATH="$work/bin:$PATH" OMARCHY_PATH="$work/runtime"
 export OMARCHY_PROVISION_OWNER_SOURCE=1 OMARCHY_FACTORY_RESET_SOURCE=1
-export OMARCHY_MAC_BOOT_LIB="$work/stage/usr/lib/omarchy-mac/boot"
-if bash -c 'source "$1"' _ "$ROOT/bin/omarchy-system-factory-reset" 2>"$work/error"; then
-  fail "factory reset must refuse missing required boot support"
-fi
-grep -q 'Required omarchy-mac-boot' "$work/error" || fail "missing package is diagnosed"
 grep -Fxq omarchy-mac-boot "$ROOT/install/omarchy-apple.packages" || fail "Apple fresh-install inputs carry the boot package"
-pass "Apple lifecycles fail closed without their boot package, which Apple installs carry"
+pass "Apple installs carry the boot package their lifecycles dispatch to"
 bash "$ROOT/packages/omarchy-mac/boot/install" "$work/stage"
 for entry in omarchy-provision-owner omarchy-system-factory-reset; do
   bash -c 'source "$1"' _ "$ROOT/bin/$entry"
 done
 pass "Apple lifecycles load the separately staged package"
 
-# Owner provisioning reaches the Mac's boot chain only through
+# Owner provisioning and factory reset reach the Mac's boot chain only through
 # omarchy-lifecycle-dispatch; the boot package owns the files below.
-for pattern in /boot/omarchy encrypt.state rd.luks.key /etc/default/grub omarchy-mac-boot omarchy-mac/boot update-grub; do
-  ! grep -Fq -- "$pattern" "$ROOT/bin/omarchy-provision-owner" ||
-    fail "omarchy-provision-owner leaves $pattern to the boot package" "$(grep -Fn -- "$pattern" "$ROOT/bin/omarchy-provision-owner")"
+# Factory reset has no Apple step of its own left either.
+patterns=(/boot/omarchy encrypt.state rd.luks.key /etc/default/grub omarchy-mac-boot omarchy-mac/boot update-grub)
+for entry in omarchy-provision-owner omarchy-system-factory-reset; do
+  [[ $entry != omarchy-system-factory-reset ]] || patterns+=(omarchy-hw-apple-silicon)
+  for pattern in "${patterns[@]}"; do
+    ! grep -Fq -- "$pattern" "$ROOT/bin/$entry" ||
+      fail "$entry leaves $pattern to the boot package" "$(grep -Fn -- "$pattern" "$ROOT/bin/$entry")"
+  done
 done
-for operation in provision-prepare provision-commit provision-verify luks-slots; do
+for operation in provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback luks-slots; do
   [[ -x $work/stage/usr/lib/omarchy/mac-boot/$operation ]] || fail "omarchy-mac-boot ships $operation"
 done
-pass "owner provisioning handles Apple boot files only through the boot package's dispatch entrypoints"
+pass "owner provisioning and factory reset handle Apple boot files only through the boot package's dispatch entrypoints"
 [[ ! -e $work/stage/boot ]] || fail "staging does not change boot files"
 while IFS= read -r -d '' file; do
   [[ -e $ROOT/packages/omarchy-mac/boot/files/${file#"$work/stage/"} ]] || fail "staged ${file#"$work/stage"} is a shipped package file"
