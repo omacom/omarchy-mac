@@ -7,6 +7,7 @@ root=${root%/}
 [[ -z $root || $root == /* ]] || exit 2
 omarchy-hw-apple-silicon || exit 0
 config=${XDG_CONFIG_HOME:-$HOME/.config}
+legacy="$root/usr/share/omarchy-mac/legacy"
 
 # Apple's display controller runs its own firmware, and a hardware cursor plane
 # makes every pointer update a round trip into it, so the pointer lags the hand.
@@ -30,16 +31,25 @@ LUA
   install -Dm644 /dev/null "$cursor_marker"
 fi
 
-policy="$config/wireplumber/wireplumber.conf.d/asahi-headset-mic.conf"
 # A matching user copy hides future vendor updates. Modified files and links stay.
-if [[ -f $policy && ! -L $policy ]] && cmp -s "$policy" "$root/usr/share/omarchy-mac/legacy/asahi-headset-mic.conf"; then
-  if [[ -e $policy.omarchy-mac-retired || -L $policy.omarchy-mac-retired ]]; then
-    cmp -s "$policy" "$policy.omarchy-mac-retired" || exit 1
-    rm -- "$policy"
-  else
-    mv -- "$policy" "$policy.omarchy-mac-retired"
+retire() {
+  local file=$1 original=$2
+  if [[ -f $file && ! -L $file ]] && cmp -s "$file" "$original"; then
+    if [[ -e $file.omarchy-mac-retired || -L $file.omarchy-mac-retired ]]; then
+      cmp -s "$file" "$file.omarchy-mac-retired" || return 1
+      rm -- "$file"
+    else
+      mv -- "$file" "$file.omarchy-mac-retired"
+    fi
   fi
-fi
+}
+
+policies="$config/wireplumber/wireplumber.conf.d"
+retire "$policies/asahi-headset-mic.conf" "$legacy/asahi-headset-mic.conf"
+# mx-mac copied its speaker no-suspend policy into each user's configuration.
+for original in asahi-audio-no-suspend.conf asahi-audio-no-suspend-overlay.conf; do
+  retire "$policies/asahi-audio-no-suspend.conf" "$legacy/$original"
+done
 unit=omarchy-asahi-mic.service
 # Masks, custom fragments and custom wants links are user/administrator choices.
 # Never enable --force or replace them with a vendor fragment.
@@ -63,8 +73,10 @@ elif [[ ! -L $wants/$unit || $(readlink "$wants/$unit") != "/usr/lib/systemd/use
   exit 0
 fi
 install -Dm644 /dev/null "$marker"
-# Offline user finalization needs no user bus or PipeWire endpoints.
-if [[ -z $root && -S ${XDG_RUNTIME_DIR:-/run/user/$UID}/bus ]]; then
+# Offline user finalization needs no user bus or PipeWire endpoints. systemctl
+# --user finds the bus only through XDG_RUNTIME_DIR, which sudo -i clears even
+# while the owner's session socket exists.
+if [[ -z $root && -n ${XDG_RUNTIME_DIR:-} && -S $XDG_RUNTIME_DIR/bus ]]; then
   systemctl --user daemon-reload
   systemctl --user cat "$unit"
   systemctl --user start "$unit"
