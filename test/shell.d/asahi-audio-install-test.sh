@@ -67,10 +67,14 @@ cat >"$stub_bin/systemctl" <<'SH'
 printf 'systemctl' >>"$TEST_LOG"
 printf '\t%s' "$@" >>"$TEST_LOG"
 printf '\n' >>"$TEST_LOG"
+SH
 
-if [[ $1 == "is-active" ]]; then
-  exit "${SPEAKERSAFETYD_ACTIVE:-0}"
-fi
+cat >"$stub_bin/omarchy-setup-mac" <<'SH'
+#!/bin/bash
+
+printf 'omarchy-setup-mac' >>"$TEST_LOG"
+printf '\t%s' "$@" >>"$TEST_LOG"
+printf '\n' >>"$TEST_LOG"
 SH
 
 cat >"$stub_bin/omarchy-state" <<'SH'
@@ -100,7 +104,7 @@ run_audio_setup() {
 : >"$calls"
 run_audio_setup "$leaf" aarch64 apple,j413
 
-expected_call=$'omarchy-pkg-add\trtkit\tpipewire-pulse\tpipewire-alsa\tasahi-audio\tspeakersafetyd'
+expected_call=$'omarchy-pkg-add\trtkit\tpipewire-pulse\tpipewire-alsa\talsa-ucm-conf-asahi\tasahi-audio\tspeakersafetyd'
 grep -Fxq "$expected_call" "$calls" ||
   fail "fresh Apple Silicon installs get the complete protected audio stack" "$(cat "$calls")"
 pass "fresh Apple Silicon installs get the complete protected audio stack"
@@ -159,19 +163,10 @@ grep -Fq 'omarchy-hw-apple-silicon && systemctl --user is-enabled --quiet omarch
 pass "audio restart and session start keep the Asahi mic mapping gated"
 
 rm -f "$installed_marker"
-touch "$installed_marker"
 : >"$calls"
 run_audio_setup "$leaf" aarch64 apple,j413
-grep -Fq $'systemctl\tenable\t--now\tspeakersafetyd' "$calls" ||
-  fail "speakersafetyd is enabled when already running" "$(cat "$calls")"
-! grep -Fq $'systemctl\treset-failed\tspeakersafetyd' "$calls" ||
-  fail "a running speakersafetyd is not reset" "$(cat "$calls")"
-pass "a running speakersafetyd is left alone"
-
-: >"$calls"
-SPEAKERSAFETYD_ACTIVE=3 run_audio_setup "$leaf" aarch64 apple,j413
-grep -Fq $'systemctl\treset-failed\tspeakersafetyd' "$calls" ||
-  fail "a dead speakersafetyd start-limit is cleared" "$(cat "$calls")"
-grep -Fq $'systemctl\tstart\tspeakersafetyd' "$calls" ||
-  fail "speakersafetyd is started after a start-limit" "$(cat "$calls")"
-pass "speakersafetyd recovers from a start-limit-hit"
+grep -Fxq $'omarchy-setup-mac\t--system' "$calls" ||
+  fail "omarchy-mac sets up speakersafetyd once the stack is installed" "$(cat "$calls")"
+! grep -q $'^systemctl\t.*speakersafetyd' "$calls" ||
+  fail "the desktop leaf leaves speakersafetyd enablement to omarchy-mac" "$(cat "$calls")"
+pass "speakersafetyd enablement belongs to omarchy-mac"
