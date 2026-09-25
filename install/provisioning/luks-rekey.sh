@@ -11,10 +11,11 @@
 #   them and rebuilds the boot files, restoring the unlock before it fails.
 #
 # The journal (REKEY_STATE) records only the phase and slot numbers, never key
-# material. Phases advance staged → owner → boot, each written durably after
-# its step, so an attempt interrupted anywhere resumes from the last one; the
-# retire step after them is idempotent. The journal is removed once the staged
-# key provably opens nothing.
+# material. Phases advance staged → owner → boot → done, each written durably
+# after its step, so an attempt interrupted anywhere resumes from the last one;
+# the retire step before done is idempotent. The caller removes the journal
+# with the rest of its provisioning state, so until then a retry can only use
+# the password the disk holds.
 
 luks_key_slot() {
   local out
@@ -75,10 +76,14 @@ staged_key_slot() {
   luks_key_slot "$PROVISIONING_DIR/luks-key" "$1"
 }
 
-# Anything left of the provisioning window: the staged key, an unfinished
-# journal, or the boot-time auto-unlock.
+# The staged key or its boot-time auto-unlock is still on this machine.
+luks_staged_unlock_remains() {
+  [[ -e $PROVISIONING_DIR/luks-key ]] || luks_auto_unlock_present
+}
+
+# Re-key work is due while the staged unlock remains or the journal is open.
 luks_rekey_pending() {
-  [[ -e $PROVISIONING_DIR/luks-key || -e $REKEY_STATE ]] || luks_auto_unlock_present
+  [[ -e $REKEY_STATE ]] || luks_staged_unlock_remains
 }
 
 # Whether an interrupted re-key can finish with $password. Until the staged key
@@ -178,9 +183,9 @@ luks_rekey_verify() {
 
 # Order: record the staged slot, add the owner's key, rebuild boot without the
 # auto-unlock (keeping the staged slot as the fallback while that can fail),
-# retire every other slot, then verify and destroy the staged key. Failing is
-# loud: silently keeping the staged key would leave the disk effectively
-# unencrypted.
+# retire every other slot, then verify, destroy the staged key and record done.
+# Failing is loud: silently keeping the staged key would leave the disk
+# effectively unencrypted.
 luks_rekey() {
   local -
   set +x
@@ -198,7 +203,7 @@ luks_rekey() {
       rekey_state_put staged_slot "$staged" phase staged || return 1
       phase=staged
       ;;
-    staged | owner | boot) ;;
+    staged | owner | boot | done) ;;
     *)
       log_step "unknown LUKS re-key phase '$phase' in $REKEY_STATE"
       say --foreground 1 "The LUKS re-key journal is unreadable."
@@ -206,19 +211,25 @@ luks_rekey() {
       ;;
   esac
 
-  luks_rekey_owner "$device" "$phase" || return 1
-  [[ $phase == "staged" ]] && phase=owner
+  if [[ $phase != "done" ]]; then
+    luks_rekey_owner "$device" "$phase" || return 1
+    [[ $phase == "staged" ]] && phase=owner
 
-  if [[ $phase == "owner" ]] || luks_auto_unlock_present; then
-    if ! luks_auto_unlock_drop; then
-      say --foreground 1 "Could not rebuild the boot files without the install key; will retry."
-      return 1
+    if [[ $phase == "owner" ]] || luks_auto_unlock_present; then
+      if ! luks_auto_unlock_drop; then
+        say --foreground 1 "Could not rebuild the boot files without the install key; will retry."
+        return 1
+      fi
+      sync
+      rekey_state_put phase boot || return 1
     fi
-    sync
-    rekey_state_put phase boot || return 1
-  fi
 
-  luks_rekey_retire "$device" || return 1
+    luks_rekey_retire "$device" || return 1
+  elif [[ $(luks_slot_for "$password" "$device") != "$(rekey_state_get owner_slot || true)" ]]; then
+    log_step "the password does not open the owner slot the finished re-key recorded on $device"
+    say --foreground 1 "Use the disk password chosen earlier in setup."
+    return 1
+  fi
 
   if ! luks_rekey_verify "$device"; then
     say --foreground 1 "Could not confirm the temporary install key was removed; will retry."
@@ -228,5 +239,6 @@ luks_rekey() {
   if [[ -e $PROVISIONING_DIR/luks-key ]]; then
     shred -u "$PROVISIONING_DIR/luks-key" 2>/dev/null || rm -f "$PROVISIONING_DIR/luks-key" || return 1
   fi
-  rm -f "$REKEY_STATE" "$REKEY_STATE".??????
+  rm -f "$REKEY_STATE".??????
+  [[ $phase == "done" ]] || rekey_state_put phase done
 }

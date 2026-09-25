@@ -19,7 +19,8 @@ owner_password=owner-password
 sed -n '/^PROVISIONING_UNLOCK_FILES=(/,/^)/p; /^luks_auto_unlock_present() {/,/^}/p; /^luks_auto_unlock_drop() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/unlock.sh"
 grep -q '^luks_auto_unlock_drop() {' "$tmp/unlock.sh" || fail "omarchy-provision-owner defines the Limine auto-unlock callbacks"
-sed -n '/^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p' "$ROOT/bin/omarchy-provision-owner" >"$tmp/provision.sh"
+sed -n '/^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p' \
+  "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/provision.sh"
 grep -q '^run_provisioning() {' "$tmp/provision.sh" || fail "omarchy-provision-owner defines its provisioning worker"
 
 cat >"$tmp/attempt.sh" <<'SH'
@@ -140,9 +141,12 @@ provision() {
   configure_hostname() { :; }
   configure_timezone() { :; }
   finalize_user() { :; }
-  limine_entries_stale() { return 1; }
+  limine_entries_stale() {
+    crash_point "re-key returned"
+    return 1
+  }
   luks_device() { echo "$DEVICE"; }
-  cleanup_oem_state() { touch "$TMP/cleaned"; }
+  systemctl() { :; }
   run_provisioning
 }
 
@@ -150,7 +154,7 @@ case $MODE in
   provision) provision ;;
   rekey) luks_rekey "$DEVICE" ;;
   accepts) luks_rekey_accepts_password "$DEVICE" ;;
-  pending) luks_rekey_pending ;;
+  remains) luks_staged_unlock_remains ;;
 esac
 SH
 
@@ -182,9 +186,10 @@ slot_count() {
 
 fixture() {
   local format=${1:-luks2}
-  rm -rf "$tmp/provisioning" "$tmp/etc" "$tmp/log" "$tmp/output" "$tmp/trace" "$tmp/rebuilds" "$tmp/adds" "$tmp/rebuild-fail" "$tmp/kill-noop" "$tmp/cleaned"
+  rm -rf "$tmp/provisioning" "$tmp/etc" "$tmp/log" "$tmp/output" "$tmp/trace" "$tmp/rebuilds" "$tmp/adds" "$tmp/rebuild-fail" "$tmp/kill-noop"
   mkdir -p "$tmp/provisioning" "$tmp/etc/omarchy" "$tmp/etc/limine-entry-tool.d" "$tmp/etc/mkinitcpio.conf.d"
   chmod 755 "$tmp/provisioning"
+  touch "$tmp/provisioning/pending"
   printf '%s' "$staged_key" >"$tmp/provisioning/luks-key"
   printf '%s' "$staged_key" >"$tmp/etc/omarchy/provisioning.key"
   echo 'KERNEL_CMDLINE[default]+=" cryptkey=rootfs:/etc/omarchy/provisioning.key"' \
@@ -249,11 +254,18 @@ assert_finished() {
   [[ -z $(opens "$seller_key") ]] || fail "$backend: $context: the previous owner's key no longer unlocks the volume"
   [[ ! -e $tmp/provisioning/luks-key ]] || fail "$backend: $context: the staged key file is destroyed"
   ! unlock_files_present || fail "$backend: $context: no boot-time auto-unlock remains"
-  [[ ! -e $tmp/provisioning/luks-rekey.state ]] || fail "$backend: $context: the finished journal is removed"
   [[ -f $tmp/adds ]] && adds=$(wc -l <"$tmp/adds")
   (( adds <= max_adds )) || fail "$backend: $context: the owner's key is added at most $max_adds time(s)"
-  ! run pending "$password" || fail "$backend: $context: nothing is left pending"
-  no_secrets_in "$tmp/log" "$tmp/output"
+  ! run remains "$password" || fail "$backend: $context: nothing of the staged unlock remains"
+  no_secrets_in "$tmp/provisioning/luks-rekey.state" "$tmp/log" "$tmp/output"
+}
+
+# Setup completed: the disk opens with the password the account got, and the
+# provisioning state is gone.
+assert_provisioned() {
+  assert_finished "$@"
+  [[ ! -e $tmp/provisioning/pending && ! -e $tmp/provisioning/luks-rekey.state ]] ||
+    fail "$backend: $1: setup drops pending and the journal together"
 }
 
 backends=(fake)
@@ -268,47 +280,51 @@ for backend in "${backends[@]}"; do
   [[ $backend == "fake" ]] && format=luks2
 
   fixture "$format"
-  run rekey "$owner_password" || fail "$backend: an uninterrupted re-key completes" "$(cat "$tmp/log" "$tmp/output")"
-  assert_finished "uninterrupted" "$owner_password"
+  run provision "$owner_password" || fail "$backend: uninterrupted setup completes" "$(cat "$tmp/log" "$tmp/output")"
+  assert_provisioned "uninterrupted" "$owner_password"
   total_steps=$(cat "$tmp/steps")
-  (( total_steps >= 9 )) || fail "$backend: every durable step is a crash point" "$(cat "$tmp/trace")"
-  pass "$backend: an uninterrupted re-key leaves only the owner's slot and destroys the staged key"
+  (( total_steps >= 11 )) || fail "$backend: every durable step is a crash point" "$(cat "$tmp/trace")"
+  pass "$backend: uninterrupted setup leaves only the owner's slot and destroys the staged key"
 
+  # After each kill the owner reboots and answers the form again, with the same
+  # password or a new one. The account takes whatever the form accepts, so the
+  # disk must open with that password when setup finishes.
   for (( step = 1; step <= total_steps; step++ )); do
-    fixture "$format"
-    if run rekey "$owner_password" "$step"; then
-      fail "$backend: the attempt is killed at step $step"
-    fi
-    point=$(sed -n "${step}p" "$tmp/trace")
-    assert_recoverable "killed after '$point'" "$owner_password"
-    run rekey "$owner_password" || fail "$backend: rerun after '$point' completes" "$(cat "$tmp/log")"
-    assert_finished "rerun after '$point'" "$owner_password"
-    if head -n "$step" "$tmp/trace" | grep -q 'journal phase boot'; then
-      [[ $(wc -l <"$tmp/rebuilds") == "1" ]] || fail "$backend: rerun after '$point' does not rebuild boot again"
-    fi
-  done
-  pass "$backend: killed after each of $total_steps steps, a rerun resumes without adding a slot and completes"
+    for retry_password in "$owner_password" other-password; do
+      fixture "$format"
+      if run provision "$owner_password" "$step"; then
+        fail "$backend: setup is killed at step $step"
+      fi
+      point=$(sed -n "${step}p" "$tmp/trace")
+      assert_recoverable "killed after '$point'" "$owner_password"
+      [[ -e $tmp/provisioning/pending ]] || fail "$backend: killed after '$point', setup runs again"
+      staged_alive=$([[ -n $(opens "$staged_key") ]] && echo 1 || echo 0)
 
-  for (( step = 1; step <= total_steps; step++ )); do
-    fixture "$format"
-    run rekey "$owner_password" "$step" || true
-    point=$(sed -n "${step}p" "$tmp/trace")
-    staged_alive=$([[ -n $(opens "$staged_key") ]] && echo 1 || echo 0)
-
-    if run accepts other-password; then
-      (( staged_alive )) || fail "$backend: after '$point' a new password is refused once the staged key is retired"
-      run rekey other-password || fail "$backend: after '$point' a new password completes" "$(cat "$tmp/log")"
-      assert_finished "new password after '$point'" other-password 2
-      [[ -z $(opens "$owner_password") ]] || fail "$backend: after '$point' the abandoned password is retired"
-    else
-      (( ! staged_alive )) || fail "$backend: after '$point' a new password is accepted while the staged key works"
-      if run rekey other-password; then fail "$backend: after '$point' the worker refuses a new password"; fi
-      assert_recoverable "refused new password after '$point'" "$owner_password"
-      run rekey "$owner_password" || fail "$backend: after '$point' the original password completes" "$(cat "$tmp/log")"
-      assert_finished "original password after '$point'" "$owner_password"
-    fi
+      if run accepts "$retry_password"; then
+        [[ $retry_password == "$owner_password" ]] || (( staged_alive )) ||
+          fail "$backend: after '$point' a new password is refused once the staged key is retired"
+        run provision "$retry_password" || fail "$backend: after '$point' setup completes" "$(cat "$tmp/log")"
+        if [[ $retry_password == "$owner_password" ]]; then
+          assert_provisioned "rerun after '$point'" "$retry_password"
+          if head -n "$step" "$tmp/trace" | grep -q 'journal phase boot'; then
+            [[ $(wc -l <"$tmp/rebuilds") == "1" ]] || fail "$backend: rerun after '$point' does not rebuild boot again"
+          fi
+        else
+          assert_provisioned "new password after '$point'" "$retry_password" 2
+          [[ -z $(opens "$owner_password") ]] || fail "$backend: after '$point' the abandoned password is retired"
+        fi
+      else
+        [[ $retry_password != "$owner_password" ]] || fail "$backend: after '$point' the original password is always accepted"
+        (( ! staged_alive )) || fail "$backend: after '$point' a new password is accepted while the staged key works"
+        if run provision "$retry_password"; then fail "$backend: after '$point' setup refuses a new password"; fi
+        assert_recoverable "refused new password after '$point'" "$owner_password"
+        [[ -e $tmp/provisioning/pending ]] || fail "$backend: after '$point' a refused password keeps setup pending"
+        run provision "$owner_password" || fail "$backend: after '$point' the original password completes" "$(cat "$tmp/log")"
+        assert_provisioned "original password after '$point'" "$owner_password"
+      fi
+    done
   done
-  pass "$backend: a retry with a new password completes while the staged key works and is refused once it is retired"
+  pass "$backend: killed after each of $total_steps steps, setup resumes to a disk that opens with the account's password"
 done
 
 backend=fake
@@ -349,7 +365,7 @@ pass "a fresh re-key refuses a staged key that no longer unlocks the volume"
 
 fixture
 rm "$tmp/provisioning/luks-key"
-run pending "$owner_password" || fail "a leftover auto-unlock keeps the re-key pending"
+run remains "$owner_password" || fail "a leftover auto-unlock counts as the staged unlock remaining"
 if run rekey "$owner_password"; then fail "a leftover auto-unlock without its staged key fails closed"; fi
 unlock_files_present || fail "the leftover auto-unlock is not silently accepted"
 pass "a boot-time auto-unlock without its staged key keeps provisioning from finishing"
@@ -374,20 +390,14 @@ chmod 600 "$tmp/provisioning/luks-rekey.state"
 pass "journal writes replace only their own keys"
 
 fixture
-run provision "$owner_password" || fail "first-boot provisioning re-keys and finishes" "$(cat "$tmp/log" "$tmp/output")"
-assert_finished "first-boot provisioning" "$owner_password"
-[[ -e $tmp/cleaned ]] || fail "first-boot provisioning drops its state once the re-key is done"
-pass "first-boot provisioning finishes only after the re-key retires the staged key"
-
-fixture
 rm "$tmp/provisioning/luks-key"
 if run provision "$owner_password"; then fail "provisioning with a leftover auto-unlock and no staged key fails"; fi
-[[ ! -e $tmp/cleaned ]] && unlock_files_present || fail "provisioning keeps its state while the auto-unlock remains"
+[[ -e $tmp/provisioning/pending ]] && unlock_files_present || fail "provisioning keeps its state while the auto-unlock remains"
 pass "first-boot provisioning never finishes with the boot-time auto-unlock still configured"
 
 fixture
 rm -rf "$tmp/provisioning/luks-key" "$tmp/etc"
 run provision "$owner_password" || fail "unencrypted provisioning finishes" "$(cat "$tmp/log" "$tmp/output")"
-[[ -e $tmp/cleaned && ! -e $tmp/provisioning/luks-rekey.state && $(slot_count) == "2" ]] ||
+[[ ! -e $tmp/provisioning/pending && ! -e $tmp/provisioning/luks-rekey.state && $(slot_count) == "2" ]] ||
   fail "unencrypted provisioning skips the re-key"
 pass "provisioning without a staged key or auto-unlock skips the re-key"

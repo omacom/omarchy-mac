@@ -980,7 +980,7 @@ reset_limine_config() {
 cleanup_oem_state() {
   # Keep groups + packages: omarchy-system-factory-reset stages the bundled Node
   # tarball from these live copies when the factory snapshot predates it.
-  rm -f "$PROVISIONING_DIR/pending" "$PROVISIONING_DIR/authorized_keys" "$PROVISIONING_DIR/setup-user"
+  rm -f "$PROVISIONING_DIR/pending" "$PROVISIONING_DIR/authorized_keys" "$PROVISIONING_DIR/setup-user" "$REKEY_STATE"
 
   rm -f /etc/systemd/system/multi-user.target.wants/omarchy-provision-owner.service
   systemctl daemon-reload 2>/dev/null || true
@@ -1024,7 +1024,7 @@ run_provisioning() {
     limine-update
   fi
 
-  if luks_rekey_pending; then
+  if luks_staged_unlock_remains; then
     log_step "refusing to finish setup while the staged LUKS key or its auto-unlock remains"
     return 1
   fi
