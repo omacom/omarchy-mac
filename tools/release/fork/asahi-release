@@ -1,0 +1,2357 @@
+#!/bin/bash
+#
+# Release an omarchy-mx-mac commit to installed Apple Silicon Macs in one go.
+#
+#   mac-release --lane fork [--dry-run] [--update-macs] [--hardware-evidence FILE]
+#                 [--dispatch-again candidate|packages|runtime] OMARCHY_MX_MAC_COMMIT
+#   mac-release --lane fork --abandon
+#
+# The fork lane adapter: omarchy-pkgs bin/asahi-release (maralcbr asahi-quattro
+# 7e2f6cfe), moved here unchanged in what it decides. It still releases through
+# the fork's own workflows, channels and helpers, and goes away when mx-mac is
+# archived. It needs no omarchy-pkgs or omarchy-mx-mac checkout: it clones both,
+# takes bin/asahi-candidate-lineage and bin/asahi-package-payload from the
+# asahi-quattro head it resolved, and trusts the repository key next to it.
+#
+# Runs to completion or to a hard stop, then reports once:
+#
+#   1. pin pkgbuilds/omarchy-source.conf to the commit through a squash-merged
+#      PR (skipped when it is already pinned)
+#   2. build an incremental candidate on the nearest published candidate in
+#      the history of asahi-quattro
+#   3. fast path, when the candidate rebuilt only runtime packages: publish
+#      the next runtime channel. Full path otherwise: VM acceptance on the
+#      VM host, promotion, the package channel, then the runtime channel
+#   4. with --update-macs: omarchy update and its checks on each update host,
+#      in order. Never a reboot
+#
+# --dry-run resolves and prints the plan and changes nothing. A kernel or boot
+# package change stops before anything public moves unless --hardware-evidence
+# names a record of it on a real Mac. State is kept under
+# ${XDG_STATE_HOME:-~/.local/state}/omarchy-release: running the same command
+# again resumes, and --abandon drops the release in progress. The hard stops
+# and how to clear each are in tools/release/README.md.
+#
+# The SSH user, the VM host, the update hosts and the pin commit's author have
+# no defaults. They come from KEY=value lines in $ASAHI_RELEASE_CONFIG
+# (default ${XDG_CONFIG_HOME:-~/.config}/omarchy/asahi-release.conf) or from
+# the environment, which wins: ASAHI_RELEASE_SSH_USER, ASAHI_RELEASE_VM_HOST,
+# ASAHI_RELEASE_UPDATE_HOSTS (space-separated, in update order),
+# ASAHI_RELEASE_AUTHOR_NAME and ASAHI_RELEASE_AUTHOR_EMAIL. A step that needs
+# one that is unset stops and names it; --dry-run lists the missing ones.
+
+set -euo pipefail
+
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "mac-release: needs bash 4 or newer (on macOS, run it with Homebrew bash)" >&2
+  exit 1
+fi
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# How this command is named in resume hints.
+self=${ASAHI_RELEASE_SELF:-tools/release/mac-release --lane fork}
+repo=${ASAHI_RELEASE_REPOSITORY:-maralcbr/omarchy-pkgs}
+branch=asahi-quattro
+environment=asahi-quattro-release
+pkgs_git=${ASAHI_RELEASE_PKGS_GIT:-https://github.com/$repo.git}
+mx_git=${ASAHI_RELEASE_MX_GIT:-https://github.com/maralcbr/omarchy-mx-mac.git}
+pointer_base=${ASAHI_RELEASE_POINTER_BASE:-https://downloads.aicodelabs.com.au/pointers}
+repository_key=${ASAHI_RELEASE_REPOSITORY_KEY:-$ROOT/asahi-repository-signing.asc}
+state_root=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-release
+evidence_root=${ASAHI_RELEASE_EVIDENCE_ROOT:-$HOME/vm-evidence}
+config_file=${ASAHI_RELEASE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/asahi-release.conf}
+setting_keys=(ASAHI_RELEASE_SSH_USER ASAHI_RELEASE_VM_HOST ASAHI_RELEASE_UPDATE_HOSTS ASAHI_RELEASE_AUTHOR_NAME ASAHI_RELEASE_AUTHOR_EMAIL)
+declare -A setting=()
+# Relative to the VM host's home. Shared with hand-run acceptance so the
+# harness's cached base image and its lease cover every run on that Mac.
+remote_vm_state=${ASAHI_RELEASE_VM_STATE_DIR:-omarchy-src/test/vm/asahi-fresh/test-runs}
+poll=${ASAHI_RELEASE_POLL_SECONDS:-30}
+lock_wait=${ASAHI_RELEASE_LOCK_WAIT_SECONDS:-15}
+
+runtime_packages=(omarchy-settings-dev omarchy-dev omarchy-keyring omarchy-nvim quickshell-git ttf-jetbrains-mono-nerd-basic)
+# Packages that decide what a Mac boots. One moves when its version differs from
+# the live package set's, or its recipe changed since that set, and VM
+# acceptance (a generic kernel) cannot clear it: only a record from a real Mac.
+boot_package_pattern='^(linux-.+|m1n1.*|uboot-.+|asahi-fwextract|asahi-scripts|omarchy-apple-boot|omarchy-mac-boot|limine-mkinitcpio-hook|.+-dkms)$'
+# Runtime files that pin a kernel release installed Macs move to.
+runtime_kernel_pins=(default/aurora-qualified-release)
+pointer_step="Publish release channel pointer"
+ssh_options=(-o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=4)
+
+usage() {
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2
+  exit "${1:-64}"
+}
+
+stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+say() {
+  printf '\033[1;34m==>\033[0m %s\n' "$*"
+  if [[ -n ${rel:-} && -d ${rel:-} ]]; then printf '%s %s\n' "$(stamp)" "$*" >>"$rel/log"; fi
+}
+
+die() {
+  echo "asahi-release: $*" >&2
+  exit 1
+}
+
+# A hard stop: one message, the way back in, and a non-zero exit. Nothing
+# already recorded is lost; the next run of the same command resumes.
+stop() {
+  printf 'asahi-release: STOP: %s\n' "$1" >&2
+  if [[ -n ${rel:-} && -d ${rel:-} ]]; then
+    printf '%s STOP %s\n' "$(stamp)" "$1" >>"$rel/log"
+    printf '%s\n' "$1" >"$rel/last-stop"
+  fi
+  [[ -z ${resume_hint:-} ]] || printf 'asahi-release: then resume with:\n  %s\n' "$resume_hint" >&2
+  exit 1
+}
+
+nap() {
+  (( poll == 0 )) || sleep "${1:-$poll}"
+}
+
+sha256() { sha256sum "$1" | cut -d' ' -f1; }
+
+kv_write() {
+  local file=$1
+  shift
+  printf '%s\n' "$@" >"$file.tmp.$$"
+  mv "$file.tmp.$$" "$file"
+}
+
+kv_get() {
+  [[ -f $1 ]] || return 0
+  awk -v key="$2" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' "$1"
+}
+
+record() {
+  local step=$1
+  shift
+  kv_write "$rel/steps/$step" "completed_at=$(stamp)" "$@"
+}
+
+recorded() { [[ -s $rel/steps/$1 ]]; }
+get() { kv_get "$rel/steps/$1" "$2"; }
+
+# ── operator settings ──────────────────────────────────────────────────────
+# Read as data, never sourced: blank lines, # comments and KEY=value lines with
+# a known key, the value optionally in matching quotes. The environment wins
+# over the file. Nothing falls back to git's user.name or user.email.
+load_settings() {
+  local line key value n=0
+  if [[ -e $config_file ]]; then
+    [[ -f $config_file && -r $config_file ]] || die "$config_file is not a readable file"
+    while IFS= read -r line || [[ -n $line ]]; do
+      n=$((n + 1))
+      line=${line%$'\r'}
+      [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
+      [[ $line =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] ||
+        die "$config_file:$n: not a KEY=value line"
+      key=${BASH_REMATCH[1]}
+      value=${BASH_REMATCH[2]}
+      [[ " ${setting_keys[*]} " == *" $key "* ]] || die "$config_file:$n: unknown key $key (known: ${setting_keys[*]})"
+      if [[ $value =~ ^\"(.*)\"$ || $value =~ ^\'(.*)\'$ ]]; then value=${BASH_REMATCH[1]}; fi
+      setting[$key]=$value
+    done <"$config_file"
+  elif [[ -n ${ASAHI_RELEASE_CONFIG:-} ]]; then
+    die "ASAHI_RELEASE_CONFIG names $config_file, which does not exist"
+  fi
+  for key in "${setting_keys[@]}"; do
+    [[ -z ${!key:-} ]] || setting[$key]=${!key}
+  done
+  settings_valid ASAHI_RELEASE_SSH_USER '^[A-Za-z_][A-Za-z0-9._-]*$' "a user name"
+  settings_valid ASAHI_RELEASE_VM_HOST '^[A-Za-z0-9][A-Za-z0-9._-]*$' "a host name"
+  settings_valid ASAHI_RELEASE_UPDATE_HOSTS '^[A-Za-z0-9][A-Za-z0-9._-]*([[:space:]]+[A-Za-z0-9][A-Za-z0-9._-]*)*$' "a list of host names"
+  settings_valid ASAHI_RELEASE_AUTHOR_NAME '^[^<>]*[^<>[:space:]][^<>]*$' "a name"
+  settings_valid ASAHI_RELEASE_AUTHOR_EMAIL '^[^<>@[:space:]]+@[^<>@[:space:]]+$' "an email address"
+  ssh_user=${setting[ASAHI_RELEASE_SSH_USER]:-}
+  vm_host=${setting[ASAHI_RELEASE_VM_HOST]:-}
+  read -r -a update_hosts <<<"${setting[ASAHI_RELEASE_UPDATE_HOSTS]:-}"
+  author_name=${setting[ASAHI_RELEASE_AUTHOR_NAME]:-}
+  author_email=${setting[ASAHI_RELEASE_AUTHOR_EMAIL]:-}
+}
+
+settings_valid() {
+  [[ -z ${setting[$1]:-} || ${setting[$1]} =~ $2 ]] || die "$1 is not $3: ${setting[$1]}"
+}
+
+missing_settings() {
+  local key
+  for key; do [[ -n ${setting[$key]:-} ]] || printf '%s\n' "$key"; done
+}
+
+# Stop before a step that needs settings that are unset, naming them.
+need_settings() {
+  local purpose=$1 missing
+  shift
+  missing=$(missing_settings "$@" | tr '\n' ' ')
+  [[ -z $missing ]] ||
+    stop "$purpose needs ${missing% }: set each as a KEY=value line in $config_file or in the environment"
+}
+
+# ── lock ───────────────────────────────────────────────────────────────────
+# One release command at a time on this controller: sequences are allocated
+# and channels advanced only under it. The lock is flock(2) on a file this
+# shell keeps open, taken by a short perl child (perl ships with macOS and
+# with git on Arch). The lock belongs to the open file, so it outlives that
+# child and the kernel drops it when this command exits or dies: there is no
+# stale lock to take over. SSH sessions do not inherit it (see remote).
+lock_fd=""
+
+acquire_lock() {
+  local lock=$state_root/release.lock waited=0
+  mkdir -p "$state_root"
+  exec {lock_fd}<>"$lock"
+  # A command that just died can leave a child (a gh or git call) holding the
+  # descriptor for a moment; wait that long, never longer.
+  until perl -MFcntl=:flock -e 'open(my $lock, "+<&=", $ARGV[0]) or exit 2; flock($lock, LOCK_EX | LOCK_NB) or exit 1' "$lock_fd"; do
+    (( waited < lock_wait * 2 )) ||
+      die "another release command holds $lock ($(tr '\n' ' ' <"$lock")); wait for it to finish"
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  printf 'pid=%s host=%s started_at=%s\n' "$$" "$(uname -n)" "$(stamp)" >"$lock"
+}
+
+cleanup() {
+  [[ -z ${work:-} ]] || rm -rf "$work"
+}
+
+# ── git ────────────────────────────────────────────────────────────────────
+pkgs_clone() {
+  pkgs=$work/pkgs
+  [[ -d $pkgs/.git ]] && return 0
+  git clone --quiet --filter=blob:none --no-checkout --branch "$branch" "$pkgs_git" "$pkgs" 2>"$work/git.err" ||
+    die "could not clone $pkgs_git: $(tail -n 3 "$work/git.err")"
+}
+
+pkgs_head() {
+  git -C "$pkgs" fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>"$work/git.err" ||
+    stop "could not fetch $branch: $(tail -n 3 "$work/git.err")"
+  git -C "$pkgs" rev-parse "refs/remotes/origin/$branch"
+}
+
+pinned_at() {
+  git -C "$pkgs" show "$1:pkgbuilds/omarchy-source.conf" 2>/dev/null | sed -n 's/^OMARCHY_SOURCE_COMMIT=//p'
+}
+
+mx_sync() {
+  if [[ ! -d $mx_dir ]]; then
+    mkdir -p "$(dirname "$mx_dir")"
+    git clone --quiet --bare --filter=blob:none "$mx_git" "$mx_dir" 2>"$work/git.err" ||
+      die "could not clone $mx_git: $(tail -n 3 "$work/git.err")"
+  fi
+  git -C "$mx_dir" fetch --quiet origin "+refs/heads/main:refs/heads/main" 2>"$work/git.err" ||
+    die "could not fetch omarchy-mx-mac main: $(tail -n 3 "$work/git.err")"
+}
+
+mx_show() { git -C "$mx_dir" show "$1:$2" 2>/dev/null; }
+
+# PATH at COMMIT of omarchy-mx-mac into the file OUT (empty when the commit has
+# no such file). Returns 1 when the commit or the file cannot be read: a
+# comparison is never made against anything but the exact commit.
+mx_file_at() {
+  local commit=$1 path=$2 out=$3 entry
+  git -C "$mx_dir" cat-file -e "$commit^{commit}" 2>/dev/null ||
+    git -C "$mx_dir" fetch --quiet origin "$commit" 2>/dev/null || return 1
+  entry=$(git -C "$mx_dir" ls-tree "$commit" -- "$path" 2>/dev/null) || return 1
+  : >"$out"
+  [[ -z $entry ]] || git -C "$mx_dir" show "$commit:$path" >"$out" 2>/dev/null
+}
+
+# The fork's own helper NAME from the asahi-quattro head fetched last, in
+# $helper: the rules it holds are the ones the fork's workflows enforce.
+# ASAHI_RELEASE_HELPERS names a directory to take it from instead.
+fork_helper() {
+  if [[ -n ${ASAHI_RELEASE_HELPERS:-} ]]; then
+    helper=$ASAHI_RELEASE_HELPERS/$1
+    return 0
+  fi
+  helper=$work/fork-bin/$1
+  [[ ! -s $helper ]] || return 0
+  mkdir -p "$work/fork-bin"
+  git -C "$pkgs" show "refs/remotes/origin/$branch:bin/$1" >"$helper" 2>"$work/git.err" && [[ -s $helper ]] ||
+    stop "could not read bin/$1 on $branch: $(tail -n 3 "$work/git.err")"
+}
+
+# ── keys and signatures ────────────────────────────────────────────────────
+dearmor_to() {
+  if grep -q -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' "$1"; then
+    gpg --homedir "$work/gnupg" --batch --yes --dearmor --output "$2" "$1" 2>/dev/null
+  else
+    cp "$1" "$2"
+  fi
+}
+
+is_subkey() {
+  gpg --homedir "$work/gnupg" --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: -v want="$2" '
+    $1 == "pub" || $1 == "sub" { kind = $1; next }
+    $1 == "fpr" && kind == "sub" && toupper($10) == want { found = 1 }
+    $1 == "fpr" { kind = "" }
+    END { exit !found }'
+}
+
+verify_signature() {
+  local status
+  status=$(gpgv --homedir "$work/gnupg" --status-fd 1 --keyring "$1" "$3" "$2" 2>/dev/null) || return 1
+  [[ -z ${4:-} ]] || grep -Eq "^\[GNUPG:\] VALIDSIG $4( |$)" <<<"$status"
+}
+
+prepare_keys() {
+  mkdir -m 0700 -p "$work/gnupg"
+  [[ -r $repository_key ]] || die "the repository key $repository_key is not readable"
+  dearmor_to "$repository_key" "$work/repository.gpg" || die "could not read $repository_key"
+}
+
+prepare_release_key() {
+  [[ -s $work/release.gpg ]] && return 0
+  mx_show "$source_commit" default/omarchy-release.gpg >"$work/release-key" && [[ -s $work/release-key ]] ||
+    stop "omarchy-mx-mac $source_commit has no default/omarchy-release.gpg to verify channels with"
+  dearmor_to "$work/release-key" "$work/release.gpg" || stop "could not read the release key"
+}
+
+# ── releases ───────────────────────────────────────────────────────────────
+refresh_releases() {
+  gh api --paginate "repos/$repo/releases?per_page=100" 2>"$work/gh.err" | jq -s 'add // []' >"$work/releases.json" ||
+    stop "could not list the releases of $repo: $(head -c 300 "$work/gh.err")"
+}
+
+release_status() {
+  jq -r --arg tag "$1" '[.[] | select(.tag_name == $tag)] |
+    if length == 0 then "absent" elif .[0].draft then "draft" elif .[0].prerelease then "prerelease" else "published" end' \
+    "$work/releases.json"
+}
+
+release_immutable() {
+  jq -e --arg tag "$1" 'any(.[]; .tag_name == $tag and .immutable == true)' "$work/releases.json" >/dev/null
+}
+
+release_assets() {
+  jq -r --arg tag "$1" '.[] | select(.tag_name == $tag) | .assets[] | "\(.name) \((.digest // "none") | sub("^sha256:"; ""))"' \
+    "$work/releases.json" | LC_ALL=C sort
+}
+
+max_sequence() {
+  jq -r --arg prefix "$1" '[.[] | select(.draft == false and .prerelease == false) | .tag_name
+    | select(test("^" + $prefix + "-[1-9][0-9]*$")) | sub("^" + $prefix + "-"; "") | tonumber] | max // 0' \
+    "$work/releases.json"
+}
+
+drafts_named() {
+  jq -r --arg prefix "$1" '.[] | select(.draft == true and (.tag_name | startswith($prefix))) | .tag_name' "$work/releases.json"
+}
+
+download_assets() {
+  local tag=$1 dir=$2 pattern
+  local patterns=()
+  shift 2
+  for pattern in "$@"; do patterns+=(--pattern "$pattern"); done
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  gh release download "$tag" -R "$repo" --dir "$dir" "${patterns[@]}" >/dev/null 2>"$work/gh.err"
+}
+
+# Every asset the checksum files list is in the release with that digest, and
+# the release holds nothing else.
+inventory_matches_release() {
+  local dir=$1 tag=$2 extra
+  cat "$dir/SHA256SUMS" "$dir/RUNTIME-SHA256SUMS" |
+    awk 'NF == 2 { name = $2; sub(/^\*/, "", name); print name, $1 }' | LC_ALL=C sort -u >"$work/inventory"
+  printf '%s none\n' SHA256SUMS RUNTIME-SHA256SUMS >>"$work/inventory"
+  release_assets "$tag" | awk '$1 == "SHA256SUMS" || $1 == "RUNTIME-SHA256SUMS" { print $1, "none"; next } { print }' |
+    LC_ALL=C sort >"$work/assets"
+  LC_ALL=C sort -o "$work/inventory" "$work/inventory"
+  extra=$(LC_ALL=C comm -3 "$work/inventory" "$work/assets" | head -n 3 | tr -s '\t\n' '  ')
+  [[ -z $extra ]] || stop "the inventory of $tag does not match its release assets: $extra"
+}
+
+CANDIDATE_ASSETS=(CANDIDATE CANDIDATE.sig SHA256SUMS RUNTIME-SHA256SUMS asahi-quattro-bundle.manifest asahi-quattro-bundle.manifest.sig)
+
+# The signed descriptor and runtime manifest of a candidate, and their
+# inventory against the release, without downloading a package.
+verify_candidate_files() {
+  local dir=$1 tag=$2 commit=$3 runtime=$4 fingerprint=$5 run=${6:-}
+  local file count filename checksum signature signature_checksum
+  for file in "${CANDIDATE_ASSETS[@]}"; do
+    [[ -s $dir/$file ]] || stop "$tag has no $file"
+  done
+  verify_signature "$work/repository.gpg" "$dir/CANDIDATE" "$dir/CANDIDATE.sig" "$fingerprint" ||
+    stop "invalid signature on the CANDIDATE descriptor of $tag (expected subkey $fingerprint)"
+  verify_signature "$work/repository.gpg" "$dir/asahi-quattro-bundle.manifest" "$dir/asahi-quattro-bundle.manifest.sig" "$fingerprint" ||
+    stop "invalid signature on the runtime manifest of $tag"
+  for file in format=1 "release_tag=$tag" "source_commit=$commit" runner_arch=aarch64 "signing_fingerprint=$fingerprint"; do
+    grep -Fxq "$file" "$dir/CANDIDATE" || stop "the CANDIDATE descriptor of $tag lacks $file"
+  done
+  [[ -z $run ]] || grep -Fxq "workflow_run=$run" "$dir/CANDIDATE" || stop "$tag was not built by run $run"
+  count=$(sed -n 's/^package_count=//p' "$dir/CANDIDATE")
+  [[ $count =~ ^[1-9][0-9]*$ && $(grep -c '^package=' "$dir/CANDIDATE") == "$count" ]] ||
+    stop "the CANDIDATE descriptor of $tag lists a package inventory other than its package_count"
+  while IFS='|' read -r _ _ _ _ filename checksum signature signature_checksum; do
+    grep -Fxq "$checksum  $filename" "$dir/SHA256SUMS" && grep -Fxq "$signature_checksum  $signature" "$dir/SHA256SUMS" ||
+      stop "$filename of $tag is not in its checksum inventory as signed"
+  done < <(sed -n 's/^package=//p' "$dir/CANDIDATE")
+  grep -Fxq "$(sha256 "$dir/CANDIDATE")  CANDIDATE" "$dir/SHA256SUMS" || stop "SHA256SUMS of $tag does not list its CANDIDATE"
+  for file in format=2 bundle=asahi-quattro "source_commit=$runtime" package_count=6; do
+    grep -Fxq "$file" "$dir/asahi-quattro-bundle.manifest" || stop "the runtime manifest of $tag lacks $file"
+  done
+  (( $(grep -c '^package=' "$dir/asahi-quattro-bundle.manifest") == 6 )) || stop "the runtime manifest of $tag does not list 6 packages"
+  while IFS='|' read -r _ _ _ _ filename checksum; do
+    grep -Fxq "$checksum  $filename" "$dir/RUNTIME-SHA256SUMS" || stop "$filename of $tag is not in its runtime inventory as signed"
+  done < <(sed -n 's/^package=//p' "$dir/asahi-quattro-bundle.manifest")
+  grep -Fxq "$(sha256 "$dir/asahi-quattro-bundle.manifest")  asahi-quattro-bundle.manifest" "$dir/RUNTIME-SHA256SUMS" ||
+    stop "RUNTIME-SHA256SUMS of $tag does not list its manifest"
+  inventory_matches_release "$dir" "$tag"
+}
+
+# Before every step after the build: the recorded candidate is still the
+# immutable, signed release this release pinned.
+reverify_candidate() {
+  local tag commit dir
+  tag=$(get candidate tag)
+  commit=$(get candidate commit)
+  dir=$work/reverify
+  refresh_releases
+  [[ $(release_status "$tag") == prerelease ]] && release_immutable "$tag" ||
+    stop "$tag is no longer an immutable published candidate"
+  download_assets "$tag" "$dir" "${CANDIDATE_ASSETS[@]}" || stop "could not download $tag: $(head -c 300 "$work/gh.err")"
+  [[ $(sha256 "$dir/CANDIDATE") == "$(get candidate sha256)" ]] ||
+    stop "the CANDIDATE descriptor of $tag changed: sha256 $(sha256 "$dir/CANDIDATE"), this release pinned $(get candidate sha256)"
+  [[ $(sha256 "$dir/asahi-quattro-bundle.manifest") == "$(get candidate manifest_sha256)" ]] ||
+    stop "the runtime manifest of $tag changed since this release pinned it"
+  verify_candidate_files "$dir" "$tag" "$commit" "$source_commit" "$(get candidate fingerprint)"
+}
+
+# ── pointers ───────────────────────────────────────────────────────────────
+pointer_sequence() {
+  local body
+  body=$(curl --proto '=https' --tlsv1.2 --fail --silent --max-time 20 "$pointer_base/$1" 2>/dev/null) || return 0
+  if [[ $body =~ ^format=1$'\n'sequence=([1-9][0-9]*)$'\n'tag=$1-([1-9][0-9]*)$ && ${BASH_REMATCH[1]} == "${BASH_REMATCH[2]}" ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    printf 'malformed\n'
+  fi
+}
+
+pointer_names() {
+  local name=$1 sequence=$2 attempt body=$work/pointer
+  for attempt in 1 2 3 4 5; do
+    if curl --proto '=https' --tlsv1.2 --fail --silent --max-time 20 --output "$body" "$pointer_base/$name" 2>/dev/null &&
+      cmp -s <(printf 'format=1\nsequence=%s\ntag=%s-%s\n' "$sequence" "$name" "$sequence") "$body"; then
+      return 0
+    fi
+    (( attempt == 5 )) || nap 6
+  done
+  return 1
+}
+
+runtime_pointer_repair() {
+  stop "asahi-quattro-channel-$1 is public, but $2; installed Macs stay on the previous channel until the pointer is repaired with:
+  gh workflow run publish-asahi-channel-pointer.yml -R $repo --ref $branch -f sequence=$1
+approve its $environment gate"
+}
+
+packages_pointer_repair() {
+  stop "asahi-packages-channel-$1 is public, but $2; installed Macs keep their package set until the pointer is repaired with:
+  gh workflow run publish-asahi-channel-pointer.yml -R $repo --ref $branch -f kind=packages -f sequence=$1
+approve its $environment gate"
+}
+
+# ── GitHub runs ────────────────────────────────────────────────────────────
+runs_of() {
+  gh api "repos/$repo/actions/workflows/$1/runs?event=workflow_dispatch&branch=$branch&head_sha=$2&per_page=100" \
+    2>"$work/gh.err" | jq '.workflow_runs // []'
+}
+
+marker_fields() {
+  local marker=$1 phase=$2 key
+  shift 2
+  local fields=("phase=$phase")
+  for key in workflow head_sha actor title before at url_run sequence; do
+    [[ $(grep -c "^$key=" "$marker" 2>/dev/null) == 0 ]] || fields+=("$key=$(kv_get "$marker" "$key")")
+  done
+  kv_write "$marker" "${fields[@]}" "$@"
+}
+
+# The run a recorded dispatch produced: same workflow, commit, actor and title,
+# dispatched by the event API, and not one that existed before the dispatch.
+# Exactly one or nothing; more is a stop.
+match_dispatch() {
+  local marker=$1 workflow head actor title before attempt runs matches url_run
+  local found=()
+  workflow=$(kv_get "$marker" workflow)
+  head=$(kv_get "$marker" head_sha)
+  actor=$(kv_get "$marker" actor)
+  title=$(kv_get "$marker" title)
+  before=$(kv_get "$marker" before)
+  matched_run=""
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    runs=$(runs_of "$workflow" "$head") || { (( attempt < 10 )) && { nap 6; continue; }; stop "could not list the runs of $workflow: $(head -c 300 "$work/gh.err")"; }
+    matches=$(jq -r --arg path ".github/workflows/$workflow" --arg actor "$actor" --arg title "$title" --arg before ",$before," '
+      [.[] | select(.path == $path and .event == "workflow_dispatch" and .head_branch == "asahi-quattro" and .actor.login == $actor)
+           | select(.conclusion != "cancelled")
+           | select($title == "" or .display_title == $title)
+           | (.id | tostring) as $id | select(($before | contains("," + $id + ",")) | not)
+           | $id] | join(" ")' <<<"$runs")
+    [[ -z $matches ]] || break
+    nap 6
+  done
+  read -r -a found <<<"$matches"
+  (( ${#found[@]} <= 1 )) ||
+    stop "the dispatch of $workflow on ${head:0:12} matches ${#found[@]} runs (${found[*]}); refusing to pick one. Cancel all but the one to keep, then resume"
+  (( ${#found[@]} == 1 )) || return 0
+  url_run=$(kv_get "$marker" url_run)
+  [[ -z $url_run || $url_run == "${found[0]}" ]] || stop "gh reported run $url_run for the dispatch of $workflow, but the lookup found run ${found[0]}"
+  matched_run=${found[0]}
+  marker_fields "$marker" resolved "run=$matched_run"
+}
+
+# Dispatch a workflow once. The intent is recorded before the dispatch and the
+# run ID after it; an intent without a run ID is reconciled by lookup, never
+# dispatched again blindly.
+dispatch() {
+  local step=$1 workflow=$2 title=$3 marker phase head before output url_run
+  shift 3
+  marker=$rel/dispatch/$step
+  phase=$(kv_get "$marker" phase)
+  case $phase in
+    resolved)
+      dispatched_run=$(kv_get "$marker" run)
+      return 0
+      ;;
+    intent|sent)
+      match_dispatch "$marker"
+      if [[ -n $matched_run ]]; then
+        dispatched_run=$matched_run
+        say "$step: found run $dispatched_run of the earlier dispatch"
+        return 0
+      fi
+      # No run found is not proof that GitHub never took the dispatch: it may
+      # show up late, or on another commit. Only the operator can say.
+      [[ " ${dispatch_again[*]} " == *" $step "* ]] ||
+        stop "the $step dispatch of $workflow recorded at $(kv_get "$marker" at) on ${branch} $(kv_get "$marker" head_sha) has no run this command can find. Look at https://github.com/$repo/actions/workflows/$workflow for a run started then, by $(kv_get "$marker" actor), on any commit. If there is one, cancel it or let it finish, then resume. Only if there is none, resume with --dispatch-again $step"
+      mv "$marker" "$marker.unmatched-$(date -u +%Y%m%dT%H%M%SZ)"
+      say "$step: the operator confirmed the earlier dispatch of $workflow has no run; dispatching it again"
+      ;;
+  esac
+  head=$(pkgs_head)
+  [[ -z ${dispatch_expected_head:-} || $head == "$dispatch_expected_head" ]] ||
+    stop "$branch moved to $head while this release expected $dispatch_expected_head"
+  runs_of "$workflow" "$head" >"$work/runs.json" || stop "could not list the runs of $workflow: $(head -c 300 "$work/gh.err")"
+  before=$(jq -r '[.[].id | tostring] | join(",")' "$work/runs.json")
+  [[ -z ${dispatch_precheck:-} ]] || "$dispatch_precheck"
+  kv_write "$marker" phase=intent "workflow=$workflow" "head_sha=$head" "actor=$actor" "title=$title" "before=$before" "at=$(stamp)" "${dispatch_extra[@]}"
+  output=$(gh workflow run "$workflow" -R "$repo" --ref "$branch" "$@" 2>&1) ||
+    stop "could not dispatch $workflow: $output"
+  url_run=$(grep -oE 'actions/runs/[0-9]+' <<<"$output" | head -n 1 | cut -d/ -f3 || true)
+  marker_fields "$marker" sent "url_run=$url_run"
+  match_dispatch "$marker"
+  [[ -n $matched_run ]] ||
+    stop "$workflow was dispatched on ${head:0:12}, but no new run of it appeared. Check https://github.com/$repo/actions/workflows/$workflow"
+  dispatched_run=$matched_run
+}
+
+archive_marker() {
+  [[ ! -f $rel/dispatch/$1 ]] || mv "$rel/dispatch/$1" "$rel/dispatch/$1.failed-$2"
+}
+
+# Every job of a run: a full build has more matrix jobs than one page holds.
+run_jobs() {
+  gh api --paginate "repos/$repo/actions/runs/$1/jobs?per_page=100" 2>"$work/gh.err" | jq -s '{jobs: (map(.jobs) | add // [])}'
+}
+
+failed_jobs() {
+  run_jobs "$1" | jq -r '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || true
+}
+
+failed_steps() {
+  run_jobs "$1" | jq -r '[.jobs[] | select(.conclusion == "failure") | .steps[]? | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || true
+}
+
+job_conclusion() {
+  jq -r --arg name "$2" '[.jobs[] | select(.name == $name) | .conclusion // ""] | first // ""' <<<"$1"
+}
+
+# Approve only the asahi-quattro-release deployment of this exact run, and only
+# after the step's own check of what the waiting job will publish.
+approve_gate() {
+  local step=$1 run=$2 pending others env_id jobs waiting
+  pending=$(gh api "repos/$repo/actions/runs/$run/pending_deployments" 2>"$work/gh.err") || return 0
+  (( $(jq length <<<"$pending") > 0 )) || return 0
+  others=$(jq -r --arg env "$environment" '[.[] | .environment.name | select(. != $env)] | unique | join(", ")' <<<"$pending")
+  [[ -z $others ]] ||
+    stop "run $run waits for approval on environment '$others', which this command never approves (https://github.com/$repo/actions/runs/$run)"
+  env_id=$(jq -r --arg env "$environment" '[.[] | select(.environment.name == $env) | .environment.id] | first' <<<"$pending")
+  [[ $env_id =~ ^[0-9]+$ ]] || stop "run $run has a pending $environment deployment without an environment ID"
+  jobs=$(run_jobs "$run") || stop "could not read the jobs of run $run"
+  waiting=$(jq -r '[.jobs[] | select(.status == "waiting") | .name] | join(",")' <<<"$jobs")
+  "gate_$step" "$run" "$waiting" "$jobs"
+  printf '{"environment_ids":[%s],"state":"approved","comment":"asahi-release %s: %s verified"}' "$env_id" "$release_id" "$waiting" |
+    gh api -X POST "repos/$repo/actions/runs/$run/pending_deployments" --input - >/dev/null 2>"$work/gh.err" ||
+    stop "could not approve $environment on run $run: $(head -c 300 "$work/gh.err")"
+  say "$step: approved $environment for $waiting on run $run"
+}
+
+wait_for_run() {
+  local step=$1 run=$2 marker workflow head actor title json status conclusion misses=0
+  marker=$rel/dispatch/$step
+  workflow=$(kv_get "$marker" workflow)
+  head=$(kv_get "$marker" head_sha)
+  actor=$(kv_get "$marker" actor)
+  title=$(kv_get "$marker" title)
+  say "$step: https://github.com/$repo/actions/runs/$run"
+  while true; do
+    if ! json=$(gh api "repos/$repo/actions/runs/$run" 2>"$work/gh.err"); then
+      (( ++misses < 20 )) || stop "could not read run $run: $(head -c 300 "$work/gh.err")"
+      nap
+      continue
+    fi
+    misses=0
+    jq -e --argjson id "$run" --arg path ".github/workflows/$workflow" --arg head "$head" --arg actor "$actor" --arg title "$title" '
+      .id == $id and .path == $path and .event == "workflow_dispatch" and .head_sha == $head and
+      .head_branch == "asahi-quattro" and .actor.login == $actor and ($title == "" or .display_title == $title)' \
+      <<<"$json" >/dev/null || stop "run $run is not the $workflow dispatch this release made"
+    status=$(jq -r .status <<<"$json")
+    conclusion=$(jq -r '.conclusion // ""' <<<"$json")
+    if [[ $status == completed ]]; then
+      [[ $conclusion == success ]] && return 0
+      "failed_$step" "$run" "$conclusion"
+    fi
+    if [[ $status == waiting ]]; then approve_gate "$step" "$run"; fi
+    nap
+  done
+}
+
+# ── remote hosts ───────────────────────────────────────────────────────────
+remote() {
+  if [[ -n $lock_fd ]]; then
+    ssh "${ssh_options[@]}" "$ssh_user@$1" "bash -lc $(printf '%q' "$2")" {lock_fd}>&-
+  else
+    ssh "${ssh_options[@]}" "$ssh_user@$1" "bash -lc $(printf '%q' "$2")"
+  fi
+}
+
+# A long job on a remote host runs detached from this SSH session and writes
+# its exit status to a file, so a dropped connection or a restart of this
+# command reattaches to it instead of starting it again.
+remote_job_start() {
+  remote "$1" "cd $2 || exit 1; rm -f status pid; if command -v setsid >/dev/null; then setsid nohup bash job.sh >job.log 2>&1 </dev/null & else nohup bash job.sh >job.log 2>&1 </dev/null & fi; echo \$! >pid"
+}
+
+# The status file is read again after the process is found gone: a job that
+# wrote it and exited between the two checks is finished, not lost.
+remote_job_state() {
+  remote "$1" "cd $2 2>/dev/null || { echo none; exit 0; }; if [ -s status ]; then echo done:\$(cat status); elif [ -s pid ] && kill -0 \$(cat pid) 2>/dev/null; then echo running; elif [ -s status ]; then echo done:\$(cat status); else echo lost; fi"
+}
+
+remote_job_wait() {
+  local host=$1 dir=$2 state misses=0
+  while true; do
+    if state=$(remote_job_state "$host" "$dir"); then
+      misses=0
+      case $state in
+        done:*) job_status=${state#done:}; return 0 ;;
+        running) ;;
+        *) job_status=""; return 0 ;;
+      esac
+    else
+      (( ++misses < 10 )) || stop "lost contact with $host while $dir runs there; it keeps running, and resuming reattaches to it"
+    fi
+    nap
+  done
+}
+
+# ── evidence ───────────────────────────────────────────────────────────────
+kernel_moves() { get classify kernel_moves; }
+
+# Before anything public moves: a kernel or boot change needs a record from a
+# real Mac that names it.
+# The lines a hardware record must hold, exactly: the candidate's CANDIDATE
+# digest and one line per moved boot package (with the version this release
+# publishes) or kernel pin.
+required_hardware_lines() {
+  printf 'candidate_sha256=%s\n' "$(get candidate sha256)"
+  get classify hardware_evidence_lines | tr ';' '\n' | grep .
+}
+
+hardware_record_matches() {
+  cmp -s <(required_hardware_lines | LC_ALL=C sort) <(grep -E '^(candidate_sha256|boot|pin)=' "$1" | LC_ALL=C sort)
+}
+
+# Before anything public moves: a kernel or boot change needs a record from a
+# real Mac of exactly what this release publishes.
+require_hardware_evidence() {
+  local moves stored=$rel/evidence/hardware-evidence.txt
+  check_baseline
+  moves=$(kernel_moves)
+  [[ -n $moves ]] || return 0
+  if [[ -s $stored ]] && ! hardware_record_matches "$stored"; then
+    mv "$stored" "$stored.superseded-$(date -u +%Y%m%dT%H%M%SZ)"
+    say "the recorded hardware evidence no longer matches what this release moves; it was set aside"
+  fi
+  if [[ -n $hardware_evidence ]]; then
+    # What is validated is the copy that is kept, not the file it came from.
+    cp "$hardware_evidence" "$stored.tmp"
+    hardware_record_matches "$stored.tmp" || {
+      rm -f "$stored.tmp"
+      stop "$hardware_evidence does not record exactly what this release publishes. Its candidate_sha256=, boot= and pin= lines must be these, no more and no fewer:
+$(required_hardware_lines | sed 's/^/  /')"
+    }
+    mv "$stored.tmp" "$stored"
+    kv_write "$rel/progress/hardware" "source=$hardware_evidence" "sha256=$(sha256 "$stored")" "recorded_at=$(stamp)"
+    say "hardware evidence recorded for $moves ($(sha256 "$stored"))"
+  fi
+  [[ -s $stored ]] ||
+    stop "this release moves a kernel or boot package ($moves)$(details=$(get classify boot_details); [[ -z $details ]] || printf ' against %s: %s' "$(get classify boot_basis)" "$details"). VM acceptance cannot qualify a kernel, so nothing public moves without a record from a real Mac. Test exactly this on one, then write a record of it (free text, plus these lines, no more and no fewer) and pass it with --hardware-evidence FILE:
+$(required_hardware_lines | sed 's/^/  /')"
+  [[ $(sha256 "$stored") == "$(kv_get "$rel/progress/hardware" sha256)" ]] && hardware_record_matches "$stored" ||
+    stop "$stored changed after it was recorded, or no longer matches what this release publishes"
+}
+
+compose_acceptance() {
+  local result=$rel/progress/vm-result out=$rel/evidence/acceptance.txt tag moves hardware_status hardware_line
+  tag=$(get candidate tag)
+  moves=$(kernel_moves)
+  if [[ -z $moves ]]; then
+    hardware_status="not-required (no kernel or boot package moved)"
+  elif [[ -s $rel/evidence/hardware-evidence.txt ]]; then
+    hardware_status="recorded"
+    hardware_line="physical_hardware_evidence=$(kv_get "$rel/progress/hardware" source) sha256 $(kv_get "$rel/progress/hardware" sha256) (names $moves)"
+  else
+    hardware_status="pending (kernel or boot change: $moves)"
+  fi
+  {
+    printf '%s\n' format=1 "candidate_tag=$tag" "candidate_sha256=$(get candidate sha256)" \
+      "signing_fingerprint=$(get candidate fingerprint)" status=accepted acceptance_scope=native-aarch64-vm \
+      "accepted_at=$(kv_get "$result" accepted_at)" \
+      "execution_host=$(kv_get "$result" execution_host) ($vm_host)" \
+      "host_kernel=$(kv_get "$result" host_kernel)" "docker_version=$(kv_get "$result" docker_version)" \
+      "vm_memory_mb=$(kv_get "$result" vm_memory_mb)" "fork_commit=${source_commit:0:8}" \
+      "alarm_mirror=$(kv_get "$result" alarm_mirror) (harness default)" \
+      "runtime_source=$source_commit" "runtime_manifest_sha256=$(get candidate manifest_sha256)" \
+      "asahi_channel_url=unset (guest discovery read the R2 runtime channel pointer)" \
+      "vm_lifecycle=pass (install, interruption recovery, reboot, verify and rerun rejection; harness exit 0)" \
+      "vm_optional_packages=pass ($(kv_get "$result" optional_ok) installed, 0 failed)" \
+      "vm_ok_lines=$(kv_get "$result" ok_lines)" release_blocking_defects=none \
+      "physical_hardware_status=$hardware_status"
+    [[ -z ${hardware_line:-} ]] || printf '%s\n' "$hardware_line"
+    [[ -z $(get classify boot_same_version) ]] ||
+      printf 'boot_packages_rebuilt_at_same_version=%s (unchanged recipes and payloads; installed Macs keep their copy)\n' "$(get classify boot_same_version)"
+    printf '%s\n' "candidate_repository_log_sha256=$(kv_get "$result" candidate_repository_log_sha256)" \
+      "install_log_sha256=$(kv_get "$result" install_log_sha256)" "serial_log_sha256=$(kv_get "$result" serial_log_sha256)" \
+      "verify_log_sha256=$(kv_get "$result" verify_log_sha256)" \
+      "optional_packages_log_sha256=$(kv_get "$result" optional_packages_log_sha256)" \
+      "rerun_log_sha256=$(kv_get "$result" rerun_log_sha256)" \
+      "evidence_path=~/vm-evidence/$(kv_get "$result" run_id) on $vm_host, copied to $(kv_get "$result" evidence_dir) on $(uname -n)" \
+      "candidate_release=https://github.com/$repo/releases/tag/$tag" \
+      "candidate_workflow=https://github.com/$repo/actions/runs/$(get candidate run)" \
+      "package_changes=rebuilt $(get candidate rebuilt | tr ' ' ',') ($(get candidate effective_mode))"
+  } >"$out.tmp"
+  mv "$out.tmp" "$out"
+  cp "$out" "$evidence_root/$tag/acceptance.txt"
+}
+
+# The set installed Macs follow: the highest package channel, its signature,
+# and the signed CANDIDATE of the stable set it names, bound by digest. Sets
+# live_versions, live_stable_commit and live_package_sequence; on any doubt it
+# returns 1 with live_set_problem and the caller fails closed.
+read_live_package_set() {
+  local sequence dir=$work/live-packages stable descriptor fingerprint package version file checksum
+  declare -gA live_versions=() live_files=()
+  live_stable_commit=""
+  live_descriptor=""
+  live_package_sequence=0
+  live_set_problem=""
+  sequence=$(max_sequence asahi-packages-channel)
+  (( sequence > 0 )) || { live_set_problem="no package channel is published"; return 1; }
+  download_assets "asahi-packages-channel-$sequence" "$dir/channel" asahi-packages-channel asahi-packages-channel.sig ||
+    { live_set_problem="could not download asahi-packages-channel-$sequence"; return 1; }
+  prepare_release_key
+  verify_signature "$work/release.gpg" "$dir/channel/asahi-packages-channel" "$dir/channel/asahi-packages-channel.sig" &&
+    grep -Fxq "sequence=$sequence" "$dir/channel/asahi-packages-channel" ||
+    { live_set_problem="asahi-packages-channel-$sequence does not verify"; return 1; }
+  stable=$(sed -n 's/^stable_tag=//p' "$dir/channel/asahi-packages-channel")
+  descriptor=$(sed -n 's/^descriptor_sha256=//p' "$dir/channel/asahi-packages-channel")
+  [[ $stable =~ ^asahi-packages-stable-[0-9a-f]{40}$ && $descriptor =~ ^[0-9a-f]{64}$ ]] ||
+    { live_set_problem="asahi-packages-channel-$sequence names no stable set"; return 1; }
+  [[ $(release_status "$stable") == published ]] && release_immutable "$stable" ||
+    { live_set_problem="$stable is not an immutable published release"; return 1; }
+  download_assets "$stable" "$dir/stable" CANDIDATE CANDIDATE.sig && [[ -s $dir/stable/CANDIDATE ]] ||
+    { live_set_problem="could not download the CANDIDATE of $stable"; return 1; }
+  [[ $(sha256 "$dir/stable/CANDIDATE") == "$descriptor" ]] ||
+    { live_set_problem="the CANDIDATE of $stable is not the one asahi-packages-channel-$sequence names"; return 1; }
+  fingerprint=$(sed -n 's/^signing_fingerprint=//p' "$dir/stable/CANDIDATE")
+  [[ $fingerprint =~ ^[A-F0-9]{40}$ ]] && is_subkey "$repository_key" "$fingerprint" &&
+    verify_signature "$work/repository.gpg" "$dir/stable/CANDIDATE" "$dir/stable/CANDIDATE.sig" "$fingerprint" &&
+    grep -Fxq "source_commit=${stable#asahi-packages-stable-}" "$dir/stable/CANDIDATE" ||
+    { live_set_problem="the CANDIDATE of $stable does not verify"; return 1; }
+  release_assets "$stable" >"$dir/assets"
+  while IFS='|' read -r _ package version _ file checksum _; do
+    grep -Fxq "$file $checksum" "$dir/assets" || { live_set_problem="$file of $stable is not the file its CANDIDATE signs"; return 1; }
+    live_versions[$package]=$version
+    live_files[$package]="$version $file $checksum"
+  done < <(sed -n 's/^package=//p' "$dir/stable/CANDIDATE")
+  (( ${#live_versions[@]} > 0 )) || { live_set_problem="the CANDIDATE of $stable lists no packages"; return 1; }
+  cp "$dir/stable/CANDIDATE" "$work/live-candidate"
+  live_stable_commit=${stable#asahi-packages-stable-}
+  live_package_sequence=$sequence
+  live_descriptor=$descriptor
+}
+
+# One read of the live set that a classification and its baseline both use.
+# Nothing reads it again behind the snapshot's back.
+take_live_snapshot() {
+  if read_live_package_set; then live_snapshot=verified; else live_snapshot=unverified; fi
+}
+
+# The package channel the live snapshot holds, as a baseline.
+current_package_baseline() {
+  if [[ -n $live_stable_commit ]]; then
+    printf 'asahi-packages-channel-%s asahi-packages-stable-%s %s\n' "$live_package_sequence" "$live_stable_commit" "$live_descriptor"
+  else
+    printf 'unverified: %s\n' "$live_set_problem"
+  fi
+}
+
+# How a candidate's repository set (the packages its CANDIDATE lists, by name,
+# version and archive digest) differs from the live one: sets set_changes,
+# empty when installed Macs already have exactly this set. A candidate built on
+# a predecessor that was never promoted inherits that predecessor's packages
+# without rebuilding them, so this, not the rebuilt list, says whether a
+# package set has to be published. A live set that cannot be verified is a
+# difference.
+package_set_changes() {
+  local descriptor=$1 package version file checksum
+  local -A listed=()
+  set_changes=()
+  if [[ ${live_snapshot:-} != verified ]]; then
+    set_changes=("the live package set does not verify: $live_set_problem")
+    return 0
+  fi
+  while IFS='|' read -r _ package version _ file checksum _; do
+    listed[$package]=1
+    if [[ -z ${live_files[$package]:-} ]]; then
+      set_changes+=("$package $version (new)")
+    elif [[ ${live_versions[$package]} != "$version" ]]; then
+      set_changes+=("$package ${live_versions[$package]} -> $version")
+    elif [[ ${live_files[$package]} != "$version $file $checksum" ]]; then
+      set_changes+=("$package $version (other bytes)")
+    fi
+  done < <(sed -n 's/^package=//p' "$descriptor")
+  for package in "${!live_files[@]}"; do
+    [[ -n ${listed[$package]:-} ]] || set_changes+=("$package (removed)")
+  done
+  mapfile -t set_changes < <(printf '%s\n' "${set_changes[@]}" | grep . | LC_ALL=C sort)
+}
+
+# Packages the candidate carries without having rebuilt them and that differ
+# from the live set (another version, or other bytes under the same version),
+# when its chain of candidates does not lead back to the live set's: they
+# could be older builds than the live ones. Sets stale_inherited and
+# chain_problem. bin/asahi-candidate-lineage holds the rule and the chain walk;
+# bin/publish-asahi-packages-channel enforces the same one.
+stale_inheritance() {
+  local descriptor=$1 rebuilt=$2 chain_tag=$3 chain_digest=$4 status=0
+  stale_inherited=()
+  chain_problem=""
+  [[ ${live_snapshot:-} == verified ]] || return 0
+  fork_helper asahi-candidate-lineage
+  "$BASH" "$helper" --rebuilt "$rebuilt" --signing-key "$repository_key" --repository "$repo" \
+    "$descriptor" "$work/live-candidate" "$chain_tag" "$chain_digest" >"$work/lineage" 2>"$work/lineage.err" || status=$?
+  case $status in
+    0) ;;
+    1)
+      mapfile -t stale_inherited < <(sed -n 's/^stale=//p' "$work/lineage")
+      chain_problem=$(sed -n 's/^problem=//p' "$work/lineage")
+      ;;
+    *) stop "could not check what $chain_tag inherits: $(tail -n 3 "$work/lineage.err")" ;;
+  esac
+}
+
+find_stale_inheritance() {
+  stale_inheritance "$work/reverify/CANDIDATE" "$(get candidate rebuilt)" "$(get candidate tag)" "$(get candidate sha256)"
+}
+
+require_no_stale_inheritance() {
+  find_stale_inheritance
+  stop_on_stale_inheritance
+}
+
+stop_on_stale_inheritance() {
+  (( ${#stale_inherited[@]} == 0 )) ||
+    stop "$(get candidate tag) carries ${stale_inherited[*]} without having rebuilt them, and they differ from the live set (asahi-packages-stable-$live_stable_commit), but its chain of candidates does not lead back to the live set's ($chain_problem): they may be older builds than the live ones. Rebuild those packages (a full candidate) and release again"
+}
+
+# The first few set changes and how many more, for one line of output.
+set_changes_summary() {
+  local i out=""
+  for ((i = 0; i < ${#set_changes[@]} && i < 4; i++)); do out+="${out:+, }${set_changes[i]}"; done
+  printf '%s' "$out"
+  (( ${#set_changes[@]} <= 4 )) || printf ' and %s more' $(( ${#set_changes[@]} - 4 ))
+}
+
+# Whether a package's recipe changed between the live set and COMMIT, from the
+# source that builds it. Unknown answers count as changed.
+recipe_changed_since_live() {
+  local package=$1 commit=$2 source
+  git -C "$pkgs" cat-file -e "$live_stable_commit^{commit}" 2>/dev/null ||
+    git -C "$pkgs" fetch --quiet origin "$live_stable_commit" 2>/dev/null || return 0
+  source=$(git -C "$pkgs" show "$commit:pkgbuilds/asahi-source-outputs" 2>/dev/null |
+    awk -F'|' -v package="$package" '{ n = split($2, outputs, " "); for (i = 1; i <= n; i++) if (outputs[i] == package) print $1 }' | head -n 1)
+  [[ -n $source ]] || source=$package
+  ! git -C "$pkgs" diff --quiet "$live_stable_commit" "$commit" -- "pkgbuilds/$source/" 2>/dev/null
+}
+
+# Whether FILE (SHA256) of the release TAG installs what the live set's archive
+# of PACKAGE installs, as bin/asahi-package-payload lists it: every path with
+# its type, mode, owner and effective content (a hard link reads as its
+# target), symlink target or device numbers. Both archives come from their
+# verified releases and must have the digests their signed CANDIDATEs list.
+# Anything that cannot be compared differs. Sets payload_difference.
+payload_matches_live() {
+  local package=$1 tag=$2 file=$3 checksum=$4 live_file live_checksum dir=$work/payload
+  read -r _ live_file live_checksum <<<"${live_files[$package]}"
+  payload_difference=""
+  download_assets "asahi-packages-stable-$live_stable_commit" "$dir/live" "$live_file" && [[ -s $dir/live/$live_file ]] ||
+    { payload_difference="could not download $live_file of the live set"; return 1; }
+  [[ $(sha256 "$dir/live/$live_file") == "$live_checksum" ]] ||
+    { payload_difference="$live_file of the live set is not the file its CANDIDATE signs"; return 1; }
+  download_assets "$tag" "$dir/new" "$file" && [[ -s $dir/new/$file ]] ||
+    { payload_difference="could not download $file of $tag"; return 1; }
+  [[ $(sha256 "$dir/new/$file") == "$checksum" ]] ||
+    { payload_difference="$file of $tag is not the file its CANDIDATE signs"; return 1; }
+  fork_helper asahi-package-payload
+  "$BASH" "$helper" "$dir/live/$live_file" >"$dir/live.payload" 2>"$dir/payload.err" &&
+    "$BASH" "$helper" "$dir/new/$file" >"$dir/new.payload" 2>>"$dir/payload.err" ||
+    { payload_difference="could not compare $live_file with $file: $(tail -n 1 "$dir/payload.err")"; return 1; }
+  if cmp -s "$dir/live.payload" "$dir/new.payload"; then
+    rm -rf "$dir"
+    return 0
+  fi
+  payload_difference="differs in $(LC_ALL=C comm -3 "$dir/live.payload" "$dir/new.payload" |
+    awk '{ print $1 }' | LC_ALL=C sort -u | awk 'NR <= 3' | paste -sd' ' -)"
+  rm -rf "$dir"
+  return 1
+}
+
+# The boot packages a published package set would move, against the live set:
+# sets boot_moves ("name version"), boot_details and boot_same_version. A boot
+# package at the live set's version, from an unchanged recipe, moves only when
+# its archive is not the live one and installs something else (see
+# payload_matches_live). When the live set cannot be read and verified, every
+# boot package the set publishes, rebuilt or inherited, counts as moved.
+boot_changes() {
+  local descriptor=$1 commit=$2 rebuilt=$3 package version live_ok=1 tag file checksum
+  local -A versions=() archives=() rebuilt_set=() seen=()
+  boot_moves=()
+  boot_details=()
+  boot_same_version=()
+  tag=$(sed -n 's/^release_tag=//p' "$descriptor")
+  for package in $rebuilt; do rebuilt_set[$package]=1; done
+  while IFS='|' read -r _ package version _ file checksum _; do
+    versions[$package]=$version
+    archives[$package]="$file $checksum"
+  done < <(sed -n 's/^package=//p' "$descriptor")
+  if [[ ${live_snapshot:-} == verified ]]; then
+    boot_basis="asahi-packages-channel-$live_package_sequence (asahi-packages-stable-$live_stable_commit)"
+  else
+    live_ok=0
+    boot_basis="unverified live set: $live_set_problem"
+  fi
+  while IFS= read -r package; do
+    [[ -n $package && $package =~ $boot_package_pattern && -z ${seen[$package]:-} ]] || continue
+    seen[$package]=1
+    version=${versions[$package]:-unknown}
+    if (( ! live_ok )); then
+      boot_moves+=("$package $version")
+      boot_details+=("$package $version (not compared: $live_set_problem)")
+    elif [[ $version == unknown ]]; then
+      boot_moves+=("$package $version")
+      boot_details+=("$package (rebuilt; its version is not in the descriptor)")
+    elif [[ ${live_versions[$package]:-} != "$version" ]]; then
+      boot_moves+=("$package $version")
+      boot_details+=("$package ${live_versions[$package]:-absent} -> $version")
+    elif recipe_changed_since_live "$package" "$commit"; then
+      boot_moves+=("$package $version")
+      boot_details+=("$package $version (recipe changed since the live set, same version)")
+    elif [[ ${live_files[$package]} == "$version ${archives[$package]}" ]]; then
+      [[ -z ${rebuilt_set[$package]:-} ]] || boot_same_version+=("$package $version")
+    elif ! payload_matches_live "$package" "$tag" ${archives[$package]}; then
+      boot_moves+=("$package $version")
+      boot_details+=("$package $version (same version as the live set, another payload: $payload_difference)")
+    else
+      boot_same_version+=("$package $version")
+    fi
+  done < <(printf '%s\n' "${!versions[@]}" $rebuilt | LC_ALL=C sort -u)
+}
+
+# ── steps ──────────────────────────────────────────────────────────────────
+find_predecessor() {
+  local head=$1 commit tag dir
+  local -A candidates=()
+  while IFS= read -r tag; do
+    candidates[${tag#asahi-packages-candidate-}]=1
+  done < <(jq -r '.[] | select(.draft == false and .prerelease == true and .immutable == true) | .tag_name
+    | select(test("^asahi-packages-candidate-[0-9a-f]{40}$"))' "$work/releases.json")
+  predecessor_commit=""
+  while IFS= read -r commit; do
+    if [[ -n ${candidates[$commit]:-} ]]; then
+      predecessor_commit=$commit
+      break
+    fi
+  done < <(git -C "$pkgs" rev-list --first-parent --max-count=1000 "$head")
+  [[ -n $predecessor_commit ]] || stop "no published candidate in the history of $branch to build on"
+  predecessor_tag=asahi-packages-candidate-$predecessor_commit
+  dir=$work/predecessor
+  download_assets "$predecessor_tag" "$dir" "${CANDIDATE_ASSETS[@]}" ||
+    stop "could not download $predecessor_tag: $(head -c 300 "$work/gh.err")"
+  predecessor_fingerprint=$(sed -n 's/^signing_fingerprint=//p' "$dir/CANDIDATE")
+  [[ $predecessor_fingerprint =~ ^[A-F0-9]{40}$ ]] || stop "$predecessor_tag names no signing subkey"
+  is_subkey "$repository_key" "$predecessor_fingerprint" ||
+    stop "$predecessor_tag is signed by $predecessor_fingerprint, which is not a subkey of $repository_key"
+  predecessor_runtime=$(sed -n 's/^source_commit=//p' "$dir/asahi-quattro-bundle.manifest")
+  [[ $predecessor_runtime =~ ^[0-9a-f]{40}$ ]] || stop "the runtime manifest of $predecessor_tag names no source commit"
+  verify_candidate_files "$dir" "$predecessor_tag" "$predecessor_commit" "$predecessor_runtime" "$predecessor_fingerprint"
+  predecessor_sha256=$(sha256 "$dir/CANDIDATE")
+}
+
+resolve_inputs() {
+  mx_sync
+  git -C "$mx_dir" merge-base --is-ancestor "$source_commit" refs/heads/main 2>/dev/null ||
+    stop "$source_commit is not on omarchy-mx-mac main; push it first"
+  pkgs_clone
+  head=$(pkgs_head)
+  pinned=$(pinned_at "$head")
+  [[ $pinned =~ ^[0-9a-f]{40}$ ]] || stop "could not read the runtime source pinned on $branch"
+  pin_needed=0
+  if [[ $pinned != "$source_commit" ]]; then
+    pin_needed=1
+    git -C "$mx_dir" merge-base --is-ancestor "$pinned" "$source_commit" 2>/dev/null ||
+      stop "$branch pins omarchy-mx-mac $pinned, which $source_commit does not descend from; this would move the runtime backwards"
+  fi
+  refresh_releases
+  find_predecessor "$head"
+}
+
+# The highest runtime channel, verified: sets live_runtime_* (sequence 0 when
+# there is none).
+read_live_runtime() {
+  local dir=$work/live-runtime
+  live_runtime_sequence=$(max_sequence asahi-quattro-channel)
+  live_runtime_release=""
+  live_runtime_source=""
+  live_runtime_manifest=""
+  (( live_runtime_sequence > 0 )) || return 0
+  download_assets "asahi-quattro-channel-$live_runtime_sequence" "$dir" asahi-quattro-channel asahi-quattro-channel.sig ||
+    stop "could not download asahi-quattro-channel-$live_runtime_sequence"
+  prepare_release_key
+  verify_signature "$work/release.gpg" "$dir/asahi-quattro-channel" "$dir/asahi-quattro-channel.sig" ||
+    stop "invalid signature on asahi-quattro-channel-$live_runtime_sequence"
+  grep -Fxq "sequence=$live_runtime_sequence" "$dir/asahi-quattro-channel" ||
+    stop "asahi-quattro-channel-$live_runtime_sequence does not carry its own sequence"
+  live_runtime_release=$(sed -n 's/^release_tag=//p' "$dir/asahi-quattro-channel")
+  live_runtime_source=$(sed -n 's/^source_commit=//p' "$dir/asahi-quattro-channel")
+  live_runtime_manifest=$(sed -n 's/^manifest_sha256=//p' "$dir/asahi-quattro-channel")
+}
+
+# A published runtime channel N and its release, bound to this candidate.
+verify_runtime_channel() {
+  local sequence=$1 dir=$work/runtime-channel release_tag=asahi-quattro-${source_commit:0:8} line
+  prepare_release_key
+  for line in "asahi-quattro-channel-$sequence" "$release_tag"; do
+    [[ $(release_status "$line") == published ]] && release_immutable "$line" || stop "$line is not an immutable published release"
+  done
+  download_assets "asahi-quattro-channel-$sequence" "$dir/channel" asahi-quattro-channel asahi-quattro-channel.sig ||
+    stop "could not download asahi-quattro-channel-$sequence"
+  download_assets "$release_tag" "$dir/release" asahi-quattro-release asahi-quattro-release.sig || stop "could not download $release_tag"
+  verify_signature "$work/release.gpg" "$dir/channel/asahi-quattro-channel" "$dir/channel/asahi-quattro-channel.sig" ||
+    stop "invalid signature on asahi-quattro-channel-$sequence"
+  verify_signature "$work/release.gpg" "$dir/release/asahi-quattro-release" "$dir/release/asahi-quattro-release.sig" ||
+    stop "invalid signature on $release_tag"
+  for line in "sequence=$sequence" "release_tag=$release_tag" "source_commit=$source_commit" \
+    "manifest_sha256=$(get candidate manifest_sha256)" "release_sha256=$(sha256 "$dir/release/asahi-quattro-release")"; do
+    grep -Fxq "$line" "$dir/channel/asahi-quattro-channel" || stop "asahi-quattro-channel-$sequence lacks $line"
+  done
+  for line in "release_tag=$release_tag" "source_commit=$source_commit" "package_source_commit=$(get candidate commit)" \
+    "manifest_sha256=$(get candidate manifest_sha256)"; do
+    grep -Fxq "$line" "$dir/release/asahi-quattro-release" || stop "$release_tag lacks $line"
+  done
+}
+
+step_pin() {
+  local lane pr_json count state number merged head conf subject output
+  recorded pin && return 0
+  if [[ $(get resolve pin_needed) == 0 ]]; then
+    record pin status=not-needed "pinned=$source_commit"
+    return 0
+  fi
+  lane=runtime/${source_commit:0:8}
+  pr_json=$(gh pr list -R "$repo" --head "$lane" --base "$branch" --state all --json number,state,mergeCommit 2>"$work/gh.err") ||
+    stop "could not list the pull requests of $lane: $(head -c 300 "$work/gh.err")"
+  count=$(jq length <<<"$pr_json")
+  (( count <= 1 )) || stop "$lane has $count pull requests; close the extra ones, then resume"
+  state=$(jq -r '.[0].state // "NONE"' <<<"$pr_json")
+  number=$(jq -r '.[0].number // ""' <<<"$pr_json")
+  case $state in
+    MERGED) ;;
+    CLOSED) stop "pull request #$number for $lane was closed without merging; reopen it or delete $lane, then resume" ;;
+    OPEN)
+      say "pin: merging the open pull request #$number"
+      gh pr merge "$number" -R "$repo" --squash --delete-branch >/dev/null 2>"$work/gh.err" ||
+        stop "could not merge pull request #$number: $(head -c 300 "$work/gh.err")"
+      ;;
+    NONE)
+      head=$(pkgs_head)
+      if [[ $(pinned_at "$head") == "$source_commit" ]]; then
+        record pin status=pinned-elsewhere "merged_commit=$head"
+        return 0
+      fi
+      need_settings "the pin commit" ASAHI_RELEASE_AUTHOR_NAME ASAHI_RELEASE_AUTHOR_EMAIL
+      git -C "$pkgs" checkout --quiet -B "$lane" "$head"
+      conf=$pkgs/pkgbuilds/omarchy-source.conf
+      sed "s/^OMARCHY_SOURCE_COMMIT=.*/OMARCHY_SOURCE_COMMIT=$source_commit/" "$conf" >"$conf.new"
+      mv "$conf.new" "$conf"
+      subject=$(git -C "$mx_dir" log -1 --format=%s "$source_commit")
+      # The configured author only: the environment variables beat any
+      # identity in the operator's git configuration.
+      GIT_AUTHOR_NAME=$author_name GIT_AUTHOR_EMAIL=$author_email GIT_COMMITTER_NAME=$author_name \
+        GIT_COMMITTER_EMAIL=$author_email git -C "$pkgs" commit --quiet -am \
+        "Move the runtime source to omarchy-mx-mac ${source_commit:0:8}
+
+$subject"
+      git -C "$pkgs" push --quiet --force origin "$lane" 2>"$work/git.err" || stop "could not push $lane: $(tail -n 3 "$work/git.err")"
+      output=$(gh pr create -R "$repo" --base "$branch" --head "$lane" \
+        --title "Move the runtime source to omarchy-mx-mac ${source_commit:0:8}" \
+        --body "Release $release_id: $subject (omarchy-mx-mac $source_commit). Candidate on $(get resolve predecessor_tag)." 2>&1) ||
+        stop "could not open the pin pull request: $output"
+      number=$(grep -oE 'pull/[0-9]+' <<<"$output" | tail -n 1 | cut -d/ -f2)
+      [[ $number =~ ^[0-9]+$ ]] || stop "could not read the number of the pin pull request from: $output"
+      say "pin: opened pull request #$number"
+      gh pr merge "$number" -R "$repo" --squash --delete-branch >/dev/null 2>"$work/gh.err" ||
+        stop "could not merge pull request #$number: $(head -c 300 "$work/gh.err")"
+      ;;
+  esac
+  pr_json=$(gh pr list -R "$repo" --head "$lane" --base "$branch" --state merged --json number,state,mergeCommit 2>"$work/gh.err") ||
+    stop "could not read pull request #$number"
+  merged=$(jq -r '.[0].mergeCommit.oid // ""' <<<"$pr_json")
+  number=$(jq -r '.[0].number // ""' <<<"$pr_json")
+  [[ $merged =~ ^[0-9a-f]{40}$ ]] || stop "pull request #$number for $lane is not merged"
+  pkgs_head >/dev/null
+  git -C "$pkgs" merge-base --is-ancestor "$merged" "refs/remotes/origin/$branch" 2>/dev/null ||
+    stop "the merge commit $merged of #$number is not on $branch"
+  [[ $(pinned_at "$merged") == "$source_commit" ]] || stop "the merge commit $merged of #$number does not pin $source_commit"
+  record pin status=merged "pr=$number" "merged_commit=$merged"
+  say "pin: #$number merged as $merged"
+}
+
+gate_candidate() {
+  local run=$1 waiting=$2 jobs=$3 plan=$work/gate-plan/plan.json field
+  case $waiting in
+    signing-check) ;;
+    publish)
+      [[ $(job_conclusion "$jobs" assemble-and-verify) == success ]] ||
+        stop "run $run waits to publish, but its assemble-and-verify job did not succeed"
+      rm -rf "$work/gate-plan"
+      gh run download "$run" -R "$repo" -n incremental-plan -D "$work/gate-plan" >/dev/null 2>"$work/gh.err" && [[ -s $plan ]] ||
+        stop "could not read the plan of run $run before approving it: $(head -c 300 "$work/gh.err")"
+      for field in "requested_mode=incremental" "previous_package_commit=$(get resolve predecessor_commit)" \
+        "previous_runtime_commit=$(get resolve predecessor_runtime)" "current_package_commit=$(kv_get "$rel/dispatch/candidate" head_sha)" \
+        "current_runtime_commit=$source_commit"; do
+        [[ $(jq -r --arg key "${field%%=*}" '.[$key]' "$plan") == "${field#*=}" ]] ||
+          stop "run $run planned ${field%%=*}=$(jq -r --arg key "${field%%=*}" '.[$key]' "$plan"), not ${field#*=}; not approving it"
+      done
+      ;;
+    *) stop "run $run waits on '$waiting', which this command does not approve" ;;
+  esac
+}
+
+failed_candidate() {
+  archive_marker candidate "$1"
+  stop "the candidate build ended $2 in: $(failed_jobs "$1") (https://github.com/$repo/actions/runs/$1). Fix the cause; resuming dispatches a new build"
+}
+
+step_candidate() {
+  local head tag dir run adopted=0 plan provenance field
+  recorded candidate && return 0
+  if [[ $(kv_get "$rel/dispatch/candidate" phase) == "" ]]; then
+    head=$(pkgs_head)
+    [[ $(pinned_at "$head") == "$source_commit" ]] ||
+      stop "$branch head $head pins omarchy-mx-mac $(pinned_at "$head"), not $source_commit; another change moved the pin"
+  else
+    head=$(kv_get "$rel/dispatch/candidate" head_sha)
+  fi
+  if [[ $head == "$(get resolve predecessor_commit)" ]]; then
+    adopted=1
+    run=""
+    say "candidate: $branch head already has a published candidate; taking it"
+  else
+    dispatch_expected_head=$head dispatch_precheck="" dispatch_extra=()
+    dispatch candidate release-asahi-package-incremental.yml "" \
+      -f mode=incremental -f publish_candidate=true \
+      -f predecessor_tag="$(get resolve predecessor_tag)" -f predecessor_candidate_sha256="$(get resolve predecessor_sha256)" \
+      -f previous_package_commit="$(get resolve predecessor_commit)" -f previous_runtime_commit="$(get resolve predecessor_runtime)" \
+      -f predecessor_signing_fingerprint="$(get resolve fingerprint)"
+    dispatch_expected_head=""
+    run=$dispatched_run
+    head=$(kv_get "$rel/dispatch/candidate" head_sha)
+    wait_for_run candidate "$run"
+  fi
+  tag=asahi-packages-candidate-$head
+  dir=$work/candidate
+  refresh_releases
+  [[ $(release_status "$tag") == prerelease ]] && release_immutable "$tag" || stop "$tag is not an immutable published candidate"
+  download_assets "$tag" "$dir" "${CANDIDATE_ASSETS[@]}" PLAN.json PROVENANCE.json ||
+    stop "could not download $tag: $(head -c 300 "$work/gh.err")"
+  verify_candidate_files "$dir" "$tag" "$head" "$source_commit" "$(get resolve fingerprint)" "$run"
+  plan=$dir/PLAN.json
+  provenance=$dir/PROVENANCE.json
+  [[ -s $plan && -s $provenance ]] || stop "$tag has no PLAN.json or PROVENANCE.json"
+  if (( ! adopted )); then
+    for field in "previous_package_commit=$(get resolve predecessor_commit)" "previous_runtime_commit=$(get resolve predecessor_runtime)" \
+      "current_package_commit=$head" "current_runtime_commit=$source_commit"; do
+      [[ $(jq -r --arg key "${field%%=*}" '.[$key]' "$plan") == "${field#*=}" ]] || stop "PLAN.json of $tag has another ${field%%=*}"
+    done
+    [[ $(jq -r .predecessor.tag "$provenance") == "$(get resolve predecessor_tag)" &&
+      $(jq -r .predecessor.candidate_sha256 "$provenance") == "$(get resolve predecessor_sha256)" ]] ||
+      stop "PROVENANCE.json of $tag names another predecessor"
+  fi
+  record candidate "tag=$tag" "commit=$head" "sha256=$(sha256 "$dir/CANDIDATE")" \
+    "manifest_sha256=$(sha256 "$dir/asahi-quattro-bundle.manifest")" "fingerprint=$(get resolve fingerprint)" \
+    "package_count=$(sed -n 's/^package_count=//p' "$dir/CANDIDATE")" "run=${run:-$(sed -n 's/^workflow_run=//p' "$dir/CANDIDATE")}" \
+    "adopted=$adopted" "rebuilt=$(jq -r '.rebuilt_packages | join(" ")' "$plan")" \
+    "effective_mode=$(jq -r .effective_mode "$plan")" "fallback_reason=$(jq -r '.fallback_reason // ""' "$plan")"
+  say "candidate: $tag (CANDIDATE sha256 $(get candidate sha256)); rebuilt: $(get candidate rebuilt)"
+}
+
+# What this release would move against the live channels as they are now:
+# kernel pins in the runtime against the live runtime channel, and on the full
+# path boot packages against the live package set. Sets moves, evidence_lines
+# and the two baselines the comparison was made against.
+compute_moves() {
+  local path=$1 rebuilt=$2 reference pin new_tag item
+  moves=()
+  evidence_lines=()
+  read_live_runtime
+  # A runtime that repins a kernel moves installed Macs' kernels as surely as a
+  # rebuilt kernel package. The comparison is against the exact source of the
+  # live runtime channel; with none published, against the predecessor's.
+  reference=${live_runtime_source:-$(get resolve predecessor_runtime)}
+  for pin in "${runtime_kernel_pins[@]}"; do
+    mx_file_at "$reference" "$pin" "$work/pin-live" ||
+      stop "cannot read $pin at omarchy-mx-mac $reference (the source of asahi-quattro-channel-$live_runtime_sequence) to compare kernel pins with; fetch it into $mx_dir or check the channel"
+    mx_file_at "$source_commit" "$pin" "$work/pin-new" || stop "cannot read $pin at omarchy-mx-mac $source_commit"
+    if ! cmp -s "$work/pin-live" "$work/pin-new"; then
+      new_tag=$(sed -n 's/^tag=//p' "$work/pin-new")
+      moves+=("${new_tag:-$pin}")
+      evidence_lines+=("pin=${new_tag:-$pin}")
+    fi
+  done
+  runtime_baseline="asahi-quattro-channel-$live_runtime_sequence $live_runtime_source"
+  # Only a published package set moves boot packages; the fast path publishes
+  # none.
+  boot_moves=()
+  boot_details=()
+  boot_same_version=()
+  boot_basis="no package set is published on this path"
+  if [[ $path == full ]]; then
+    reverify_candidate
+    boot_changes "$work/reverify/CANDIDATE" "$(get candidate commit)" "$rebuilt"
+  fi
+  # Every path depends on the live set (the fast one on its being this set):
+  # the baseline is the snapshot the comparison used.
+  package_baseline=$(current_package_baseline)
+  for item in "${boot_moves[@]}"; do
+    moves+=("${item%% *}")
+    evidence_lines+=("boot=$item")
+  done
+}
+
+# Whether this release's runtime still has to be published, from the live
+# runtime channel as it is now: live (the highest channel publishes this
+# source), needed, or a stop when another release superseded it or it would
+# move installed Macs back to an older source.
+runtime_eligibility() {
+  local rebuilt=$1 package runtime_rebuilt=() our=asahi-quattro-${source_commit:0:8}
+  for package in $rebuilt; do
+    if printf '%s\n' "${runtime_packages[@]}" | grep -Fxq "$package"; then runtime_rebuilt+=("$package"); fi
+  done
+  read_live_runtime
+  if [[ $live_runtime_release == "$our" ]]; then
+    [[ $live_runtime_manifest == "$(get candidate manifest_sha256)" || ${#runtime_rebuilt[@]} == 0 ]] ||
+      stop "$(get candidate tag) rebuilt runtime packages (${runtime_rebuilt[*]}), but channel $live_runtime_sequence already publishes omarchy-mx-mac ${source_commit:0:8} with other bytes; a runtime change needs a new omarchy-mx-mac commit"
+    runtime_publish=live
+  elif [[ $(release_status "$our") != absent ]]; then
+    withdraw_runtime_dispatch "another release superseded this one's runtime"
+    stop "$our is published, but the highest runtime channel (asahi-quattro-channel-$live_runtime_sequence) now publishes $live_runtime_release (omarchy-mx-mac $live_runtime_source): another release superseded this one, or an earlier publication stopped half way. Release from the live runtime's commit instead"
+  else
+    if [[ -n $live_runtime_source ]]; then
+      git -C "$mx_dir" cat-file -e "$live_runtime_source^{commit}" 2>/dev/null ||
+        git -C "$mx_dir" fetch --quiet origin "$live_runtime_source" 2>/dev/null ||
+        stop "cannot read omarchy-mx-mac $live_runtime_source, the source of asahi-quattro-channel-$live_runtime_sequence"
+      if ! git -C "$mx_dir" merge-base --is-ancestor "$live_runtime_source" "$source_commit" 2>/dev/null; then
+        withdraw_runtime_dispatch "a newer runtime went live"
+        stop "asahi-quattro-channel-$live_runtime_sequence publishes omarchy-mx-mac $live_runtime_source, which $source_commit does not descend from; publishing this runtime would move installed Macs back"
+      fi
+    fi
+    runtime_publish=needed
+  fi
+}
+
+record_classification() {
+  record classify "path=$1" "runtime_publish=$2" "set_changes=$3" "kernel_moves=${moves[*]}" \
+    "hardware_evidence_lines=$(IFS=';'; echo "${evidence_lines[*]}")" \
+    "boot_details=$(IFS=';'; echo "${boot_details[*]}")" "boot_same_version=$(IFS=','; echo "${boot_same_version[*]}")" \
+    "boot_basis=$boot_basis" "package_baseline=$package_baseline" "runtime_baseline=$runtime_baseline" \
+    "live_runtime_sequence=$live_runtime_sequence" "live_runtime_source=$live_runtime_source"
+}
+
+# Before every public step and gate: the live channels this release compared
+# against are still the live ones, or the comparison is made again. A channel
+# this release published itself is not a change. A new comparison replaces the
+# recorded one, so the hardware evidence is checked against it.
+# Whether this release has published any of its runtime, read from the
+# releases rather than from how a run ended: its runtime release, a runtime
+# draft, or the channel of SEQUENCE. A release that ever dispatched a runtime
+# run (its runtime-intent record, written once before the first dispatch, or
+# any runtime dispatch record) always reconciles, whatever its classification
+# says now; one that never set out to publish its runtime has nothing to
+# reconcile. Returns 0 when nothing is published; otherwise stops for the
+# operator before any package step.
+reconcile_runtime_publication() {
+  local why=$1 sequence=${2:-} ours=asahi-quattro-${source_commit:0:8} found="" drafts pointer
+  [[ -f $rel/progress/runtime-intent || $(get classify runtime_publish) == needed ]] ||
+    compgen -G "$rel/dispatch/runtime*" >/dev/null || return 0
+  refresh_releases
+  [[ $(release_status "$ours") == absent ]] || found="$ours is $(release_status "$ours")"
+  # The channel number this release asked for can go to another release; it
+  # counts as this one's when it names this runtime, or cannot be read.
+  if [[ -n $sequence && $(release_status "asahi-quattro-channel-$sequence") != absent ]]; then
+    if ! download_assets "asahi-quattro-channel-$sequence" "$work/reconcile" asahi-quattro-channel ||
+      grep -Fxq "release_tag=$ours" "$work/reconcile/asahi-quattro-channel"; then
+      found="${found:+$found; }asahi-quattro-channel-$sequence is $(release_status "asahi-quattro-channel-$sequence")"
+    fi
+  fi
+  drafts=$(drafts_named asahi-quattro- | tr '\n' ' ')
+  [[ -z $drafts ]] || found="${found:+$found; }draft runtime release(s) $drafts"
+  [[ -n $found ]] || return 0
+  pointer=$(pointer_sequence asahi-quattro-channel)
+  stop "$why, but this release has already published its runtime, in part or in full ($found; the runtime pointer names ${pointer:-nothing}). It publishes nothing more. Check those releases; if a channel is complete and the pointer lags, repair it with:
+  gh workflow run publish-asahi-channel-pointer.yml -R $repo --ref $branch -f sequence=${sequence:-<N>}
+then drop this release with '$self --abandon' and run '$self $source_commit' again: it adopts the candidate and publishes the package set on its own"
+}
+
+# Before a release turns to the full path, or stops for good, the runtime run
+# it dispatched must not stay waiting on the gate the package channel shares
+# with it. The exact recorded run is cancelled when it is waiting; once that
+# run has ended, however it ended, the releases must show that it published
+# nothing before its record is set aside.
+withdraw_runtime_dispatch() {
+  local why=${1:-the live package set moved} marker=$rel/dispatch/runtime phase run json status conclusion jobs publish attempt sequence
+  phase=$(kv_get "$marker" phase)
+  [[ -n $phase ]] || return 0
+  sequence=$(kv_get "$marker" sequence)
+  if [[ $phase != resolved ]]; then
+    match_dispatch "$marker"
+    if [[ -z $matched_run ]]; then
+      [[ " ${dispatch_again[*]} " == *" runtime "* ]] ||
+        stop "$why, but this release's runtime dispatch recorded at $(kv_get "$marker" at) has no run this command can find. Look at https://github.com/$repo/actions/workflows/promote-asahi-quattro-runtime.yml; cancel any such run, then resume with --dispatch-again runtime"
+      # The operator found no run: set the record aside once the releases
+      # agree that nothing was published.
+      reconcile_runtime_publication "$why" "$sequence"
+      mv "$marker" "$marker.unmatched-$(date -u +%Y%m%dT%H%M%SZ)"
+      say "runtime: the operator confirmed the runtime dispatch has no run; its record is set aside"
+      return 0
+    fi
+  fi
+  run=$(kv_get "$marker" run)
+  json=$(gh api "repos/$repo/actions/runs/$run" 2>"$work/gh.err") || stop "could not read runtime run $run: $(head -c 300 "$work/gh.err")"
+  status=$(jq -r .status <<<"$json")
+  conclusion=$(jq -r '.conclusion // ""' <<<"$json")
+  if [[ $status != completed ]]; then
+    jobs=$(run_jobs "$run") || stop "could not read the jobs of runtime run $run"
+    publish=$(jq -r '[.jobs[] | select(.name == "publish") | .status] | first // "absent"' <<<"$jobs")
+    case $publish in
+      absent|queued|waiting|pending) ;;
+      *) stop "$why while runtime run $run is publishing ($publish); let it finish, check the channels, then resume" ;;
+    esac
+    gh api -X POST "repos/$repo/actions/runs/$run/cancel" >/dev/null 2>"$work/gh.err" ||
+      stop "could not cancel runtime run $run: $(head -c 300 "$work/gh.err")"
+    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      json=$(gh api "repos/$repo/actions/runs/$run" 2>"$work/gh.err") || { nap 6; continue; }
+      [[ $(jq -r .status <<<"$json") != completed ]] || break
+      nap 6
+    done
+    [[ $(jq -r .status <<<"$json") == completed ]] || stop "runtime run $run did not finish cancelling; cancel it by hand, then resume"
+    conclusion=$(jq -r '.conclusion // ""' <<<"$json")
+  fi
+  # However the run ended, only the releases say what it published.
+  reconcile_runtime_publication "$why (runtime run $run ended $conclusion)" "$sequence"
+  mv "$marker" "$marker.$conclusion-$run"
+  say "runtime: run $run ended $conclusion and published nothing ($why); its record is set aside"
+}
+
+check_baseline() {
+  local path changed="" changes
+  path=$(get classify path)
+  refresh_releases
+  read_live_runtime
+  if [[ $live_runtime_release != "asahi-quattro-${source_commit:0:8}" &&
+    "asahi-quattro-channel-$live_runtime_sequence $live_runtime_source" != "$(get classify runtime_baseline)" ]]; then
+    changed="the live runtime channel is now asahi-quattro-channel-$live_runtime_sequence"
+  fi
+  take_live_snapshot
+  # Nothing is published against a live set that cannot be verified now,
+  # whatever the classification saw.
+  [[ $live_snapshot == verified ]] ||
+    stop "the live package set cannot be verified now ($live_set_problem); nothing is published until it can. Resume once it verifies"
+  if ! [[ $path == full && $live_stable_commit == "$(get candidate commit)" ]] &&
+    [[ $(current_package_baseline) != "$(get classify package_baseline)" ]]; then
+    changed="${changed:+$changed; }the live package set is now $(current_package_baseline | cut -d' ' -f1-2)"
+  fi
+  [[ -n $changed ]] || return 0
+  say "classifying again: $changed"
+  reverify_candidate
+  package_set_changes "$work/reverify/CANDIDATE"
+  find_stale_inheritance
+  changes=$(IFS=';'; echo "${set_changes[*]}")
+  # Either outcome below ends this pass before the runtime: a runtime run this
+  # release left waiting on the shared gate would hold up the package channel.
+  if (( ${#stale_inherited[@]} > 0 )) || { [[ $path != full ]] && (( ${#set_changes[@]} > 0 )); }; then
+    withdraw_runtime_dispatch
+    reconcile_runtime_publication "the live package set moved"
+  fi
+  stop_on_stale_inheritance
+  if [[ $path != full ]] && (( ${#set_changes[@]} > 0 )); then
+    # The set this release was going to leave alone is no longer the live one:
+    # it goes through VM acceptance, promotion and the package channel first.
+    compute_moves full "$(get candidate rebuilt)"
+    runtime_eligibility "$(get candidate rebuilt)"
+    record_classification full "$runtime_publish" "$changes"
+    stop "the live package set moved while this release waited, and the candidate's set now differs from it ($(set_changes_summary)). This release takes the full path now: resume to run VM acceptance, promotion and the package channel before the runtime"
+  fi
+  compute_moves "$path" "$(get candidate rebuilt)"
+  runtime_eligibility "$(get candidate rebuilt)"
+  record_classification "$path" "$runtime_publish" "$changes"
+  [[ ${#moves[@]} == 0 ]] || say "kernel or boot change: ${moves[*]}${boot_details[*]:+ (${boot_details[*]})}"
+}
+
+step_classify() {
+  local rebuilt package path=fast changes
+  recorded classify && return 0
+  rebuilt=$(get candidate rebuilt)
+  for package in $rebuilt; do
+    printf '%s\n' "${runtime_packages[@]}" | grep -Fxq "$package" || path=full
+  done
+  refresh_releases
+  # The full path whenever the set would move installed Macs, rebuilt here or
+  # inherited from a predecessor that was never promoted.
+  reverify_candidate
+  take_live_snapshot
+  package_set_changes "$work/reverify/CANDIDATE"
+  require_no_stale_inheritance
+  changes=$(IFS=';'; echo "${set_changes[*]}")
+  if (( ${#set_changes[@]} > 0 )) && [[ $path != full ]]; then
+    path=full
+    say "the candidate's package set differs from the live one, though nothing in it was rebuilt: $(set_changes_summary)"
+  fi
+  compute_moves "$path" "$rebuilt"
+  runtime_eligibility "$rebuilt"
+  if [[ $path == fast && $runtime_publish == live ]]; then
+    path=none
+  fi
+  record_classification "$path" "$runtime_publish" "$changes"
+  case $path in
+    fast) say "path: fast (runtime channel only)" ;;
+    full)
+      if [[ $runtime_publish == needed ]]; then
+        say "path: full (VM acceptance, promotion, package channel, runtime channel)"
+      else
+        say "path: full (VM acceptance, promotion, package channel; the runtime is already live)"
+      fi
+      ;;
+    none) say "path: nothing new to publish; $(get candidate tag) is already live" ;;
+  esac
+  [[ ${#moves[@]} == 0 ]] || say "kernel or boot change: ${moves[*]}${boot_details[*]:+ (${boot_details[*]})}"
+  [[ ${#boot_same_version[@]} == 0 ]] || say "rebuilt at the same version (installed Macs keep their copy): ${boot_same_version[*]}"
+}
+
+stable_matches_candidate() {
+  local stable=$1
+  [[ $(release_status "$stable") == published ]] && release_immutable "$stable" || return 1
+  cmp -s <(release_assets "$stable") <(release_assets "$(get candidate tag)")
+}
+
+check_stable() {
+  local stable=asahi-packages-stable-$(get candidate commit) status
+  status=$(release_status "$stable")
+  case $status in
+    absent) return 1 ;;
+    published) stable_matches_candidate "$stable" || stop "$stable exists but is not a byte-identical, immutable copy of $(get candidate tag); resolve it by hand" ;;
+    *) stop "$stable exists as a $status: a promotion stopped half way. Check it and delete it by hand (gh release delete $stable -R $repo), then resume" ;;
+  esac
+}
+
+vm_failed() {
+  kv_write "$rel/progress/vm" "attempt=$vm_attempt" "run_id=$vm_run_id" "failed_attempt=$vm_attempt" "reason=$1"
+  stop "VM acceptance run $vm_run_id of $(get candidate tag) failed: $1. Evidence: $vm_evidence. Resuming starts a new run"
+}
+
+# An acceptance record of this exact candidate, read strictly: every line is
+# key=value, no key appears twice, the result is accepted with no blocking
+# defect, and the identities it records (the runtime ones where it has them)
+# are this release's.
+acceptance_record_matches() {
+  local file=$1 key expected
+  local -A want=([format]=1 [candidate_tag]="$(get candidate tag)" [candidate_sha256]="$(get candidate sha256)"
+    [signing_fingerprint]="$(get candidate fingerprint)" [status]=accepted [release_blocking_defects]=none)
+  local -A where_present=([runtime_source]="$source_commit" [runtime_manifest_sha256]="$(get candidate manifest_sha256)")
+  ! grep -vqE '^([a-z0-9_]+=.*)?$' "$file" || return 1
+  [[ -z $(sed -n 's/^\([a-z0-9_]*\)=.*/\1/p' "$file" | LC_ALL=C sort | uniq -d) ]] || return 1
+  for key in "${!want[@]}"; do
+    [[ $(grep -c "^$key=" "$file") == 1 ]] && grep -Fxq "$key=${want[$key]}" "$file" || return 1
+  done
+  for key in "${!where_present[@]}"; do
+    expected=${where_present[$key]}
+    ! grep -q "^$key=" "$file" || grep -Fxq "$key=$expected" "$file" || return 1
+  done
+}
+
+# A record of this candidate committed to omarchy-mx-mac main, if any.
+committed_acceptance() {
+  local file commit
+  commit=$(get candidate commit)
+  while IFS= read -r file; do
+    [[ $file == docs/releases/asahi-packages-candidate-"${commit:0:7}"*-acceptance.txt ]] || continue
+    mx_show refs/heads/main "$file" >"$work/committed-acceptance" 2>/dev/null || continue
+    if acceptance_record_matches "$work/committed-acceptance"; then
+      printf '%s\n' "$file"
+      return 0
+    fi
+  done < <(git -C "$mx_dir" ls-tree --name-only refs/heads/main docs/releases/ 2>/dev/null)
+}
+
+# Nothing is promoted or published, and no existing stable set is adopted,
+# without an acceptance record of this candidate in hand.
+acceptance_in_hand() {
+  [[ $(get vm status) == accepted || $(get vm status) == committed-record ]] &&
+    [[ -s $rel/evidence/acceptance.txt ]] && acceptance_record_matches "$rel/evidence/acceptance.txt"
+}
+
+step_vm() {
+  local tag dir state expected optional_ok ok_lines log harness key run_txt default_mirror line committed
+  recorded vm && return 0
+  reverify_candidate
+  tag=$(get candidate tag)
+  committed=$(committed_acceptance)
+  if [[ -n $committed ]]; then
+    cp "$work/committed-acceptance" "$rel/evidence/acceptance.txt"
+    record vm status=committed-record "record=omarchy-mx-mac main:$committed"
+    say "vm: $tag was accepted before ($committed on omarchy-mx-mac main)"
+    return 0
+  fi
+  need_settings "VM acceptance" ASAHI_RELEASE_SSH_USER ASAHI_RELEASE_VM_HOST
+  harness=$(mx_show "$source_commit" test/vm/asahi-fresh/run) || stop "omarchy-mx-mac $source_commit has no VM harness"
+  default_mirror=$(printf '%s\n' "$harness" | sed -n "s/^alarm_mirror=\${OMARCHY_VM_ALARM_MIRROR:-'\(.*\)'}\$/\1/p")
+  grep -q -- '--wait-for-lease' <<<"$harness" && [[ -n $default_mirror ]] ||
+    stop "the VM harness at omarchy-mx-mac $source_commit predates per-run evidence and its lease; release a commit whose harness writes run.txt"
+  vm_attempt=$(kv_get "$rel/progress/vm" attempt)
+  vm_attempt=${vm_attempt:-0}
+  vm_run_id=$(kv_get "$rel/progress/vm" run_id)
+  state=none
+  if (( vm_attempt > 0 )); then
+    state=$(remote_job_state "$vm_host" "omarchy-release/$release_id/vm-$vm_attempt") || stop "could not reach $vm_host"
+    [[ $(kv_get "$rel/progress/vm" failed_attempt) != "$vm_attempt" ]] || state=failed
+  fi
+  case $state in
+    running|done:*) say "vm: reattaching to acceptance run $vm_run_id on $vm_host" ;;
+    *)
+      vm_attempt=$((vm_attempt + 1))
+      # The harness names its evidence directory after the run ID.
+      vm_run_id=candidate-$(cut -c1-8 <<<"${tag#asahi-packages-candidate-}")-$(date -u +%Y%m%dT%H%M%SZ)-$vm_attempt
+      dir=omarchy-release/$release_id/vm-$vm_attempt
+      cat >"$work/vm-job.sh" <<JOB
+#!/bin/bash
+# VM acceptance of $tag for release $release_id, run $vm_run_id.
+set -u
+dir=\$(cd "\$(dirname "\$0")" && pwd)
+# The harness's own Arch Linux ARM snapshot and evidence directory, never overrides.
+unset OMARCHY_VM_ALARM_MIRROR OMARCHY_VM_EVIDENCE_DIR
+export OMARCHY_VM_CANDIDATE_TAG=$tag
+export OMARCHY_VM_CANDIDATE_SHA256=$(get candidate sha256)
+export OMARCHY_VM_CANDIDATE_FINGERPRINT=$(get candidate fingerprint)
+export OMARCHY_VM_CANDIDATE_PACKAGE_COUNT=$(get candidate package_count)
+export OMARCHY_VM_RUNTIME_MANIFEST_SHA256=$(get candidate manifest_sha256)
+export OMARCHY_VM_RUNTIME_SOURCE=$source_commit
+export OMARCHY_VM_STATE_DIR=\$HOME/$remote_vm_state OMARCHY_VM_RUN_ID=$vm_run_id
+cd "\$dir/mx"
+# Queue behind another run's lease rather than fail on it.
+test/vm/asahi-fresh/run --optional-packages --wait-for-lease
+status=\$?
+{
+  printf 'execution_host=%s\n' "\$(tr -d '\\0' </proc/device-tree/model 2>/dev/null || uname -n)"
+  printf 'host_kernel=%s\n' "\$(uname -r)"
+  printf 'docker_version=%s\n' "\$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown)"
+  printf 'harness_status=%s\n' "\$status"
+} >"\$dir/host.env"
+printf '%s\n' "\$status" >"\$dir/status.tmp" && mv "\$dir/status.tmp" "\$dir/status"
+JOB
+      git -C "$mx_dir" archive --format=tar "$source_commit" |
+        remote "$vm_host" "rm -rf $dir && mkdir -p $dir/mx && tar -x -C $dir/mx" || stop "could not ship the harness to $vm_host"
+      remote "$vm_host" "cat >$dir/job.sh" <"$work/vm-job.sh" || stop "could not ship the acceptance job to $vm_host"
+      kv_write "$rel/progress/vm" "attempt=$vm_attempt" "run_id=$vm_run_id" "started_at=$(stamp)"
+      remote_job_start "$vm_host" "$dir" || stop "could not start VM acceptance on $vm_host"
+      say "vm: acceptance run $vm_run_id of $tag started on $vm_host (~/$dir/job.log)"
+      ;;
+  esac
+  dir=omarchy-release/$release_id/vm-$vm_attempt
+  remote_job_wait "$vm_host" "$dir"
+  [[ -n $job_status ]] || stop "VM acceptance run $vm_run_id on $vm_host stopped without an exit status; resuming starts a new run"
+  vm_evidence=$evidence_root/$tag/$vm_run_id
+  rm -rf "$vm_evidence"
+  mkdir -p "$vm_evidence"
+  remote "$vm_host" "cd \"\$HOME/$dir\" && tar -c host.env job.log" | tar -x -C "$vm_evidence" ||
+    stop "could not copy the job record of $vm_run_id back from $vm_host"
+  remote "$vm_host" "tar -c -C \"\$HOME/vm-evidence/$vm_run_id\" ." | tar -x -C "$vm_evidence" ||
+    vm_failed "the harness exported no evidence to ~/vm-evidence/$vm_run_id"
+  [[ $job_status == 0 ]] || vm_failed "the harness exited $job_status"
+  # The harness's own record of the run must name this run and this candidate.
+  run_txt=$vm_evidence/run.txt
+  [[ -s $run_txt ]] || vm_failed "the harness wrote no run.txt"
+  for line in format=1 "run_id=$vm_run_id" status=passed exit_status=0 "candidate_tag=$tag" \
+    "candidate_sha256=$(get candidate sha256)" "runtime_manifest_sha256=$(get candidate manifest_sha256)" \
+    "runtime_source=$source_commit" "alarm_mirror=$default_mirror"; do
+    grep -Fxq "$line" "$run_txt" || vm_failed "run.txt does not record $line"
+  done
+  for log in candidate-repository.log install.log serial.log verify.log optional-packages.log rerun.log; do
+    [[ -s $vm_evidence/$log ]] || vm_failed "the harness left no $log"
+    key=${log//[-.]/_}_sha256
+    [[ $(kv_get "$run_txt" "$key") == "$(sha256 "$vm_evidence/$log")" ]] || vm_failed "the copy of $log does not match its $key in run.txt"
+  done
+  tr -d '\r' <"$vm_evidence/candidate-repository.log" | grep -Fxq "Installed exact signed package candidate $tag" ||
+    vm_failed "candidate-repository.log does not show $tag installed"
+  for log in candidate-repository.log install.log verify.log optional-packages.log rerun.log; do
+    ! tr -d '\r' <"$vm_evidence/$log" | grep -q '^not ok' || vm_failed "$log reports a failure"
+  done
+  tr -d '\r' <"$vm_evidence/verify.log" | grep -q '^ok - ' || vm_failed "verify.log has no passing check"
+  tr -d '\r' <"$vm_evidence/rerun.log" | grep -q '^ok - ' || vm_failed "rerun.log has no passing check"
+  expected=$(mx_show "$source_commit" install/optional-packages-aarch64-required | grep -c '^install\.' || true)
+  optional_ok=$(tr -d '\r' <"$vm_evidence/optional-packages.log" | grep -c '^ok - ' || true)
+  [[ $optional_ok == "$expected" ]] || vm_failed "$optional_ok optional package transactions passed, $expected required"
+  tr -d '\r' <"$vm_evidence/optional-packages.log" | grep -q 'installed, 0 failed' || vm_failed "optional package installs report failures"
+  ok_lines=0
+  for log in verify.log optional-packages.log rerun.log; do
+    ok_lines=$((ok_lines + $(tr -d '\r' <"$vm_evidence/$log" | grep -c '^ok - ' || true)))
+  done
+  kv_write "$rel/progress/vm-result" "accepted_at=$(stamp)" "attempt=$vm_attempt" "run_id=$vm_run_id" "evidence_dir=$vm_evidence" \
+    "execution_host=$(kv_get "$vm_evidence/host.env" execution_host)" "host_kernel=$(kv_get "$vm_evidence/host.env" host_kernel)" \
+    "docker_version=$(kv_get "$vm_evidence/host.env" docker_version)" "vm_memory_mb=$(kv_get "$run_txt" vm_memory_mb)" \
+    "alarm_mirror=$default_mirror" "optional_ok=$optional_ok" "ok_lines=$ok_lines" \
+    "candidate_repository_log_sha256=$(sha256 "$vm_evidence/candidate-repository.log")" \
+    "install_log_sha256=$(sha256 "$vm_evidence/install.log")" "serial_log_sha256=$(sha256 "$vm_evidence/serial.log")" \
+    "verify_log_sha256=$(sha256 "$vm_evidence/verify.log")" "optional_packages_log_sha256=$(sha256 "$vm_evidence/optional-packages.log")" \
+    "rerun_log_sha256=$(sha256 "$vm_evidence/rerun.log")"
+  compose_acceptance
+  record vm status=accepted "run_id=$vm_run_id" "evidence_dir=$vm_evidence" "ok_lines=$ok_lines"
+  say "vm: accepted ($ok_lines ok lines); evidence in $vm_evidence"
+}
+
+# The promotion runs as a detached job in a directory named after its attempt,
+# recorded here before it starts, so a lost SSH session or a restart of this
+# command reconciles that job instead of starting a second publisher. The
+# GitHub token reaches it on stdin; the launcher returns once the job has read
+# it.
+promote_job_start() {
+  remote "$1" "cd $2 || exit 1; rm -f status pid token-read; if command -v setsid >/dev/null; then setsid nohup bash job.sh <&0 >job.log 2>&1 & else nohup bash job.sh <&0 >job.log 2>&1 & fi; echo \$! >pid; for i in \$(seq 1 120); do [ -e token-read ] && exit 0; kill -0 \$(cat pid) 2>/dev/null || exit 1; sleep 0.5; done; exit 1"
+}
+
+promote_settle() {
+  local attempt=$1 dir=$2 stable=$3
+  remote "$vm_host" "cat $dir/job.log 2>/dev/null" >"$rel/evidence/promote-$attempt.log" 2>&1 || true
+  refresh_releases
+  if check_stable; then
+    record promote "stable=$stable" status=promoted "attempt=$attempt" "acceptance_sha256=$(sha256 "$rel/evidence/acceptance.txt")"
+    say "promote: $stable is a byte-identical copy of $(get candidate tag)"
+    return 0
+  fi
+  kv_write "$rel/progress/promote" "attempt=$attempt" "failed_attempt=$attempt" "status=$job_status"
+  stop "the promotion job (attempt $attempt) on $vm_host exited $job_status and $stable is not published: $(tail -n 5 "$rel/evidence/promote-$attempt.log" | tr '\n' ' '). Resuming starts a new attempt"
+}
+
+step_promote() {
+  local tag commit stable acceptance acceptance_sha256 dir token attempt state
+  recorded promote && return 0
+  require_hardware_evidence
+  reverify_candidate
+  tag=$(get candidate tag)
+  commit=$(get candidate commit)
+  stable=asahi-packages-stable-$commit
+  acceptance_in_hand || stop "this release holds no acceptance record of $tag; nothing is promoted or adopted without one"
+  attempt=$(kv_get "$rel/progress/promote" attempt)
+  attempt=${attempt:-0}
+  if (( attempt > 0 )) && [[ $(kv_get "$rel/progress/promote" failed_attempt) != "$attempt" ]]; then
+    need_settings "the promotion on the VM host" ASAHI_RELEASE_SSH_USER ASAHI_RELEASE_VM_HOST
+    dir=omarchy-release/$release_id/promote-$attempt
+    state=$(remote_job_state "$vm_host" "$dir") ||
+      stop "could not reach $vm_host, where promotion attempt $attempt may still run; resume when it answers"
+    case $state in
+      running|done:*)
+        say "promote: reattaching to promotion attempt $attempt on $vm_host"
+        remote_job_wait "$vm_host" "$dir"
+        if [[ -n $job_status ]]; then
+          promote_settle "$attempt" "$dir" "$stable"
+          return 0
+        fi
+        ;;
+    esac
+    refresh_releases
+    if check_stable; then
+      record promote "stable=$stable" status=promoted "attempt=$attempt" "acceptance_sha256=$(sha256 "$rel/evidence/acceptance.txt")"
+      return 0
+    fi
+    stop "promotion attempt $attempt on $vm_host is neither running nor finished (~/$dir has no exit status) and $stable is not published. Check $vm_host for a promote-asahi-package-candidate process and a draft $stable; once sure neither exists, remove $rel/progress/promote and resume"
+  fi
+  refresh_releases
+  if check_stable; then
+    record promote "stable=$stable" status=already-promoted
+    say "promote: $stable already exists as a byte-identical copy of $tag; adopted with this release's acceptance record"
+    return 0
+  fi
+  need_settings "the promotion on the VM host" ASAHI_RELEASE_SSH_USER ASAHI_RELEASE_VM_HOST
+  [[ $(get vm status) == committed-record ]] || compose_acceptance
+  acceptance=$rel/evidence/acceptance.txt
+  acceptance_record_matches "$acceptance" || stop "the acceptance record of $tag does not match it"
+  acceptance_sha256=$(sha256 "$acceptance")
+  attempt=$((attempt + 1))
+  dir=omarchy-release/$release_id/promote-$attempt
+  cat >"$work/promote-job.sh" <<JOB
+#!/bin/bash
+# Promotion of $tag for release $release_id, attempt $attempt.
+set -u
+dir=\$(cd "\$(dirname "\$0")" && pwd)
+IFS= read -r GH_TOKEN || GH_TOKEN=""
+exec 0</dev/null
+: >"\$dir/token-read"
+export GH_TOKEN
+status=0
+if [ -n "\$GH_TOKEN" ]; then
+  (cd "\$dir/pkgs" && LC_ALL=C bash bin/promote-asahi-package-candidate --publish $repo $tag $(get candidate sha256) \\
+    $(get candidate fingerprint) keys/asahi-repository-signing.asc ../acceptance.txt $acceptance_sha256) || status=\$?
+else
+  echo "no GitHub token arrived on stdin" >&2
+  status=90
+fi
+unset GH_TOKEN
+printf '%s\n' "\$status" >"\$dir/status.tmp" && mv "\$dir/status.tmp" "\$dir/status"
+JOB
+  git -C "$pkgs" archive --format=tar "$commit" |
+    remote "$vm_host" "rm -rf $dir && mkdir -p $dir/pkgs && tar -x -C $dir/pkgs" || stop "could not ship omarchy-pkgs $commit to $vm_host"
+  remote "$vm_host" "cat >$dir/acceptance.txt" <"$acceptance" || stop "could not ship the acceptance record to $vm_host"
+  remote "$vm_host" "cat >$dir/job.sh" <"$work/promote-job.sh" || stop "could not ship the promotion job to $vm_host"
+  token=$(gh auth token 2>/dev/null) && [[ -n $token ]] || stop "gh has no token to hand to the promotion"
+  kv_write "$rel/progress/promote" "attempt=$attempt" "host=$vm_host" "dir=$dir" "started_at=$(stamp)"
+  say "promote: $tag -> $stable on $vm_host (attempt $attempt, ~/$dir/job.log)"
+  promote_job_start "$vm_host" "$dir" <<<"$token" ||
+    { unset token; stop "promotion attempt $attempt did not start on $vm_host; resuming reconciles it before anything else"; }
+  unset token
+  remote_job_wait "$vm_host" "$dir"
+  [[ -n $job_status ]] || stop "promotion attempt $attempt on $vm_host stopped without an exit status; resuming reconciles it"
+  promote_settle "$attempt" "$dir" "$stable"
+}
+
+gate_packages() {
+  local run=$1 waiting=$2
+  [[ $waiting == publish ]] || stop "run $run waits on '$waiting', not the package channel publish job"
+  require_hardware_evidence
+  refresh_releases
+  check_stable || stop "asahi-packages-stable-$(get candidate commit) is not published; not approving run $run"
+}
+
+failed_packages() {
+  archive_marker packages "$1"
+  stop "the package channel run ended $2 in: $(failed_jobs "$1") (https://github.com/$repo/actions/runs/$1). It is its own repair: resuming dispatches it again with the same stable_tag"
+}
+
+# The highest package channel names this release's stable set: verify it and
+# its pointer, and record the step.
+adopt_package_channel() {
+  local sequence=$1 dir=$work/package-channel line stable=asahi-packages-stable-$(get candidate commit)
+  release_immutable "asahi-packages-channel-$sequence" || stop "asahi-packages-channel-$sequence is not immutable"
+  prepare_release_key
+  verify_signature "$work/release.gpg" "$dir/asahi-packages-channel" "$dir/asahi-packages-channel.sig" ||
+    stop "invalid signature on asahi-packages-channel-$sequence"
+  for line in format=1 channel=asahi-packages "sequence=$sequence" "stable_tag=$stable" "descriptor_sha256=$(get candidate sha256)"; do
+    grep -Fxq "$line" "$dir/asahi-packages-channel" || stop "asahi-packages-channel-$sequence lacks $line"
+  done
+  pointer_names asahi-packages-channel "$sequence" || packages_pointer_repair "$sequence" "$pointer_base/asahi-packages-channel does not name it"
+  record packages "sequence=$sequence" "stable=$stable" "run=$(kv_get "$rel/dispatch/packages" run)"
+  say "packages: asahi-packages-channel-$sequence names $stable; pointer verified"
+}
+
+highest_package_channel_names_stable() {
+  local sequence=$1 dir=$work/package-channel
+  (( sequence > 0 )) || return 1
+  download_assets "asahi-packages-channel-$sequence" "$dir" asahi-packages-channel asahi-packages-channel.sig ||
+    stop "could not download asahi-packages-channel-$sequence"
+  grep -Fxq "stable_tag=asahi-packages-stable-$(get candidate commit)" "$dir/asahi-packages-channel"
+}
+
+step_packages() {
+  local stable sequence drafts pointer
+  recorded packages && return 0
+  require_hardware_evidence
+  reverify_candidate
+  acceptance_in_hand || stop "this release holds no acceptance record of $(get candidate tag); no package channel is published without one"
+  check_stable || stop "asahi-packages-stable-$(get candidate commit) is not published"
+  stable=asahi-packages-stable-$(get candidate commit)
+  drafts=$(drafts_named asahi-packages-channel- | tr '\n' ' ')
+  [[ -z $drafts ]] || stop "draft package channel release(s) $drafts exist: an earlier publication stopped half way. Rerun it by hand: gh workflow run publish-asahi-packages-channel.yml -R $repo --ref $branch -f stable_tag=$stable"
+  sequence=$(max_sequence asahi-packages-channel)
+  if highest_package_channel_names_stable "$sequence"; then
+    adopt_package_channel "$sequence"
+    return 0
+  fi
+  if [[ -z $(kv_get "$rel/dispatch/packages" phase) ]]; then
+    pointer=$(pointer_sequence asahi-packages-channel)
+    (( sequence == 0 )) || [[ $pointer == "$sequence" ]] ||
+      packages_pointer_repair "$sequence" "$pointer_base/asahi-packages-channel names ${pointer:-nothing}"
+  fi
+  dispatch_expected_head="" dispatch_precheck="" dispatch_extra=("sequence=$((sequence + 1))")
+  dispatch packages publish-asahi-packages-channel.yml "Package channel $stable" -f stable_tag="$stable"
+  wait_for_run packages "$dispatched_run"
+  refresh_releases
+  sequence=$(max_sequence asahi-packages-channel)
+  highest_package_channel_names_stable "$sequence" ||
+    stop "run $dispatched_run succeeded, but the highest package channel ($sequence) does not name $stable"
+  adopt_package_channel "$sequence"
+}
+
+gate_runtime() {
+  local run=$1 waiting=$2 jobs=$3 dir=$work/gate-runtime manifest filename checksum
+  [[ $waiting == publish ]] || stop "run $run waits on '$waiting', not the runtime publish job"
+  require_hardware_evidence
+  [[ $(job_conclusion "$jobs" verify) == success ]] || stop "run $run waits to publish, but its verify job did not succeed"
+  rm -rf "$dir"
+  gh run download "$run" -R "$repo" -n exact-asahi-runtime-candidate -D "$dir" >/dev/null 2>"$work/gh.err" ||
+    stop "could not read what run $run will publish: $(head -c 300 "$work/gh.err")"
+  manifest=$dir/metadata/asahi-quattro-bundle.manifest
+  [[ -s $manifest && $(sha256 "$manifest") == "$(get candidate manifest_sha256)" ]] ||
+    stop "run $run would publish another runtime manifest than $(get candidate tag)'s; not approving it"
+  while IFS='|' read -r _ _ _ _ filename checksum; do
+    [[ -s $dir/packages/$filename && $(sha256 "$dir/packages/$filename") == "$checksum" ]] ||
+      stop "run $run would publish $filename with other bytes than the manifest; not approving it"
+  done < <(sed -n 's/^package=//p' "$manifest")
+}
+
+failed_runtime() {
+  local sequence
+  sequence=$(kv_get "$rel/dispatch/runtime" sequence)
+  archive_marker runtime "$1"
+  [[ $(failed_steps "$1") != "$pointer_step" ]] ||
+    runtime_pointer_repair "$sequence" "the release channel pointer step failed (https://github.com/$repo/actions/runs/$1)"
+  stop "the runtime channel run ended $2 in: $(failed_jobs "$1") (https://github.com/$repo/actions/runs/$1). Resuming dispatches it again with the same sequence"
+}
+
+check_runtime_sequence() {
+  refresh_releases
+  [[ $(max_sequence asahi-quattro-channel) == "$runtime_current" ]] ||
+    stop "the runtime channel moved from $runtime_current to $(max_sequence asahi-quattro-channel) while this release prepared $((runtime_current + 1)); resume to recompute"
+}
+
+runtime_title() {
+  printf 'Runtime publish %s sha256 %s source %s sequence %s' "$(get candidate tag)" "$(get candidate sha256)" "$source_commit" "$1"
+}
+
+step_runtime() {
+  local release_tag=asahi-quattro-${source_commit:0:8} drafts pointer next phase sequence
+  recorded runtime && return 0
+  require_hardware_evidence
+  refresh_releases
+  runtime_eligibility "$(get candidate rebuilt)"
+  if [[ $(get classify runtime_publish) == live ]]; then
+    # Classified as already published: it must still be the live channel.
+    [[ $runtime_publish == live ]] ||
+      stop "this release found omarchy-mx-mac ${source_commit:0:8} live when it started, but asahi-quattro-channel-$live_runtime_sequence now publishes $live_runtime_release"
+    pointer_names asahi-quattro-channel "$live_runtime_sequence" ||
+      runtime_pointer_repair "$live_runtime_sequence" "$pointer_base/asahi-quattro-channel does not name it"
+    record runtime status=already-live "sequence=$live_runtime_sequence" "release=$release_tag"
+    say "runtime: asahi-quattro-channel-$live_runtime_sequence already publishes omarchy-mx-mac ${source_commit:0:8}"
+    return 0
+  fi
+  reverify_candidate
+  drafts=$(drafts_named asahi-quattro- | tr '\n' ' ')
+  [[ -z $drafts ]] || stop "draft runtime release(s) $drafts exist: an earlier publication stopped half way; resolve them by hand"
+  read_live_runtime
+  if [[ $live_runtime_release == "$release_tag" ]]; then
+    verify_runtime_channel "$live_runtime_sequence"
+    pointer_names asahi-quattro-channel "$live_runtime_sequence" ||
+      runtime_pointer_repair "$live_runtime_sequence" "$pointer_base/asahi-quattro-channel does not name it"
+    record runtime "sequence=$live_runtime_sequence" "release=$release_tag" "run=$(kv_get "$rel/dispatch/runtime" run)"
+    say "runtime: asahi-quattro-channel-$live_runtime_sequence is live; pointer verified"
+    return 0
+  fi
+  [[ $(release_status "$release_tag") == absent ]] ||
+    stop "$release_tag exists, but the highest runtime channel ($live_runtime_sequence) does not name it; an earlier publication stopped half way. Check it by hand"
+  phase=$(kv_get "$rel/dispatch/runtime" phase)
+  runtime_current=$live_runtime_sequence
+  next=$((runtime_current + 1))
+  if [[ -z $phase ]]; then
+    pointer=$(pointer_sequence asahi-quattro-channel)
+    (( runtime_current == 0 )) || [[ $pointer == "$runtime_current" ]] ||
+      runtime_pointer_repair "$runtime_current" "$pointer_base/asahi-quattro-channel names ${pointer:-nothing}"
+  fi
+  # Once, before the first runtime dispatch: this release publishes its
+  # runtime. Later classifications may say otherwise; this record does not.
+  [[ -f $rel/progress/runtime-intent ]] ||
+    kv_write "$rel/progress/runtime-intent" "release=$release_tag" "first_sequence=$next" "recorded_at=$(stamp)"
+  dispatch_expected_head="" dispatch_precheck=check_runtime_sequence dispatch_extra=("sequence=$next")
+  dispatch runtime promote-asahi-quattro-runtime.yml "$(runtime_title "$next")" \
+    -f candidate_tag="$(get candidate tag)" -f candidate_sha256="$(get candidate sha256)" \
+    -f source_commit="$source_commit" -f sequence="$next" -f mode=publish
+  dispatch_precheck=""
+  sequence=$(kv_get "$rel/dispatch/runtime" sequence)
+  wait_for_run runtime "$dispatched_run"
+  refresh_releases
+  verify_runtime_channel "$sequence"
+  pointer_names asahi-quattro-channel "$sequence" ||
+    runtime_pointer_repair "$sequence" "$pointer_base/asahi-quattro-channel does not name it"
+  record runtime "sequence=$sequence" "release=$release_tag" "run=$dispatched_run"
+  say "runtime: asahi-quattro-channel-$sequence is live; installed Macs get omarchy-mx-mac ${source_commit:0:8} on their next omarchy update"
+}
+
+write_update_job() {
+  cat >"$work/update-job.sh" <<'JOB'
+#!/bin/bash
+# omarchy update on this Mac for a release, then its remote checks. Never a
+# reboot: -y answers every prompt, the reboot one included, with "later".
+set -u
+dir=$(cd "$(dirname "$0")" && pwd)
+expected_runtime=$(cat "$dir/expected-runtime")
+expected_stable=$(cat "$dir/expected-stable")
+blocked=${OMARCHY_REBOOT_BLOCKED:-/run/omarchy-reboot-blocked}
+release_file=${OMARCHY_ASAHI_RELEASE_FILE:-/var/lib/omarchy/asahi-quattro-release}
+pacman_conf=${OMARCHY_PACMAN_CONF:-/etc/pacman.conf}
+result=$dir/result.env
+: >"$result"
+note() { printf '%s\n' "$1" >>"$result"; }
+finish() {
+  printf '%s\n' "$1" >"$dir/status.tmp"
+  mv "$dir/status.tmp" "$dir/status"
+  exit 0
+}
+if [ -e "$blocked" ]; then
+  note "reason=a reboot block was already set: $(head -n 1 "$blocked")"
+  finish 3
+fi
+# omarchy update reads stdin; give it none.
+omarchy update -y </dev/null >"$dir/update.log" 2>&1 &
+update=$!
+# Its AUR step starts a sudo -v keepalive that prompts over SSH, where nobody
+# answers: cancel that one process and let the update carry on.
+while kill -0 "$update" 2>/dev/null; do
+  for pid in $(pgrep -U "$(id -u)" -f '^sudo -v$' 2>/dev/null); do
+    kill "$pid" 2>/dev/null && note "cancelled_sudo_keepalive=$pid"
+  done
+  sleep 2
+done
+wait "$update"
+status=$?
+note "update_status=$status"
+[ "$status" = 0 ] || { note "reason=omarchy update exited $status"; finish 1; }
+if [ -e "$blocked" ]; then
+  note "reason=the update set a reboot block: $(head -n 1 "$blocked")"
+  finish 3
+fi
+failed=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{ print $1 }' | tr '\n' ' ')
+note "failed_units=${failed:-none}"
+[ -z "$failed" ] || { note "reason=failed units: $failed"; finish 1; }
+if [ -n "$expected_runtime" ]; then
+  grep -Fxq "source_commit=$expected_runtime" "$release_file" 2>/dev/null ||
+    { note "reason=$release_file does not record runtime source $expected_runtime"; finish 1; }
+  note "runtime=$(sed -n 's/^tag=//p' "$release_file") ($expected_runtime)"
+fi
+if [ -n "$expected_stable" ]; then
+  grep -Fq "/$expected_stable" "$pacman_conf" 2>/dev/null ||
+    { note "reason=[omarchy] in $pacman_conf is not on $expected_stable"; finish 1; }
+  note "packages=$expected_stable"
+fi
+if command -v omarchy-apple-silicon-boot-check >/dev/null 2>&1; then
+  sudo -n omarchy-apple-silicon-boot-check >"$dir/boot-check.log" 2>&1 ||
+    { note "reason=omarchy-apple-silicon-boot-check failed (see boot-check.log)"; finish 1; }
+  note "boot_check=pass"
+else
+  note "boot_check=not-installed"
+fi
+note "running_kernel=$(uname -r)"
+finish 0
+JOB
+}
+
+step_update_macs() {
+  local host dir state expected_runtime=$source_commit expected_stable="" result
+  local checks=()
+  (( update_macs )) || return 0
+  need_settings "--update-macs" ASAHI_RELEASE_SSH_USER ASAHI_RELEASE_UPDATE_HOSTS
+  if recorded packages; then expected_stable=$(get packages stable); fi
+  write_update_job
+  for host in "${update_hosts[@]}"; do
+    recorded "update-$host" && continue
+    dir=omarchy-release/$release_id/update-$host
+    state=$(remote_job_state "$host" "$dir") || stop "could not reach $host"
+    case $state in
+      running|done:*) say "update: reattaching to omarchy update on $host" ;;
+      *)
+        if [[ -z ${candidate_reverified:-} ]]; then
+          reverify_candidate
+          candidate_reverified=1
+        fi
+        remote "$host" "mkdir -p $dir && cat >$dir/job.sh" <"$work/update-job.sh" || stop "could not reach $host"
+        remote "$host" "cat >$dir/expected-runtime" <<<"$expected_runtime"
+        remote "$host" "cat >$dir/expected-stable" <<<"$expected_stable"
+        remote_job_start "$host" "$dir" || stop "could not start omarchy update on $host"
+        say "update: omarchy update started on $host"
+        ;;
+    esac
+    remote_job_wait "$host" "$dir"
+    result=$(remote "$host" "cat $dir/result.env 2>/dev/null; tail -n 20 $dir/update.log 2>/dev/null | sed 's/^/log: /'" || true)
+    printf '%s\n' "$result" >"$rel/evidence/update-$host.txt"
+    if [[ $job_status != 0 ]]; then
+      [[ -n $job_status ]] || stop "omarchy update on $host stopped without a result; check ~/$dir on it"
+      remote "$host" "rm -f $dir/status"
+      stop "omarchy update on $host did not pass its checks: $(sed -n 's/^reason=//p' <<<"$result" | head -n 1). Nothing was done on the Macs after it; see $rel/evidence/update-$host.txt. Resuming runs its update again"
+    fi
+    mapfile -t checks < <(grep -E '^(runtime|packages|boot_check|running_kernel|failed_units)=' <<<"$result")
+    record "update-$host" "${checks[@]}"
+    say "update: $host updated and checked"
+  done
+}
+
+# ── report ─────────────────────────────────────────────────────────────────
+report() {
+  local host moves pr
+  pr=$(get pin pr)
+  say "release $release_id: ${1:-complete}"
+  printf '    %-16s %s\n' "omarchy-mx-mac" "$source_commit"
+  printf '    %-16s %s\n' "pin" "$(get pin status)${pr:+ as #$pr} $(get pin merged_commit)"
+  printf '    %-16s %s\n' "predecessor" "$(get resolve predecessor_tag)"
+  if recorded candidate; then
+    printf '    %-16s %s\n' "candidate" "$(get candidate tag)"
+    printf '    %-16s %s\n' "CANDIDATE sha256" "$(get candidate sha256)"
+    printf '    %-16s %s\n' "rebuilt" "$(get candidate rebuilt) ($(get candidate effective_mode))"
+  fi
+  if recorded classify; then
+    printf '    %-16s %s\n' "path" "$(get classify path)"
+    moves=$(kernel_moves)
+    printf '    %-16s %s\n' "kernel or boot" "${moves:-none}"
+    [[ -z $(get classify boot_same_version) ]] ||
+      printf '    %-16s %s\n' "same version" "rebuilt at the same version: $(get classify boot_same_version)"
+  fi
+  if recorded vm; then
+    printf '    %-16s %s\n' "VM acceptance" "$(get vm status) $(get vm evidence_dir)"
+    [[ ! -s $rel/evidence/acceptance.txt ]] ||
+      printf '    %-16s %s\n' "acceptance" "$evidence_root/$(get candidate tag)/acceptance.txt; commit it to omarchy-mx-mac as docs/releases/$(get candidate tag | cut -c1-33)-acceptance.txt"
+  fi
+  ! recorded promote || printf '    %-16s %s\n' "promoted" "$(get promote stable) ($(get promote status))"
+  ! recorded packages || printf '    %-16s %s\n' "package channel" "asahi-packages-channel-$(get packages sequence)"
+  ! recorded runtime || printf '    %-16s %s\n' "runtime channel" "$(if [[ -n $(get runtime sequence) ]]; then echo "asahi-quattro-channel-$(get runtime sequence)"; else get runtime status; fi)"
+  for host in "${update_hosts[@]}"; do
+    if recorded "update-$host"; then
+      printf '    %-16s %s\n' "$host" "updated and checked: $(sed -n '2,$p' "$rel/steps/update-$host" | tr '\n' ' ')"
+    fi
+  done
+  (( update_macs )) || printf '    %-16s %s\n' "Macs" "not updated here (pass --update-macs)"
+  printf '    %-16s %s\n' "not in scope" "OS payload and the owner-signed installer catalog"
+  printf '    %-16s %s\n' "state" "$rel"
+}
+
+finish_release() {
+  kv_write "$rel/COMPLETE" "completed_at=$(stamp)"
+  rm -f "$state_root/active"
+  report complete
+}
+
+# ── dry run ────────────────────────────────────────────────────────────────
+dry_run_plan() {
+  local plan=$work/plan.json rebuilt package path=fast moves=() pin new runtime_state packages_sequence id boot_note="" stale_note=""
+  local boot_rebuilt=() boot_later=() needed=() missing
+  local vm_host_shown=${vm_host:-"(ASAHI_RELEASE_VM_HOST unset)"}
+  mx_dir=$work/mx.git
+  resolve_inputs
+  say "runtime source: $pinned -> $source_commit$( (( pin_needed )) || echo ' (already pinned: no pin PR)')"
+  say "$branch head:  $head"
+  say "predecessor:    $predecessor_tag (CANDIDATE sha256 $predecessor_sha256, runtime ${predecessor_runtime:0:8})"
+  git -C "$pkgs" checkout --quiet --detach "$head" 2>/dev/null
+  if [[ $head == "$predecessor_commit" && $pin_needed == 0 ]]; then
+    rebuilt="(no build: $head already has a candidate, whose PLAN.json decides)"
+    path=unknown
+  elif ASAHI_PACKAGE_ROOT=$pkgs "$BASH" "$pkgs/bin/asahi-incremental-plan" --mode incremental \
+    --previous-package-commit "$predecessor_commit" --current-package-commit "$head" \
+    --previous-runtime-commit "$predecessor_runtime" --current-runtime-commit "$source_commit" --output "$plan" 2>"$work/plan.err"; then
+    rebuilt=$(jq -r '.rebuilt_packages | join(" ")' "$plan")
+    for package in $rebuilt; do
+      printf '%s\n' "${runtime_packages[@]}" | grep -Fxq "$package" || path=full
+      if [[ $package =~ $boot_package_pattern ]]; then boot_rebuilt+=("$package"); fi
+    done
+    # Nothing in the repository set rebuilt: it is the predecessor's, which
+    # may never have been promoted.
+    take_live_snapshot
+    if [[ $path == fast ]]; then
+      package_set_changes "$work/predecessor/CANDIDATE"
+      if (( ${#set_changes[@]} > 0 )); then
+        path=full
+        if (( ${#set_changes[@]} == 1 )); then package="1 package differs"; else package="${#set_changes[@]} packages differ"; fi
+        rebuilt="${rebuilt:-nothing}, and inherits a package set that is not live ($package: $(set_changes_summary))"
+      fi
+    fi
+    # Packages the candidate will carry without rebuilding them are the
+    # predecessor's: they must not be older builds than the live set's, and
+    # their boot rows are compared with the live set now.
+    if [[ $path == full ]]; then
+      stale_inheritance "$work/predecessor/CANDIDATE" "$(jq -r '.rebuilt_packages | join(" ")' "$plan")" "$predecessor_tag" "$predecessor_sha256"
+      (( ${#stale_inherited[@]} == 0 )) ||
+        stale_note="stops: inherits ${stale_inherited[*]}, which differ from the live set, from candidates that do not lead back to it ($chain_problem); rebuild them first"
+    fi
+    if [[ $path == full ]]; then
+      boot_changes "$work/predecessor/CANDIDATE" "$head" ""
+      for package in "${boot_moves[@]}"; do
+        [[ " ${boot_rebuilt[*]} " == *" ${package%% *} "* ]] || moves+=("${package%% *}")
+      done
+    fi
+    # The built versions of rebuilt boot packages are not known yet: a recipe
+    # change since the live set is a move now; any other one is checked after
+    # the build.
+    if [[ $path == full && ${#boot_rebuilt[@]} -gt 0 ]]; then
+      if [[ $live_snapshot == verified ]]; then
+        for package in "${boot_rebuilt[@]}"; do
+          if recipe_changed_since_live "$package" "$head"; then moves+=("$package"); else boot_later+=("$package"); fi
+        done
+      else
+        moves+=("${boot_rebuilt[@]}")
+        boot_note=" (the live package set does not verify: $live_set_problem)"
+      fi
+    fi
+    [[ $(jq -r .effective_mode "$plan") == incremental ]] || rebuilt="$rebuilt (full rebuild: $(jq -r .fallback_reason "$plan"))"
+  else
+    rebuilt="unknown (the planner failed: $(tail -n 1 "$work/plan.err"))"
+    path=unknown
+  fi
+  read_live_runtime
+  for pin in "${runtime_kernel_pins[@]}"; do
+    new=$(mx_show "$source_commit" "$pin" || true)
+    [[ $(mx_show "${live_runtime_source:-$predecessor_runtime}" "$pin" || true) == "$new" ]] ||
+      moves+=("$(sed -n 's/^tag=//p' <<<"$new" | grep . || echo "$pin")")
+  done
+  say "predicted plan: rebuilds ${rebuilt:-nothing}"
+  if [[ $live_runtime_release == "asahi-quattro-${source_commit:0:8}" ]]; then
+    runtime_state="already live on asahi-quattro-channel-$live_runtime_sequence"
+    [[ $path != fast ]] || path=none
+  else
+    runtime_state="asahi-quattro-channel-$live_runtime_sequence -> asahi-quattro-channel-$((live_runtime_sequence + 1))"
+  fi
+  case $path in
+    fast) say "path:           fast (runtime channel only)" ;;
+    full)
+      if [[ $runtime_state == already* ]]; then
+        say "path:           full (VM acceptance on $vm_host_shown, promotion, package channel; the runtime is already live)"
+      else
+        say "path:           full (VM acceptance on $vm_host_shown, promotion, package channel, runtime channel)"
+      fi
+      ;;
+    none) say "path:           nothing new to publish" ;;
+    *) say "path:           decided from the candidate's PLAN.json" ;;
+  esac
+  (( ${#moves[@]} == 0 )) && say "kernel or boot: none$boot_note" ||
+    say "kernel or boot: ${moves[*]}$boot_note (stops before anything public moves unless --hardware-evidence names them)"
+  (( ${#boot_later[@]} == 0 )) ||
+    say "boot rebuilds:  ${boot_later[*]} (a move only if the built version or what it installs differs from the live set's)"
+  [[ -z $stale_note ]] || say "package set:    $stale_note"
+  say "channel:        $runtime_state"
+  if [[ $path == full || $path == unknown ]]; then
+    packages_sequence=$(max_sequence asahi-packages-channel)
+    say "package channel: asahi-packages-channel-$packages_sequence -> asahi-packages-channel-$((packages_sequence + 1))"
+  fi
+  if (( update_macs )); then
+    say "Mac updates:    ${update_hosts[*]:-(ASAHI_RELEASE_UPDATE_HOSTS unset)} (in that order, no reboot)"
+  else
+    say "Mac updates:    not requested"
+  fi
+  # The settings the steps above would need, and which of them are unset.
+  (( ! pin_needed )) || needed+=(ASAHI_RELEASE_AUTHOR_NAME ASAHI_RELEASE_AUTHOR_EMAIL)
+  [[ $path != full && $path != unknown ]] || needed+=(ASAHI_RELEASE_SSH_USER ASAHI_RELEASE_VM_HOST)
+  (( ! update_macs )) || needed+=(ASAHI_RELEASE_SSH_USER ASAHI_RELEASE_UPDATE_HOSTS)
+  missing=$(missing_settings "${needed[@]}" | awk '!seen[$0]++' | tr '\n' ' ')
+  if (( ${#needed[@]} == 0 )); then
+    say "settings:       none needed"
+  elif [[ -n $missing ]]; then
+    say "settings:       missing ${missing% } (the steps that need them stop; set them in $config_file or the environment)"
+  else
+    say "settings:       complete"
+  fi
+  if [[ -s $state_root/active ]]; then
+    id=$(<"$state_root/active")
+    say "in progress:    release $id ($(ls "$state_root/$id/steps" 2>/dev/null | tr '\n' ' ')done)"
+  fi
+  say "dry run: nothing was changed"
+}
+
+abandon_active() {
+  local id stamp_now
+  acquire_lock
+  [[ -s $state_root/active ]] || die "no release is in progress"
+  id=$(<"$state_root/active")
+  stamp_now=$(date -u +%Y%m%dT%H%M%SZ)
+  mv "$state_root/$id" "$state_root/$id.abandoned-$stamp_now"
+  rm -f "$state_root/active"
+  say "abandoned release $id (its records are in $state_root/$id.abandoned-$stamp_now)"
+}
+
+use_release() {
+  local flags=""
+  release_id=$1
+  rel=$state_root/$release_id
+  mkdir -p "$rel"/{steps,dispatch,progress,evidence}
+  (( ! update_macs )) || flags+=" --update-macs"
+  (( ! runtime_only )) || flags+=" --runtime-only"
+  resume_hint="$self$flags $source_commit"
+}
+
+# A finished release of this source whose candidate is the current head of
+# asahi-quattro: the same (source commit, package commit) pair.
+completed_release() {
+  local done_file dir
+  for done_file in "$state_root"/*/COMPLETE; do
+    [[ -f $done_file ]] || continue
+    dir=${done_file%/COMPLETE}
+    [[ $(kv_get "$dir/release.env" source_commit) == "$source_commit" && $(kv_get "$dir/steps/candidate" commit) == "$head" ]] || continue
+    printf '%s\n' "${dir##*/}"
+    return 0
+  done
+}
+
+open_release() {
+  local id active_source
+  completed=0
+  mkdir -p "$state_root"
+  mx_dir=$state_root/cache/omarchy-mx-mac.git
+  if [[ -s $state_root/active ]]; then
+    id=$(<"$state_root/active")
+    [[ -s $state_root/$id/release.env ]] || die "$state_root/active names $id, which has no record; remove $state_root/active"
+    active_source=$(kv_get "$state_root/$id/release.env" source_commit)
+    [[ $active_source == "$source_commit" ]] ||
+      die "release $id (omarchy-mx-mac $active_source) is in progress; finish it with '$self $active_source' or drop it with '$self --abandon'"
+    use_release "$id"
+    say "resuming release $release_id"
+    mx_sync
+    pkgs_clone
+    return 0
+  fi
+  resolve_inputs
+  if (( ! pin_needed )); then
+    id=$(completed_release)
+    if [[ -n $id ]]; then
+      use_release "$id"
+      completed=1
+      return 0
+    fi
+    (( ! runtime_only )) || die "the runtime source is already pinned to $source_commit"
+  fi
+  id=${source_commit:0:12}-$(date -u +%Y%m%dT%H%M%SZ)
+  use_release "$id"
+  kv_write "$rel/release.env" "release_id=$id" "source_commit=$source_commit" "created_at=$(stamp)" "controller=$(uname -n)"
+  record resolve "head=$head" "pinned=$pinned" "pin_needed=$pin_needed" "predecessor_tag=$predecessor_tag" \
+    "predecessor_commit=$predecessor_commit" "predecessor_sha256=$predecessor_sha256" \
+    "predecessor_runtime=$predecessor_runtime" "fingerprint=$predecessor_fingerprint"
+  printf '%s\n' "$id" >"$state_root/active.tmp"
+  mv "$state_root/active.tmp" "$state_root/active"
+  say "release $release_id: omarchy-mx-mac $pinned -> $source_commit on $predecessor_tag"
+}
+
+# ── main ───────────────────────────────────────────────────────────────────
+dry_run=0
+update_macs=0
+runtime_only=0
+abandon=0
+dispatch_again=()
+hardware_evidence=""
+while (( $# > 0 )); do
+  case $1 in
+    --dry-run) dry_run=1 ;;
+    --update-macs) update_macs=1 ;;
+    --runtime-only) runtime_only=1 ;;
+    --abandon) abandon=1 ;;
+    --dispatch-again)
+      (( $# > 1 )) && [[ $2 =~ ^(candidate|packages|runtime)$ ]] || usage
+      dispatch_again+=("$2")
+      shift
+      ;;
+    --hardware-evidence)
+      (( $# > 1 )) || usage
+      hardware_evidence=$2
+      shift
+      ;;
+    -h|--help) usage 0 ;;
+    -*) usage ;;
+    *) break ;;
+  esac
+  shift
+done
+
+for tool in gh jq git curl gpg gpgv sha256sum ssh tar awk; do
+  command -v "$tool" >/dev/null || die "missing command: $tool"
+done
+work=$(mktemp -d)
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+if (( abandon )); then
+  (( $# == 0 )) || usage
+  abandon_active
+  exit 0
+fi
+(( $# == 1 )) || usage
+load_settings
+source_commit=$1
+[[ $source_commit =~ ^[0-9a-f]{40}$ ]] || die "OMARCHY_MX_MAC_COMMIT must be a full 40-hex commit"
+if [[ -n $hardware_evidence ]]; then
+  [[ -s $hardware_evidence && -r $hardware_evidence ]] || die "--hardware-evidence $hardware_evidence is not a readable, non-empty file"
+  hardware_evidence=$(cd "$(dirname "$hardware_evidence")" && pwd)/$(basename "$hardware_evidence")
+fi
+prepare_keys
+
+if (( dry_run )); then
+  dry_run_plan
+  exit 0
+fi
+
+acquire_lock
+actor=$(gh api user 2>"$work/gh.err" | jq -r .login) && [[ -n $actor && $actor != null ]] ||
+  die "gh is not signed in: $(head -c 300 "$work/gh.err")"
+open_release
+if (( completed )); then
+  if (( update_macs )) && { (( ${#update_hosts[@]} == 0 )) || ! recorded "update-${update_hosts[-1]}"; }; then
+    printf '%s\n' "$release_id" >"$state_root/active"
+    rm -f "$rel/COMPLETE"
+    step_update_macs
+    finish_release
+  else
+    report "already complete"
+  fi
+  exit 0
+fi
+
+step_pin
+step_candidate
+step_classify
+if (( runtime_only )) && [[ $(get classify path) == full ]]; then
+  resume_hint="$self $source_commit"
+  stop "$(get candidate tag) rebuilt repository packages ($(get candidate rebuilt)); this is not a runtime-only change. Take the full lane (VM acceptance, promotion, package channel)"
+fi
+if [[ $(get classify path) == full ]]; then
+  step_vm
+  step_promote
+  step_packages
+fi
+step_runtime
+step_update_macs
+finish_release

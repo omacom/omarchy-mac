@@ -1,0 +1,50 @@
+#!/bin/bash
+#
+# The fork's own suites for bin/asahi-release, bin/asahi-runtime-release and
+# bin/mac-aurora-pin, run against the relocated tools: a copy of a fork
+# checkout (FORK_PKGS_DIR, else a shallow clone of maralcbr/omarchy-pkgs
+# asahi-quattro) whose bin/asahi-release is tools/release/fork/asahi-release
+# (the suites also read its source) and whose bin/mac-aurora-pin runs
+# tools/release/mac-aurora-pin --lane fork. Everything the suites fake stays
+# fake: no network beyond the clone, nothing published.
+#
+#   tools/release/test/fork-parity
+#
+# Needs what the suites need: bash 5, gpg, bsdtar, jq, perl and GNU
+# coreutils, sed and tar first on PATH (on macOS, Homebrew's gnubin
+# directories).
+
+set -euo pipefail
+
+TOOLS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+fork=$tmp/fork
+
+if [[ -n ${FORK_PKGS_DIR:-} ]]; then
+  mkdir -p "$fork"
+  tar -C "$FORK_PKGS_DIR" --exclude=.git -cf - . | tar -x -C "$fork"
+else
+  git clone --quiet --depth 1 --branch asahi-quattro https://github.com/maralcbr/omarchy-pkgs.git "$fork"
+fi
+
+# The fork's asahi-runtime-release runs it directly, and /bin/bash is 3.2 on
+# macOS: take bash from PATH there, as the fork's copy did.
+sed '1s|^#!/bin/bash$|#!/usr/bin/env bash|' "$TOOLS/fork/asahi-release" >"$fork/bin/asahi-release"
+printf '#!/usr/bin/env bash\nexec "$BASH" %q --lane fork "$@"\n' "$TOOLS/mac-aurora-pin" >"$fork/bin/mac-aurora-pin"
+chmod +x "$fork/bin/asahi-release" "$fork/bin/mac-aurora-pin"
+# The fork's helpers from the same checkout, as the original took them, and
+# the fork's name for the command in the resume hints its suite checks.
+export ASAHI_RELEASE_HELPERS=$fork/bin ASAHI_RELEASE_SELF=bin/asahi-release
+
+status=0
+for suite in asahi-release asahi-runtime-release aurora-mac-pin; do
+  if "$BASH" "$fork/test/$suite" >"$tmp/$suite.log" 2>&1; then
+    echo "ok - the fork's test/$suite passes against tools/release ($(grep -c '^ok' "$tmp/$suite.log") checks)"
+  else
+    echo "not ok - the fork's test/$suite fails against tools/release:"
+    tail -n 30 "$tmp/$suite.log" | sed 's/^/  | /'
+    status=1
+  fi
+done
+exit "$status"
