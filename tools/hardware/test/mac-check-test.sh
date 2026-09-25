@@ -99,6 +99,7 @@ SH
 stub systemctl <<'SH'
 #!/bin/bash
 [[ $* == *--failed* ]] && (( ${TEST_SYSTEMCTL_DOWN:-0} )) && exit 1
+[[ $* == *--user* ]] && (( ${TEST_USER_MANAGER_DOWN:-0} )) && exit 1
 case "$*" in
   "--failed --no-legend --plain") printf '%s' "${TEST_FAILED_UNITS:-}" ;;
   "--user --failed --no-legend --plain") printf '%s' "${TEST_FAILED_USER_UNITS:-}" ;;
@@ -217,6 +218,10 @@ fi
 grep -Fxq "FAIL  units            systemctl cannot list failed units" "$test_tmp/out" || fail "an unanswered systemctl is not a pass" "$(cat "$test_tmp/out")"
 grep -Fxq "FAIL  default-sink     the default sink is PipeWire's dummy output" "$test_tmp/out" || fail "a dummy sink is not a pass" "$(cat "$test_tmp/out")"
 pass "an unanswered systemctl and PipeWire's dummy sink fail"
+
+TEST_USER_MANAGER_DOWN=1 run_check && fail "a user manager that does not answer fails"
+grep -Fxq "FAIL  units            failed: user manager did not answer" "$test_tmp/out" || fail "an unanswered user manager is named" "$(cat "$test_tmp/out")"
+pass "a user manager that does not answer fails the units check"
 
 rm "$fixture/run/user/$uid/bus"
 run_check || fail "no user manager is not a failure" "$(cat "$test_tmp/out")"

@@ -154,11 +154,13 @@ if ! system_units=$(systemctl --failed --no-legend --plain 2>/dev/null); then
 else
   mapfile -t failed_units < <(awk 'NF { print $1 }' <<<"$system_units")
   detail="no failed system or user units"
-  if [[ -e $runtime/bus ]] && user_units=$(XDG_RUNTIME_DIR=$runtime systemctl --user --failed --no-legend --plain 2>/dev/null); then
+  if [[ ! -e $runtime/bus ]]; then
+    detail="no failed system units; no user manager to ask about user units"
+  elif user_units=$(XDG_RUNTIME_DIR=$runtime systemctl --user --failed --no-legend --plain 2>/dev/null); then
     mapfile -t failed_user_units < <(awk 'NF { print "user:" $1 }' <<<"$user_units")
     failed_units+=("${failed_user_units[@]}")
   else
-    detail="no failed system units; no user manager to ask about user units"
+    failed_units+=("user manager did not answer")
   fi
   if (( ${#failed_units[@]} )); then
     report FAIL units "failed: $(joined "${failed_units[@]}")"

@@ -39,6 +39,17 @@ sha256() {
   fi
 }
 
+# Only the host and path count: a query or fragment could carry anything.
+url_pinned() {
+  local url=$1 sha=$2
+  [[ $url != *[?#]* ]] || return 1
+  [[ $url =~ ^https://raw\.githubusercontent\.com/[^/]+/[^/]+/[0-9a-f]{40}/ ]] && return 0
+  [[ $url =~ ^https://github\.com/[^/]+/[^/]+/(raw|blob)/[0-9a-f]{40}/ ]] && return 0
+  [[ $url =~ ^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/[^/]+$ ]] && return 0
+  [[ $sha =~ ^[0-9a-f]{64}$ && $url =~ ^https://[^/]+/.*$sha ]] && return 0
+  return 1
+}
+
 if [[ ! -f $manifest ]]; then
   problem "artifacts.tsv is missing"
   manifest=/dev/null
@@ -72,20 +83,8 @@ while IFS=$'\t' read -r path bytes sha url extra || [[ -n $path ]]; do
   [[ $sha =~ ^[0-9a-f]{64}$ ]] || problem "$where: '$sha' is not a lowercase SHA-256"
   [[ -d $evidence/$(dirname "$path") ]] || problem "$where: $path belongs to no evidence record"
   [[ ! -e $evidence/$path ]] || problem "$where: $path is also committed; keep only the reference"
-  case $url in
-    https://raw.githubusercontent.com/*)
-      [[ $url =~ ^https://raw\.githubusercontent\.com/[^/]+/[^/]+/[0-9a-f]{40}/ ]] ||
-        problem "$where: GitHub raw URL is not pinned to a full commit: $url"
-      ;;
-    https://github.com/*/raw/* | https://github.com/*/blob/*)
-      [[ $url =~ ^https://github\.com/[^/]+/[^/]+/(raw|blob)/[0-9a-f]{40}/ ]] ||
-        problem "$where: GitHub URL is not pinned to a full commit: $url"
-      ;;
-    https://github.com/*/releases/download/*/*) ;;
-    https://*/*"$sha"*) ;;
-    https://*) problem "$where: URL is neither commit-pinned, a release asset, nor content-addressed: $url" ;;
-    *) problem "$where: URL must use https: $url" ;;
-  esac
+  url_pinned "$url" "$sha" ||
+    problem "$where: URL is not https at a full commit, a GitHub release asset or a path carrying the SHA-256: $url"
   if (( fetch )); then
     if curl -fsSL --retry 2 -o "$work/artifact" "$url"; then
       actual_bytes=$(wc -c <"$work/artifact" | tr -d ' ')

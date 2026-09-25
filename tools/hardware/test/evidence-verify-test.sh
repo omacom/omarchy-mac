@@ -49,7 +49,7 @@ pass "a text capture over 64 KiB is refused"
 reset_evidence
 sed -i.bak "s|/$commit/|/main/|" "$evidence/artifacts.tsv" && rm "$evidence/artifacts.tsv.bak"
 verify && fail "a branch URL is refused"
-grep -q "not pinned to a full commit" "$test_tmp/out" || fail "the unpinned URL is named" "$(cat "$test_tmp/out")"
+grep -q "URL is not https at a full commit" "$test_tmp/out" || fail "the unpinned URL is named" "$(cat "$test_tmp/out")"
 pass "an artifact URL on a branch is refused"
 
 reset_evidence
@@ -66,7 +66,9 @@ set_url() {
   mv "$evidence/artifacts.tsv.new" "$evidence/artifacts.tsv"
 }
 sha=$(file_sha256 "$artifact_source")
-for url in "http://example.com/$sha/state.tar.gz" "https://example.com/latest/state.tar.gz" "https://github.com/owner/repo/raw/main/state.tar.gz"; do
+for url in "http://example.com/$sha/state.tar.gz" "https://example.com/latest/state.tar.gz" "https://github.com/owner/repo/raw/main/state.tar.gz" \
+  "https://example.com/latest.tar.gz#$sha" "https://example.com/latest.tar.gz?sha=$sha" \
+  "https://github.com/owner/repo/issues?next=/releases/download/tag/state.tar.gz"; do
   set_url "$url"
   verify && fail "a movable URL is refused: $url"
 done
