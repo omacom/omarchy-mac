@@ -17,11 +17,15 @@ for entry in omarchy-provision-owner omarchy-system-factory-reset; do
   fi
   grep -q 'Required omarchy-mac-boot' "$work/error" || fail "missing package is diagnosed"
 done
-pass "Apple lifecycles fail closed without their boot package"
+grep -Fxq omarchy-mac-boot "$ROOT/install/omarchy-apple.packages" || fail "Apple fresh-install inputs carry the boot package"
+pass "Apple lifecycles fail closed without their boot package, which Apple installs carry"
 bash "$ROOT/packages/omarchy-mac/boot/install" "$work/stage"
 for entry in omarchy-provision-owner omarchy-system-factory-reset; do
   bash -c 'source "$1"' _ "$ROOT/bin/$entry"
 done
 pass "Apple lifecycles load the separately staged package"
-[[ ! -e $work/stage/etc && ! -e $work/stage/boot ]] || fail "staging does not change administrator or boot files"
-pass "boot helper staging owns vendor paths only"
+[[ ! -e $work/stage/boot ]] || fail "staging does not change boot files"
+while IFS= read -r -d '' file; do
+  [[ -e $ROOT/packages/omarchy-mac/boot/files/${file#"$work/stage/"} ]] || fail "staged ${file#"$work/stage"} is a shipped package file"
+done < <(find "$work/stage/etc" \( -type f -o -type l \) -print0)
+pass "boot package staging writes only its shipped configuration outside vendor paths"
