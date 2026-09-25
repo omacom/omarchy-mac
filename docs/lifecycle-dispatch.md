@@ -33,9 +33,9 @@ The set is fixed in the dispatcher; adding one is an upstream change. The operat
 | `reset-prepare` | Factory reset, before switching to the factory root | Stages the platform's boot state (unlock, command line, rebuilt boot files) for the factory root | required | ticket 34 |
 | `reset-verify` | Factory reset, before committing the switch | Proves the factory root boots on this boot chain (kernel, firmware and DTB coherence, loader hashes) | required | ticket 34 |
 | `reset-rollback` | Factory reset, when anything fails after `reset-prepare` | Restores the previous boot state | required | ticket 34 |
-| `update-preflight` | Update, before the package transaction | Refuses an update the platform can't boot afterwards | optional | ticket 35 |
-| `update-verify` | Update, after the package transaction | Verifies the boot chain boots the updated system. A failure blocks completion. | required | ticket 35 |
-| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | required | `omarchy-provision-owner`; tickets 35, 36 |
+| `update-preflight` | Update, before the keyring and package transaction | Refuses an update the platform can't boot afterwards. A failure stops the update. | optional | `omarchy-update-boot preflight` (`omarchy update`) |
+| `update-verify` | Update, after the last package step: the transaction, migrations, the post-update hook, AUR, mise and orphans | Read-only. Verifies the boot chain boots the updated system, whose new kernel may still wait for its reboot. A failure leaves the update unfinished: it exits non-zero and offers no reboot. | required | `omarchy-update-boot verify` (`omarchy update`) |
+| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | required | `omarchy-provision-owner`; ticket 36 |
 
 ## Platform registration
 
@@ -69,6 +69,13 @@ A dispatch point takes one of two shapes:
 - After a factory reset left Limine entries for another machine identity, `refresh_boot_entries` starts the menu over from the template (core), then runs `boot-rebuild` if the platform implements it, and `limine-update` otherwise.
 - Everything else stays upstream: the wizard, account and login, the journal, slot retirement, the proof that the staged key opens nothing, and cleanup.
 
+### Update (`bin/omarchy-update`)
+
+- `omarchy-update-boot preflight` runs after the dev checkout update and before the keyring and system packages change. A refusal stops the update like any failed step.
+- `omarchy-update-boot verify` runs after the last package step. When it fails, the update still checks its log, refreshes the update indicator and releases Stay Awake, then says the update is not finished and exits 1 without `omarchy-update-restart`, so no reboot is offered.
+- `omarchy-update-boot` resolves the operation as the user first and runs it with `sudo` only when it resolves to an entrypoint, so an update with nothing to run never asks for root. A failed resolution, such as a Mac without `omarchy-mac-boot`, fails the step with the dispatcher's message.
+- The update path rebuilds no boot file itself: package hooks do, and `update-verify` catches what they missed.
+
 ## Apple implementation
 
 `omarchy-mac-boot` implements the Apple operations. Draft #503 already moved the Apple boot code into `packages/omarchy-mac/boot/`, with sourced modules in `/usr/lib/omarchy-mac/boot` and commands in `/usr/bin`. Its modules become the implementation with small entrypoints around them:
@@ -81,8 +88,8 @@ A dispatch point takes one of two shapes:
 | `stage_luks_rekey_apple` in `lib/factory-reset.sh` | `reset-prepare` | Ticket 34 |
 | `rebuild_next_boot_apple` (factory-kernel coherence refusal, rebuild in the factory root, `verify_limine_hashes`) | `reset-prepare`, `reset-verify` | Ticket 34 |
 | mx-mac's reset rollback, not yet in #503 | `reset-rollback` | Ticket 34 |
-| `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning uses it now. Ticket 35 wires the update path. |
-| `omarchy-apple-silicon-boot-check` | `update-verify` | Ticket 35 |
+| `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning uses it now. |
+| `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` runs the check with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. On failure it says not to reboot and how to rebuild the boot files. |
 
 - **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #503 put them and are sourced by absolute path.
 - **Owner and recovery slots:** #503's `rekey_luks_apple` sequence folds into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`). Only its boot step is `provision-commit`.
@@ -106,6 +113,7 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
   - untrusted entrypoints
   - usage errors, and an undetermined platform
   - root ignoring fixture roots, `BASH_ENV` and exported functions
+- `test/shell.d/update-boot-verify-test.sh` runs `omarchy update` through the real dispatcher: no-ops and no root on x86, generic aarch64 and Qualcomm; on Apple, preflight before the packages, and `omarchy-mac-boot`'s real `update-verify` and boot check on a fixture Mac, where a wrong device tree, a stale m1n1 or a missing UKI fails the update without offering the reboot.
 - `test/shell.d/luks-rekey-journal-test.sh` runs owner provisioning through the real dispatcher:
   - the crash-and-resume matrix on x86 (Limine UKI path unchanged, no Mac entrypoint runs) and on Apple with a fake boot package
   - setup stopping before the owner form when the boot package is missing or not ready
