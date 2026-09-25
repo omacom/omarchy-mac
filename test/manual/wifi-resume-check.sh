@@ -87,11 +87,10 @@ if [[ ${1:-} != "before" && ${1:-} != "after" ]]; then
   echo "Usage: bash $0 before|after" >&2
   exit 2
 fi
-check "the Broadcom Wi-Fi interface is present" has_brcmfmac
-iface=$(brcmfmac_iface)
-
 case $1 in
   before)
+    check "the Broadcom Wi-Fi interface is present" has_brcmfmac
+    iface=$(brcmfmac_iface)
     check "the platform is Apple Silicon" apple_silicon
     lspci -nn | grep -E '14e4:(4425|4433|4434)' || true
     check "the add-on covers this Wi-Fi chip" /usr/lib/omarchy-mac/wifi-supported
@@ -113,15 +112,20 @@ case $1 in
   after)
     check "a cursor from the before step exists" test -s "$cursor_file"
     cursor=$(<"$cursor_file")
-    resume=$(latest_resume_cursor)
+    # journalctl --grep exits 1 when nothing matches; the next check reports it.
+    resume=$(latest_resume_cursor) || true
     check "the Mac resumed from sleep since the before step" test -n "$resume"
     check "resume recovery finished for the latest resume" wait_for recovery_finished
     journalctl -q --after-cursor "$resume" -u "$unit" -o cat
     check "resume recovery succeeded" recovery_succeeded
+    # A driver reload recreates the interface, so look it up only now.
+    check "the Broadcom Wi-Fi interface is present" wait_for has_brcmfmac
+    iface=$(brcmfmac_iface)
     check "$iface is connected" wait_for wifi_connected
-    check "traffic leaves through $iface" routed_over_wifi
-    check "the network is reachable" reachable
-    check "names resolve" getent hosts archlinux.org
+    # NetworkManager reports connected once either address family is up.
+    check "traffic leaves through $iface" wait_for routed_over_wifi
+    check "the network is reachable" wait_for reachable
+    check "names resolve" wait_for getent hosts archlinux.org
     rm -f "$cursor_file"
     ;;
 esac
