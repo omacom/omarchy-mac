@@ -17,8 +17,14 @@ if omarchy-cmd-missing snapper; then
   exit 127 # omarchy-update can use this to just ignore if snapper is not available
 fi
 
+# A snapshot boot came from Limine's menu, even when the snapshot's own root
+# predates Limine; Limine's restore hook then says why it cannot be restored.
 apple_grub() {
-  omarchy-hw-apple-silicon && ! { omarchy-cmd-present omarchy-mac-limine-active && omarchy-mac-limine-active; }
+  omarchy-hw-apple-silicon || return 1
+  if grep -Eq '(^|[[:space:]])rootflags=([^[:space:]]*,)?subvol=[^[:space:],]*/\.snapshots/[0-9]+/snapshot' "${OMARCHY_CMDLINE:-/proc/cmdline}" 2>/dev/null; then
+    return 1
+  fi
+  ! { omarchy-cmd-present omarchy-mac-limine-active && omarchy-mac-limine-active; }
 }
 
 case "$COMMAND" in

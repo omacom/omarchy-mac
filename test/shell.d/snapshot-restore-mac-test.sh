@@ -20,7 +20,7 @@ limine_mac_init "$tmp/mac"
 # sudo, snapper and the GRUB-era restore record themselves; the omarchy-mac-boot
 # commands are the package's own, with omarchy-mac-limine-active recorded.
 common=$tmp/common
-mkdir -p "$common" "$tmp/limine" "$tmp/hooks" "$tmp/no-hooks"
+mkdir -p "$common" "$tmp/limine" "$tmp/hooks/pre.d" "$tmp/hooks/post.d" "$tmp/no-hooks/pre.d" "$tmp/no-hooks/post.d"
 cat >"$common/sudo" <<'SH'
 #!/bin/bash
 echo "sudo $*" >>"$CALLS"
@@ -34,38 +34,72 @@ cat >"$common/omarchy-mac-limine-active" <<SH
 echo omarchy-mac-limine-active >>"\$CALLS"
 exec bash $(printf '%q' "$ROOT/packages/omarchy-mac/boot/bin/omarchy-mac-limine-active")
 SH
-# limine-snapper-restore as root runs limine-snapper-sync --restore, which runs
-# every pre hook first and stops the restore at one that exits 100 or more.
+# limine-snapper-restore as root runs limine-snapper-sync --restore: every pre
+# hook first, stopping at one that exits 100 or more; then the restore, which
+# makes @ the booted snapshot or, picked from its own list, LSS_PICK; then the
+# post hooks, where one that exits 100 or more keeps it from offering the reboot.
 cat >"$tmp/limine/limine-snapper-restore" <<'SH'
 #!/bin/bash
 export HOOK_CALLER=limine-snapper-restore HOOK_CMDLINE="--restore --no-mutex"
-for hook in "$HOOKS_DIR"/*; do
-  [[ -f $hook && -x $hook ]] || continue
-  rc=0
-  "$hook" || rc=$?
-  (( rc == 0 )) && continue
-  if (( rc >= 100 )); then
-    echo "ERROR: pre hook failed (fatal, exit code $rc): $hook" >&2
-    echo "Aborting limine-snapper-restore: pre hook failed"
-    exit 2
-  fi
-  echo "WARNING: pre hook failed (exit code $rc): $hook" >&2
-done
+run_hooks() {
+  local hook rc
+  for hook in "$HOOKS_DIR/$1.d"/*; do
+    [[ -f $hook && -x $hook ]] || continue
+    rc=0
+    "$hook" || rc=$?
+    (( rc == 0 )) && continue
+    if (( rc >= 100 )); then
+      echo "ERROR: $1 hook failed (fatal, exit code $rc): $hook" >&2
+      return 1
+    fi
+    echo "WARNING: $1 hook failed (exit code $rc): $hook" >&2
+  done
+}
+if ! run_hooks pre; then
+  echo "Aborting limine-snapper-restore: pre hook failed"
+  exit 2
+fi
+rm -rf "$OMARCHY_SNAPSHOT_TOP/@"
+cp -a "${LSS_PICK:-$BOOTED}" "$OMARCHY_SNAPSHOT_TOP/@"
+echo restored >"$OMARCHY_SNAPSHOT_RESTORE_LOCK"
 echo restored >>"$CALLS"
+if run_hooks post; then
+  echo "Restore complete. Reboot now? [Y/n]:"
+else
+  echo "Restore complete. Please reboot manually."
+fi
 SH
 chmod +x "$common"/* "$tmp/limine"/*
-ln -s "$ROOT/packages/omarchy-mac/boot/bin/omarchy-mac-snapshot-check" "$tmp/hooks/04-omarchy-mac-snapshot-check"
+ln -s "$ROOT/packages/omarchy-mac/boot/bin/omarchy-mac-snapshot-check" "$tmp/hooks/pre.d/04-omarchy-mac-snapshot-check"
+ln -s "$ROOT/packages/omarchy-mac/boot/bin/omarchy-mac-snapshot-check" "$tmp/hooks/post.d/99-omarchy-mac-snapshot-check"
+
+# Snapshot trees for the restore to put back: $2 is the kernel image, the rest
+# of the boot files are the fixture's.
+snapshot_root_tree() {
+  local tree=$1 modules
+  rm -rf "$tree"
+  mkdir -p "$tree/.snapshots/12"
+  cp -a "$mac_root/usr" "$tree/usr"
+  modules=$tree/usr/lib/modules/$mac_kver
+  printf '%s\n' "$2" >"$modules/vmlinuz"
+  printf 'linux-aurora\n' >"$modules/pkgbase"
+  : >"$modules/modules.dep"
+}
 
 snapshot_cmdline='root=UUID=r rw rootflags=subvol=/@/.snapshots/7/snapshot quiet'
+live_cmdline='root=UUID=r rw rootflags=subvol=@ quiet'
 
 # omarchy-snapshot restore on platform $1; $2 is "limine" when limine-snapper-sync
-# is installed, and $3 the directory of pre hooks it runs.
+# is installed, and $3 the directory of hooks it runs. TEST_CMDLINE is the
+# kernel command line, a boot of snapshot 7 unless set.
 run_restore() {
   local platform=$1 limine=$2 hooks=${3:-$tmp/no-hooks} path
   path=$tmp/$platform/bin:$common
   [[ $limine != limine ]] || path+=:$tmp/limine
   path+=:$ROOT/bin:$ROOT/packages/omarchy-mac/boot/bin
-  printf '%s\n' "$snapshot_cmdline" >"$tmp/cmdline"
+  printf '%s\n' "${TEST_CMDLINE:-$snapshot_cmdline}" >"$tmp/cmdline"
+  mkdir -p "$tmp/top"
+  [[ -d $tmp/booted ]] || snapshot_root_tree "$tmp/booted" "linux-aurora kernel $mac_kver"
   : >"$tmp/calls"
   set +e
   (
@@ -73,7 +107,8 @@ run_restore() {
     export PATH="$path:$PATH"
     export CALLS="$tmp/calls" HOOKS_DIR="$hooks" OMARCHY_PROC_ROOT="$tmp/$platform/proc" OMARCHY_CMDLINE="$tmp/cmdline"
     export OMARCHY_LIMINE_GATE="$mac_root/var/lib/omarchy/limine.enabled" OMARCHY_LIMINE_DEFAULT="$mac_root/etc/default/limine"
-    export OMARCHY_BOOT_DIR="$mac_root/boot"
+    export OMARCHY_BOOT_DIR="$mac_root/boot" BOOTED="$tmp/booted"
+    export OMARCHY_SNAPSHOT_TOP="$tmp/top" OMARCHY_SNAPSHOT_RESTORE_LOCK="$tmp/restore.lock"
     bash "$ROOT/bin/omarchy-snapshot" restore </dev/null
   ) >"$tmp/out" 2>"$tmp/err"
   status=$?
@@ -93,10 +128,18 @@ pass "x86 restores as before, without any Mac check"
 # A Mac that boots GRUB has limine-snapper-sync installed but not in use.
 limine_mac
 rm "$mac_root/var/lib/omarchy/limine.enabled"
-run_restore apple-silicon limine "$tmp/hooks"
+TEST_CMDLINE=$live_cmdline run_restore apple-silicon limine "$tmp/hooks"
 (( status == 0 )) && grep -Fxq 'sudo omarchy-system-snapshot-restore' "$tmp/calls" && ! grep -q 'limine-snapper-restore\|restored' "$tmp/calls" ||
   fail "a GRUB Mac restores with the subvolume swap, never limine-snapper-restore" "$(cat "$tmp/calls" "$tmp/err")"
 pass "a Mac that boots GRUB uses the GRUB-era restore"
+
+# A snapshot boot came from Limine's menu, even of a snapshot from before
+# Limine: that restore is Limine's, whose hook says why it cannot go ahead.
+run_restore apple-silicon limine "$tmp/hooks"
+(( status != 0 )) && grep -Fxq 'sudo limine-snapper-restore' "$tmp/calls" && ! grep -Fxq restored "$tmp/calls" &&
+  grep -Fq "Snapshot 7 was taken before Limine was activated on this Mac" "$tmp/err" ||
+  fail "a boot of a snapshot from before Limine is refused by Limine's restore hook" "$(cat "$tmp/calls" "$tmp/err")"
+pass "a boot of a snapshot from before Limine is told why it cannot be restored"
 
 # A Limine Mac booted into snapshot 7 from the menu: the x86 restore, which the
 # package's pre hook lets through when the snapshot matches the boot files.
@@ -119,6 +162,22 @@ grep -Fq "Snapshot 7 does not match this Mac's boot files, so it is not restored
   grep -Fq "A snapshot holds the root file system only" "$tmp/err" ||
   fail "the refusal says what differs and why" "$(cat "$tmp/err")"
 pass "a Limine Mac refuses a snapshot from before a kernel update, and explains"
+
+# Booted into snapshot 7, but another snapshot picked from limine-snapper-restore's
+# own list: the pre hook checked 7, so the post hook checks what came back.
+limine_mac
+snapshot_root_tree "$tmp/picked" "linux-aurora kernel 6.16.0-aurora0-ARCH"
+LSS_PICK=$tmp/picked run_restore apple-silicon limine "$tmp/hooks"
+grep -Fxq restored "$tmp/calls" && grep -Fq "Please reboot manually" "$tmp/out" && ! grep -Fq "Reboot now" "$tmp/out" ||
+  fail "a mismatched snapshot picked from the list is not offered the reboot" "$(cat "$tmp/calls" "$tmp/out" "$tmp/err")"
+grep -Fq "The restore put back a root this Mac's boot files do not match" "$tmp/err" &&
+  grep -Fq "Do not reboot yet" "$tmp/err" && grep -Fq "pick snapshot 12, the backup this restore just made" "$tmp/err" ||
+  fail "the post hook says what went wrong and how to undo it" "$(cat "$tmp/err")"
+snapshot_root_tree "$tmp/picked" "linux-aurora kernel $mac_kver"
+LSS_PICK=$tmp/picked run_restore apple-silicon limine "$tmp/hooks"
+(( status == 0 )) && grep -Fq "Reboot now" "$tmp/out" && grep -Fq "The restored root matches this Mac's boot files" "$tmp/out" ||
+  fail "a matching snapshot picked from the list is restored and offered the reboot" "$(cat "$tmp/out" "$tmp/err")"
+pass "a snapshot picked from limine-snapper-restore's list is checked after the restore"
 
 # The GRUB-era restore itself: refused on a Limine Mac before anything else,
 # while a GRUB Mac and x86 reach its usual checks.
