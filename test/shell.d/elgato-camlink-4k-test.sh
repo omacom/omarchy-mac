@@ -42,6 +42,8 @@ printf 'sudo %s\n' "$*" >>"$CALLS"
 [[ $1 != tee ]] || cat >/dev/null
 STUB
 
+# Stands in for fake_platform's uname, which cannot fake the kernel release;
+# only its proc trees are used below.
 cat >"$stub_bin/uname" <<'STUB'
 #!/bin/bash
 case ${1:-} in
