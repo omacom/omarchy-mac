@@ -18,9 +18,9 @@ Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=infinity
 ExecStart=/usr/lib/omarchy/initcpio/omarchy-mac-encrypt
-# Progress goes to the journal and the kernel log, never straight to the
-# console: on a Mac loglevel=0 keeps the splash clean, while a serial console
-# without "quiet" (the VM harness) still sees every line. A failure is shown
-# through Plymouth and left in /run/omarchy-mac-encrypt.failed.
-StandardOutput=journal+kmsg
-StandardError=journal+kmsg
+# Progress goes to the journal and on to the kernel log (kmsg), never straight
+# to the console: on a Mac loglevel=0 keeps the splash clean, while a serial
+# console without "quiet" (the VM harness) still sees every line. A failure is
+# shown through Plymouth and left in /run/omarchy-mac-encrypt.failed.
+StandardOutput=kmsg
+StandardError=kmsg

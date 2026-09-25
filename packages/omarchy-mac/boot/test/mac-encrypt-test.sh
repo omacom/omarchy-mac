@@ -38,7 +38,7 @@ grep -Fq 'After=systemd-udevd.service systemd-udev-trigger.service systemd-udev-
   grep -Fq 'TimeoutStartSec=infinity' "$UNIT" &&
   grep -Fxq 'ExecStart=/usr/lib/omarchy/initcpio/omarchy-mac-encrypt' "$UNIT" ||
   fail "the initrd unit matches v3 ordering (udev settle + vendorfw-initrd, before cryptsetup-pre/sysroot)"
-grep -Fxq 'StandardOutput=journal+kmsg' "$UNIT" && grep -Fxq 'StandardError=journal+kmsg' "$UNIT" &&
+grep -Fxq 'StandardOutput=kmsg' "$UNIT" && grep -Fxq 'StandardError=kmsg' "$UNIT" &&
   ! grep -Eq '^(TTYPath|StandardInput)=' "$UNIT" ||
   fail "the initrd unit logs to the journal and kmsg (serial harness), never the console"
 for binary in chroot grep mv cat mkdir chmod readlink stat sync date; do
@@ -136,6 +136,25 @@ grep -Fq 'dir=$mnt/var/lib/omarchy/mac-first-boot' "$SCRIPT" &&
   [[ $(grep -v '^[[:space:]]*#' "$SCRIPT") != *omarchy/image* ]] ||
   fail "a fresh image is the first-boot marker with its conversion token, never the image hardware queue a reset restores"
 echo 'ok - script, unit and drop-in match INTERFACES §5 T4a v3'
+
+# systemd ignores a setting it cannot parse and still exits 0, so any output
+# fails. Emulated containers cannot verify even a trivial unit; skip there.
+if command -v systemd-analyze >/dev/null; then
+  verify_root=$(mktemp -d)
+  install -D -m 755 "$SCRIPT" "$verify_root/usr/lib/omarchy/initcpio/omarchy-mac-encrypt"
+  install -D -m 644 "$UNIT" "$verify_root/usr/lib/systemd/system/omarchy-mac-encrypt.service"
+  printf '[Unit]\nDefaultDependencies=no\n[Service]\nType=oneshot\nExecStart=/usr/lib/omarchy/initcpio/omarchy-mac-encrypt\n' \
+    >"$verify_root/usr/lib/systemd/system/probe.service"
+  if systemd-analyze verify --man=no --root="$verify_root" "$verify_root/usr/lib/systemd/system/probe.service" >/dev/null 2>&1; then
+    verify_out=$(systemd-analyze verify --man=no --root="$verify_root" \
+      "$verify_root/usr/lib/systemd/system/omarchy-mac-encrypt.service" 2>&1) && [[ -z $verify_out ]] ||
+      fail "systemd-analyze verify accepts the initrd unit: $verify_out"
+    echo 'ok - systemd-analyze verify accepts the initrd unit'
+  else
+    echo 'ok - systemd-analyze cannot verify units here; unit verification not run'
+  fi
+  rm -rf "$verify_root"
+fi
 
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${OMARCHY_MAC_ENCRYPT_TEST_INNER:-0} != "1" ]]; then
   echo 'ok - source checks passed; disposable initramfs/block tests not run (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in)'
