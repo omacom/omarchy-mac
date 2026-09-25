@@ -208,6 +208,7 @@ Panel {
   }
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: "omarchy.network"
 
     function open() { root.open() }

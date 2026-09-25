@@ -175,6 +175,7 @@ Panel {
   }
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: "omarchy.power"
 
     function open() { root.open() }

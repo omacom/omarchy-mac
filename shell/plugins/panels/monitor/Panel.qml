@@ -218,6 +218,7 @@ Panel {
   }
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: "omarchy.monitor"
 
     function brightness(percent: string): string { return root.brightnessIpc(percent) }

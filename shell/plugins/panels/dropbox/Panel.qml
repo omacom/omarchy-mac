@@ -156,6 +156,7 @@ Panel {
   }
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: root.ipcTarget
     function open(): void { root.open() }
     function close(): void { root.close() }

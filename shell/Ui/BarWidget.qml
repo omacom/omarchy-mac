@@ -1,12 +1,17 @@
 import QtQuick
 import qs.Commons
 
-// Base item every bar widget extends. Codifies the three properties the
-// bar host injects into each widget slot:
+// Base item every bar widget extends. Codifies the properties the bar host
+// injects into each widget slot:
 //   bar         - the host Bar instance (foreground/background/run/etc).
 //   moduleName  - widget's canonical id, used by the host registry to look
 //                 up settings and to disambiguate inline IPC routes.
 //   settings    - per-widget overrides read from shell.json's layout entry.
+//   screen      - which connected screen this instance's bar is on (the bar
+//                 is mounted once per screen). A widget that owns an
+//                 IpcHandler directly should gate it with
+//                 Util.isPrimaryScreen(screen) so only one screen's copy
+//                 constructs it; the rest already reach it via broadcast().
 //
 // Widgets are free to add their own properties, signals, and child items.
 Item {
@@ -15,6 +20,7 @@ Item {
   property QtObject bar: null
   property string moduleName: ""
   property var settings: ({})
+  property var screen: null
 
   // Bar geometry, lifted off the host. Widgets read these constantly to pick
   // between horizontal/vertical layouts; defining them on the base keeps the

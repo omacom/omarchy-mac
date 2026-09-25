@@ -14,6 +14,11 @@ Item {
   property var settings: ({})
   property string ipcTarget: ""
   property bool manageIpc: true
+  // Injected by Bar.qml's ModuleSlot.injectProps() for anything mounted
+  // through the bar. Bar.qml renders once per connected screen, so without
+  // this every module's IpcHandler would be constructed once per screen
+  // too -- see Util.isPrimaryScreen().
+  property var screen: null
   property alias controller: panelController
   property bool popoutSwitching: false
   property bool popoutSwitchClosing: false
@@ -46,7 +51,7 @@ Item {
   }
 
   IpcHandler {
-    enabled: root.manageIpc && root.ipcTarget !== ""
+    enabled: root.manageIpc && root.ipcTarget !== "" && Util.isPrimaryScreen(root.screen)
     target: root.ipcTarget
 
     function open(): void { root.open() }

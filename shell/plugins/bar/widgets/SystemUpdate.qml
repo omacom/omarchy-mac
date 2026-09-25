@@ -25,6 +25,7 @@ BarWidget {
   implicitHeight: button.implicitHeight
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: "omarchy.system-update"
 
     function refresh(): void {

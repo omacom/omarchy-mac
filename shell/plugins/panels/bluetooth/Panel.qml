@@ -638,6 +638,7 @@ Panel {
   }
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: "omarchy.bluetooth"
 
     function open() { root.open() }

@@ -131,6 +131,7 @@ BarWidget {
   }
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: "omarchy.clock"
 
     function refresh(): void { root.broadcast("refresh") }

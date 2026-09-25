@@ -13,6 +13,11 @@ BarWidget {
     if ("settings" in target) target.settings = root.settings
     if ("anchorItem" in target) target.anchorItem = button
     if ("hostWidget" in target) target.hostWidget = root
+    // The nested Panel, not this BarWidget, owns the IpcHandler (target:
+    // root.ipcTarget in Panel.qml) -- it needs the real screen forwarded
+    // the same way bar/settings already are, or Util.isPrimaryScreen()
+    // would see it as permanently unset rather than per-screen-deduplicated.
+    if ("screen" in target) target.screen = root.screen
   }
 
   function refresh() {
@@ -52,6 +57,7 @@ BarWidget {
 
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
+  onScreenChanged: injectPanel()
 
   Loader {
     id: panelLoader

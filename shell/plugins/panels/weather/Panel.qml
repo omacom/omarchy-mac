@@ -474,6 +474,7 @@ Panel {
   }
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: root.ipcTarget
 
     function open(): void { root.openFromHotkey() }

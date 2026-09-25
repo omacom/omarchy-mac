@@ -17,6 +17,24 @@ QtObject {
     return clamp(value, 0, 1)
   }
 
+  // Bar.qml mounts every module once per connected screen (Variants over
+  // Quickshell.screens), so a module whose IpcHandler is unconditionally
+  // constructed ends up with one competing registration per screen — only
+  // one wins, and every other screen's calls silently no-op. Gate that
+  // construction to a single, deterministic instance with this.
+  //
+  // `screen` is injected by ModuleSlot.injectProps() *after* the module
+  // (and its IpcHandler) already exists -- Loader.onLoaded necessarily
+  // fires post-construction. Defaulting an unset screen to "primary" was
+  // tried first and does not work: every instance is briefly "primary"
+  // during that gap, all of them race to register, and IpcHandler does not
+  // retry once that initial race is lost -- confirmed live, reproducibly.
+  // Defaulting to false instead means nothing registers until its real
+  // screen is known, so exactly one instance ever wins, deterministically.
+  function isPrimaryScreen(screen) {
+    return screen !== null && screen === Quickshell.screens[0]
+  }
+
   function wheelSteps(accumulator, delta) {
     // Some mouse/compositor combinations scale a single notch well beyond
     // Qt's conventional 120 units. Keep one event to one step while still

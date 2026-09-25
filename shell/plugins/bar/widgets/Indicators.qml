@@ -166,6 +166,7 @@ BarWidget {
     : Math.max(activeHorizontalBlock.implicitHeight, inactiveHorizontalArea.implicitHeight)
 
   IpcHandler {
+    enabled: Util.isPrimaryScreen(root.screen)
     target: "omarchy.indicators"
 
     function refresh(): void {
