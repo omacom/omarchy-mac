@@ -28,7 +28,7 @@ install_implementation() {
   for operation in "${operations[@]}"; do
     cat >"$root/$implementation/$operation" <<SH
 #!/bin/bash
-printf '%s %s\n' "$operation" "\$*" >>"$tmp/ran"
+{ printf '%s' "$operation"; printf ' %q' "\$@"; echo; } >>"$tmp/ran"
 env >"$tmp/env"
 [[ ! -e $tmp/fail-with ]] || exit "\$(cat "$tmp/fail-with")"
 SH
@@ -73,7 +73,7 @@ export CALLER_SECRET=leak
 for operation in "${operations[@]}"; do
   rm -f "$tmp/ran"
   on apple-silicon "$full" "$operation" first "second arg" || fail "apple: $operation runs its entrypoint"
-  [[ $(cat "$tmp/ran") == "$operation first second arg" ]] || fail "apple: $operation passes its arguments" "$(cat "$tmp/ran")"
+  [[ $(cat "$tmp/ran") == "$operation first second\\ arg" ]] || fail "apple: $operation passes its arguments" "$(cat "$tmp/ran")"
   ! grep -q CALLER_SECRET "$tmp/env" || fail "apple: $operation does not pass the caller's environment" "$(cat "$tmp/env")"
   grep -qx 'PATH=/usr/local/sbin:/usr/local/bin:/usr/bin' "$tmp/env" || fail "apple: $operation runs with a fixed PATH" "$(cat "$tmp/env")"
   resolved=$(on apple-silicon "$full" --resolve "$operation") || fail "apple: $operation resolves"
@@ -170,9 +170,12 @@ fi
   fail "an undetermined platform runs nothing and says why" "$output"
 pass "an undetermined platform fails closed"
 
-if output=$(on apple-silicon "relative/root" provision-commit 2>&1); then
+rm -f "$tmp/ran"
+if output=$(cd "$tmp" && on apple-silicon full provision-commit 2>&1); then
   fail "a relative fixture root is refused"
 fi
+[[ ! -e $tmp/ran && $output == "Error: OMARCHY_LIFECYCLE_ROOT must be an absolute path" ]] ||
+  fail "a relative fixture root runs nothing and says why" "$output"
 pass "a relative fixture root is refused"
 
 # Root resolves only the fixed /usr/lib path, whatever fixture root its

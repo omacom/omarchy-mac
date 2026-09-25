@@ -15,10 +15,21 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-require_platform_fixtures "provisioning through lifecycle dispatch"
 fake_platform "$tmp/x86" generic
 fake_platform "$tmp/apple" apple-silicon
 platform=x86
+
+# Root's dispatcher ignores the fixtures and sees this machine, which stands in
+# for x86 only where no boot package is registered.
+platforms=(x86 apple)
+if (( EUID == 0 )); then
+  if [[ $("$ROOT/bin/omarchy-hw-platform") == "apple-silicon" ]]; then
+    pass "running as root on Apple Silicon, where dispatch ignores fixtures; skipping"
+    exit 0
+  fi
+  platforms=(x86)
+  pass "running as root, where dispatch ignores fixtures; skipping the Apple runs"
+fi
 runtime=$ROOT
 
 mac_boot=$tmp/lifecycle/usr/lib/omarchy/mac-boot
@@ -363,7 +374,7 @@ matrix=()
 for backend in "${backends[@]}"; do
   matrix+=("x86 $backend")
 done
-matrix+=("apple fake")
+[[ " ${platforms[*]} " != *" apple "* ]] || matrix+=("apple fake")
 
 for run_spec in "${matrix[@]}"; do
   read -r platform backend <<<"$run_spec"
@@ -505,31 +516,33 @@ run provision "$owner_password" || fail "unencrypted provisioning finishes" "$(c
   fail "unencrypted provisioning skips the re-key"
 pass "provisioning without a staged key or auto-unlock skips the re-key"
 
-# Apple: a failed boot-package commit keeps the unattended unlock and every slot.
-platform=apple
-fixture
-touch "$tmp/rebuild-fail"
-if run rekey "$owner_password"; then fail "apple: a failed boot-package commit fails the attempt"; fi
-unlock_files_present || fail "apple: a failed commit keeps the boot-time unlock"
-[[ -n $(opens "$staged_key") && -n $(opens "$seller_key") ]] || fail "apple: a failed commit retires no slot"
-rm "$tmp/rebuild-fail"
-run rekey "$owner_password" || fail "apple: the retry after a failed commit completes" "$(cat "$tmp/log")"
-assert_finished "apple: retry after a failed commit" "$owner_password"
-pass "apple: a failed boot-package commit keeps the unattended unlock and every slot for the retry"
+if [[ " ${platforms[*]} " == *" apple "* ]]; then
+  # Apple: a failed boot-package commit keeps the unattended unlock and every slot.
+  platform=apple
+  fixture
+  touch "$tmp/rebuild-fail"
+  if run rekey "$owner_password"; then fail "apple: a failed boot-package commit fails the attempt"; fi
+  unlock_files_present || fail "apple: a failed commit keeps the boot-time unlock"
+  [[ -n $(opens "$staged_key") && -n $(opens "$seller_key") ]] || fail "apple: a failed commit retires no slot"
+  rm "$tmp/rebuild-fail"
+  run rekey "$owner_password" || fail "apple: the retry after a failed commit completes" "$(cat "$tmp/log")"
+  assert_finished "apple: retry after a failed commit" "$owner_password"
+  pass "apple: a failed boot-package commit keeps the unattended unlock and every slot for the retry"
 
-# Apple: an inherited decision never replaces resolving who owns the unlock.
-fixture
-rm -f "$tmp/limine-ran"
-export UNLOCK_OWNER=limine
-run provision "$owner_password" || fail "apple: setup completes with UNLOCK_OWNER in its environment" "$(cat "$tmp/log")"
-unset UNLOCK_OWNER
-assert_provisioned "apple: UNLOCK_OWNER inherited" "$owner_password"
-[[ ! -e $tmp/limine-ran ]] || fail "apple: an inherited UNLOCK_OWNER does not select the Limine path"
-pass "apple: an inherited UNLOCK_OWNER is ignored"
+  # Apple: an inherited decision never replaces resolving who owns the unlock.
+  fixture
+  rm -f "$tmp/limine-ran"
+  export UNLOCK_OWNER=limine
+  run provision "$owner_password" || fail "apple: setup completes with UNLOCK_OWNER in its environment" "$(cat "$tmp/log")"
+  unset UNLOCK_OWNER
+  assert_provisioned "apple: UNLOCK_OWNER inherited" "$owner_password"
+  [[ ! -e $tmp/limine-ran ]] || fail "apple: an inherited UNLOCK_OWNER does not select the Limine path"
+  pass "apple: an inherited UNLOCK_OWNER is ignored"
+fi
 
 # After a factory reset left entries for another machine identity, the menu
 # starts over on both; the boot package rebuilds on Apple, limine-update on x86.
-for platform in x86 apple; do
+for platform in "${platforms[@]}"; do
   fixture
   rm -rf "$tmp/provisioning/luks-key" "$tmp/etc" "$tmp/boot" "$tmp/limine-ran" "$tmp/mac-boot-ran"
   touch "$tmp/stale"
@@ -556,40 +569,42 @@ run setup "$owner_password" || fail "x86: setup reaches the owner form without a
   fail "x86: no Mac boot entrypoint runs before the owner form" "$(cat "$tmp/screen")"
 pass "x86: the platform check before the owner form is a no-op"
 
-platform=apple
-fixture
-run setup "$owner_password" && grep -qx 'owner form' "$tmp/screen" ||
-  fail "apple: setup reaches the owner form with the boot package ready" "$(cat "$tmp/output")"
-fixture
-touch "$tmp/prepare-fail"
-if run setup "$owner_password"; then fail "apple: setup stops when the boot package is not ready"; fi
-! grep -qx 'owner form' "$tmp/screen" || fail "apple: the owner is asked nothing when the boot package is not ready"
-grep -q 'The boot partition is not mounted.' "$tmp/screen" && grep -q 'The boot partition is not mounted.' "$tmp/log" ||
-  fail "apple: the boot package's reason reaches the screen and the log" "$(cat "$tmp/screen" "$tmp/log" 2>/dev/null)"
-pass "apple: setup stops before the owner form when the boot package is not ready"
+if [[ " ${platforms[*]} " == *" apple "* ]]; then
+  platform=apple
+  fixture
+  run setup "$owner_password" && grep -qx 'owner form' "$tmp/screen" ||
+    fail "apple: setup reaches the owner form with the boot package ready" "$(cat "$tmp/output")"
+  fixture
+  touch "$tmp/prepare-fail"
+  if run setup "$owner_password"; then fail "apple: setup stops when the boot package is not ready"; fi
+  ! grep -qx 'owner form' "$tmp/screen" || fail "apple: the owner is asked nothing when the boot package is not ready"
+  grep -q 'The boot partition is not mounted.' "$tmp/screen" && grep -q 'The boot partition is not mounted.' "$tmp/log" ||
+    fail "apple: the boot package's reason reaches the screen and the log" "$(cat "$tmp/screen" "$tmp/log" 2>/dev/null)"
+  pass "apple: setup stops before the owner form when the boot package is not ready"
 
-# Apple without omarchy-mac-boot: setup stops before the owner form naming the
-# package, and a worker that got past it anyway never finishes while any part
-# of the staged unlock remains.
-mv "$mac_boot" "$tmp/mac-boot.off"
-fixture
-rm -f "$tmp/limine-ran"
-if run setup "$owner_password"; then fail "apple: setup refuses without the boot package"; fi
-! grep -qx 'owner form' "$tmp/screen" || fail "apple: the owner is asked nothing without the boot package"
-grep -q 'provision-prepare on apple-silicon needs omarchy-mac-boot' "$tmp/screen" ||
-  fail "apple: the missing boot package is named on the screen" "$(cat "$tmp/screen" 2>/dev/null)"
-grep -q '/usr/lib/omarchy/mac-boot/provision-prepare' "$tmp/log" || fail "apple: the log names the missing entrypoint" "$(cat "$tmp/log")"
-if run provision "$owner_password"; then fail "apple: provisioning without the boot package fails"; fi
-[[ -e $tmp/provisioning/pending && -f $tmp/provisioning/luks-key ]] && unlock_files_present ||
-  fail "apple: provisioning without the boot package keeps its state and the staged unlock"
-[[ -n $(opens "$staged_key") && -n $(opens "$seller_key") ]] || fail "apple: provisioning without the boot package retires no slot"
-fixture
-rm "$tmp/provisioning/luks-key"
-if run provision "$owner_password"; then fail "apple: a leftover boot-partition unlock without the boot package fails provisioning"; fi
-[[ -e $tmp/provisioning/pending ]] && unlock_files_present || fail "apple: a leftover boot-partition unlock keeps provisioning pending"
-[[ ! -e $tmp/limine-ran ]] || fail "apple: the Limine UKI path is no fallback for a missing boot package"
-mv "$tmp/mac-boot.off" "$mac_boot"
-pass "apple: without omarchy-mac-boot setup stops naming it, and the worker fails closed"
+  # Apple without omarchy-mac-boot: setup stops before the owner form naming the
+  # package, and a worker that got past it anyway never finishes while any part
+  # of the staged unlock remains.
+  mv "$mac_boot" "$tmp/mac-boot.off"
+  fixture
+  rm -f "$tmp/limine-ran"
+  if run setup "$owner_password"; then fail "apple: setup refuses without the boot package"; fi
+  ! grep -qx 'owner form' "$tmp/screen" || fail "apple: the owner is asked nothing without the boot package"
+  grep -q 'provision-prepare on apple-silicon needs omarchy-mac-boot' "$tmp/screen" ||
+    fail "apple: the missing boot package is named on the screen" "$(cat "$tmp/screen" 2>/dev/null)"
+  grep -q '/usr/lib/omarchy/mac-boot/provision-prepare' "$tmp/log" || fail "apple: the log names the missing entrypoint" "$(cat "$tmp/log")"
+  if run provision "$owner_password"; then fail "apple: provisioning without the boot package fails"; fi
+  [[ -e $tmp/provisioning/pending && -f $tmp/provisioning/luks-key ]] && unlock_files_present ||
+    fail "apple: provisioning without the boot package keeps its state and the staged unlock"
+  [[ -n $(opens "$staged_key") && -n $(opens "$seller_key") ]] || fail "apple: provisioning without the boot package retires no slot"
+  fixture
+  rm "$tmp/provisioning/luks-key"
+  if run provision "$owner_password"; then fail "apple: a leftover boot-partition unlock without the boot package fails provisioning"; fi
+  [[ -e $tmp/provisioning/pending ]] && unlock_files_present || fail "apple: a leftover boot-partition unlock keeps provisioning pending"
+  [[ ! -e $tmp/limine-ran ]] || fail "apple: the Limine UKI path is no fallback for a missing boot package"
+  mv "$tmp/mac-boot.off" "$mac_boot"
+  pass "apple: without omarchy-mac-boot setup stops naming it, and the worker fails closed"
+fi
 
 # A boot package that implements only one of the commit/verify pair owns
 # nothing: provisioning fails closed rather than mixing it with the Limine path.
@@ -605,7 +620,7 @@ fixture
 rm -f "$tmp/limine-ran" "$tmp/half-ran"
 if run provision "$owner_password"; then fail "a half-implemented unlock fails provisioning"; fi
 [[ -e $tmp/provisioning/pending ]] && unlock_files_present || fail "a half-implemented unlock keeps provisioning pending"
-! grep -qv -- '--resolve' "$tmp/half-ran" && [[ ! -e $tmp/limine-ran ]] ||
+[[ -s $tmp/half-ran && ! -e $tmp/limine-ran ]] && ! grep -qv -- '--resolve' "$tmp/half-ran" ||
   fail "a half-implemented unlock runs neither the platform nor the Limine path" "$(cat "$tmp/half-ran")"
 runtime=$ROOT
 pass "a boot package implementing only half of the unlock pair fails closed"
