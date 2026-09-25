@@ -968,9 +968,12 @@ scenario_update() {
   serial_type "$owner_password"
   console_login update "$owner_password" || fail "update: $owner_user could not log in with the password setup gave"
   guest_run "update: installed runtime" "pacman -Q --color never omarchy omarchy-settings omarchy-mac omarchy-mac-boot"
-  before=$(grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' <<<"$guest_output" | sort)
-  # The reboot the update offers is declined: the guest is stopped and booted again below.
-  replies=("\[sudo\] password for [a-z]+:=$owner_password" "Reboot\?=n" "Ready\?=n")
+  before=$(grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' <<<"$guest_output" | sort) || true
+  [[ -n $before ]] || fail "update: pacman -Q lists no runtime package before the update (see ${log##*/})"
+  # The reboot the update offers is declined, and so is removing orphans (an
+  # owner's choice that -y does not make): the guest is stopped and booted again below.
+  replies=("\[sudo\] password for [a-z]+:=$owner_password" "Reboot\?=n" "Ready\?=n"
+    "Remove [0-9]+ orphaned package\(s\)\?=n")
   guest_wait=$update_timeout guest_run "update: omarchy update -y" "omarchy update -y" "${replies[@]}"
   ((guest_status == 0)) || fail "update: omarchy update -y exited $guest_status (see ${log##*/})"
   [[ $guest_output == *"boot files match"* ]] ||
@@ -981,7 +984,8 @@ scenario_update() {
   upgraded=$(grep -acE 'upgrading [^ ]+\.\.\.|\( *[0-9]+/[0-9]+\) upgrading ' "$log") || true
   ok "update: omarchy update -y upgraded the packages ($upgraded upgrade steps), verified the boot files and finished"
   guest_run "update: installed runtime" "pacman -Q --color never omarchy omarchy-settings omarchy-mac omarchy-mac-boot"
-  after=$(grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' <<<"$guest_output" | sort)
+  after=$(grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' <<<"$guest_output" | sort) || true
+  [[ -n $after ]] || fail "update: pacman -Q lists no runtime package after the update (see ${log##*/})"
   echo "runtime_before_update=$(paste -sd, - <<<"$before")" >>"$evidence_dir/run.txt"
   echo "runtime_after_update=$(paste -sd, - <<<"$after")" >>"$evidence_dir/run.txt"
   # A test image keeps the set's runtime through the upgrade (image-builder's test_image_pin).
