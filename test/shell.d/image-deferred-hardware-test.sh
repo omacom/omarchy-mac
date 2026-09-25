@@ -236,8 +236,8 @@ output=$(first_boot "$root") || fail "the first boot finishes the deferred hardw
 [[ ! -e $root/var/lib/omarchy/image/target && -f $root/var/lib/omarchy/image/target.booted ]] ||
   fail "the first boot retires the build manifest"
 [[ ! -e $root/var/lib/omarchy/image/deferred-steps ]] || fail "the first boot empties the queue"
-[[ ! -e $root/etc/systemd/system/$unit_name && ! -L $root/etc/systemd/system/multi-user.target.wants/$unit_name ]] ||
-  fail "the first boot disarms its service"
+[[ ! -L $root/etc/systemd/system/multi-user.target.wants/$unit_name && -f $root/etc/systemd/system/$unit_name ]] ||
+  fail "the first boot disables its service and keeps the unit, so a start job already queued is skipped rather than failed"
 [[ $(cat "$REBUILDS") == "mkinitcpio -P" ]] ||
   fail "the first boot rebuilds the initramfs once after a leaf changed it" "$(cat "$REBUILDS" 2>/dev/null)"
 [[ ! -e $root/var/lib/omarchy/image/initramfs-inputs ]] || fail "the first boot clears the rebuild it owed"
@@ -282,7 +282,7 @@ fi
   fail "the failed step and those after it stay queued" "$(queue_of "$root")"
 [[ -f $root/var/lib/omarchy/image/target.booted && ! -e $root/var/lib/omarchy/image/target ]] ||
   fail "the machine stops being an image build once its first boot starts"
-[[ -e $root/etc/systemd/system/$unit_name && -e $root/var/lib/omarchy/image/initramfs-inputs && ! -e $REBUILDS ]] ||
+[[ -L $root/etc/systemd/system/multi-user.target.wants/$unit_name && -e $root/var/lib/omarchy/image/initramfs-inputs && ! -e $REBUILDS ]] ||
   fail "the service stays armed and the initramfs rebuild stays owed until the queue is empty"
 pass "a failed step stays queued with the steps after it"
 
@@ -292,7 +292,7 @@ output=$(first_boot "$root") || fail "the next boot finishes the deferred hardwa
 [[ $(cat "$RUNS") == $'b\nc' ]] || fail "the next boot resumes at the failed step" "$(cat "$RUNS")"
 [[ $(cat "$REBUILDS") == "limine-mkinitcpio " ]] ||
   fail "the next boot rebuilds the initramfs the earlier boot owed, through Limine when present" "$(cat "$REBUILDS" 2>/dev/null)"
-[[ ! -e $root/var/lib/omarchy/image/deferred-steps && ! -e $root/etc/systemd/system/$unit_name ]] ||
+[[ ! -e $root/var/lib/omarchy/image/deferred-steps && ! -L $root/etc/systemd/system/multi-user.target.wants/$unit_name ]] ||
   fail "the next boot disarms the service"
 pass "the next boot resumes at the failed step and finishes"
 

@@ -445,8 +445,8 @@ root_real=$(realpath -m "${root:-/}")
 [[ $root_real == / ]] || m1n1_file=${m1n1_file#"$root_real"}
 grep -Fxq -- "$m1n1_file" "$workdir/bootloader-files" || fail "M1N1 $M1N1 is not owned by $bootloader"
 
-# Split and globbed the way update-m1n1's unquoted $DTBS is, in the collation
-# pacman ran it under: C for omarchy update, else this session's locale.
+# Split and globbed the way update-m1n1's unquoted $DTBS is, in the C collation
+# /etc/default/update-m1n1 pins.
 dtb_list() {
   local LC_ALL=$1 words word matches
   set -f
@@ -494,12 +494,37 @@ build_image() {
 }
 
 build_image "$workdir/boot.bin" "${dtbs[@]}"
-expected=("$workdir/boot.bin")
-mapfile -t session_dtbs < <(dtb_list "${LC_ALL:-${LC_COLLATE:-${LANG:-C}}}" 2>/dev/null)
-if [[ ${session_dtbs[*]} != "${dtbs[*]}" ]]; then
-  build_image "$workdir/boot-session.bin" "${session_dtbs[@]}"
-  expected+=("$workdir/boot-session.bin")
-fi
+
+# The device trees in IMAGE from byte OFFSET on, one per flattened device tree
+# header (magic, then its big-endian total size), named by the expected device
+# tree with the same bytes. Fails unless they are exactly the expected ones,
+# each as often, in whatever order.
+dtb_order() {
+  local image=$1 offset=$2 end magic size hash dtb
+  local -A by_hash=() left=()
+  for dtb in "${dtbs[@]}"; do
+    hash=$(sha256sum <"$root$dtb")
+    hash=${hash%% *}
+    by_hash[$hash]=$dtb
+    left[$hash]=$(( ${left[$hash]:-0} + 1 ))
+  done
+  end=$(stat -c %s "$image")
+  while (( offset + 8 <= end )); do
+    magic=$(od -An -tx1 -j "$offset" -N4 "$image" | tr -d ' \n')
+    [[ $magic == d00dfeed ]] || break
+    size=$(od -An -tu4 --endian=big -j $(( offset + 4 )) -N4 "$image" | tr -d ' \n')
+    (( size >= 8 && offset + size <= end )) || return 1
+    hash=$(dd if="$image" iflag=skip_bytes,count_bytes skip="$offset" count="$size" bs=64K status=none | sha256sum)
+    hash=${hash%% *}
+    (( ${left[$hash]:-0} > 0 )) || return 1
+    left[$hash]=$(( left[$hash] - 1 ))
+    printf '%s\n' "${by_hash[$hash]}"
+    offset=$(( offset + size ))
+  done
+  for hash in "${!left[@]}"; do
+    (( left[$hash] == 0 )) || return 1
+  done
+}
 
 # The system ESP, found the way asahi-scripts' mount_sys_esp finds it. It is
 # only ever read through a mount that is read-only from the start: a fresh one
@@ -549,10 +574,21 @@ report_running_release() {
     echo "Apple Silicon boot check: running $kernel $kver; installed boot files match"
   fi
 }
-for image in "${expected[@]}"; do
-  ! sudo cmp -s "$image" "$mountpoint/m1n1/boot.bin" || {
+if sudo cmp -s "$workdir/boot.bin" "$mountpoint/m1n1/boot.bin"; then
+  report_running_release
+  exit 0
+fi
+# An image update-m1n1 wrote before the C locale was pinned holds the same
+# device trees in its caller's collation: rebuild it in the order it holds
+# them and compare again.
+sudo cat "$mountpoint/m1n1/boot.bin" >"$workdir/esp-boot.bin" ||
+  fail "cannot read m1n1/boot.bin on the system ESP ($esp)"
+if esp_order=$(dtb_order "$workdir/esp-boot.bin" "$(stat -L -c %s "$root$M1N1")") && [[ -n $esp_order ]]; then
+  mapfile -t esp_dtbs <<<"$esp_order"
+  build_image "$workdir/boot-esp-order.bin" "${esp_dtbs[@]}"
+  if cmp -s "$workdir/boot-esp-order.bin" "$workdir/esp-boot.bin"; then
     report_running_release
     exit 0
-  }
-done
+  fi
+fi
 fail "m1n1/boot.bin on the system ESP ($esp) is not m1n1, $kernel $kver's device trees, U-Boot and $CONFIG as installed; run sudo update-m1n1, then omarchy update"

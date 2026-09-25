@@ -120,3 +120,7 @@ Landed together with the generic re-key journal (#517) and the merge blockers fr
 - `install/omarchy-apple.packages` names `omarchy-mac-boot`, which owner setup and factory reset require on Apple Silicon.
 
 Merge criteria are the runtime suite, the boot package tests and these blockers. The complete candidate transaction and VM runs move to the signed candidate set and the first convergence install on the M2 Max; an M3 install is out of scope for the convergence.
+
+## Deferred hardware setup at first boot (2026-09-25)
+
+First boot no longer sources the Limine leaf. Once the Mac's package keyring exists it runs `omarchy-provision-hardware`, which works through the image's own queue in `/var/lib/omarchy/image/deferred-steps` (see `docs/file-layout.md`); `omarchy-provision-hardware.service` is ordered after first boot. `mac-first-boot/deferred-steps` stays the initramfs's fresh-image conversion token with the same contents, and a fresh image (token present) must also carry the build manifest `/var/lib/omarchy/image/target` (`target.booted` on a retry). The conversion gate never reads the image queue: `@factory` keeps that queue, so a factory reset restores it next to a re-armed first-boot marker. The reset also drops the conversion token from `@factory` and the next root.
