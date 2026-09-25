@@ -130,12 +130,17 @@ omarchy-update
   │  installed but unconfigured fails the snapshot loudly, pointing at
   │  install/config/snapper.sh, and the update continues without one)
   ├─ omarchy-update-stay-awake start
-  ├─ run package updates, migrations, hooks, and log analysis
+  ├─ omarchy-update-boot preflight
+  │    └─ the platform's boot package can refuse the update before packages change
+  ├─ run package updates, migrations and hooks
+  ├─ omarchy-update-boot verify
+  │    └─ the platform's boot package proves the boot files boot the updated system
+  ├─ log analysis
   ├─ omarchy-update-status
   │    └─ refresh or clear the shell update indicator
   ├─ omarchy-update-stay-awake stop
   │    └─ release the sleep inhibitor and restore shell idle state, if changed
-  └─ omarchy-update-restart
+  └─ omarchy-update-restart, only when the boot files were verified
 ```
 
 Important behavior:
@@ -152,6 +157,7 @@ Important behavior:
   `omarchy-migrate` after pacman finishes.
 - A failure should leave enough output in `/tmp/omarchy-update.log` and the
   terminal transcript to debug.
+- Both boot checks are [lifecycle dispatch](lifecycle-dispatch.md) operations (`update-preflight`, `update-verify`), no-ops on platforms whose boot chain needs no handling of its own, x86 included. A refused preflight stops the update like any failed step. A failed verification lets the update finish its remaining reporting steps, then it exits non-zero without `omarchy-update-restart`: the update is not finished and offers no reboot. On Apple Silicon, `omarchy-mac-boot` verifies the kernel and initramfs in `/boot`, m1n1 stage 2 with the kernel's device trees and U-Boot on the system ESP, and Limine's loader, menu and UKI on that ESP.
 
 ## Path 2: direct `sudo pacman -Syu` attempt
 
@@ -291,6 +297,7 @@ scripts.
 | `omarchy-update-mise` | Runs `MISE_MINIMUM_RELEASE_AGE=0 mise up` for mise-managed tools — the override of mise's release-age cooldown is the point. | **Keep.** Mise-managed tools are intentionally part of the blessed update path. |
 | `omarchy-update-orphan-pkgs` | Lists orphans and prompts before removal; noninteractive mode never removes. | **Keep for now.** Safe because it is prompt-only. |
 | `omarchy-update-analyze-logs` | Scans `/tmp/omarchy-update.log` for known failure patterns, currently initramfs generation. | **Keep/expand.** Useful safety net; should grow only for high-signal checks. |
+| `omarchy-update-boot` | Hidden helper that runs the platform's `update-preflight` and `update-verify` lifecycle operations through `omarchy-lifecycle-dispatch`. | **Keep internal/hidden.** Keeps platform boot checks out of the pipeline and stubbable in tests. |
 | `omarchy-update-restart` | Prompts for reboot after kernel/Hyprland updates, restarts components with `restart-*-required` markers, and always restarts the shell. | **Keep.** Important final step; may eventually include service-restart checks. |
 | `omarchy-update-firmware` | Manual firmware update command using fwupd. Not part of the normal update pipeline. | **Keep separate.** Firmware is not a routine system update step. |
 | `omarchy-update-time` | Restarts `systemd-timesyncd`. | **Question.** Not really an update command. Consider renaming/moving under system/time maintenance. |
