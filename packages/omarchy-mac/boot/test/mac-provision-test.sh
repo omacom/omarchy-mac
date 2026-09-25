@@ -243,6 +243,10 @@ sed -i '/^recovery_shown=/d' "$root/var/lib/omarchy/provisioning/luks-rekey.stat
 run provision-commit || fail "commit succeeds without an acknowledged recovery key"
 ! grep -q '^recovery_slot=' "$root/boot/omarchy/encrypt.state" || fail "an unacknowledged recovery slot is not recorded"
 grep -Fxq 'owner_slot=2' "$root/boot/omarchy/encrypt.state" || fail "the owner slot is recorded"
+printf 'recovery_slot=7\n' >>"$root/boot/omarchy/encrypt.state"
+sed -i 's/^phase=.*/phase=configured/' "$root/boot/omarchy/encrypt.state"
+run provision-commit || fail "commit succeeds over a stale recovery slot"
+! grep -q '^recovery_slot=' "$root/boot/omarchy/encrypt.state" || fail "a stale recovery slot is not carried into finished"
 pass "only a recovery slot the owner acknowledged is recorded"
 
 # A failed rebuild keeps the unattended unlock for the retry: the key stays on
@@ -265,6 +269,17 @@ for failure in fail-mkinitcpio fail-boot-update build-without-firmware; do
 done
 pass "a failed rebuild, or one without the firmware ordering, keeps the unattended unlock for the retry"
 
+# An attempt killed after it rewrote GRUB's defaults, then a retry whose
+# rebuild fails: the key is still on the boot partition, so the command line
+# names it again.
+fixture
+sed -i "s| $key_line||" "$root/etc/default/grub"
+touch "$test_tmp/fail-mkinitcpio"
+if run provision-commit; then fail "the retry's failed rebuild fails commit"; fi
+grep -Fxq "$grub_line" "$root/etc/default/grub" || fail "rd.luks.key= is put back for the key that remains" "$(cat "$root/etc/default/grub")"
+[[ -f $root/boot/omarchy/luks-key ]] || fail "the key stays for the next boot"
+pass "a failed retry names the remaining boot-partition key again, whichever attempt dropped it"
+
 # Interrupted after the rebuild, before the key went: the rerun finishes.
 fixture
 sed -i "s| $key_line||" "$root/etc/default/grub"
@@ -278,9 +293,13 @@ run provision-commit || fail "commit finishes after an interruption past the key
 grep -Fxq 'phase=finished' "$root/boot/omarchy/encrypt.state" || fail "the rerun records finished"
 pass "provision-commit resumes wherever an interruption stopped it"
 
-for phase in plaintext shrunk reencrypting encrypted; do
+for phase in plaintext shrunk reencrypting encrypted unreadable; do
   fixture
-  sed -i "s/^phase=.*/phase=$phase/" "$root/boot/omarchy/encrypt.state"
+  if [[ $phase == unreadable ]]; then
+    sed -i '/^phase=/d' "$root/boot/omarchy/encrypt.state"
+  else
+    sed -i "s/^phase=.*/phase=$phase/" "$root/boot/omarchy/encrypt.state"
+  fi
   before=$(snapshot)
   if run provision-commit; then fail "commit refuses phase=$phase"; fi
   [[ $(snapshot) == "$before" && ! -s $calls ]] || fail "phase=$phase: the key the conversion resumes with is untouched"

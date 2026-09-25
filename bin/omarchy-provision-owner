@@ -972,6 +972,8 @@ rekey_luks() {
 # the password the disk already holds. So can one whose owner slot got a
 # recovery key beside it: that slot's password stays the disk password.
 rekey_accepts_password() {
+  local -
+  set +x
   local device owner
   [[ -f $REKEY_STATE ]] || return 0
   if ! device=$(luks_device) || [[ ! -e $device ]]; then

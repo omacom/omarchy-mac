@@ -16,7 +16,8 @@ LIMINE_GATE=$MAC_BOOT_ROOT/var/lib/omarchy/limine.enabled
 CRYPTTAB=$MAC_BOOT_ROOT/etc/crypttab
 REKEY_STATE=$MAC_BOOT_ROOT/var/lib/omarchy/provisioning/luks-rekey.state
 INSTALL_CONF=$MAC_BOOT_ROOT/var/lib/omarchy/mac-first-boot/install.conf
-LOG_FILE=/dev/stderr
+# The image's Boot partition, as omarchy-mac-encrypt names it in rd.luks.key=.
+BOOT_UUID=4f4d5801-424f-4f54-8000-000000000001
 
 log_step() { printf '%s\n' "$*" >&2; }
 
@@ -48,10 +49,16 @@ grub_drop_rd_luks_key() {
   return 1
 }
 
-restore_grub_default() {
-  local tmp
+# While the boot-partition key exists, GRUB's command line names it, as
+# omarchy-mac-encrypt wrote it, so sd-encrypt unlocks unattended too.
+grub_restore_rd_luks_key() {
+  local uuid tmp
+  [[ -f $GRUB_DEFAULT ]] && ! grep -q 'rd.luks.key=' "$GRUB_DEFAULT" || return 0
+  uuid=$(encrypt_state_get luks_uuid || true)
+  [[ $uuid =~ ^[0-9a-fA-F-]+$ ]] || return 1
   tmp=$(mktemp "$GRUB_DEFAULT.XXXXXX") || return 1
-  if printf '%s\n' "$1" >"$tmp" && chmod --reference="$GRUB_DEFAULT" "$tmp" && sync "$tmp" &&
+  if sed -E "s|^(GRUB_CMDLINE_LINUX=\"[^\"]*)\"|\\1 rd.luks.key=$uuid=/omarchy/luks-key:UUID=$BOOT_UUID\"|" "$GRUB_DEFAULT" >"$tmp" &&
+    grep -q 'rd.luks.key=' "$tmp" && chmod --reference="$GRUB_DEFAULT" "$tmp" && sync "$tmp" &&
     mv -f "$tmp" "$GRUB_DEFAULT"; then
     sync "$(dirname "$GRUB_DEFAULT")"
     return
@@ -68,8 +75,7 @@ apple_rekey_boot() {
   if grep -q 'rd.luks.key=' "$GRUB_DEFAULT"; then
     grub_drop_rd_luks_key "$GRUB_DEFAULT" || return 1
   fi
-  if ! mkinitcpio -P </dev/null >>"$LOG_FILE" 2>&1 ||
-    ! omarchy-mac-boot-update >>"$LOG_FILE" 2>&1; then
+  if ! mkinitcpio -P </dev/null >&2 || ! omarchy-mac-boot-update >&2; then
     log_step "mkinitcpio or omarchy-mac-boot-update failed while dropping the staged key"
     return 1
   fi
@@ -127,10 +133,11 @@ write_encrypt_state() {
     done <"$ENCRYPT_STATE"
   fi
   value=$(state_get "$REKEY_STATE" owner_slot || true)
-  [[ -z $value ]] || owner_slot=$value
-  if [[ $(state_get "$REKEY_STATE" recovery_shown || true) == 1 ]]; then
-    value=$(state_get "$REKEY_STATE" recovery_slot || true)
-    [[ -z $value ]] || recovery_slot=$value
+  if [[ -n $value ]]; then
+    owner_slot=$value
+    recovery_slot=""
+    [[ $(state_get "$REKEY_STATE" recovery_shown || true) != 1 ]] ||
+      recovery_slot=$(state_get "$REKEY_STATE" recovery_slot || true)
   fi
 
   install -d -m 755 "$(dirname "$ENCRYPT_STATE")" || return 1
@@ -194,29 +201,29 @@ provision_prepare() {
 
   luks_device_found ||
     refuse "Could not find the encrypted disk that /etc/crypttab names."
-  initramfs_orders_firmware 2>/dev/null ||
-    refuse "The boot image would ask for the disk password before the keyboard firmware loads. Rebuild it with mkinitcpio -P."
-  esp_selected 2>/dev/null ||
+  initramfs_orders_firmware ||
+    refuse "The boot image would ask for the disk password before the keyboard firmware loads."
+  esp_selected ||
     refuse "The EFI partition this Mac boots from is not where its boot files are written."
 }
 
 provision_commit() {
-  local phase grub_before=""
+  local phase
   require_apple_silicon
   phase=$(encrypt_state_get phase || true)
   # The initramfs resumes an unfinished conversion with the boot-partition key.
-  if [[ -n $phase && $phase != declined ]] && ! encrypted_phase "$phase"; then
-    log_step "encrypt.state is phase=$phase; the conversion still needs $BOOT_LUKS_KEY"
+  if [[ -e $ENCRYPT_STATE && -z $phase ]] || { [[ -n $phase && $phase != declined ]] && ! encrypted_phase "$phase"; }; then
+    log_step "encrypt.state is phase=${phase:-unreadable}; the conversion still needs $BOOT_LUKS_KEY"
     return 1
   fi
 
-  [[ ! -f $GRUB_DEFAULT ]] || grub_before=$(<"$GRUB_DEFAULT")
   # The boot-partition key goes last: until then the initramfs still unlocks
-  # with it, so a failure only has to put rd.luks.key= back.
+  # with it, so a failure only has to put rd.luks.key= back, whichever attempt
+  # dropped it.
   if ! apple_rekey_boot || ! initramfs_orders_firmware; then
-    if [[ -f $GRUB_DEFAULT && $(<"$GRUB_DEFAULT") != "$grub_before" ]]; then
+    if [[ -f $BOOT_LUKS_KEY ]] && ! grep -q 'rd.luks.key=' "$GRUB_DEFAULT" 2>/dev/null; then
       log_step "restoring rd.luks.key= for the retry"
-      restore_grub_default "$grub_before" && omarchy-mac-boot-update >&2 || true
+      grub_restore_rd_luks_key && omarchy-mac-boot-update >&2 || true
     fi
     return 1
   fi

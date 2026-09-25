@@ -325,10 +325,13 @@ OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&
   fail "the retry retires the throwaway slot and destroys the key" "$(cat "$slots")"
 pass "a retry after the commit finishes with the password and recovery key already set"
 
-# A finished encrypt.state never ends setup while any boot-time unlock remains.
+# A finished re-key never ends setup while any boot-time unlock remains: the
+# journal's last check asks the boot package.
 for leftover in boot cmdline; do
   fixture
   rm "$prov/luks-key"
+  printf '1 owner-secret\n' >"$slots"
+  printf 'staged_slot=0\nowner_slot=1\nphase=done\n' >"$prov/luks-rekey.state"
   sed -i 's/^phase=.*/phase=finished/' "$encrypt_state"
   if [[ $leftover == boot ]]; then
     sed -i "s| $key_line||" "$grub_default" "$root/boot/grub/grub.cfg"
@@ -338,6 +341,8 @@ for leftover in boot cmdline; do
   if OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1; then
     fail "setup does not finish with a leftover $leftover unlock"
   fi
+  grep -q 'the boot-time auto-unlock is still configured' "$OMARCHY_PROVISION_OWNER_LOG" ||
+    fail "$leftover: provision-verify is what stops setup" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
   [[ -f $prov/pending ]] || fail "a leftover $leftover unlock keeps setup pending"
 done
 pass "a finished encrypt.state never ends setup while a boot-time unlock remains"
