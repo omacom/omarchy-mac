@@ -1,0 +1,21 @@
+#!/bin/bash
+# Install boot support separately from the kernel-neutral hardware package.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+destination=${1:?Usage: ./install DESTDIR}
+[[ $destination == /* && $destination != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
+for file in bin/*; do install -Dm755 "$file" "$destination/usr/bin/${file##*/}"; done
+for file in lib/*; do install -Dm644 "$file" "$destination/usr/lib/omarchy-mac/boot/${file##*/}"; done
+for file in setup/*; do install -Dm644 "$file" "$destination/usr/lib/omarchy-mac/boot/setup/${file##*/}"; done
+# The initramfs, encryption and first-boot payload keeps its installed paths.
+while IFS= read -r -d '' file; do
+  if [[ -L $file ]]; then
+    install -d "$destination/$(dirname "${file#files/}")"
+    ln -sfn "$(readlink "$file")" "$destination/${file#files/}"
+  elif [[ -x $file ]]; then
+    install -Dm755 "$file" "$destination/${file#files/}"
+  else
+    install -Dm644 "$file" "$destination/${file#files/}"
+  fi
+done < <(find files \( -type f -o -type l \) -print0)
+install -Dm644 LICENSE "$destination/usr/share/licenses/omarchy-mac-boot/LICENSE"
