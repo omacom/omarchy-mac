@@ -50,18 +50,28 @@ cat >"$stub_bin/cryptsetup" <<'SH'
 #!/bin/bash
 case "$1" in
   luksDump)
+    printf 'LUKS header information\nVersion:       \t2\n\nData segments:\n  0: crypt\n\nKeyslots:\n'
     if [[ -n ${TEST_LUKS_SLOTS:-} ]]; then
       for slot in $TEST_LUKS_SLOTS; do
-        printf '  %s: luks2\n' "$slot"
+        printf '  %s: luks2\n\tKey:        512 bits\n' "$slot"
       done
-      exit 0
+    else
+      slots=${TEST_LUKS_SLOT_COUNT:-2}
+      i=0
+      while (( i < slots )); do
+        printf '  %s: luks2\n\tKey:        512 bits\n' "$i"
+        (( ++i ))
+      done
     fi
-    slots=${TEST_LUKS_SLOT_COUNT:-2}
-    i=0
-    while (( i < slots )); do
-      printf '  %s: luks2\n' "$i"
-      (( ++i ))
-    done
+    # TEST_LUKS_TOKENS holds id:type:keyslot triples; their lines look like keyslots.
+    if [[ -n ${TEST_LUKS_TOKENS:-} ]]; then
+      echo "Tokens:"
+      for token in $TEST_LUKS_TOKENS; do
+        IFS=: read -r id type slot <<<"$token"
+        printf '  %s: %s\n\tKeyslot:    %s\n' "$id" "$type" "$slot"
+      done
+    fi
+    printf 'Digests:\n  0: pbkdf2\n'
     exit 0
     ;;
   *) exit 1 ;;
@@ -224,6 +234,7 @@ run_check() {
     TEST_ESP_DEVICE="$esp_device" \
     TEST_LUKS_SLOT_COUNT="${TEST_LUKS_SLOT_COUNT:-2}" \
     TEST_LUKS_SLOTS="${TEST_LUKS_SLOTS:-}" \
+    TEST_LUKS_TOKENS="${TEST_LUKS_TOKENS:-}" \
     TEST_INITRAMFS_ANALYZE="${TEST_INITRAMFS_ANALYZE:-$test_tmp/initramfs.analyze}" \
     TEST_LSBLK="${TEST_LSBLK:-}" \
     TEST_MAPPER_UUID="${TEST_MAPPER_UUID:-}" \
@@ -259,6 +270,7 @@ encrypt_root() {
   : >"$root/dev/disk/by-uuid/abcd-ef"
   TEST_LUKS_SLOT_COUNT=2
   TEST_LUKS_SLOTS="1 2"
+  TEST_LUKS_TOKENS=""
 }
 
 # Unencrypted roots keep the existing expectations; missing install.conf is fine.
@@ -336,6 +348,23 @@ encrypt_root
 TEST_LUKS_SLOTS="0 1"
 run_check
 expect_fail "wrong slot numbers after provisioning" "does not contain the recorded owner and recovery slots"
+
+# luksDump lists tokens the way it lists keyslots. A TPM2 and a keyring token on
+# the owner and recovery slots are not leftover keyslots, and a keyring token
+# numbered like a missing recovery slot does not stand in for it.
+system
+encrypt_root
+TEST_LUKS_TOKENS="0:systemd-tpm2:1 1:luks2-keyring:2"
+run_check
+expect_pass "owner and recovery slots beside TPM2 and keyring tokens"
+
+system
+encrypt_root
+TEST_LUKS_SLOTS="1"
+TEST_LUKS_TOKENS="2:luks2-keyring:1"
+run_check
+expect_fail "a keyring token numbered like the missing recovery slot" "(1 keyslots, expected 2)"
+pass "only luksDump's keyslot section counts as keyslots, whatever tokens are enrolled"
 
 system
 encrypt_root

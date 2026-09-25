@@ -228,7 +228,10 @@ if (( has_crypttab_root )); then
     [[ $owner_slot != "$recovery_slot" ]] ||
       fail "/boot/omarchy/encrypt.state records the same slot for owner and recovery"
 
-    mapfile -t luks_slots < <(awk '/^[[:space:]]+[0-9]+:[[:space:]]+luks2/ { sub(":", "", $1); print $1 }' <<<"$luks_dump")
+    # Only the keyslot section: a luks2-keyring token under "Tokens:" looks the same.
+    mapfile -t luks_slots < <(awk '
+      /^[^[:space:]]/ { keyslots = ($0 == "Keyslots:") }
+      keyslots && /^[[:space:]]+[0-9]+:[[:space:]]+luks2/ { sub(":", "", $1); print $1 }' <<<"$luks_dump")
     (( ${#luks_slots[@]} == 2 )) ||
       fail "throwaway LUKS keyslot still present after provisioning (${#luks_slots[@]} keyslots, expected 2)"
     [[ " ${luks_slots[*]} " == *" $owner_slot "* && " ${luks_slots[*]} " == *" $recovery_slot "* ]] ||
