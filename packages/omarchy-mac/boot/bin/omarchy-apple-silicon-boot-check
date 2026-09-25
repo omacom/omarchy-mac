@@ -567,6 +567,14 @@ else
 fi
 
 sudo test -f "$mountpoint/m1n1/boot.bin" || fail "the system ESP ($esp) has no m1n1/boot.bin"
+# U-Boot starts the loader on the system ESP, so the Limine, menu and UKI
+# checked above must be the ones there.
+if (( limine_mac )); then
+  for file in EFI/BOOT/BOOTAA64.EFI limine.conf "EFI/Linux/omarchy_$kernel.efi"; do
+    sudo cmp -s "$(path "$limine_esp/$file")" "$mountpoint/$file" ||
+      fail "$limine_esp/$file is not the one on the system ESP ($esp), which U-Boot boots; point ESP_PATH in /etc/default/limine at that ESP's mountpoint, then run sudo omarchy-mac-boot-update and omarchy update"
+  done
+fi
 report_running_release() {
   if (( pending_reboot )); then
     echo "Apple Silicon boot check: installed $kernel $kver boot files match; running $running_kver, reboot pending"
