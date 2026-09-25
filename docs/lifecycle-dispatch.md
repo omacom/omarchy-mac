@@ -113,4 +113,4 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
   - the crash-and-resume matrix on x86 (Limine UKI path unchanged, no Mac entrypoint runs) and on Apple with a fake boot package
   - setup stopping before the owner form when the boot package is not ready, and reaching it while the package ships no provisioning entrypoints
   - the stale-entry refresh rebuilding through `limine-update` on x86 and the boot package on Apple
-  - the worker failing closed without it
+  - the worker failing closed when a boot package implements only one of `provision-commit` and `provision-verify`

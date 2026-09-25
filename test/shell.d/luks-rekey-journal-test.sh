@@ -600,6 +600,11 @@ if [[ " ${platforms[*]} " == *" apple "* ]]; then
   run setup "$owner_password" || fail "apple: setup reaches the owner form before the package ships entrypoints" "$(cat "$tmp/output")"
   [[ $(cat "$tmp/screen") == "owner form" && ! -e $tmp/mac-boot-ran ]] ||
     fail "apple: nothing runs before the owner form without provisioning entrypoints" "$(cat "$tmp/screen")"
+  # The worker's last check sees only the built-in unlock there, as before
+  # dispatch; #527's direct re-key checks the boot-partition key itself.
+  rm "$tmp/provisioning/luks-key"
+  if run remains "$owner_password"; then fail "apple: the final check does not block setup without provisioning entrypoints"; fi
+  [[ ! -e $tmp/mac-boot-ran ]] || fail "apple: the final check runs no Mac entrypoint without provisioning entrypoints"
   rmdir "$mac_boot"
   mv "$tmp/mac-boot.off" "$mac_boot"
   pass "apple: before omarchy-mac-boot ships provisioning entrypoints, setup reaches the owner form"
