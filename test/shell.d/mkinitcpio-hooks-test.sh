@@ -14,6 +14,24 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
 done
 # omarchy-settings without the runtime package: no detector on PATH.
 mkdir -p "$test_tmp/platforms/no-detector/bin"
+# The kernel being built, as modinfo answers for it: KERNEL_MODULES names its
+# modules (thunderbolt, as on x86 and Aurora, unless a case says otherwise) and
+# KERNEL_BUILTINS the ones built in.
+cat >"$test_tmp/modinfo" <<'SH'
+#!/bin/bash
+[[ $1 == -k && $2 == "$KERNELVERSION" && $3 == -F && $4 == filename ]] || exit 1
+if [[ " ${KERNEL_MODULES-thunderbolt} " == *" $5 "* ]]; then
+  printf '/usr/lib/modules/%s/kernel/%s.ko.zst\n' "$KERNELVERSION" "$5"
+elif [[ " ${KERNEL_BUILTINS-} " == *" $5 "* ]]; then
+  printf '(builtin)\n'
+else
+  exit 1
+fi
+SH
+chmod +x "$test_tmp/modinfo"
+for fixture in "$test_tmp"/platforms/*; do
+  cp "$test_tmp/modinfo" "$fixture/bin/"
+done
 # A device tree naming both Apple and Qualcomm, which the detector refuses.
 fake_platform "$test_tmp/platforms/contradiction" apple-silicon
 printf '%s\0' apple,j416c qcom,x1e80100 >"$test_tmp/platforms/contradiction/proc/device-tree/compatible"
@@ -73,7 +91,7 @@ compose() {
 
   local path="$fixture/bin:$ROOT/bin:$PATH"
   [[ $1 != "no-detector" ]] || path="$fixture/bin"
-  OMARCHY_PROC_ROOT="$fixture/proc" OMARCHY_PCI_DEVICES_PATH="$devices" PATH="$path" "$BASH" -c '
+  KERNELVERSION=6.99.0-test OMARCHY_PROC_ROOT="$fixture/proc" OMARCHY_PCI_DEVICES_PATH="$devices" PATH="$path" "$BASH" -c '
     . "$1" || exit 1
     files=()
     for file in "${FILES[@]}"; do
@@ -166,28 +184,27 @@ assert_hooks "the NVIDIA filter keeps a platform fragment's hooks" generic \
   "base udev plymouth keyboard autodetect microcode modconf keymap consolefont block encrypt platform-firmware filesystems fsck btrfs-overlayfs platform-late"
 
 # Existing x86 configurations build the image they built before the baseline
-# moved: the same HOOKS, MODULES and FILES. thunderbolt? is the same module,
-# optional so that a kernel without it (as on ARM) still builds.
+# moved: the same HOOKS, MODULES and FILES.
 new_etc
 assert_composed "x86 without hardware drop-ins is unchanged" generic \
-  "$x86_hooks" "thunderbolt?" ""
+  "$x86_hooks" "thunderbolt" ""
 
 new_etc
 drop_in nvidia.conf <<<"MODULES+=($nvidia_modules)"
 pci_devices 0x10de:0x030000
 assert_composed "NVIDIA-only x86 drops only kms" generic \
-  "$x86_hooks_without_kms" "$nvidia_modules thunderbolt?" ""
+  "$x86_hooks_without_kms" "$nvidia_modules thunderbolt" ""
 
 new_etc
 drop_in nvidia.conf <<<"MODULES+=($nvidia_modules)"
 pci_devices 0x8086:0x030000 0x10de:0x030200
 assert_composed "hybrid x86 keeps kms for the iGPU" generic \
-  "$x86_hooks" "$nvidia_modules thunderbolt?" ""
+  "$x86_hooks" "$nvidia_modules thunderbolt" ""
 
 new_etc
 pci_devices 0x10de:0x030000
 assert_composed "NVIDIA-only x86 without early nvidia_drm keeps kms" generic \
-  "$x86_hooks" "thunderbolt?" ""
+  "$x86_hooks" "thunderbolt" ""
 
 new_etc
 drop_in nvidia.conf <<<"MODULES+=($nvidia_modules)"
@@ -195,21 +212,34 @@ drop_in omarchy_resume.conf <<<"HOOKS+=(resume)"
 drop_in 99-omarchy-provisioning-key.conf <<<"FILES+=(/etc/omarchy/provisioning.key)"
 pci_devices 0x10de:0x030000
 assert_composed "NVIDIA-only x86 with hibernation and a provisioning key is unchanged" generic \
-  "$x86_hooks_without_kms resume" "$nvidia_modules thunderbolt?" "/etc/omarchy/provisioning.key"
+  "$x86_hooks_without_kms resume" "$nvidia_modules thunderbolt" "/etc/omarchy/provisioning.key"
 
 new_etc
 drop_in apple-t2.conf <<<"MODULES+=(t2bce_vhci usbhid hid_apple hid_generic xhci_pci xhci_hcd)"
 assert_composed "T2 Mac x86 is unchanged" generic \
-  "$x86_hooks" "t2bce_vhci usbhid hid_apple hid_generic xhci_pci xhci_hcd thunderbolt?" ""
+  "$x86_hooks" "t2bce_vhci usbhid hid_apple hid_generic xhci_pci xhci_hcd thunderbolt" ""
 
 new_etc
 drop_in macbook_spi_modules.conf <<<"MODULES=(applespi intel_lpss_pci spi_pxa2xx_platform)"
 assert_composed "SPI keyboard MacBook x86 is unchanged" generic \
-  "$x86_hooks" "applespi intel_lpss_pci spi_pxa2xx_platform thunderbolt?" ""
+  "$x86_hooks" "applespi intel_lpss_pci spi_pxa2xx_platform thunderbolt" ""
 
 new_etc
 drop_in nvidia.conf <<<"MODULES+=($nvidia_modules)"
 drop_in surface_device_modules.conf <<<"MODULES=(pinctrl_tigerlake surface_aggregator surface_aggregator_registry surface_aggregator_hub surface_hid_core surface_hid surface_kbd intel_lpss_pci 8250_dw)"
 pci_devices 0x8086:0x030000
 assert_composed "Surface x86 is unchanged" generic \
-  "$x86_hooks" "pinctrl_tigerlake surface_aggregator surface_aggregator_registry surface_aggregator_hub surface_hid_core surface_hid surface_kbd intel_lpss_pci 8250_dw thunderbolt?" ""
+  "$x86_hooks" "pinctrl_tigerlake surface_aggregator surface_aggregator_registry surface_aggregator_hub surface_hid_core surface_hid surface_kbd intel_lpss_pci 8250_dw thunderbolt" ""
+
+# thunderbolt is early-loaded only where the kernel builds it as a module. A
+# systemd initramfs writes MODULES into modules-load.d as they are, so neither
+# an optional thunderbolt? nor a module the kernel lacks may reach it.
+new_etc
+assert_composed "Apple Silicon early-loads the Aurora kernel's thunderbolt module" apple-silicon \
+  "$apple_hooks" "thunderbolt" ""
+KERNEL_MODULES="" assert_composed "a generic aarch64 kernel without thunderbolt leaves it out" generic-aarch64 \
+  "$x86_hooks" "" ""
+KERNEL_MODULES="" KERNEL_BUILTINS=thunderbolt assert_composed "a built-in thunderbolt is not listed" generic \
+  "$x86_hooks" "" ""
+KERNEL_MODULES="" assert_composed "a systemd initramfs without the module lists nothing" apple-silicon \
+  "$apple_hooks" "" ""
