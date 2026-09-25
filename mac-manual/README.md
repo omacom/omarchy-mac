@@ -60,7 +60,7 @@ Diagrams carry no colours of their own. They use the `.diagram` classes in the s
 
 ## Provenance
 
-Moved from maralcbr/omarchy-mx-mac `docs/site/` at `8e70a5cdcc82caf2a0548d742bb1b26e40876a37` (2026-09-25). The first commit touching this directory copies `build.py`, `diagrams/gen.py`, `templates/page.html` and `assets/` unchanged; their earlier history is `git log 8e70a5cd -- docs/site` in omarchy-mx-mac (#215, #252).
+Moved from maralcbr/omarchy-mx-mac `docs/site/` at `b8ab4b7f0827f3ed840594ec6994e4295bf6f88b` (2026-09-25). The first commit touching this directory copies `build.py`, `diagrams/gen.py`, `templates/page.html` and `assets/` unchanged (they are identical at `8e70a5cd`, the revision that commit names); their earlier history is `git log b8ab4b7f -- docs/site` in omarchy-mx-mac (#215, #252).
 
 The pages were rewritten for the converged stack: the omacom installer, official Omarchy with `omarchy-mac` and `omarchy-mac-boot` from omacom/omarchy-pkgs, the Aurora kernel only, Limine, the encryption lifecycle and the move of existing Macs. Left behind as fork-only: the fork's repositories, release lanes and download links, the per-channel Aurora kernel lanes and their repository pins, the runtime bundle and legacy repository updaters, the release pipeline, the testing and evidence page (the validation runbook and evidence move with the hardware tooling), and the generated package map. The build no longer hard-codes a domain or a download link.
 

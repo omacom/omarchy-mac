@@ -23,17 +23,13 @@ This stack is still being qualified and has no public release yet. Mac packages 
 | Packages | Signed packages only: Omarchy's own `[omarchy]` repository for aarch64, Arch Linux ARM and the Asahi repositories |
 | Installer | The macOS app from [omacom/omarchy-mac-installer](https://github.com/omacom/omarchy-mac-installer) |
 
-## Who this is for
-
-- Owners of an M1 or M2 Mac who want Omarchy as a daily driver next to macOS.
-- People already running Omarchy on a Mac from an earlier Apple Silicon project, who want to know what changes: see [Moving an existing Mac]({{page:migrate}}).
-- Contributors who need the map of packages, repositories and release gates.
-
 ## Where to start
 
 1. [Hardware support]({{page:hardware}}): check your Mac first.
 2. [Install on a Mac]({{page:install}}): verify and run the installer.
 3. [Updates and channels]({{page:updates}}): how updates arrive and what keeps a Mac bootable.
+
+Already running Omarchy on a Mac from an earlier Apple Silicon project? [Moving an existing Mac]({{page:migrate}}) says what happens to it.
 
 <div class="note" markdown="1">
 Omarchy on Apple Silicon depends on the Asahi Linux project and the Aurora kernel. It is not affiliated with Apple or the Asahi Linux project, and it is not intended for Parallels, virtual machines or non-Apple ARM systems.

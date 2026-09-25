@@ -14,7 +14,7 @@ An installed Mac is an upstream Omarchy installation plus two Mac packages and t
 | `omarchy` | The `omarchy-*` commands, install scripts, migrations, themes and the Quickshell desktop |
 | `omarchy-mac` | Microphone mapping, Wi-Fi resume recovery, the iwd Wi-Fi backend for NetworkManager, the notch setting |
 | `omarchy-mac-boot` | Initramfs fragments, vendor firmware hooks, first-boot and encryption units, Limine and U-Boot deployment, boot verification |
-| `linux-aurora` | The kernel, its headers and the device trees |
+| `linux-aurora` | The kernel and the device trees. `linux-aurora-headers` adds the headers when a DKMS module needs them. |
 | `m1n1-aurora`, `uboot-asahi` | The boot stages between Apple's firmware and Limine |
 | `limine`, `limine-mkinitcpio-hook`, `limine-snapper-sync` | The boot loader, unified kernel images and snapshot entries |
 | `omarchy-keyring` | The pacman keys for `[omarchy]`, upstream's package unchanged |

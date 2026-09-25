@@ -13,7 +13,7 @@ A change lives as close to upstream as it can. Every layer the Mac work touches 
 | Packages | [omacom/omarchy-pkgs](https://github.com/omacom/omarchy-pkgs) | Mac recipes are pinned to exact omarchy-mac commits, built for aarch64 only and published to `edge` first. |
 | Installer | [omacom/omarchy-mac-installer](https://github.com/omacom/omarchy-mac-installer) | The macOS app, the engine overlay and the image builder |
 | Kernel | [aurora-silicon/linux](https://github.com/aurora-silicon/linux) | Pull requests to the Aurora kernel tree |
-| Boot, firmware, engine | [Asahi Linux](https://asahilinux.org) | m1n1 and `asahi-scripts` are used as Asahi ships them; U-Boot is built with a silent console; the installer engine is Asahi's installer with Omarchy's patches, pinned by digest |
+| Boot, firmware, engine | [Asahi Linux](https://asahilinux.org) | `asahi-scripts` is used as Asahi ships it; `m1n1-aurora` is Asahi's m1n1 built for the Aurora kernel with the Omarchy boot logo; U-Boot is built with a silent console; the installer engine is Asahi's installer with Omarchy's patches, pinned by digest |
 | Compositor | [hyprwm/Hyprland](https://github.com/hyprwm/Hyprland), [hyprwm/aquamarine](https://github.com/hyprwm/aquamarine) | Fixes are submitted upstream. An aquamarine display fix is carried for aarch64 until hyprwm releases it. |
 
 ## Naming

@@ -17,7 +17,7 @@ The bundle carries the channel list, the default channel and the SHA-256 of the 
 On launch the app:
 
 1. downloads the channel's signed catalog and verifies the signature against the bundled trust root;
-2. refuses a catalog whose sequence number is not larger than the last one it accepted;
+2. refuses a catalog whose sequence number is lower than the last one it accepted, or that reuses that number for different contents;
 3. checks its own version against the catalog's minimum installer version, so an old app stops before downloading a release it cannot install;
 4. checks the Mac's device-tree identity against the models the catalog admits;
 5. downloads the image parts and the engine overlay the catalog names, verifying each SHA-256, and reuses a cached file only when its size and hash match.

@@ -27,7 +27,7 @@ The Mac packages (`omarchy-mac`, `omarchy-mac-boot`, `linux-aurora`, `m1n1-auror
 
 Every Mac runs `linux-aurora`, built from [aurora-silicon/linux](https://github.com/aurora-silicon/linux). On top of the Asahi Linux kernel it adds DisplayPort alt-mode and USB4 external monitors, variable refresh rate, the camera signal processor and the always-on processor.
 
-It stands in for `linux-asahi`, so anything that asks for the Asahi kernel or its headers is satisfied. It does not claim the generic `linux` name, so it can never be picked as another ARM machine's kernel.
+It stands in for `linux-asahi`, and `linux-aurora-headers` for `linux-asahi-headers`, so anything that asks for the Asahi kernel or its headers is satisfied. It does not claim the generic `linux` name, so it can never be picked as another ARM machine's kernel.
 
 ## How an update runs on a Mac
 

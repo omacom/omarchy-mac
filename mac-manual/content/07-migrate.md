@@ -4,12 +4,12 @@ description: What happens to Macs installed from earlier Apple Silicon projects,
 section: Using it
 ---
 
-Macs already running Omarchy from an earlier Apple Silicon project move to this stack in place, without a reinstall. Nothing moves yet: the move is switched on only after the official packages are published and promoted, and after it has been accepted for each kind of install below.
+Macs already running Omarchy from an earlier Apple Silicon project move to this stack in place, without a reinstall. Nothing moves yet. The move is switched on only after the generic changes are merged into Omarchy, the official Mac packages are signed, published and promoted, and the move has been accepted for each kind of install below.
 
 | Installed from | What the move does |
 | --- | --- |
 | Omarchy MX Mac | Swaps its runtime packages for official Omarchy in one transaction and retires its own updaters, so the Mac never returns to them. Encryption, snapshots and Limine stay as they are. |
-| The earlier omarchy-mac project, on GRUB and the Asahi kernel | Converts the checkout-based install to packages, removes the unsigned package repository and sets up official package trust, and moves from the Asahi kernel to Aurora and from GRUB to Limine. An unencrypted Mac stays unencrypted. |
+| The earlier omarchy-mac project, on GRUB and the Asahi kernel | An install from before Quattro first takes Omarchy's existing Quattro upgrade. The move then converts the checkout-based install to packages, removes the unsigned package repository and sets up official package trust, and moves from the Asahi kernel to Aurora and from GRUB to Limine. An unencrypted Mac stays unencrypted. |
 | Test builds of this stack | Replaces the test packages with the official ones, even where a test build carries a higher version. |
 
 ## How the move runs
