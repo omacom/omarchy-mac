@@ -94,7 +94,7 @@ default/applications/battlenet.desktop
 applications/icons/*           ──►  omarchy-settings    /usr/share/icons/hicolor/{48,256,scalable}/apps/
 
 etc/**                         ──►  omarchy-settings    /etc/**           (drop-ins we own outright)
-  ├─ mkinitcpio.conf.d/{omarchy_hooks,thunderbolt_module}.conf
+  ├─ mkinitcpio.conf.d/{00-omarchy-hooks,omarchy_hooks,thunderbolt_module}.conf
   ├─ limine-entry-tool.d/{omarchy-defaults,omarchy-uki}.conf
   ├─ NetworkManager/, sudoers.d/, sysctl.d/, tmpfiles.d/,
   │  profile.d/omarchy.sh, …                            (a summary — `ls etc/` for the full ~17-entry tree)

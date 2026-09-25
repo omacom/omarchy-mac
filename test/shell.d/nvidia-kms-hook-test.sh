@@ -7,6 +7,7 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 
+baseline_conf="$ROOT/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf"
 hooks_conf="$ROOT/etc/mkinitcpio.conf.d/omarchy_hooks.conf"
 
 # Each argument is a PCI device as "vendor:class", in sysfs's own format.
@@ -26,8 +27,8 @@ write_pci_devices() {
   done
 }
 
-# Sources the hook config the way mkinitcpio does — with earlier drop-ins
-# already applied — and prints the resulting HOOKS. mkinitcpio does not run
+# Sources the hook config the way mkinitcpio does — after the baseline and
+# the earlier drop-ins — and prints the resulting HOOKS. mkinitcpio does not run
 # under set -u, but the config must survive it, so source under it anyway.
 # "unset" leaves MODULES undeclared entirely.
 resolved_hooks() {
@@ -40,6 +41,7 @@ resolved_hooks() {
   OMARCHY_PCI_DEVICES_PATH="$tmp_dir/devices" bash -uc "
     FILES=()
     XKBLAYOUT=us
+    source '$baseline_conf'
     $modules_decl
     source '$hooks_conf'
     echo \"\${HOOKS[*]}\"
@@ -101,3 +103,42 @@ write_pci_devices 0x10de:0x030000
 mkdir -p "$tmp_dir/devices/0000:01:00.0"
 assert_hooks "unreadable device beside an NVIDIA GPU keeps kms" \
   "$nvidia_modules" "$with_kms"
+
+# Migration 1786605598 rebuilds once where the installed drop-ins drop kms, and
+# leaves a hybrid system's initramfs alone.
+stub_bin="$tmp_dir/stub-bin"
+mkdir -p "$stub_bin"
+cat >"$stub_bin/limine-mkinitcpio" <<SH
+#!/bin/bash
+echo rebuilt >>"$tmp_dir/rebuilds"
+SH
+cat >"$stub_bin/sudo" <<'SH'
+#!/bin/bash
+exec "$@"
+SH
+chmod +x "$stub_bin/limine-mkinitcpio" "$stub_bin/sudo"
+printf 'MODULES+=(%s)\n' "$nvidia_modules" >"$tmp_dir/nvidia.conf"
+
+migration_rebuilds() {
+  rm -f "$tmp_dir/rebuilds" "$tmp_dir/rebuild-marker"
+  OMARCHY_MKINITCPIO_BASELINE_CONF="${1:-$baseline_conf}" OMARCHY_MKINITCPIO_HOOKS_CONF="$hooks_conf" \
+    OMARCHY_MKINITCPIO_NVIDIA_CONF="$tmp_dir/nvidia.conf" OMARCHY_KMS_REBUILD_MARKER="$tmp_dir/rebuild-marker" \
+    OMARCHY_PCI_DEVICES_PATH="$tmp_dir/devices" XKBLAYOUT=us \
+    PATH="$stub_bin:$ROOT/bin:$PATH" bash -euo pipefail "$ROOT/migrations/1786605598.sh" >/dev/null
+  [[ -f $tmp_dir/rebuilds ]] && echo yes || echo no
+}
+
+write_pci_devices 0x10de:0x030000
+[[ $(migration_rebuilds) == "yes" && -f $tmp_dir/rebuild-marker ]] ||
+  fail "the kms migration rebuilds an NVIDIA-only system"
+pass "the kms migration rebuilds an NVIDIA-only system"
+
+write_pci_devices 0x1002:0x030000 0x10de:0x030200
+[[ $(migration_rebuilds) == "no" ]] ||
+  fail "the kms migration leaves a hybrid system alone"
+pass "the kms migration leaves a hybrid system alone"
+
+write_pci_devices 0x10de:0x030000
+[[ $(migration_rebuilds "$tmp_dir/missing-baseline.conf") == "no" && ! -e $tmp_dir/rebuild-marker ]] ||
+  fail "the kms migration skips a machine without the baseline drop-in"
+pass "the kms migration skips a machine without the baseline drop-in"
