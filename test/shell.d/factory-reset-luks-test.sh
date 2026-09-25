@@ -283,6 +283,7 @@ mkdir -p "$factory/etc" \
 : >"$factory/etc/passwd"
 : >"$factory/etc/machine-id"
 touch "$factory/var/lib/omarchy/mac-first-boot/pending" \
+  "$factory/var/lib/omarchy/mac-first-boot/deferred-steps" \
   "$factory/var/lib/omarchy/mac-first-boot/install.conf" \
   "$factory/var/lib/omarchy/provisioning/pending" \
   "$factory/var/lib/omarchy/provisioning/wipe-pending" \
@@ -290,6 +291,7 @@ touch "$factory/var/lib/omarchy/mac-first-boot/pending" \
 printf 'format=1\nphase=finished\npartition=p\nluks_uuid=u\n' >"$factory/boot/omarchy/encrypt.state"
 sanitize_factory_baseline "$factory"
 [[ ! -e $factory/var/lib/omarchy/mac-first-boot/pending ]] || fail "@factory does not keep mac-first-boot/pending"
+[[ ! -e $factory/var/lib/omarchy/mac-first-boot/deferred-steps ]] || fail "@factory does not keep the fresh-image conversion token"
 [[ ! -e $factory/var/lib/omarchy/mac-first-boot/install.conf ]] || fail "@factory does not keep install.conf"
 [[ ! -e $factory/var/lib/omarchy/provisioning/pending ]] || fail "@factory does not keep provisioning/pending"
 [[ ! -e $factory/var/lib/omarchy/provisioning/wipe-pending ]] || fail "@factory does not keep wipe-pending"
@@ -313,7 +315,10 @@ OMARCHY_ENCRYPT_STATE="$live_state" reopen_encrypt_state || fail "reopen_encrypt
 
 cloned="$tmp/cloned"
 mkdir -p "$cloned/var/lib/omarchy/mac-first-boot" "$cloned/boot/omarchy" "$cloned/boot/efi/omarchy"
-touch "$cloned/var/lib/omarchy/mac-first-boot/pending" \
+mkdir -p "$cloned/var/lib/omarchy/image"
+touch "$cloned/var/lib/omarchy/image/deferred-steps" \
+  "$cloned/var/lib/omarchy/mac-first-boot/pending" \
+  "$cloned/var/lib/omarchy/mac-first-boot/deferred-steps" \
   "$cloned/var/lib/omarchy/mac-first-boot/install.conf" \
   "$cloned/boot/efi/omarchy/install.conf"
 printf 'format=1\nphase=finished\n' >"$cloned/boot/omarchy/encrypt.state"
@@ -323,6 +328,9 @@ arm_reset_markers "$cloned"
 [[ -f $cloned/var/lib/omarchy/provisioning/pending ]] || fail "reset re-arms provisioning/pending"
 [[ -f $cloned/var/lib/omarchy/provisioning/wipe-pending ]] || fail "reset re-arms wipe-pending"
 [[ ! -e $cloned/var/lib/omarchy/mac-first-boot/install.conf ]] || fail "reset next root does not keep install.conf"
+[[ ! -e $cloned/var/lib/omarchy/mac-first-boot/deferred-steps ]] ||
+  fail "reset next root carries no fresh-image conversion token, so the initramfs does not convert it again"
+[[ -f $cloned/var/lib/omarchy/image/deferred-steps ]] || fail "reset next root keeps the image's hardware queue for its first boot"
 [[ ! -e $cloned/boot/efi/omarchy/install.conf ]] || fail "reset next root does not keep the ESP install.conf"
 [[ -f $cloned/boot/omarchy/encrypt.state ]] || fail "the next-root scrub leaves boot/omarchy alone"
 pass "LUKS factory reset adds its slot after rebuilds, writes the Boot key after activation, re-arms both markers, and keeps @factory clean"

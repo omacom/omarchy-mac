@@ -432,14 +432,16 @@ sanitize_factory_baseline() {
   btrfs property set -ts "$factory" ro true
 }
 
-# @factory must not carry first-boot markers or the ESP install.conf (v3 item
-# 2e); the Boot partition's encrypt.state lives outside the subvolume and is
-# reopened before committing the temporary key. The reset re-arms markers on
-# the cloned next root, not on the sealed baseline.
+# @factory must not carry first-boot markers, the fresh-image conversion token
+# or the ESP install.conf (v3 item 2e); the Boot partition's encrypt.state lives
+# outside the subvolume and is reopened before committing the temporary key.
+# The reset re-arms markers on the cloned next root, not on the sealed baseline,
+# and never the conversion token.
 scrub_factory_boot_state() {
   local root=$1
   rm -f \
     "$root/var/lib/omarchy/mac-first-boot/pending" \
+    "$root/var/lib/omarchy/mac-first-boot/deferred-steps" \
     "$root/var/lib/omarchy/mac-first-boot/install.conf" \
     "$root/var/lib/omarchy/provisioning/pending" \
     "$root/var/lib/omarchy/provisioning/wipe-pending" \
