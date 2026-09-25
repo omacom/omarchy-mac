@@ -4,28 +4,63 @@
 # <dbpath>/sync/<repo>.db, both lists of packages. Repositories are file://
 # directories holding <repo>.db. $MIGRATE_FIXTURE/conflicts lists
 # "package conflicting-package..." for every repository.
+#
+# Legacy fixtures opt into more of pacman:
+# - $MIGRATE_FIXTURE/files/<name> lists the paths package <name> installs;
+#   <dbpath>/local/files records "package path" for what is installed. A
+#   transaction refuses to write over a path that exists unless a package it
+#   replaces owns it or --overwrite names it, then writes its files.
+# - With $MIGRATE_FIXTURE/verify-signatures, a sync database line may carry a
+#   third column, the key that signed the package; where the repository's
+#   SigLevel requires signatures, the key must be trusted in --gpgdir's keys.
+# - $MIGRATE_FIXTURE/depends lists "package version dependency..." for -R.
 set -euo pipefail
 
 fixture=${MIGRATE_FIXTURE:?}
 root=${OMARCHY_MAC_MIGRATE_ROOT:?}
 config=$root/etc/pacman.conf
 dbpath=$root/var/lib/pacman
-cachedirs=() dbonly=0 ask="" format="" op="" flags="" args=()
+gpgdir=$root/etc/pacman.d/gnupg
+cachedirs=() overwrites=() dbonly=0 ask="" format="" op="" flags="" args=()
 while (( $# )); do
   case $1 in
     --config) config=$2; shift 2 ;;
     --dbpath) dbpath=$2; shift 2 ;;
     --cachedir) cachedirs+=("$2"); shift 2 ;;
-    --gpgdir | --logfile) shift 2 ;;
+    --gpgdir) gpgdir=$2; shift 2 ;;
+    --overwrite) overwrites+=("$2"); shift 2 ;;
+    --logfile) shift 2 ;;
     --noconfirm) shift ;;
     --ask) ask=$2; shift 2 ;;
     --dbonly) dbonly=1; shift ;;
     --print-format) format=$2; shift 2 ;;
     --*) echo "fake pacman: unknown option $1" >&2; exit 1 ;;
-    -Q* | -S*) op=${1:1:1}; flags=${1:2}; shift ;;
+    -Q* | -S* | -R*) op=${1:1:1}; flags=${1:2}; shift ;;
     *) args+=("$1"); shift ;;
   esac
 done
+files_db=$dbpath/local/files
+[[ ! -d $fixture/files || -f $files_db ]] || : >"$files_db"
+
+# A path is written over only when nothing is there, a package the
+# transaction replaces owns it, or an --overwrite glob matches it.
+may_overwrite() {
+  local pattern
+  for pattern in ${overwrites[@]+"${overwrites[@]}"}; do
+    # shellcheck disable=SC2053 # a glob, as pacman matches it
+    [[ $1 == $pattern ]] && return 0
+  done
+  return 1
+}
+
+remove_files() { # package
+  local path
+  [[ -f $files_db ]] || return 0
+  while read -r path; do
+    [[ -d $root$path && ! -L $root$path ]] || rm -f "$root$path"
+  done < <(awk -v name="$1" '$1 == name { sub(/^[^ ]+ /, ""); print }' "$files_db")
+  awk -v name="$1" '$1 != name' "$files_db" >"$files_db.new" && mv "$files_db.new" "$files_db"
+}
 
 repositories() {
   awk '/^\[/ { name = $0; gsub(/[][]/, "", name) } /^Server = / && name != "options" { sub(/^Server = /, ""); print name, $0 }' "$config"
@@ -35,6 +70,49 @@ declare -A version=()
 while read -r name ver; do
   [[ -z $name ]] || version[$name]=$ver
 done <"$dbpath/local/packages"
+
+if [[ $op == "Q" && $flags == *l* ]]; then
+  if [[ $flags == *p* ]]; then
+    base=${args[0]##*/}
+    base=${base%%.pkg.tar.*}
+    base=${base%-*}
+    base=${base%-*}
+    [[ ! -f $fixture/files/${base%-*} ]] || cat "$fixture/files/${base%-*}"
+  elif [[ -f $files_db ]]; then
+    if [[ $flags == *q* ]]; then sed 's/^[^ ]* //' "$files_db"; else cat "$files_db"; fi
+  fi
+  exit 0
+fi
+
+if [[ $op == "R" ]]; then
+  for name in "${args[@]}"; do
+    [[ -n ${version[$name]:-} ]] || { echo "error: target not found: $name" >&2; exit 1; }
+  done
+  if [[ -f $fixture/depends ]]; then
+    while read -r name ver deps; do
+      [[ ${version[$name]:-} == "$ver" && " ${args[*]} " != *" $name "* ]] || continue
+      for dep in $deps; do
+        [[ " ${args[*]} " != *" $dep "* ]] ||
+          { echo "error: failed to prepare transaction (could not satisfy dependencies)" >&2; echo ":: removing $dep breaks dependency '$dep' required by $name" >&2; exit 1; }
+      done
+    done <"$fixture/depends"
+  fi
+  if (( ! dbonly )); then
+    [[ ! -e $dbpath/db.lck ]] || { echo "error: failed to init transaction (unable to lock database)" >&2; exit 1; }
+    : >"$dbpath/db.lck"
+    echo "remove ${args[*]}" >>"$fixture/pacman.log"
+    for name in "${args[@]}"; do remove_files "$name"; done
+  fi
+  for name in "${args[@]}"; do unset "version[$name]"; done
+  for name in "${!version[@]}"; do
+    echo "$name ${version[$name]}"
+  done | LC_ALL=C sort >"$dbpath/local/packages"
+  if (( ! dbonly )); then
+    echo "hooks" >>"$fixture/pacman.log"
+    rm -f "$dbpath/db.lck"
+  fi
+  exit 0
+fi
 
 if [[ $op == "Q" ]]; then
   if (( ${#args[@]} )); then
@@ -83,6 +161,30 @@ newer() {
   [[ $1 != "$2" && $(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1) == "$1" ]]
 }
 
+# The SigLevel each repository answers to: its own, or the global one.
+siglevel() {
+  awk -v wanted="$1" '
+    /^\[/ { name = $0; gsub(/[][]/, "", name) }
+    /^SigLevel = / { value = $0; sub(/^SigLevel = /, "", value); if (name == "options") global = value; else level[name] = value }
+    END { print ((wanted in level) ? level[wanted] : global) }' "$config"
+}
+
+verify_signatures() {
+  local name repo signer level
+  [[ -e $fixture/verify-signatures ]] || return 0
+  for name in "${!changed[@]}"; do
+    repo=${changed[$name]}
+    level=" $(siglevel "$repo") "
+    [[ ! $level =~ \ (Package)?(Optional|Never|TrustAll)\  ]] || continue
+    signer=$(awk -v name="$name" -v ver="${version[$name]}" '$1 == name && $2 == ver { print $3; exit }' "$dbpath/sync/$repo.db")
+    if [[ -z $signer ]] || ! grep -Eq "^$signer [fu]\$" "$gpgdir/keys"; then
+      echo "error: $name: signature from \"${signer:-nobody}\" is unknown trust" >&2
+      echo "error: failed to commit transaction (invalid or corrupted package (PGP signature))" >&2
+      exit 1
+    fi
+  done
+}
+
 declare -A changed=()
 if [[ $flags == *u* ]]; then
   for name in "${!version[@]}"; do
@@ -120,6 +222,7 @@ if [[ $flags == *p* ]]; then
   exit 0
 fi
 if [[ $flags == *w* ]]; then
+  verify_signatures
   for name in "${!changed[@]}"; do
     file="$name-${version[$name]}-aarch64.pkg.tar.zst"
     for dir in "${cachedirs[@]}"; do
@@ -133,6 +236,30 @@ fi
 if (( ! dbonly )); then
   [[ ! -e $fixture/fail-transaction ]] || { echo "error: failed to commit transaction" >&2; exit 1; }
   [[ ! -e $dbpath/db.lck ]] || { echo "error: failed to init transaction (unable to lock database)" >&2; exit 1; }
+  verify_signatures
+  if [[ -d $fixture/files ]]; then
+    declare -A owner=()
+    while read -r name path; do owner[$path]=$name; done <"$files_db"
+    clashes=()
+    for name in "${!changed[@]}"; do
+      [[ -f $fixture/files/$name ]] || continue
+      while read -r path; do
+        [[ -e $root$path || -L $root$path ]] || continue
+        [[ ! -d $root$path || -L $root$path ]] || continue
+        holder=${owner[$path]:-}
+        if [[ -n $holder && ( -n ${changed[$holder]:-} || -z ${version[$holder]:-} ) ]]; then
+          continue
+        fi
+        may_overwrite "$path" && [[ -z $holder ]] && continue
+        clashes+=("$name: $path exists in filesystem${holder:+ (owned by $holder)}")
+      done <"$fixture/files/$name"
+    done
+    if (( ${#clashes[@]} )); then
+      echo "error: failed to commit transaction (conflicting files)" >&2
+      printf '%s\n' "${clashes[@]}" >&2
+      exit 1
+    fi
+  fi
   : >"$dbpath/db.lck"
   echo "transaction ${args[*]}" >>"$fixture/pacman.log"
   # A package scriptlet that arms first boot, as a fresh image's would.
@@ -140,6 +267,20 @@ if (( ! dbonly )); then
     mkdir -p "$root/var/lib/omarchy/mac-first-boot"
     : >"$root/var/lib/omarchy/mac-first-boot/pending"
   fi
+fi
+if (( ! dbonly )) && [[ -d $fixture/files ]]; then
+  for name in $(awk '{ print $1 }' "$files_db" | sort -u); do
+    [[ -n ${version[$name]:-} && -z ${changed[$name]:-} ]] || remove_files "$name"
+  done
+  for name in "${!changed[@]}"; do
+    [[ -f $fixture/files/$name ]] || continue
+    while read -r path; do
+      mkdir -p "$(dirname "$root$path")"
+      rm -f "$root$path"
+      echo "$name ${version[$name]}" >"$root$path"
+      echo "$name $path" >>"$files_db"
+    done <"$fixture/files/$name"
+  done
 fi
 for name in "${!version[@]}"; do
   echo "$name ${version[$name]}"
