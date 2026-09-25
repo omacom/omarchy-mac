@@ -77,6 +77,14 @@ fi
 
 # Generic, generic-aarch64 and Qualcomm machines have no registered boot
 # package: every operation is a no-op there and callers keep their generic path.
+# omarchy-mac-boot ships the provisioning entrypoints, and owner provisioning
+# has no other Apple path, so they are required. It does not ship boot-rebuild
+# yet, so that stays optional until it does. Moving an operation to required
+# also changes: apple_optional in test/shell.d/lifecycle-dispatch-test.sh,
+# the empty mac-boot case in test/shell.d/luks-rekey-journal-test.sh, and the
+# Apple column and registration table in docs/lifecycle-dispatch.md.
+# /usr/lib/omarchy/mac-boot/limine-ready already lives in that directory as a
+# boot hook, not an operation: entrypoints are added beside it.
 case $platform in
   apple-silicon)
     implementation=/usr/lib/omarchy/mac-boot
@@ -85,7 +93,6 @@ case $platform in
       provision-prepare provision-commit provision-verify
       reset-prepare reset-verify reset-rollback
       update-verify
-      boot-rebuild
     )
     ;;
   *)

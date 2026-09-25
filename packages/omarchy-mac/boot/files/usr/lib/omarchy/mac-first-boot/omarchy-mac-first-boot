@@ -149,13 +149,20 @@ run_deferred_steps() {
   [[ -x $provision ]] || fail "the installed runtime does not ship deferred hardware setup (omarchy-provision-hardware)"
   # Run the image's deferred hardware setup now that the keyring exists, before
   # owner setup. Its service is ordered after first boot, so the two never run at
-  # once. A step that cannot finish yet (one that needs the network on an offline
-  # first boot) must not strand the owner here: it stays queued, and the service
-  # retries it once first boot is done and on every later boot.
-  if ! "$provision" >>"$log_file" 2>&1; then
-    log "deferred hardware setup is incomplete; omarchy-provision-hardware.service retries it"
-    say "Some hardware setup could not finish yet (see ${log_file#"$root"} and /var/log/omarchy-install.log); it is retried after first boot."
-  fi
+  # once. A step that cannot finish yet (status 75: one that needs the network on
+  # an offline first boot) must not strand the owner here: it stays queued, and
+  # the service retries it once first boot is done and on every later boot. Any
+  # other failure (an untrusted manifest or queue) means no setup ran at all.
+  local status=0
+  "$provision" >>"$log_file" 2>&1 || status=$?
+  case $status in
+    0) ;;
+    75)
+      log "deferred hardware setup is incomplete; omarchy-provision-hardware.service retries it"
+      say "Some hardware setup could not finish yet (see ${log_file#"$root"} and /var/log/omarchy-install.log); it is retried after first boot."
+      ;;
+    *) fail "the deferred hardware setup could not run (omarchy-provision-hardware exited $status)" ;;
+  esac
 }
 
 # What a deferred-user image carries for owner provisioning, plus the services

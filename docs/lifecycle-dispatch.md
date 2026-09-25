@@ -36,7 +36,7 @@ The set is fixed in the dispatcher; adding one is an upstream change. The operat
 | `reset-rollback` | Factory reset, when anything fails after `reset-prepare` | Restores the previous boot state | required | ticket 34 |
 | `update-preflight` | Update, before the keyring and package transaction | Refuses an update the platform can't boot afterwards. A failure stops the update. | optional | `omarchy-update-boot preflight` (`omarchy update`) |
 | `update-verify` | Update, after the last package step: the transaction, migrations, the post-update hook, AUR, mise and orphans | Read-only. Verifies the boot chain boots the updated system, whose new kernel may still wait for its reboot. A failure leaves the update unfinished: it exits non-zero and offers no reboot. | required | `omarchy-update-boot verify` (`omarchy update`) |
-| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | required | `omarchy-provision-owner`; ticket 36 |
+| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | optional until ticket 36, then required | `omarchy-provision-owner`; ticket 36 |
 
 ## Platform registration
 
@@ -44,10 +44,12 @@ Registration is code in `bin/omarchy-lifecycle-dispatch`, not configuration. No 
 
 | Platform | Implementation directory | Package | Required operations |
 | --- | --- | --- | --- |
-| `apple-silicon` | `/usr/lib/omarchy/mac-boot` | `omarchy-mac-boot` | all except `update-preflight` |
+| `apple-silicon` | `/usr/lib/omarchy/mac-boot` | `omarchy-mac-boot` | all except `update-preflight` and `boot-rebuild` |
 | `generic`, `generic-aarch64`, `qualcomm` | none | none | none: every operation is a no-op, and callers keep their generic path |
 
 The entrypoint for an operation is `<implementation directory>/<operation>`. A registered platform's required operations must be shipped. Its optional operations may be left out, and then they are no-ops.
+
+`omarchy-mac-boot` ships the provisioning entrypoints from 20260925-2 (ticket 32), and owner provisioning has no other Apple path, so they are required: a Mac whose `omarchy-mac-boot` is older stops before the owner form with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key and `rd.luks.key=` behind. `boot-rebuild` stays optional until ticket 36 ships it. The reset operations are required now because nothing calls them yet; `update-verify` is required, and `omarchy update` calls it (ticket 35).
 
 ## Trust rules
 
@@ -65,7 +67,8 @@ A dispatch point takes one of two shapes:
 
 ### Owner provisioning (`bin/omarchy-provision-owner`)
 
-- `platform_ready` runs `provision-prepare` at the start of each setup attempt, before the keyboard and account forms. Without `omarchy-mac-boot` on a Mac, the owner sees the dispatcher's error naming the package, the log records it, and the attempt ends in the retry or root-shell screen.
+- `platform_ready` runs `provision-prepare` at the start of each setup attempt, before the keyboard and account forms. If it fails, the owner sees its error, the log records it, and the attempt ends in the retry or root-shell screen. On Apple, where `provision-prepare` is required, a Mac without `omarchy-mac-boot`'s entrypoints stops here with the dispatcher's error naming the package.
+- Apple has no direct path any more (ticket 32): #527's `rekey_luks_apple` runs as the shared re-key with `omarchy-mac-boot`'s entrypoints, and a Mac without them stops at `provision-prepare`.
 - The shared re-key (`install/provisioning/luks-rekey.sh`) asks the caller for two callbacks: `luks_auto_unlock_present` and `luks_auto_unlock_drop`. `unlock_owner` resolves `provision-commit` and `provision-verify` once per process. If both resolve, the platform owns the unlock: drop is `provision-commit`, and present is `provision-verify` failing. If neither resolves, the Limine UKI callbacks run unchanged (x86, Snapdragon, generic aarch64). If only one resolves, or resolution fails, the unlock counts as present and can't be dropped, so setup never finishes.
 - After a factory reset left Limine entries for another machine identity, `refresh_boot_entries` starts the menu over from the template (core), then runs `boot-rebuild` if the platform implements it, and `limine-update` otherwise.
 - Everything else stays upstream: the wizard, account and login, the journal, slot retirement, the proof that the staged key opens nothing, and cleanup.
@@ -79,22 +82,22 @@ A dispatch point takes one of two shapes:
 
 ## Apple implementation
 
-`omarchy-mac-boot` implements the Apple operations. Draft #503 already moved the Apple boot code into `packages/omarchy-mac/boot/`, with sourced modules in `/usr/lib/omarchy-mac/boot` and commands in `/usr/bin`. Its modules become the implementation with small entrypoints around them:
+`omarchy-mac-boot` implements the Apple operations. #503, landed as #527, moved the Apple boot code into `packages/omarchy-mac/boot/`, with sourced modules in `/usr/lib/omarchy-mac/boot` and commands in `/usr/bin`. Its modules become the implementation with small entrypoints around them (tickets 32, 34 and 35):
 
-| #503 today | Operation | Change |
+| #527 today | Operation | Change |
 | --- | --- | --- |
-| `omarchy-provision-owner` sources `/usr/lib/omarchy-mac/boot/provision.sh` when `omarchy-hw-apple-silicon` succeeds, and refuses with "Required omarchy-mac-boot provision support is unavailable" | `provision-prepare` | The refusal becomes the dispatcher's required-operation error. The entrypoint keeps the checks from #503's Apple block in `run_setup`: the LUKS device is found, and a `finished` `encrypt.state` has no leftover unlock. |
-| `apple_rekey_boot` in `lib/provision.sh` (drop `rd.luks.key=` from `/etc/default/grub`, `mkinitcpio -P`, `omarchy-mac-boot-update`), the `/boot/omarchy/luks-key` half of `shred_luks_keyfiles`, then `mark_encrypt_finished` | `provision-commit` | The entrypoint sets the globals the module expects (`GRUB_DEFAULT`, `LOG_FILE`, `log_step`, `say`) to fixed values, sources the module and calls it. On failure it restores the boot key and `rd.luks.key=`. |
-| The Apple half of `require_finished_luks`, and `run_provisioning`'s refusal before `encrypt.state` reaches `finished` | `provision-verify` | New read-only entrypoint: no `/boot/omarchy/luks-key`, no `rd.luks.key=` in the GRUB defaults or in the Limine command line `omarchy-mac-limine-cmdline` derives from them, `encrypt.state` absent or `finished` |
+| `omarchy-provision-owner` sources `/usr/lib/omarchy-mac/boot/provision.sh` when `omarchy-hw-apple-silicon` succeeds, and refuses with "Required omarchy-mac-boot provision support is unavailable" | `provision-prepare` | The refusal becomes the dispatcher's required-operation error. The read-only entrypoint (ticket 32) refuses a plain root when the first boot recorded `encrypt=1` (it records that for an absent `install.conf`), an unfinished conversion, a LUKS device `/etc/crypttab` does not name, an initramfs that does not load the vendor firmware before the password prompt, and boot files that do not go to the ESP the device tree names (`omarchy-mac-esp`). A leftover unlock is no longer refused here: the journal commits it away. |
+| `apple_rekey_boot` in `lib/provision.sh` (drop `rd.luks.key=` from `/etc/default/grub`, `mkinitcpio -P`, `omarchy-mac-boot-update`), the `/boot/omarchy/luks-key` half of `shred_luks_keyfiles`, then `mark_encrypt_finished` | `provision-commit` | The entrypoint (ticket 32) sources the module, which sets its paths and output, and runs `apple_rekey_boot`, checks that the rebuilt initramfs still loads the vendor firmware before the prompt, then removes the boot-partition key and records `phase=finished` with the journal's owner slot and acknowledged recovery slot. The key goes last, so until then the initramfs still unlocks with it; a failed rebuild restores `rd.luks.key=` and rebuilds with it. It refuses while a conversion is unfinished. |
+| The Apple half of `require_finished_luks`, and `run_provisioning`'s refusal before `encrypt.state` reaches `finished` | `provision-verify` | New read-only entrypoint (ticket 32): no `/boot/omarchy/luks-key`, no `rd.luks.key=` in the GRUB defaults or the command line the Mac boots (`/etc/default/limine` on a Limine Mac, `grub.cfg` otherwise), `encrypt.state` absent, `declined` or `finished` |
 | `stage_luks_rekey_apple` in `lib/factory-reset.sh` | `reset-prepare` | Ticket 34 |
 | `rebuild_next_boot_apple` (factory-kernel coherence refusal, rebuild in the factory root, `verify_limine_hashes`) | `reset-prepare`, `reset-verify` | Ticket 34 |
-| mx-mac's reset rollback, not yet in #503 | `reset-rollback` | Ticket 34 |
-| `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning uses it now. |
-| `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` runs the check limited to the boot chain (`--boot-chain`), with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. It holds only the kernel image, device trees and m1n1 against their packages, checks the kernel the boot menu starts first when both kernels are installed, and leaves out LUKS keyslots, provisioning leftovers and an m1n1 image its owner took over with `M1N1_UPDATE_DISABLED`. On failure it says not to reboot and how to rebuild the boot files. |
+| mx-mac's reset rollback, not yet in #527 | `reset-rollback` | Ticket 34 |
+| `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning calls it once shipped; until ticket 36 ships it, Apple refreshes stale entries with `limine-update`, as #527 did. The update path does not call it. |
+| `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` (ticket 35) runs the check limited to the boot chain (`--boot-chain`), with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. It holds only the kernel image, device trees and m1n1 against their packages, checks the kernel the boot menu starts first when both kernels are installed, and leaves out LUKS keyslots, provisioning leftovers and an m1n1 image its owner took over with `M1N1_UPDATE_DISABLED`. On failure it says not to reboot and how to rebuild the boot files. |
 
-- **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #503 put them and are sourced by absolute path.
-- **Owner and recovery slots:** #503's `rekey_luks_apple` sequence folds into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`). Only its boot step is `provision-commit`.
-- **Recovery passphrase:** #503 prepares it (`prepare_luks_recovery`) only on Apple. Whether every encrypted install gets one is a core decision for ticket 33, not a dispatch operation.
+- **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #527 put them and are sourced by absolute path.
+- **Owner and recovery slots:** #527's `rekey_luks_apple` sequence is folded into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`): the journal keeps a recovery slot once the owner acknowledged its key and retires every other one. Only its boot step is `provision-commit`.
+- **Recovery passphrase:** core prepares it (`prepare_luks_recovery`) only on Apple (`recovery_key_offered`), and a retry then keeps the owner's password. Whether every encrypted install gets one is a core decision for ticket 33, not a dispatch operation.
 
 ## Qualcomm
 
@@ -117,6 +120,7 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
 - `test/shell.d/update-boot-verify-test.sh` runs `omarchy update` through the real dispatcher: no-ops and no root on x86, generic aarch64 and Qualcomm; on Apple, preflight before the packages, and `omarchy-mac-boot`'s real `update-verify` and boot check on a fixture Mac, where a wrong device tree, a stale m1n1 or a missing UKI fails the update without offering the reboot.
 - `test/shell.d/luks-rekey-journal-test.sh` runs owner provisioning through the real dispatcher:
   - the crash-and-resume matrix on x86 (Limine UKI path unchanged, no Mac entrypoint runs) and on Apple with a fake boot package
-  - setup stopping before the owner form when the boot package is missing or not ready
+  - setup stopping before the owner form when the boot package is not ready, missing, or too old to ship the provisioning entrypoints
   - the stale-entry refresh rebuilding through `limine-update` on x86 and the boot package on Apple
-  - the worker failing closed without it
+  - the worker failing closed without the provisioning entrypoints, or when a boot package implements only one of `provision-commit` and `provision-verify`
+- `test/shell.d/provision-owner-luks-test.sh` runs owner provisioning through the dispatcher into `omarchy-mac-boot`'s staged entrypoints, and `packages/omarchy-mac/boot/test/mac-provision-test.sh` covers those entrypoints on their own (ticket 32).
