@@ -1,0 +1,288 @@
+#!/bin/bash
+
+# First boot of an Omarchy Mac image: consume the app's install.conf,
+# initialise this Mac's package keyring, run hardware steps the image build
+# deferred, then hand off to owner provisioning. Encryption, if chosen, already
+# happened in the initramfs of this same boot. The image already contains the
+# runtime.
+#
+# omarchy-mac-first-boot            run (omarchy-mac-first-boot.service)
+# omarchy-mac-first-boot arm ROOT   arm an image root the builder made
+
+set -euo pipefail
+
+root=${OMARCHY_MAC_FIRST_BOOT_ROOT:-}
+state_dir=$root/var/lib/omarchy/mac-first-boot
+pending=$state_dir/pending
+consumed_conf=$state_dir/install.conf
+error_file=$state_dir/last-error
+log_file=$root/var/log/omarchy-mac-first-boot.log
+provisioning_dir=$root/var/lib/omarchy/provisioning
+esp_conf=$root/boot/efi/omarchy/install.conf
+keyring_dir=$root/etc/pacman.d/gnupg
+keyring_record=$state_dir/keyring
+keyring_import_dir=$root/usr/share/pacman/keyrings
+
+
+say() { printf '%s\n' "$*"; }
+
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$log_file" 2>/dev/null || true; }
+
+fail() {
+  mkdir -p "$state_dir"
+  printf '%s\n' "$*" >"$error_file"
+  log "failed: $*"
+  printf 'First boot stopped: %s\n' "$*" >&2
+  exit 1
+}
+
+pause() { sleep "$1"; }
+
+# Writes bytes to a root-owned file in one rename, so a power loss leaves the old
+# file or the new one. The directory is fsynced after the rename so the dirent
+# is durable before the caller may delete a source copy.
+write_atomically() {
+  local target=$1 mode=$2 staging dir=${1%/*}
+  staging=$(mktemp "$target.XXXXXX")
+  printf '%s' "$3" >"$staging"
+  chmod "$mode" "$staging"
+  if ! sync "$staging"; then
+    rm -f "$staging"
+    fail "could not persist $target"
+  fi
+  mv -f "$staging" "$target"
+  sync "$dir" || fail "could not persist $target"
+}
+
+parse_install_conf() {
+  local line key value format="" encrypt=""
+  [[ -f $1 && ! -L $1 ]] || fail "$1 is not a regular file"
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ -n $line && $line != \#* ]] || continue
+    [[ $line == *=* ]] || fail "$1 is malformed"
+    key=${line%%=*}
+    value=${line#*=}
+    case $key in
+      format) format=$value ;;
+      encrypt) encrypt=$value ;;
+      lane) ;;
+    esac
+  done <"$1"
+  [[ $format == 1 ]] || fail "install.conf is not format=1"
+  [[ $encrypt == 0 || $encrypt == 1 ]] || fail "install.conf does not set encrypt=0 or encrypt=1"
+}
+
+# The encrypt hook already read the ESP copy in this boot's initramfs and left
+# it in place. First boot keeps it on the root so later tooling (and a retry
+# after power loss) does not depend on the ESP file. A persisted copy always
+# wins; it is fsynced, then the ESP is deleted independently. Missing on both
+# sides is encryption on, matching INTERFACES §4.
+consume_install_conf() {
+  local body=""
+  install -d -m 0755 "$state_dir"
+  if [[ -e $consumed_conf || -L $consumed_conf ]]; then
+    # A prior attempt may have renamed this file and then failed to fsync the
+    # directory. Existence is not durability: sync the record and its directory
+    # before the ESP copy may be deleted.
+    sync "$consumed_conf" || fail "could not persist $consumed_conf"
+    sync "$state_dir" || fail "could not persist $consumed_conf"
+  elif [[ -e $esp_conf || -L $esp_conf ]]; then
+    [[ -f $esp_conf && ! -L $esp_conf ]] || fail "$esp_conf is not a regular file"
+    IFS= read -r -d '' body <"$esp_conf" || true
+    write_atomically "$consumed_conf" 0644 "$body"
+  else
+    write_atomically "$consumed_conf" 0644 $'format=1\nencrypt=1\n'
+  fi
+  if [[ -e $esp_conf || -L $esp_conf ]]; then
+    [[ -f $esp_conf || -L $esp_conf ]] || fail "$esp_conf is not a regular file"
+    rm -f "$esp_conf"
+  fi
+  parse_install_conf "$consumed_conf"
+}
+
+# The image ships no pacman keyring, so no two Macs share a master key: each
+# makes its own before deferred steps local-sign keys. The record names that
+# master key, so a retry keeps a finished keyring and rebuilds an unfinished
+# one from scratch.
+keyring_master() {
+  gpg --batch --homedir "$keyring_dir" --with-colons --list-secret-keys 2>/dev/null |
+    awk -F: '$1 == "sec" { keys++ } $1 == "fpr" && keys == 1 && !master { master = $10 }
+      END { if (keys != 1 || master == "") exit 1; print master }'
+}
+
+# Only populate the platform/release keyrings already shipped in the image.
+# Candidate signing and third-party repository keys are not installed trust.
+make_keyring() {
+  local master=""
+  if [[ -f $keyring_record ]] && master=$(keyring_master) &&
+    [[ $(<"$keyring_record") == "master=$master" ]]; then
+    return 0
+  fi
+  say "Creating this Mac's package keyring..."
+  rm -f "$keyring_record"
+  rm -rf "$keyring_dir"
+  local -a keyrings=(archlinuxarm asahi-alarm)
+  [[ ! -f $keyring_import_dir/omarchy.gpg ]] || keyrings+=(omarchy)
+  pacman-key --gpgdir "$keyring_dir" --init >>"$log_file" 2>&1 &&
+    pacman-key --gpgdir "$keyring_dir" --populate-from "$keyring_import_dir" --populate "${keyrings[@]}" \
+      >>"$log_file" 2>&1 || fail "could not create the package keyring"
+  master=$(keyring_master) || fail "could not identify this Mac's package keyring"
+  write_atomically "$keyring_record" 0644 "master=$master"$'\n'
+}
+
+run_deferred_steps() {
+  local steps=$state_dir/deferred-steps
+  # This is the builder's fresh-image contract, not an executable input list.
+  # Reset re-arms first boot without it, so it cannot authorize conversion again.
+  if [[ -e $steps || -L $steps ]]; then
+    [[ -f $steps && ! -L $steps ]] || fail "deferred-steps is not a regular file"
+    cmp -s "$steps" <(printf '%s\n' 'install/hardware/apple/limine-boot.sh') ||
+      fail "deferred-steps does not match the supported image contract"
+  fi
+  # System hardware setup already ran inside the image builder. Only the
+  # boot activation needs the installed machine identity on first boot.
+  [[ -n ${OMARCHY_PATH:-} ]] || fail "OMARCHY_PATH is missing"
+  bash -eE -c 'source "$OMARCHY_PATH/install/hardware/apple/limine-boot.sh"' \
+    >>"$log_file" 2>&1 || fail "the deferred hardware steps failed"
+}
+
+# What a deferred-user image carries for owner provisioning, plus the services
+# it enables. Node.js and the runtime itself are already in the image. T1 arms
+# provisioning/pending; this service never re-arms it. Provision-owner finds
+# $PROVISIONING_DIR/luks-key when the initramfs hook encrypted the root; this
+# service never touches keys.
+stage_provisioning() {
+  local unit=$root/usr/share/omarchy/install/provisioning/omarchy-provision-owner.service
+  [[ -f $unit && -x $root/usr/bin/omarchy-provision-owner ]] ||
+    fail "the installed runtime does not ship owner provisioning"
+  install -d -m 0755 "$provisioning_dir"
+  chmod 0755 "$provisioning_dir"
+  install -d -m 0755 "$root/etc/systemd/system/multi-user.target.wants"
+  cp -p "$unit" "$root/etc/systemd/system/omarchy-provision-owner.service"
+  ln -sfn /etc/systemd/system/omarchy-provision-owner.service \
+    "$root/etc/systemd/system/multi-user.target.wants/omarchy-provision-owner.service"
+  systemctl enable speakersafetyd.service sddm.service >>"$log_file" 2>&1 ||
+    fail "could not enable speakersafetyd and the display manager"
+  # The unit copy, its data and every enable link must be on disk before pending goes.
+  sync "$root/etc/systemd/system/omarchy-provision-owner.service" "$root/etc/systemd/system" \
+    "$root/etc/systemd/system/multi-user.target.wants" "$provisioning_dir" || fail "could not persist the enabled units"
+}
+
+# The single commit point. The owner-provisioning and display-manager gates are
+# ConditionPathExists=!pending, so pending must be gone before their jobs are
+# queued; a start that cannot even be queued re-arms pending and fails.
+commit() {
+  systemctl daemon-reload >>"$log_file" 2>&1 ||
+    fail "could not reload systemd"
+  sync "$state_dir" || fail "could not persist the first-boot commit"
+  rm -f "$pending"
+  sync "$state_dir" || { : >"$pending"; sync "$state_dir" || true; fail "could not persist the first-boot commit"; }
+  systemctl start --no-block omarchy-provision-owner.service >>"$log_file" 2>&1 ||
+    { : >"$pending"; sync "$state_dir" || true; fail "could not queue owner provisioning"; }
+  systemctl start --no-block display-manager.service >>"$log_file" 2>&1 ||
+    { : >"$pending"; sync "$state_dir" || true; fail "could not queue the display manager"; }
+  log "committed"
+}
+
+encrypt_failed_marker=${OMARCHY_MAC_ENCRYPT_FAILED_FILE:-/run/omarchy-mac-encrypt.failed}
+
+attempt() {
+  rm -f "$error_file"
+  # The initrd encrypt unit has no console; it leaves its failure here. It
+  # is reported once and kept in the state directory, so a Retry after a
+  # repair from the shell is not blocked by the same marker.
+  if [[ -z $root && -s $encrypt_failed_marker ]]; then
+    mkdir -p "$state_dir"
+    mv -f "$encrypt_failed_marker" "$state_dir/last-encrypt-failure" 2>/dev/null ||
+      rm -f "$encrypt_failed_marker"
+    fail "encryption failed in the initramfs: $(<"$state_dir/last-encrypt-failure") (journalctl -b -u omarchy-mac-encrypt)"
+  fi
+  consume_install_conf
+  make_keyring
+  run_deferred_steps
+  stage_provisioning
+  say "Ready for account setup."
+  commit
+}
+
+# Progress goes to the journal; only a failure takes the console. The unit
+# holds no terminal (systemd's TTY reset would switch the VT to text and drop
+# the splash), so this dismisses Plymouth and opens tty1 itself, keeping the
+# journal descriptors for the retry that follows.
+console_tty=${OMARCHY_MAC_FIRST_BOOT_TTY:-/dev/tty1}
+console_taken=0
+take_console() {
+  [[ -z $root && -w $console_tty ]] || return 0
+  (( console_taken == 0 )) || return 0
+  if command -v plymouth >/dev/null 2>&1; then
+    plymouth quit 2>/dev/null || true
+  fi
+  command -v chvt >/dev/null 2>&1 && chvt 1 2>/dev/null || true
+  exec {journal_out}>&1 {journal_err}>&2
+  exec <"$console_tty" >"$console_tty" 2>&1
+  printf '\033c'
+  console_taken=1
+}
+
+release_console() {
+  (( console_taken )) || return 0
+  exec >&"$journal_out" 2>&"$journal_err" </dev/null
+  exec {journal_out}>&- {journal_err}>&-
+  console_taken=0
+}
+
+failure_screen() {
+  local choice
+  take_console
+  say ""
+  say "Omarchy could not finish first boot:"
+  say "  $(cat "$error_file" 2>/dev/null || echo "an unexpected error (details in ${log_file#"$root"})")"
+  say "Nothing is lost: retrying continues from where this attempt stopped."
+  while true; do
+    choice=$(gum choose --header "What next?" "Retry" "Shell") || { pause 5; choice=Retry; }
+    [[ $choice == Shell ]] || { release_console; return 0; }
+    say "Type exit to come back to this screen."
+    if (( console_taken )) && command -v setsid >/dev/null 2>&1; then
+      setsid -c bash -l {lock_fd}>&- || true
+    else
+      bash -l {lock_fd}>&- || true
+    fi
+  done
+}
+
+main() {
+  if [[ ${1:-} == arm ]]; then
+    local image=${2:?Usage: omarchy-mac-first-boot arm ROOT}
+    install -d -m 0755 "$image/var/lib/omarchy/mac-first-boot"
+    : >"$image/var/lib/omarchy/mac-first-boot/pending"
+    chmod 0644 "$image/var/lib/omarchy/mac-first-boot/pending"
+    return 0
+  fi
+  (($# == 0)) || { echo "Usage: omarchy-mac-first-boot [arm ROOT]" >&2; return 64; }
+  [[ -n $root || $EUID == 0 ]] || { echo "omarchy-mac-first-boot must run as root" >&2; return 1; }
+  [[ -f $pending ]] || return 0
+  install -d -m 0755 "$state_dir"
+  mkdir -p "${log_file%/*}"
+  touch "$log_file"
+  chmod 0600 "$log_file"
+
+  exec {lock_fd}>"$state_dir/lock"
+  flock -n "$lock_fd" || { echo "Another first boot is already running" >&2; return 1; }
+
+  local status
+  while true; do
+    set +e
+    (
+      set -e
+      attempt
+    )
+    status=$?
+    set -e
+    ((status != 0)) || return 0
+    failure_screen
+  done
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
