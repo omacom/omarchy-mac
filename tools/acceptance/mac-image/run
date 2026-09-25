@@ -546,16 +546,15 @@ serial_expect() {
   ((status == 0)) || fail "$2: not seen within ${3:-$boot_timeout}s (see ${serial_log##*/})"
 }
 
+# QEMU takes serial input only as fast as the guest drains the UART's 16-byte
+# FIFO, and drops what is still unread when the writer disconnects: the
+# connection stays open until the guest has read it all.
 serial_send() {
-  printf '%s' "$1" | socat -u - "UNIX-CONNECT:$serial_sock" 2>/dev/null || fail "could not type on the guest's console"
+  { printf '%s' "$1"; sleep 1; } | socat -u - "UNIX-CONNECT:$serial_sock" 2>/dev/null || fail "could not type on the guest's console"
 }
 
-# Types a line. gum's password field drops a Return that arrives in the same
-# burst as the text, so the Return goes on its own.
 serial_type() {
-  [[ -z $1 ]] || serial_send "$1"
-  sleep 1
-  serial_send $'\r'
+  serial_send "$1"$'\r'
 }
 
 # Units fsync what they record, but ext4, vfat and btrfs keep the rest in the
