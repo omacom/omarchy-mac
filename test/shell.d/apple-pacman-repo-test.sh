@@ -8,19 +8,22 @@ leaf="$ROOT/install/hardware/apple/pacman.sh"
 hardware_pacman="$ROOT/install/hardware/pacman.sh"
 migration="$ROOT/migrations/1788200000.sh"
 
+# The unsigned [omarchy-aarch64] is legacy: only the migration reaches the leaf.
+# Fresh installs and images take every package signed from [omarchy], asahi-alarm
+# and Arch Linux ARM.
 hardware_all="$ROOT/install/hardware/all.sh"
-grep -Fq 'hardware/apple/pacman.sh' "$hardware_all" ||
-  fail "the Apple Silicon repository leaf runs during hardware setup"
-(( $(grep -n 'hardware/apple/pacman.sh' "$hardware_all" | cut -d: -f1) < $(grep -n 'hardware/apple/video-decode.sh' "$hardware_all" | cut -d: -f1) )) ||
-  fail "the repository leaf runs before the Apple leaves that install from it"
+! grep -Fq 'apple/pacman.sh' "$hardware_all" ||
+  fail "fresh hardware setup, and so an image's deferred queue, never runs the [omarchy-aarch64] leaf"
 ! grep -Fq 'apple/pacman.sh' "$hardware_pacman" ||
-  fail "the repository leaf is not run a second time from the pacman extensions"
-# Every Apple Silicon migration runs after the repository exists, whether it
-# installs directly or through a sourced leaf; the runner walks migrations in
-# filename order. A migration counts as Apple Silicon when it names the
-# detector, the architecture, or an Apple leaf; one that exits on the detector
-# is Intel-only and exempt, and so are older upstream migrations that only
-# mention an Asahi package name.
+  fail "the pacman extensions never run the [omarchy-aarch64] leaf"
+pass "fresh hardware setup never runs the [omarchy-aarch64] leaf"
+
+# On installs that have it, every Apple Silicon migration still runs after the
+# repository exists, whether it installs directly or through a sourced leaf;
+# the runner walks migrations in filename order. A migration counts as Apple
+# Silicon when it names the detector, the architecture, or an Apple leaf; one
+# that exits on the detector is Intel-only and exempt, and so are older
+# upstream migrations that only mention an Asahi package name.
 late=()
 for candidate in "$ROOT"/migrations/*.sh; do
   [[ $(basename "$candidate") != $(basename "$migration") ]] || continue
@@ -30,7 +33,7 @@ for candidate in "$ROOT"/migrations/*.sh; do
 done
 (( ${#late[@]} == 0 )) ||
   fail "the repository migration sorts before every Apple Silicon migration" "$(printf '%s\n' "${late[@]}")"
-pass "the [omarchy-aarch64] leaf runs before its consumers"
+pass "the [omarchy-aarch64] migration runs before its consumers"
 
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
@@ -53,6 +56,8 @@ cat >"$stub_bin/pacman" <<'SH'
 printf 'pacman %s\n' "$*" >>"$TEST_LOG"
 exit "${PACMAN_SY_STATUS:-0}"
 SH
+# An Apple Silicon Mac has no T2 or other PCI device the pacman leaves look for.
+printf '#!/bin/bash\n' >"$stub_bin/lspci"
 chmod +x "$stub_bin"/*
 
 stock_conf() {
@@ -60,6 +65,8 @@ stock_conf() {
 }
 
 pending="$test_tmp/var/lib/omarchy/migrations/omarchy-aarch64-sync-pending"
+# A Mac installed before images, unless a test names an image-built one.
+export OMARCHY_IMAGE_ROOT="$test_tmp/legacy-root"
 
 run_leaf() {
   : >"$calls"
@@ -72,6 +79,39 @@ run_migration() {
   APPLE_SILICON="${1:-0}" OMARCHY_PACMAN_CONF="$conf" OMARCHY_AARCH64_REPO_PENDING="$pending" OMARCHY_PATH="$ROOT" TEST_LOG="$calls" PATH="$stub_bin:$PATH" \
     bash -euo pipefail "$migration"
 }
+
+unsigned_repository() {
+  grep -Eq '^\[omarchy-aarch64\]|TrustAll' "$conf"
+}
+
+# A fresh Apple Silicon hardware setup, run or deferred to an image's first
+# boot, configures no unsigned repository: run every listed leaf that touches
+# pacman's configuration on a stubbed Mac.
+stock_conf
+: >"$calls"
+while IFS= read -r step; do
+  grep -Eq 'pacman\.conf|pacman -Sy' "$ROOT/$step" || continue
+  APPLE_SILICON=1 OMARCHY_PACMAN_CONF="$conf" OMARCHY_AARCH64_REPO_PENDING="$pending" TEST_LOG="$calls" \
+    PATH="$stub_bin:$PATH" bash -euo pipefail -c 'source "$1"' _ "$ROOT/$step" >/dev/null ||
+    fail "$step runs on a stubbed Mac"
+done < <(sed -n 's|^run_logged "\$OMARCHY_INSTALL/\(hardware/[^"]*\)"$|install/\1|p' "$hardware_all")
+! unsigned_repository || fail "a fresh Apple Silicon setup leaves pacman.conf with no unsigned repository" "$(cat "$conf")"
+[[ ! -s $calls ]] || fail "a fresh Apple Silicon setup fetches no repository database" "$(cat "$calls")"
+pass "a fresh Apple Silicon setup leaves pacman.conf with no [omarchy-aarch64] and no TrustAll"
+
+# An image-built Mac, before or after its first boot, never gets the repository,
+# from the migration or from a queue an older image deferred.
+for marker in target target.booted; do
+  image_root="$test_tmp/image-$marker"
+  mkdir -p "$image_root/var/lib/omarchy/image"
+  : >"$image_root/var/lib/omarchy/image/$marker"
+  stock_conf
+  OMARCHY_IMAGE_ROOT="$image_root" run_leaf 1
+  OMARCHY_IMAGE_ROOT="$image_root" run_migration 1
+  ! unsigned_repository && [[ ! -s $calls && ! -e $pending ]] ||
+    fail "an image-built Mac ($marker) never gets the [omarchy-aarch64] repository" "$(cat "$conf" "$calls")"
+done
+pass "an image-built Mac never gets the [omarchy-aarch64] repository"
 
 stock_conf
 before=$(cat "$conf")

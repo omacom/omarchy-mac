@@ -31,8 +31,6 @@ run_logged "$OMARCHY_INSTALL/hardware/asus/fix-z13-touchpad.sh"
 
 run_logged "$OMARCHY_INSTALL/hardware/framework/qmk-hid.sh"
 
-# First among the Apple leaves: several of them install from [omarchy-aarch64].
-run_logged "$OMARCHY_INSTALL/hardware/apple/pacman.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/fix-spi-keyboard.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/fix-suspend-nvme.sh"
 run_logged "$OMARCHY_INSTALL/hardware/apple/fix-t2.sh"
