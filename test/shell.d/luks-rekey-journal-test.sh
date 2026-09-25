@@ -560,6 +560,28 @@ for platform in "${platforms[@]}"; do
 done
 pass "stale boot entries are rebuilt by limine-update on x86 and by the boot package on Apple"
 
+# omarchy-mac-boot does not ship boot-rebuild yet: on Apple the stale-entry
+# refresh falls back to limine-update, and setup still finishes only once the
+# boot package verifies nothing of the staged unlock remains.
+if [[ " ${platforms[*]} " == *" apple "* ]]; then
+  platform=apple
+  mv "$mac_boot/boot-rebuild" "$tmp/boot-rebuild.off"
+  fixture
+  rm -rf "$tmp/provisioning/luks-key" "$tmp/etc" "$tmp/boot" "$tmp/limine-ran" "$tmp/mac-boot-ran"
+  touch "$tmp/stale"
+  run provision "$owner_password" || fail "apple without boot-rebuild: stale entries are refreshed" "$(cat "$tmp/log" "$tmp/output")"
+  [[ ! -e $tmp/provisioning/pending && $(cat "$tmp/limine-ran") == $'reset\nupdate' ]] ||
+    fail "apple without boot-rebuild: the menu is reset and limine-update rebuilds" "$(cat "$tmp/limine-ran")"
+  grep -qx provision-verify "$tmp/mac-boot-ran" || fail "apple without boot-rebuild: the boot package still has the last word"
+  fixture
+  rm -rf "$tmp/provisioning/luks-key" "$tmp/limine-ran"
+  touch "$tmp/stale"
+  if run provision "$owner_password"; then fail "apple without boot-rebuild: a leftover boot-partition unlock still stops setup"; fi
+  [[ -e $tmp/provisioning/pending ]] || fail "apple without boot-rebuild: setup stays pending"
+  mv "$tmp/boot-rebuild.off" "$mac_boot/boot-rebuild"
+  pass "apple: until omarchy-mac-boot ships boot-rebuild, stale entries fall back to limine-update behind the boot package's verify"
+fi
+
 # Before the owner form: a no-op on x86 even with Mac entrypoints on disk, the
 # boot package's own answer on Apple.
 platform=x86
@@ -590,7 +612,11 @@ if [[ " ${platforms[*]} " == *" apple "* ]]; then
   # unlock remains.
   mv "$mac_boot" "$tmp/mac-boot.off"
   for package in missing old; do
-    [[ $package == missing ]] || install -d -m 755 "$mac_boot"
+    # #527's package already ships the Limine boot hook in that directory.
+    if [[ $package == old ]]; then
+      install -d -m 755 "$mac_boot"
+      install -m 755 /dev/null "$mac_boot/limine-ready"
+    fi
     fixture
     rm -f "$tmp/limine-ran" "$tmp/mac-boot-ran"
     if run setup "$owner_password"; then fail "apple ($package package): setup refuses without provisioning entrypoints"; fi
@@ -607,7 +633,7 @@ if [[ " ${platforms[*]} " == *" apple "* ]]; then
     if run provision "$owner_password"; then fail "apple ($package package): a leftover boot-partition unlock fails provisioning"; fi
     [[ -e $tmp/provisioning/pending ]] && unlock_files_present || fail "apple ($package package): a leftover boot-partition unlock keeps provisioning pending"
     [[ ! -e $tmp/limine-ran && ! -e $tmp/mac-boot-ran ]] || fail "apple ($package package): the Limine UKI path is no fallback"
-    [[ $package == missing ]] || rmdir "$mac_boot"
+    [[ $package == missing ]] || rm -r "$mac_boot"
   done
   mv "$tmp/mac-boot.off" "$mac_boot"
   pass "apple: without omarchy-mac-boot's provisioning entrypoints setup stops naming the package, and the worker fails closed"
