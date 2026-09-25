@@ -10,9 +10,8 @@
 # groups system setup recorded, finalizes it offline from the stashed Node
 # tarball, re-keys LUKS from the throwaway install passphrase to the user's
 # password, and hands off to SDDM. On Apple Silicon it also adds a one-time
-# recovery keyslot, shreds the Boot-partition auto-unlock key, drops
-# rd.luks.key=, rebuilds the initramfs, and marks encrypt.state finished so
-# later boots prompt.
+# recovery keyslot; the boot package takes the auto-unlock out of the Mac's
+# boot chain through omarchy-lifecycle-dispatch.
 
 # Password-bearing flows must never inherit shell tracing.
 set +x
@@ -24,9 +23,6 @@ OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 
 PROVISIONING_DIR="${OMARCHY_PROVISIONING_DIR:-/var/lib/omarchy/provisioning}"
 LOG_FILE="${OMARCHY_PROVISION_OWNER_LOG:-/var/log/omarchy-provision-owner.log}"
-BOOT_LUKS_KEY="${OMARCHY_BOOT_LUKS_KEY:-/boot/omarchy/luks-key}"
-ENCRYPT_STATE="${OMARCHY_ENCRYPT_STATE:-/boot/omarchy/encrypt.state}"
-GRUB_DEFAULT="${OMARCHY_GRUB_DEFAULT:-/etc/default/grub}"
 REKEY_STATE="${OMARCHY_LUKS_REKEY_STATE:-$PROVISIONING_DIR/luks-rekey.state}"
 RECOVERY_ACK_PHRASE="I wrote it down"
 
@@ -682,7 +678,9 @@ user_groups() {
   echo "$groups"
 }
 
-apple_silicon() {
+# Apple Silicon owners get a recovery key, as on omarchy-mx-mac; other
+# encrypted installs do not yet.
+recovery_key_offered() {
   omarchy-hw-apple-silicon
 }
 
@@ -953,242 +951,38 @@ show_recovery_key() {
   RECOVERY_ACKED=1
 }
 
-shred_luks_keyfiles() {
-  local file
-  for file in "$PROVISIONING_DIR/luks-key" "$BOOT_LUKS_KEY"; do
-    [[ -e $file ]] || continue
-    shred -u "$file" 2>/dev/null || rm -f "$file" || return 1
-  done
-}
-
-encrypt_state_get() {
-  local key=$1
-  [[ -f $ENCRYPT_STATE ]] || return 1
-  awk -F= -v k="$key" '$1 == k { print $2; exit }' "$ENCRYPT_STATE"
-}
-
-# Transaction state lives on the ext4 Boot partition (v3 item 1b). Preserve
-# partition= and luks_uuid= from T4a; phase moves to rekeyed then finished.
-# Owner and recovery slot numbers stay in the file so later boots can prove
-# the header still holds exactly those slots.
-write_encrypt_state() {
-  local phase=$1 device=${2:-}
-  local format=1 partition="" luks_uuid="" owner_slot="" recovery_slot=""
-  local line key value tmp
-
-  if [[ -f $ENCRYPT_STATE ]]; then
-    while IFS= read -r line || [[ -n $line ]]; do
-      [[ $line == *=* ]] || continue
-      key=${line%%=*}
-      value=${line#*=}
-      case $key in
-        format) format=$value ;;
-        partition) partition=$value ;;
-        luks_uuid) luks_uuid=$value ;;
-        owner_slot) owner_slot=$value ;;
-        recovery_slot) recovery_slot=$value ;;
-      esac
-    done <"$ENCRYPT_STATE"
-  fi
-  owner_slot=${owner_slot:-$(rekey_state_get owner_slot || true)}
-  recovery_slot=${recovery_slot:-$(rekey_state_get recovery_slot || true)}
-  [[ $format == 1 ]] || format=1
-  if [[ -n $device ]]; then
-    [[ -n $luks_uuid ]] || luks_uuid=$(cryptsetup luksUUID "$device" 2>/dev/null || true)
-    if [[ -z $partition ]]; then
-      partition=$(lsblk -no PARTUUID "$device" 2>/dev/null || true)
-      partition=${partition%%$'\n'*}
-    fi
-  fi
-
-  install -d -m 755 "$(dirname "$ENCRYPT_STATE")" || return 1
-  tmp=$(mktemp "${ENCRYPT_STATE}.XXXXXX") || return 1
-  {
-    printf 'format=%s\nphase=%s\npartition=%s\nluks_uuid=%s\n' \
-      "$format" "$phase" "$partition" "$luks_uuid"
-    [[ -z $owner_slot ]] || printf 'owner_slot=%s\n' "$owner_slot"
-    [[ -z $recovery_slot ]] || printf 'recovery_slot=%s\n' "$recovery_slot"
-  } >"$tmp" || { rm -f "$tmp"; return 1; }
-  chmod 644 "$tmp" || { rm -f "$tmp"; return 1; }
-  sync "$tmp" || { rm -f "$tmp"; return 1; }
-  mv -f "$tmp" "$ENCRYPT_STATE" || return 1
-  sync "$(dirname "$ENCRYPT_STATE")"
-}
-
-mark_encrypt_finished() {
-  write_encrypt_state finished "$1"
-}
-
-# A finished journal is not sufficient evidence when a reset or interrupted
-# cleanup has left an automatic unlock credential/configuration behind.
-require_finished_luks() {
-  if [[ -e $PROVISIONING_DIR/luks-key || -e $BOOT_LUKS_KEY ]] ||
-    { [[ -f $GRUB_DEFAULT ]] && grep -q 'rd.luks.key=' "$GRUB_DEFAULT"; }; then
-    log_step "phase=finished conflicts with staged auto-unlock; refusing provisioning completion"
-    say --foreground 1 "Disk setup is inconsistent: a temporary unlock remains."
-    return 1
-  fi
-}
-
-# Apple Silicon: GRUB + sd-encrypt. Order is crash-resumable:
-#   add owner slot → add recovery slot + acknowledgement → phase=rekeyed
-#   (slots recorded) → kill staged slot → shred keyfiles → mkinitcpio/grub
-#   → phase=finished.
-# Each step is idempotent. A retry continues from the recorded phase and never
-# adds another owner or recovery slot.
-# The account and disk share one password. Once an owner slot is recorded, a
-# retry must use the password that slot holds, or setup would finish with an
-# account password that no longer unlocks the disk.
-recorded_owner_slot() {
-  local slot
-  slot=$(rekey_state_get owner_slot || true)
-  [[ -n $slot ]] || slot=$(encrypt_state_get owner_slot || true)
-  printf '%s' "$slot"
-}
-
-owner_password_opens_recorded_slot() {
-  local device=$1 slot
-  slot=$(recorded_owner_slot)
-  [[ -n $slot ]] || return 0
-  [[ $(luks_slot_for "$password" "$device") == "$slot" ]]
-}
-
-rekey_luks_apple() {
-  local device="$1" recovery_slot new_slot phase
-  phase=$(encrypt_state_get phase || true)
-
-  if [[ $phase == rekeyed || $phase == finished ]] && ! owner_password_opens_recorded_slot "$device"; then
-    log_step "the password does not open the recorded owner slot; refusing to finish with a different disk password"
-    say --foreground 1 "Use the disk password chosen earlier in setup."
-    return 1
-  fi
-
-  if [[ $phase != rekeyed && $phase != finished ]]; then
-    new_slot=$(luks_ensure_slot "$password" "$device" owner_slot) || {
-      log_step "could not add or reuse the owner's LUKS slot; will retry"
-      say --foreground 1 "Could not add the owner's disk password; will retry."
-      return 1
-    }
-
-    recovery_slot=$(rekey_state_get recovery_slot || true)
-    if [[ $(rekey_state_get recovery_shown || true) != "1" || -z $recovery_slot ]] ||
-      ! luks_slot_present "$device" "$recovery_slot"; then
-      log_step "recovery slot is missing or unacknowledged; refusing worker re-key"
-      say --foreground 1 "Return to owner setup to confirm a working recovery key."
-      return 1
-    fi
-
-    # Each key must open its own slot: an enrolled token would answer a bare
-    # cryptsetup open for any key.
-    if [[ $(luks_slot_for "$password" "$device") != "$new_slot" ]]; then
-      log_step "owner slot does not unlock $device; will retry"
-      say --foreground 1 "Could not confirm the LUKS re-key; will retry."
-      return 1
-    fi
-    if [[ -n ${recovery_key:-} && $(luks_slot_for "$recovery_key" "$device") != "$recovery_slot" ]]; then
-      log_step "recovery slot does not unlock $device; will retry"
-      say --foreground 1 "Could not confirm the LUKS re-key; will retry."
-      return 1
-    fi
-
-    write_encrypt_state rekeyed "$device" || return 1
-    phase=rekeyed
-  fi
-
-  if [[ $phase == "finished" ]]; then
-    require_finished_luks
-    return
-  fi
-
-  new_slot=$(rekey_state_get owner_slot || true)
-  [[ -n $new_slot ]] || new_slot=$(encrypt_state_get owner_slot || true)
-  recovery_slot=$(rekey_state_get recovery_slot || true)
-  [[ -n $recovery_slot ]] || recovery_slot=$(encrypt_state_get recovery_slot || true)
-  [[ -n $new_slot && -n $recovery_slot ]] || {
-    log_step "phase=rekeyed but owner/recovery slots are not recorded"
-    say --foreground 1 "The LUKS re-key is incomplete and cannot resume."
-    return 1
-  }
-  if ! luks_slot_present "$device" "$new_slot"; then
-    log_step "recorded owner_slot $new_slot is missing from $device; not adding another"
-    say --foreground 1 "The recorded owner keyslot is missing; will not add another."
-    return 1
-  fi
-  if ! luks_slot_present "$device" "$recovery_slot"; then
-    log_step "recorded recovery_slot $recovery_slot is missing from $device; not adding another"
-    say --foreground 1 "The recorded recovery keyslot is missing; will not add another."
-    return 1
-  fi
-
-  luks_kill_other_slots "$device" "$password" "$new_slot" "$recovery_slot" || return 1
-  shred_luks_keyfiles || return 1
-  apple_rekey_boot || return 1
-  mark_encrypt_finished "$device" || return 1
-  rm -f "$REKEY_STATE"
-}
-
 # Move the LUKS volume from the throwaway install passphrase to the user's
 # password and retire every other slot (throwaway + any seller keys a reset
-# left behind).
-#
-# Failing here must be LOUD (abort the attempt, offer retry): silently keeping
-# the staged auto-unlock keyfile would leave the disk effectively unencrypted
-# forever. Apple Silicon resumes from the recorded encrypt.state phase and never
-# skips re-key while phase is not finished; elsewhere luks_rekey journals each
-# step, so an interrupted attempt resumes where it stopped.
+# left behind) but an acknowledged recovery key. luks_rekey journals each step,
+# so an interrupted attempt resumes where it stopped.
 rekey_luks() {
-  local device phase xtrace_on=0 status=0
-  [[ $- == *x* ]] && { xtrace_on=1; set +x; }
-  phase=$(encrypt_state_get phase || true)
-  if [[ $phase == "finished" ]]; then
-    require_finished_luks || status=$?
-    if (( status == 0 )) && apple_silicon && [[ -n $(recorded_owner_slot) ]]; then
-      if ! device=$(luks_device) || [[ ! -e $device ]]; then
-        log_step "cannot locate the LUKS device to check the recorded owner slot"
-        say --foreground 1 "Could not locate the LUKS device to check the disk password."
-        status=1
-      elif ! owner_password_opens_recorded_slot "$device"; then
-        log_step "the password does not open the recorded owner slot of the finished re-key"
-        say --foreground 1 "Use the disk password chosen earlier in setup."
-        status=1
-      fi
-    fi
-    if (( xtrace_on )); then set -x; fi
-    return "$status"
-  fi
+  luks_rekey_pending || return 0
 
-  if ! apple_silicon && ! luks_rekey_pending; then
-    if (( xtrace_on )); then set -x; fi
-    return 0
-  fi
-
+  local device
   if ! device=$(luks_device) || [[ ! -e $device ]]; then
-    if apple_silicon && [[ ! -f $PROVISIONING_DIR/luks-key && $phase != "configured" && $phase != "encrypted" && $phase != "rekeyed" ]]; then
-      if (( xtrace_on )); then set -x; fi
-      return 0
-    fi
-    log_step "cannot locate the LUKS device from /proc/cmdline: $(cat /proc/cmdline 2>/dev/null)"
+    log_step "cannot locate the LUKS device from /proc/cmdline: $(cat /proc/cmdline)"
     say --foreground 1 "Could not locate the LUKS device to re-key."
-    if (( xtrace_on )); then set -x; fi
     return 1
   fi
 
-  if apple_silicon; then
-    rekey_luks_apple "$device" || status=$?
-  else
-    luks_rekey "$device" || status=$?
-  fi
-  if (( xtrace_on )); then set -x; fi
-  return "$status"
+  luks_rekey "$device"
 }
 
 # A re-key interrupted after the staged key was retired can only finish with
-# the password the disk already holds.
+# the password the disk already holds. So can one whose owner slot got a
+# recovery key beside it: that slot's password stays the disk password.
 rekey_accepts_password() {
-  local device
+  local -
+  set +x
+  local device owner
   [[ -f $REKEY_STATE ]] || return 0
   if ! device=$(luks_device) || [[ ! -e $device ]]; then
     return 0
+  fi
+  owner=$(rekey_state_get owner_slot || true)
+  if [[ -n $owner ]] && recovery_key_offered; then
+    [[ $(luks_slot_for "$password" "$device") == "$owner" ]]
+    return
   fi
   luks_rekey_accepts_password "$device"
 }
@@ -1300,19 +1094,11 @@ run_provisioning() {
     touch "$FINALIZE_WARNING_FLAG"
   fi
 
-  local encrypt_phase
-  encrypt_phase=$(encrypt_state_get phase || true)
-  if luks_rekey_pending || [[ -f $BOOT_LUKS_KEY || $encrypt_phase == "configured" || $encrypt_phase == "encrypted" || $encrypt_phase == "rekeyed" || $encrypt_phase == "finished" ]]; then
+  if luks_rekey_pending; then
     log_step "re-keying LUKS to the user's password"
     echo rekey >"$STATE_FILE"
     rekey_luks || return 1
     log_step "LUKS re-key complete"
-  fi
-
-  encrypt_phase=$(encrypt_state_get phase || true)
-  if [[ $encrypt_phase == "configured" || $encrypt_phase == "encrypted" || $encrypt_phase == "rekeyed" ]]; then
-    log_step "refusing to drop provisioning state before encrypt.state phase=finished"
-    return 1
   fi
 
   # After a factory reset on an unencrypted machine nothing above rebuilds the
@@ -1364,19 +1150,7 @@ run_setup() {
       continue
     fi
     confirm_form || continue
-    # A retry after the disk was re-keyed keeps that password: refuse another
-    # before any account is created or changed.
-    if apple_silicon && [[ -n $(recorded_owner_slot) ]]; then
-      local owner_device
-      if ! owner_device=$(luks_device) || [[ ! -e $owner_device ]]; then
-        say --foreground 1 "Could not find the encrypted disk to check its password."
-        return 1
-      fi
-      if ! owner_password_opens_recorded_slot "$owner_device"; then
-        notice "Setup already set this Mac's disk password. Enter that same password." 4
-        continue
-      fi
-    elif ! apple_silicon && ! rekey_accepts_password; then
+    if ! rekey_accepts_password; then
       notice "Setup already set the disk password. Enter that same password." 4
       continue
     fi
@@ -1391,14 +1165,11 @@ run_setup() {
 
   recovery_key=""
   RECOVERY_ACKED=0
-  if apple_silicon && [[ -f $PROVISIONING_DIR/luks-key ]]; then
+  if recovery_key_offered && [[ -f $PROVISIONING_DIR/luks-key ]]; then
     local rekey_device
     if ! rekey_device=$(luks_device) || [[ ! -e $rekey_device ]]; then
       say --foreground 1 "Could not locate the LUKS device to re-key."
       return 1
-    fi
-    if [[ $(encrypt_state_get phase || true) == "finished" ]]; then
-      require_finished_luks || return 1
     fi
     prepare_luks_recovery "$rekey_device" || {
       say --foreground 1 "Could not prepare and confirm a disk recovery key; will retry."
@@ -1451,21 +1222,13 @@ run_setup() {
   # Omarchy..." card would only add a flash of screen before the handoff.
 }
 
-# Shared cryptographic operations are core code; platform modules only adapt boot files.
+# Shared cryptographic operations are core code; a platform's boot package only
+# adapts its boot chain, through omarchy-lifecycle-dispatch.
 source "$OMARCHY_PATH/install/provisioning/luks-rekey.sh" &&
   source "$OMARCHY_PATH/install/provisioning/luks-recovery.sh" || {
   echo "Required LUKS provisioning support is unavailable" >&2
   exit 1
 }
-
-# The shared lifecycle calls these boot operations only on Apple Silicon.
-# Never continue with generic boot handling when the required package is absent.
-if apple_silicon; then
-  source "${OMARCHY_MAC_BOOT_LIB:-/usr/lib/omarchy-mac/boot}/provision.sh" || {
-    echo "Required omarchy-mac-boot provision support is unavailable" >&2
-    exit 1
-  }
-fi
 
 # Tests source this file to exercise rekey_luks without the wizard.
 if [[ ${OMARCHY_PROVISION_OWNER_SOURCE:-} == "1" ]]; then
