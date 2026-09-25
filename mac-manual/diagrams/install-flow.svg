@@ -1,0 +1,65 @@
+<svg viewBox="0 0 900 420" role="img" aria-label="What happens between clicking Install and the first desktop" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/></marker><marker id="arrow-brand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow brand"/></marker></defs>
+<path class="edge brand" d="M 216 77.0 C 231.0 77.0 231.0 77.0 246 77.0" marker-end="url(#arrow-brand)"/>
+<path class="edge" d="M 442 77.0 C 457.0 77.0 457.0 77.0 472 77.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 668 77.0 C 683.0 77.0 683.0 77.0 698 77.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 796.0 114 C 796.0 177.0 796.0 177.0 796.0 240" marker-end="url(#arrow)"/>
+<text class="edge-label" x="796" y="173">then the user reboots</text>
+<path class="edge" d="M 698 277.0 C 683.0 277.0 683.0 277.0 668 277.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 472 277.0 C 457.0 277.0 457.0 277.0 442 277.0" marker-end="url(#arrow)"/>
+<path class="edge brand" d="M 246 277.0 C 231.0 277.0 231.0 277.0 216 277.0" marker-end="url(#arrow-brand)"/>
+<g class="node tone-brand">
+<rect x="20" y="40" width="196" height="74"/>
+<text class="n-title" x="32" y="61">Installer app</text>
+<text class="n-sub" x="32" y="80">Gatekeeper, channels,</text>
+<text class="n-sub" x="32" y="97">bundled trust root</text>
+</g>
+<g class="node tone-brand">
+<rect x="246" y="40" width="196" height="74"/>
+<text class="n-title" x="258" y="61">Signed catalog</text>
+<text class="n-sub" x="258" y="80">Ed25519 envelope,</text>
+<text class="n-sub" x="258" y="97">sequence cannot go back</text>
+</g>
+<g class="node">
+<rect x="472" y="40" width="196" height="74"/>
+<text class="n-title" x="484" y="61">Pinned Asahi engine</text>
+<text class="n-sub" x="484" y="80">APFS stub, ESP, boot</text>
+<text class="n-sub" x="484" y="97">and root partitions</text>
+</g>
+<g class="node tone-blue">
+<rect x="698" y="40" width="196" height="74"/>
+<text class="n-title" x="710" y="61">Image written</text>
+<text class="n-sub" x="710" y="80">root.img, boot.img,</text>
+<text class="n-sub" x="710" y="97">m1n1, device trees</text>
+</g>
+<g class="node tone-ext">
+<rect x="698" y="240" width="196" height="74"/>
+<text class="n-title" x="710" y="261">recoveryOS handoff</text>
+<text class="n-sub" x="710" y="280">the user sets the boot</text>
+<text class="n-sub" x="710" y="297">policy, one reboot</text>
+</g>
+<g class="node tone-blue">
+<rect x="472" y="240" width="196" height="74"/>
+<text class="n-title" x="484" y="261">omarchy-mac-boot</text>
+<text class="n-sub" x="484" y="280">vendor firmware, HID,</text>
+<text class="n-sub" x="484" y="297">optional LUKS</text>
+</g>
+<g class="node">
+<rect x="246" y="240" width="196" height="74"/>
+<text class="n-title" x="258" y="261">Owner provisioning</text>
+<text class="n-sub" x="258" y="280">user, password, re-key,</text>
+<text class="n-sub" x="258" y="297">recovery passphrase</text>
+</g>
+<g class="node tone-brand">
+<rect x="20" y="240" width="196" height="74"/>
+<text class="n-title" x="32" y="261">Omarchy desktop</text>
+<text class="n-sub" x="32" y="280">Hyprland + Quickshell,</text>
+<text class="n-sub" x="32" y="297">omarchy update onward</text>
+</g>
+<g class="node tone-brand"><rect x="16" y="395" width="14" height="14"/></g>
+<text class="legend" x="36" y="406">signed artefact or user-facing step</text>
+<g class="node tone-blue"><rect x="326.5" y="395" width="14" height="14"/></g>
+<text class="legend" x="346.5" y="406">package or image</text>
+<g class="node tone-ext"><rect x="494.5" y="395" width="14" height="14"/></g>
+<text class="legend" x="514.5" y="406">Apple firmware step</text>
+</svg>
