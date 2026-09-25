@@ -50,8 +50,8 @@ The entrypoint for an operation is `<implementation directory>/<operation>`. A r
 
 ## Trust rules
 
-- The dispatcher runs as `bash -p`, so a root caller's `BASH_ENV` and exported functions run nothing in it. As root it uses a fixed `PATH`, runs the detector installed beside it with an empty environment (the detector reads only the live device tree as root), and resolves only the fixed implementation directory.
-- An entrypoint runs only if it is a regular executable file, not a symlink. The file and every directory up to `/` must be owned by root and not writable by group or others. An entrypoint that fails these rules is refused, even for an optional operation.
+- The dispatcher runs as `bash -p`, so a root caller's `BASH_ENV` and exported functions run nothing in it. As root it uses a fixed `PATH`, runs the detector installed beside it with nothing in its environment but that `PATH` (the detector reads only the live device tree as root), and resolves only the fixed implementation directory.
+- An entrypoint runs only if it is a regular executable file. Neither the file nor any directory up to `/` may be a symlink, and all of them must be owned by root and not writable by group or others. An entrypoint that fails these rules is refused, even for an optional operation.
 - The entrypoint runs with an empty environment apart from `PATH=/usr/local/sbin:/usr/local/bin:/usr/bin`. It gets the caller's arguments, standard streams and working directory. Entrypoints use fixed paths, never environment variables. Anything that can also run them directly re-checks the platform itself.
 - For unprivileged tests, `OMARCHY_LIFECYCLE_ROOT` (absolute) prefixes the implementation directory, and the detector's fixture roots apply. Files the caller owns count as root's. Root ignores both.
 
@@ -77,7 +77,7 @@ A dispatch point takes one of two shapes:
 | --- | --- | --- |
 | `omarchy-provision-owner` sources `/usr/lib/omarchy-mac/boot/provision.sh` when `omarchy-hw-apple-silicon` succeeds, and refuses with "Required omarchy-mac-boot provision support is unavailable" | `provision-prepare` | The refusal becomes the dispatcher's required-operation error. The entrypoint keeps the checks from #503's Apple block in `run_setup`: the LUKS device is found, and a `finished` `encrypt.state` has no leftover unlock. |
 | `apple_rekey_boot` in `lib/provision.sh` (drop `rd.luks.key=` from `/etc/default/grub`, `mkinitcpio -P`, `omarchy-mac-boot-update`), the `/boot/omarchy/luks-key` half of `shred_luks_keyfiles`, then `mark_encrypt_finished` | `provision-commit` | The entrypoint sets the globals the module expects (`GRUB_DEFAULT`, `LOG_FILE`, `log_step`, `say`) to fixed values, sources the module and calls it. On failure it restores the boot key and `rd.luks.key=`. |
-| The Apple half of `require_finished_luks`, and `run_provisioning`'s refusal before `encrypt.state` reaches `finished` | `provision-verify` | New read-only entrypoint: no `/boot/omarchy/luks-key`, no `rd.luks.key=` in the GRUB defaults, `encrypt.state` absent or `finished` |
+| The Apple half of `require_finished_luks`, and `run_provisioning`'s refusal before `encrypt.state` reaches `finished` | `provision-verify` | New read-only entrypoint: no `/boot/omarchy/luks-key`, no `rd.luks.key=` in the GRUB defaults or in the Limine command line `omarchy-mac-limine-cmdline` derives from them, `encrypt.state` absent or `finished` |
 | `stage_luks_rekey_apple` in `lib/factory-reset.sh` | `reset-prepare` | Ticket 34 |
 | `rebuild_next_boot_apple` (factory-kernel coherence refusal, rebuild in the factory root, `verify_limine_hashes`) | `reset-prepare`, `reset-verify` | Ticket 34 |
 | mx-mac's reset rollback, not yet in #503 | `reset-rollback` | Ticket 34 |
@@ -92,7 +92,7 @@ A dispatch point takes one of two shapes:
 
 Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualcomm` is unregistered. Every operation is a no-op there, and provisioning uses the Limine UKI callbacks, so Dragon behaves exactly as before. To plug in a Qualcomm implementation:
 
-1. Ship the entrypoints from a Qualcomm boot package as `/usr/lib/omarchy/<package>/<operation>`, root-owned, mode 755.
+1. Ship the entrypoints from a Qualcomm boot package as `/usr/lib/omarchy/<name>/<operation>`, root-owned, mode 755. `<name>` is a short directory name, as `mac-boot` is for `omarchy-mac-boot`.
 2. Add a `qualcomm)` case to the registration in `bin/omarchy-lifecycle-dispatch` with that directory, the package name, and the operations it requires.
 3. Operations it neither requires nor ships stay no-ops. For provisioning, ship `provision-commit` and `provision-verify` together, or neither to keep the Limine UKI path.
 4. Move `qualcomm` in `test/shell.d/lifecycle-dispatch-test.sh` from the no-op platforms to its own cases, like Apple's.
