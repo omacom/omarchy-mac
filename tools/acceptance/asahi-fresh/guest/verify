@@ -1,0 +1,110 @@
+#!/bin/bash
+
+set -euo pipefail
+
+fail() {
+  echo "not ok - $*" >&2
+  exit 1
+}
+
+expected_version=$(sed -n 's/^version=//p' /var/lib/omarchy/vm-expected-stable-release)
+expected_sequence=$(sed -n 's/^sequence=//p' /var/lib/omarchy/vm-expected-release)
+expected_tag=$(sed -n 's/^release_tag=//p' /var/lib/omarchy/vm-expected-release)
+[[ $(< /usr/share/omarchy/version) == "$expected_version" ]] || fail "installed version"
+grep -Fxq "sequence=$expected_sequence" /var/lib/omarchy/asahi-quattro-release || fail "release sequence"
+grep -Fxq "tag=$expected_tag" /var/lib/omarchy/asahi-quattro-release || fail "release tag"
+id omarchy >/dev/null || fail "install user"
+[[ " $(id -nG alarm) " != *" wheel "* ]] || fail "stock Alarm administrator still in wheel"
+[[ $(passwd -S alarm | awk '{ print $2 }') == "L" ]] || fail "stock Alarm account is not locked"
+grep -Fxq "User=omarchy" /var/lib/sddm/state.conf || fail "SDDM last-user seeded"
+grep -Fxq "Session=omarchy.desktop" /var/lib/sddm/state.conf || fail "SDDM last-session seeded"
+grep -Eq '^[[:space:]]*-?auth[[:space:]]+.*pam_gnome_keyring\.so([[:space:]]|$)' /etc/pam.d/sddm || fail "SDDM GNOME Keyring auth hook"
+grep -Eq '^[[:space:]]*-?session[[:space:]]+.*pam_gnome_keyring\.so.*auto_start' /etc/pam.d/sddm || fail "SDDM GNOME Keyring session hook"
+[[ -f /home/omarchy/.local/state/omarchy/done/finalize-user ]] || fail "user finalization marker"
+pacman -Q omarchy-dev omarchy-settings-dev linux-asahi networkmanager iwd rtkit >/dev/null || fail "required packages"
+grep -Fxq '[omarchy]' /etc/pacman.conf || fail "signed Apple Silicon package repository"
+grep -Fxq 'SigLevel = Required DatabaseOptional' /etc/pacman.conf || fail "Apple Silicon package signature policy"
+# The expected pin comes from pre-install inputs, never from the installed
+# system: a run must not accept whatever the installer happened to write. A
+# candidate run deliberately pins the candidate release before installing,
+# which the installer must keep, and then checks its packages version by
+# version below. Otherwise the installer must have configured the stable set of
+# the package channel the host resolved, and recorded it.
+repository_state=/var/lib/omarchy/asahi-package-repository
+if [[ -f /var/lib/omarchy/vm-package-candidate ]]; then
+  expected_repository=$(sed -n 's/^release_tag=//p' /var/lib/omarchy/vm-package-candidate)
+  [[ $expected_repository =~ ^asahi-packages-candidate-[0-9a-f]{40}$ ]] || fail "candidate repository tag"
+  [[ ! -e $repository_state ]] || fail "a kept candidate repository is not recorded as the promoted set"
+else
+  expected_repository=${OMARCHY_VM_EXPECTED_REPOSITORY:-}
+  [[ $expected_repository =~ ^asahi-packages-stable-[0-9a-f]{40}$ ]] ||
+    fail "expected Apple Silicon package repository was not passed in"
+  grep -Fxq "tag=$expected_repository" "$repository_state" || fail "promoted Apple Silicon package set recorded"
+fi
+grep -Fxq "Server = https://github.com/maralcbr/omarchy-pkgs/releases/download/$expected_repository" /etc/pacman.conf || fail "immutable Apple Silicon package repository"
+repositories=$(pacman-conf --repo-list)
+[[ ${repositories%%$'\n'*} == "omarchy" ]] || fail "[omarchy] precedes every other repository"
+pacman-key --finger 5983B1CA32CB778F4D74D24ECFF35022CA5B5959 >/dev/null || fail "Apple Silicon package signing key"
+# A stable snapshot is signed by the ARM repository subkey, not the release key.
+if [[ $expected_repository == asahi-packages-stable-* ]]; then
+  pacman-key --finger C81AC3E2A99556F9B21D5FEA3DD49BC9F8360BDC >/dev/null || fail "Apple Silicon ARM repository signing key"
+fi
+if [[ -f /var/lib/omarchy/vm-package-candidate ]]; then
+  candidate=/var/lib/omarchy/vm-package-candidate
+  candidate_sha256=$(< /var/lib/omarchy/vm-package-candidate.sha256)
+  candidate_primary_fingerprint=$(< /var/lib/omarchy/vm-package-candidate-primary-fingerprint)
+  candidate_package_count=$(< /var/lib/omarchy/vm-package-candidate-package-count)
+  [[ $candidate_package_count =~ ^[1-9][0-9]*$ ]] || fail "candidate package count record"
+  [[ $(sha256sum "$candidate" | cut -d' ' -f1) == "${candidate_sha256,,}" ]] || fail "candidate descriptor checksum"
+  grep -Fxq 'channel=candidate' "$candidate" || fail "candidate channel"
+  grep -Eq '^release_tag=asahi-packages-candidate-[0-9a-f]{40}$' "$candidate" || fail "candidate release tag"
+  grep -Fxq "package_count=$candidate_package_count" "$candidate" || fail "candidate package count"
+  (( $(grep -c '^package=' "$candidate") == candidate_package_count )) || fail "candidate package inventory"
+  pacman-key --finger "$candidate_primary_fingerprint" >/dev/null || fail "candidate signing certificate"
+  while IFS='|' read -r _ package version _ _ _ _ _; do
+    [[ $(pacman -Q "$package" | cut -d' ' -f2) == "$version" ]] || fail "candidate package version: $package"
+  done < <(sed -n 's/^package=//p' "$candidate")
+fi
+for unit in NetworkManager.service sddm.service systemd-resolved.service; do
+  systemctl is-enabled --quiet "$unit" || fail "$unit enabled"
+done
+[[ ! -e /etc/systemd/system/omarchy-seamless-login.service ]] || fail "legacy seamless login unit remains"
+[[ ! -L /etc/systemd/system/graphical.target.wants/omarchy-seamless-login.service ]] || fail "legacy seamless login remains enabled"
+[[ ! -e /usr/local/bin/seamless-login ]] || fail "legacy seamless login helper remains"
+NetworkManager --print-config | grep -Fxq 'wifi.backend=iwd' || fail "iwd backend"
+grep -Eqi '^[[:space:]]*LANG[[:space:]]*=[[:space:]]*"?[^"[:space:]#]*\.utf-?8(@[^"[:space:]#]+)?"?([[:space:]]*(#.*)?)?$' /etc/locale.conf || fail "system locale is not UTF-8"
+pacman-conf --repo-list | grep -Fxq asahi-alarm || fail "Asahi repository"
+[[ -f /boot/Image && -f /boot/vmlinuz-linux-asahi && -f /boot/grub/grub.cfg ]] || fail "boot payloads"
+# The VM boots its own kernel through this harness's configuration; the one
+# Omarchy generated during the install is kept beside it and must boot the
+# Asahi kernel and its initramfs.
+grep -Eq '^[[:space:]]*linux(16|efi)?[[:space:]]+[^[:space:]]*vmlinuz-linux-asahi([[:space:]]|$)' /var/lib/omarchy/vm-omarchy-grub.cfg &&
+  grep -Eq '^[[:space:]]*initrd(16|efi)?[[:space:]]+[^[:space:]]*initramfs-linux-asahi\.img([[:space:]]|$)' /var/lib/omarchy/vm-omarchy-grub.cfg ||
+  fail "the GRUB configuration Omarchy generated boots the Asahi kernel"
+(( $(swapon --show --noheadings | wc -l) == 0 )) || fail "swap disabled"
+[[ $(cat /sys/module/zswap/parameters/enabled 2>/dev/null || echo N) == "N" ]] || fail "zswap disabled"
+[[ -s /var/lib/omarchy/vm-adapter.log ]] || fail "VM adapter audit"
+# pacman's summary is localized; pin the locale and use its exit status too.
+LC_ALL=C pacman -Qkk omarchy-dev >/tmp/omarchy-dev.mtree 2>&1 && grep -Fq '0 altered files' /tmp/omarchy-dev.mtree ||
+  fail "restored Omarchy package files"
+[[ ! -e /etc/sudoers.d/09-omarchy-fresh-build ]] || fail "temporary package build sudo rule removed"
+! getent passwd omarchy-fresh-build >/dev/null || fail "temporary package build account removed"
+ufw status | grep -Eq '^22/tcp +ALLOW' || fail "temporary VM SSH firewall rule"
+if runuser -u omarchy -- env HOME=/home/omarchy omarchy-migrate --pending >/tmp/migrations.pending; then
+  fail "pending migrations"
+fi
+[[ ! -s /tmp/migrations.pending ]] || fail "pending migrations"
+
+# A pinned channel skips discovery through the anonymous GitHub API; the updater still verifies it.
+[[ -z ${OMARCHY_VM_ASAHI_CHANNEL_URL:-} ]] || export OMARCHY_ASAHI_CHANNEL_URL=$OMARCHY_VM_ASAHI_CHANNEL_URL
+[[ -z ${OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL:-} ]] || export OMARCHY_ASAHI_CHANNEL_POINTER_URL=$OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL
+set +e
+OMARCHY_ASAHI_TESTING=1 \
+  OMARCHY_ASAHI_ROOT=/root/omarchy-fresh-vm/apple-root \
+  /root/omarchy-update-asahi-bundle.candidate --check \
+  >/tmp/asahi-update-check.out 2>/tmp/asahi-update-check.err
+update_status=$?
+set -e
+(( update_status == 0 || update_status == 1 )) || fail "fresh release state rejected by updater candidate: $(cat /tmp/asahi-update-check.err)"
+
+echo "ok - direct Omarchy 4 VM installation survived reboot"
