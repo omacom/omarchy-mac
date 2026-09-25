@@ -1,0 +1,116 @@
+#!/bin/bash
+
+set -euo pipefail
+
+tag=${OMARCHY_VM_CANDIDATE_TAG:?Missing exact candidate tag}
+descriptor_sha256=${OMARCHY_VM_CANDIDATE_SHA256:?Missing exact candidate descriptor checksum}
+signing_fingerprint=${OMARCHY_VM_CANDIDATE_FINGERPRINT:?Missing exact candidate signing fingerprint}
+package_count=${OMARCHY_VM_CANDIDATE_PACKAGE_COUNT:?Missing exact candidate package count}
+key_file=/root/omarchy-arm-repository.asc
+repository_url="https://github.com/maralcbr/omarchy-pkgs/releases/download/$tag"
+work=/root/omarchy-package-candidate
+
+[[ $tag =~ ^asahi-packages-candidate-[0-9a-f]{40}$ ]]
+[[ $descriptor_sha256 =~ ^[0-9a-fA-F]{64}$ ]]
+[[ $signing_fingerprint =~ ^[0-9a-fA-F]{40}$ ]]
+[[ $package_count =~ ^[1-9][0-9]*$ ]]
+[[ -r $key_file ]]
+
+rm -rf "$work"
+mkdir -m 0700 "$work"
+curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors \
+  "$repository_url/CANDIDATE" --output "$work/CANDIDATE"
+curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors \
+  "$repository_url/CANDIDATE.sig" --output "$work/CANDIDATE.sig"
+[[ $(sha256sum "$work/CANDIDATE" | cut -d' ' -f1) == "${descriptor_sha256,,}" ]]
+grep -Fxq 'format=1' "$work/CANDIDATE"
+grep -Fxq 'channel=candidate' "$work/CANDIDATE"
+grep -Fxq "release_tag=$tag" "$work/CANDIDATE"
+grep -Fxq "source_commit=${tag#asahi-packages-candidate-}" "$work/CANDIDATE"
+grep -Fxq "signing_fingerprint=${signing_fingerprint^^}" "$work/CANDIDATE"
+grep -Fxq "package_count=$package_count" "$work/CANDIDATE"
+(( $(grep -c '^package=' "$work/CANDIDATE") == package_count ))
+
+export GNUPGHOME=$work/gnupg
+mkdir -m 0700 "$GNUPGHOME"
+gpg --batch --import "$key_file" >/dev/null 2>&1
+signature_status=$(gpg --batch --status-fd 1 --verify "$work/CANDIDATE.sig" "$work/CANDIDATE" 2>/dev/null)
+valid_fingerprint=$(awk '$2 == "VALIDSIG" { print $3; exit }' <<<"$signature_status")
+[[ $valid_fingerprint == "${signing_fingerprint^^}" ]]
+primary_fingerprint=$(gpg --batch --show-keys --with-colons "$key_file" |
+  awk -F: '$1 == "pub" { primary=1; next } primary && $1 == "fpr" { print $10; exit }')
+[[ $primary_fingerprint =~ ^[A-F0-9]{40}$ ]]
+
+pacman-key --add "$key_file"
+pacman-key --lsign-key "$primary_fingerprint"
+
+awk '
+  /^\[omarchy\]$/ { skip=1; next }
+  skip && /^\[[^]]+\]$/ { skip=0 }
+  !skip { print }
+' /etc/pacman.conf >"$work/pacman.conf.without-omarchy"
+{
+  printf '%s\n' '[omarchy]'
+  printf '%s\n' 'SigLevel = Required DatabaseOptional'
+  printf 'Server = %s\n\n' "$repository_url"
+  cat "$work/pacman.conf.without-omarchy"
+} >"$work/pacman.conf"
+install -m 0644 "$work/pacman.conf" /etc/pacman.conf
+
+packages=()
+while IFS='|' read -r _ package version _ _ _ _ _; do
+  [[ $package =~ ^[a-z0-9@._+-]+$ && -n $version ]]
+  packages+=("$package")
+done < <(sed -n 's/^package=//p' "$work/CANDIDATE")
+(( ${#packages[@]} == package_count ))
+(( $(printf '%s\n' "${packages[@]}" | sort -u | wc -l) == package_count ))
+
+# The cached VM base owns its generic boot image and its Asahi fixture. A live
+# Asahi update here can run newly installed boot hooks before the fresh
+# installer has established its own protected-boot boundary.
+protected_packages=(linux-asahi linux-asahi-headers m1n1 grub)
+pacman -Q "${protected_packages[@]}" >"$work/protected-packages.before"
+sha256sum /boot/Image /boot/initramfs-linux-vm.img /boot/vmlinuz-linux-asahi /boot/grub/grub.cfg >"$work/protected-boot.before"
+pacman -Syu --needed --noconfirm --ignore linux-asahi,linux-asahi-headers,m1n1,grub "${packages[@]}"
+pacman -Q "${protected_packages[@]}" >"$work/protected-packages.after"
+cmp "$work/protected-packages.before" "$work/protected-packages.after"
+sha256sum --check --status "$work/protected-boot.before"
+while IFS='|' read -r _ package version _ _ _ _ _; do
+  [[ $(pacman -Q "$package" | cut -d' ' -f2) == "$version" ]]
+done < <(sed -n 's/^package=//p' "$work/CANDIDATE")
+
+# Pacman succeeds even when its initramfs hook fails; build every preset before anything repairs it.
+vendorfw_dropin=/etc/mkinitcpio.conf.d/90-omarchy-asahi.conf
+presets=(/etc/mkinitcpio.d/*.preset)
+[[ -f ${presets[0]} ]] || { echo "No mkinitcpio preset to build" >&2; exit 1; }
+for preset_file in "${presets[@]}"; do
+  preset=$(basename "$preset_file" .preset)
+  # limine-mkinitcpio-hook's /usr/local/bin/mkinitcpio discards this exit status.
+  /usr/bin/mkinitcpio -p "$preset" || { echo "mkinitcpio preset $preset failed after the candidate transaction" >&2; exit 1; }
+  bash -c 'set -e; source "$1"; for name in "${PRESETS[@]}"; do image=${name}_image; [[ -z ${!image:-} ]] || printf "%s\n" "${!image}"; done' _ "$preset_file" >"$work/preset-images" ||
+    { echo "mkinitcpio preset $preset could not be read" >&2; exit 1; }
+  mapfile -t images <"$work/preset-images"
+  (( ${#images[@]} > 0 )) || { echo "mkinitcpio preset $preset names no image" >&2; exit 1; }
+  for image in "${images[@]}"; do
+    [[ -s $image ]] || { echo "mkinitcpio preset $preset did not write $image" >&2; exit 1; }
+    [[ -f $vendorfw_dropin ]] || continue
+    lsinitcpio "$image" >"$work/initramfs-contents"
+    for entry in usr/lib/omarchy/initcpio/omarchy-vendorfw.sh usr/lib/systemd/system/omarchy-vendorfw.service \
+      usr/lib/systemd/system/initrd.target.wants/omarchy-vendorfw.service; do
+      grep -Fxq "$entry" "$work/initramfs-contents" || { echo "$image lacks $entry" >&2; exit 1; }
+    done
+  done
+  if [[ -f $vendorfw_dropin ]]; then
+    echo "Initramfs preset $preset built with the vendor firmware hook: ${images[*]}"
+  else
+    echo "Initramfs preset $preset built: ${images[*]}"
+  fi
+done
+# mkinitcpio post hooks run on a direct build too; the VM's own boot files must survive them.
+sha256sum --check --status "$work/protected-boot.before" || { echo "Building the presets changed the VM's protected boot files" >&2; exit 1; }
+
+install -Dm644 "$work/CANDIDATE" /var/lib/omarchy/vm-package-candidate
+printf '%s\n' "$descriptor_sha256" | install -Dm644 /dev/stdin /var/lib/omarchy/vm-package-candidate.sha256
+printf '%s\n' "$primary_fingerprint" | install -Dm644 /dev/stdin /var/lib/omarchy/vm-package-candidate-primary-fingerprint
+printf '%s\n' "$package_count" | install -Dm644 /dev/stdin /var/lib/omarchy/vm-package-candidate-package-count
+echo "Installed exact signed package candidate $tag"
