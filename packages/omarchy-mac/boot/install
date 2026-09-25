@@ -18,4 +18,4 @@ while IFS= read -r -d '' file; do
     install -Dm644 "$file" "$destination/${file#files/}"
   fi
 done < <(find files \( -type f -o -type l \) -print0)
-install -Dm644 ../LICENSE "$destination/usr/share/licenses/omarchy-mac-boot/LICENSE"
+install -Dm644 LICENSE "$destination/usr/share/licenses/omarchy-mac-boot/LICENSE"

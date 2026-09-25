@@ -27,7 +27,7 @@ while IFS= read -r -d '' file; do
   [[ $(stat -c %a "$staged") == "$mode" ]] || fail "$path is staged with mode $mode"
 done < <(find "$ROOT/files" \( -type f -o -type l \) -print0)
 [[ ! -e $stage/boot ]] || fail "staging writes nothing to the boot partition"
-cmp -s "$ROOT/../LICENSE" "$stage/usr/share/licenses/omarchy-mac-boot/LICENSE" || fail "the license is staged"
+cmp -s "$ROOT/LICENSE" "$stage/usr/share/licenses/omarchy-mac-boot/LICENSE" || fail "the license is staged"
 for file in "$ROOT"/bin/*; do
   [[ -x $stage/usr/bin/${file##*/} ]] || fail "${file##*/} is staged as a command"
 done
