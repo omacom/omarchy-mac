@@ -158,6 +158,15 @@ paused=0
 pause_lux=0
 
 keys() { "$ROOT/bin/omarchy-brightness-keyboard" --no-osd "$1"; }
+# Step down with the keys, letting the loop see each press, until they are off.
+keys_to_off() {
+  for _ in {1..12}; do
+    (( $(led) == 0 )) && return 0
+    keys down
+    tick
+  done
+  fail "the keyboard-brightness keys turn the keys off" "got $(led)"
+}
 led() { cat "$loop/leds/kbd_backlight/brightness"; }
 lux() { printf '%s\n' "$1" >"$als_path"; }
 
@@ -173,10 +182,7 @@ tick
 (( $(led) == 226 )) || fail "a 1% leftover lights up again" "got $(led)"
 pass "keys left off by lock blanking or a leftover light up again with the room"
 
-until (( $(led) == 0 )); do
-  keys down
-  tick
-done
+keys_to_off
 tick
 (( $(led) == 0 )) || fail "keys turned off with the brightness keys stay off" "got $(led)"
 keys off
@@ -200,10 +206,7 @@ pass "a visible level set by hand still pauses automatic control"
 
 lux 26
 tick
-until (( $(led) == 0 )); do
-  keys down
-  tick
-done
+keys_to_off
 printf '2\n' >"$loop/leds/kbd_backlight/brightness"
 tick
 (( $(led) == 226 )) || fail "a leftover after a deliberate off lights up again" "got $(led)"
@@ -212,10 +215,7 @@ tick
 (( $(led) == 226 )) || fail "a relit leftover forgets the earlier deliberate off" "got $(led)"
 pass "a relit leftover forgets the earlier deliberate off"
 
-until (( $(led) == 0 )); do
-  keys down
-  tick
-done
+keys_to_off
 last_set=""
 paused=0
 tick
