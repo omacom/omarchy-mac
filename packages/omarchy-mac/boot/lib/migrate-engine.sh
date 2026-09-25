@@ -833,6 +833,7 @@ step_prefetch() {
       >>"$cache/rehearsal.log" 2>&1 || die "the rehearsed removal of $removals failed: $(tail -n 1 "$cache/rehearsal.log")"
   fi
   gpgdir=""
+  gpgconf --homedir "$cache/trust" --kill all >/dev/null 2>&1 || true
   LC_ALL=C pacman --config "$conf" --dbpath "$rehearsal" -Q >"$cache/expected" || die "cannot read the rehearsed result"
   removed=$(comm -23 <(awk '{ print $1 }' "$cache/start" | LC_ALL=C sort) <(awk '{ print $1 }' "$cache/expected" | LC_ALL=C sort))
   for name in $removed; do
