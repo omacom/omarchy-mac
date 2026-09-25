@@ -1,7 +1,7 @@
 # Sourced by the owner provisioning entrypoints in /usr/lib/omarchy/mac-boot
-# (provision-prepare, provision-commit, provision-verify), which
-# omarchy-lifecycle-dispatch runs; do not run independently. The runtime's
-# docs/lifecycle-dispatch.md is their contract.
+# (provision-prepare, provision-commit, provision-verify) and by luks-slots,
+# which omarchy-lifecycle-dispatch runs; do not run independently. The
+# runtime's docs/lifecycle-dispatch.md is their contract.
 #
 # The entrypoints set MAC_BOOT_ROOT before sourcing: empty on a live system, a
 # fixture root in unprivileged tests. Everything here reads fixed paths below
@@ -123,24 +123,12 @@ initramfs_orders_firmware() {
 # Phase moves to finished. partition= and luks_uuid= stay as the initramfs
 # wrote them; the owner slot, and a recovery slot the owner acknowledged, come
 # from the re-key journal so later boot checks can prove the header holds
-# exactly those slots.
+# exactly those slots. luks-slots records them again whenever they change.
 write_encrypt_state() {
-  local phase=$1 format=1 partition="" luks_uuid="" owner_slot="" recovery_slot=""
-  local line key value tmp
+  local phase=$1 owner_slot recovery_slot value
 
-  if [[ -f $ENCRYPT_STATE ]]; then
-    while IFS= read -r line || [[ -n $line ]]; do
-      [[ $line == *=* ]] || continue
-      key=${line%%=*}
-      value=${line#*=}
-      case $key in
-        partition) partition=$value ;;
-        luks_uuid) luks_uuid=$value ;;
-        owner_slot) owner_slot=$value ;;
-        recovery_slot) recovery_slot=$value ;;
-      esac
-    done <"$ENCRYPT_STATE"
-  fi
+  owner_slot=$(encrypt_state_get owner_slot || true)
+  recovery_slot=$(encrypt_state_get recovery_slot || true)
   value=$(state_get "$REKEY_STATE" owner_slot || true)
   if [[ -n $value ]]; then
     owner_slot=$value
@@ -149,7 +137,15 @@ write_encrypt_state() {
       recovery_slot=$(state_get "$REKEY_STATE" recovery_slot || true)
     [[ $recovery_slot != "$owner_slot" ]] || recovery_slot=""
   fi
+  put_encrypt_state "$phase" "$owner_slot" "$recovery_slot"
+}
 
+# Rewrite encrypt.state durably with this phase and these slots.
+put_encrypt_state() {
+  local phase=$1 owner_slot=$2 recovery_slot=$3 format=1 partition luks_uuid tmp
+
+  partition=$(encrypt_state_get partition || true)
+  luks_uuid=$(encrypt_state_get luks_uuid || true)
   install -d -m 755 "$(dirname "$ENCRYPT_STATE")" || return 1
   tmp=$(mktemp "$ENCRYPT_STATE.XXXXXX") || return 1
   {
@@ -168,13 +164,29 @@ install_conf_encrypt() {
   state_get "$INSTALL_CONF" encrypt || true
 }
 
-# The root the initramfs encrypted, as crypttab names it, is present.
-luks_device_found() {
+# The root the initramfs encrypted, as crypttab names it.
+luks_root_device() {
   local uuid recorded
   uuid=$(awk '$1 == "root" && $2 ~ /^UUID=/ { sub(/^UUID=/, "", $2); print $2; exit }' "$CRYPTTAB" 2>/dev/null || true)
   [[ -n $uuid && -e $MAC_BOOT_ROOT/dev/disk/by-uuid/$uuid ]] || return 1
   recorded=$(encrypt_state_get luks_uuid || true)
-  [[ -z $recorded || $recorded == "$uuid" ]]
+  [[ -z $recorded || $recorded == "$uuid" ]] || return 1
+  printf '%s\n' "$MAC_BOOT_ROOT/dev/disk/by-uuid/$uuid"
+}
+
+luks_device_found() {
+  luks_root_device >/dev/null
+}
+
+# The key slots in use, one per line. A luks2-keyring token under "Tokens:"
+# looks like a keyslot, so read only the keyslot section.
+luks_keyslots() {
+  local dump
+  dump=$(cryptsetup luksDump "$1") || return 1
+  awk '
+    /^[^ \t]/ { keyslots = ($0 == "Keyslots:") }
+    keyslots && /^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }
+    /^Key Slot [0-9]+: ENABLED/ { sub(":", "", $3); print $3 }' <<<"$dump"
 }
 
 # Limine and its UKI go on the ESP the device tree says this Mac boots from.
@@ -280,4 +292,43 @@ provision_verify() {
       return 1
     }
   fi
+}
+
+# luks-slots owner=<slot> [recovery=<slot>]: record the slots of the owner's
+# password and of the recovery key in encrypt.state, whenever setup or a
+# password change leaves them in other slots, so the boot check can prove the
+# header holds exactly those. Without recovery=, the recorded one stays; an
+# empty one records none. Each must be a key slot the root's header holds. A
+# Mac whose disk the image did not encrypt records nothing.
+record_luks_slots() {
+  local arg owner="" recovery="" recovery_given=0 phase device slots slot
+
+  require_apple_silicon
+  require_boot_partition
+  for arg in "$@"; do
+    case $arg in
+      owner=*) owner=${arg#owner=} ;;
+      recovery=*) recovery=${arg#recovery=} recovery_given=1 ;;
+      *) refuse "luks-slots takes owner=<slot> and recovery=<slot>, not: $arg" ;;
+    esac
+  done
+  [[ $owner =~ ^([0-9]|[12][0-9]|3[01])$ ]] || refuse "luks-slots needs owner=<slot>, a LUKS key slot number."
+
+  [[ -e $ENCRYPT_STATE ]] || return 0
+  phase=$(encrypt_state_get phase || true)
+  [[ $phase != declined ]] || return 0
+  encrypted_phase "$phase" ||
+    refuse "encrypt.state is phase=${phase:-unreadable}; the disk's conversion has not finished."
+
+  (( recovery_given )) || recovery=$(encrypt_state_get recovery_slot || true)
+  [[ -z $recovery || $recovery =~ ^([0-9]|[12][0-9]|3[01])$ ]] ||
+    refuse "luks-slots needs recovery=<slot>, a LUKS key slot number."
+  [[ $recovery != "$owner" ]] || refuse "The owner's password and the recovery key cannot share key slot $owner."
+
+  device=$(luks_root_device) || refuse "Could not find the encrypted disk that /etc/crypttab names."
+  slots=$(luks_keyslots "$device") || refuse "Could not read the key slots of $device."
+  for slot in $owner $recovery; do
+    grep -Fxq "$slot" <<<"$slots" || refuse "The LUKS header of $device has no key in slot $slot."
+  done
+  put_encrypt_state "$phase" "$owner" "$recovery" || refuse "Could not write $ENCRYPT_STATE."
 }

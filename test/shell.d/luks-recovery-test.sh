@@ -3,6 +3,9 @@
 set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
+# prepare_luks_recovery against a slot-table cryptsetup. The kill-at-every-step
+# runs on real LUKS2 and LUKS1 volumes are in luks-rekey-journal-test.sh.
+
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 PROVISIONING_DIR="$test_tmp/provisioning"
@@ -12,10 +15,6 @@ slots="$test_tmp/slots"
 calls="$test_tmp/calls"
 device=fixture-device
 password=fixture-owner
-mkdir -p "$PROVISIONING_DIR"
-printf fixture-staged >"$PROVISIONING_DIR/luks-key"
-printf '0 fixture-staged\n' >"$slots"
-: >"$calls"
 log_step() { printf '%s\n' "$*" >>"$LOG_FILE"; }
 say() { :; }
 # No hardware detector, boot module, real device, or elevated command is present.
@@ -23,13 +22,14 @@ source "$ROOT/install/provisioning/luks-rekey.sh"
 source "$ROOT/install/provisioning/luks-recovery.sh"
 
 cryptsetup() {
-  local operation=$1 key_file="" requested="" argument material slot newfile="" target=""
+  local operation=$1 key_file="" requested="" material slot newfile="" target=""
   shift
   printf '%s\n' "$operation" >>"$calls"
   while (( $# )); do
     case $1 in
       --key-file) key_file=$2; shift 2 ;;
       --key-slot) requested=$2; shift 2 ;;
+      --token-type) shift 2 ;;
       --*|-q) shift ;;
       *)
         if [[ -z $target ]]; then target=$1; else newfile=$1; fi
@@ -39,6 +39,7 @@ cryptsetup() {
   done
   [[ $target == "$device" ]] || return 1
   if [[ $operation == "luksDump" ]]; then
+    echo "Keyslots:"
     awk '{printf "  %s: luks2\n", $1}' "$slots"
     return
   fi
@@ -55,6 +56,7 @@ cryptsetup() {
           if ! awk '{print $1}' "$slots" | grep -Fxq "$requested"; then break; fi
         done
       fi
+      ! awk '{print $1}' "$slots" | grep -Fxq "$requested" || return 1
       printf '%s %s\n' "$requested" "$material" >>"$slots"
       ;;
     luksKillSlot)
@@ -65,54 +67,109 @@ cryptsetup() {
   esac
 }
 
-key=$(generate_recovery_passphrase)
-[[ $key =~ ^([A-Z2-7]{4}-){11}[A-Z2-7]{4}$ ]] || fail "recovery key format"
-owner_slot=$(luks_ensure_slot "$password" "$device" owner_slot)
-[[ $owner_slot == "1" ]] || fail "owner slot created"
-[[ $(luks_ensure_slot "$password" "$device" owner_slot) == "$owner_slot" ]] || fail "owner slot reused"
-[[ $(grep -c luksAddKey "$calls") == "1" ]] || fail "retry added a duplicate owner slot"
-if luks_ensure_slot wrong-password "$device" owner_slot; then fail "owner retry must authenticate"; fi
-[[ $(stat -c %a "$REKEY_STATE") == "600" ]] || fail "journal must be private"
-pass "shared owner slot creation is idempotent and retry authenticates"
-
 show_recovery_key() {
   [[ $(luks_slot_for "$1" "$device") == "$(rekey_state_get recovery_slot)" ]] || fail "display before key verification"
-  printf 'shown\n' >>"$test_tmp/shown"
+  [[ $(rekey_state_get recovery_shown) == "0" ]] || fail "the key is journaled as added before it is shown"
+  printf '%s %s\n' "$RECOVERY_REPLACED" "$1" >>"$test_tmp/shown"
   [[ ! -e $test_tmp/display-fail ]]
 }
+
+# After a factory reset: the staged key in slot 0 beside a previous owner's key.
+fixture() {
+  rm -rf "$PROVISIONING_DIR" "$test_tmp/shown" "$test_tmp"/*-fail
+  mkdir -p "$PROVISIONING_DIR"
+  printf fixture-staged >"$PROVISIONING_DIR/luks-key"
+  printf '0 fixture-staged\n1 previous-owner\n' >"$slots"
+  : >"$calls" >"$LOG_FILE"
+  recovery_key=""
+  unset OMARCHY_PROVISION_WORKER
+}
+
+shown_count() {
+  [[ -e $test_tmp/shown ]] && wc -l <"$test_tmp/shown" || echo 0
+}
+
+key=$(generate_recovery_passphrase)
+luks_recovery_passphrase "$key" || fail "a generated key has the recovery key's form"
+! luks_recovery_passphrase "fixture-owner" && ! luks_recovery_passphrase "${key,,}" && ! luks_recovery_passphrase "$key-AAAA" ||
+  fail "other passwords do not have the recovery key's form"
+[[ $(generate_recovery_passphrase) != "$key" ]] || fail "each recovery key is new"
+pass "recovery keys are 48 base32 characters in groups of four, and recognisable by that form"
+
+fixture
 prepare_luks_recovery "$device"
 recovery_slot=$(rekey_state_get recovery_slot)
-[[ $(rekey_state_get recovery_shown) == "1" ]] || fail "acknowledgement persisted"
-[[ $(wc -l <"$test_tmp/shown") == "1" ]] || fail "key displayed once"
+[[ $recovery_slot == "2" && $(luks_slot_for "$recovery_key" "$device") == "2" ]] || fail "the key goes to the first free slot" "$(cat "$slots")"
+[[ $(rekey_state_get recovery_shown) == "1" && $(shown_count) == "1" ]] || fail "the key is shown once and its acknowledgement journaled"
+[[ $(grep -c luksAddKey "$calls") == "1" ]] || fail "one key is added"
+[[ -z $(rekey_state_get owner_slot || true) && -z $(luks_slot_for "$password" "$device") ]] ||
+  fail "the owner's slot is left to the re-key"
+[[ $(stat -c %a "$REKEY_STATE") == "600" ]] || fail "the journal is private"
+! grep -Fq -e "$recovery_key" -e fixture-staged "$REKEY_STATE" "$LOG_FILE" || fail "no key reaches the journal or the log"
 prepare_luks_recovery "$device"
-[[ $(wc -l <"$test_tmp/shown") == "1" ]] || fail "acknowledged key redisplayed"
-! grep -Fq "$password" "$REKEY_STATE" || fail "journal leaked owner secret"
-! grep -Fq "$recovery_key" "$REKEY_STATE" || fail "journal leaked recovery secret"
-pass "recovery display follows slot verification and acknowledged retries retain it"
+[[ $(shown_count) == "1" && $(grep -c luksAddKey "$calls") == "1" && $RECOVERY_REPLACED == "0" ]] ||
+  fail "a retry keeps the acknowledged key without showing it again"
+pass "the recovery key is added with the staged key, verified, shown once and kept once acknowledged"
 
-rekey_state_put recovery_shown 0
+# Shown but never acknowledged: the owner may have written it down, so the
+# retry replaces it in the same slot and says so.
+fixture
 touch "$test_tmp/display-fail"
-if prepare_luks_recovery "$device"; then fail "display failure must propagate"; fi
+if prepare_luks_recovery "$device"; then fail "a display that is not acknowledged fails the attempt"; fi
 unconfirmed_key=$recovery_key
+recovery_slot=$(rekey_state_get recovery_slot)
+[[ $(rekey_state_get recovery_shown) == "0" ]] || fail "an unacknowledged key is journaled as shown, not acknowledged"
 rm "$test_tmp/display-fail"
 prepare_luks_recovery "$device"
-[[ $RECOVERY_REPLACED == "1" ]] || fail "interrupted display reports replacement"
-[[ -z $(luks_slot_for "$unconfirmed_key" "$device") ]] || fail "unconfirmed recovery key still unlocks"
-[[ $(rekey_state_get recovery_slot) == "$recovery_slot" ]] || fail "replacement must reuse reserved slot"
-pass "interrupted recovery confirmation revokes the old credential before replacement"
+[[ $RECOVERY_REPLACED == "1" && $(tail -n 1 "$test_tmp/shown") == "1 $recovery_key" ]] || fail "the replacement tells the owner to replace their copy"
+[[ -z $(luks_slot_for "$unconfirmed_key" "$device") ]] || fail "the unacknowledged key no longer unlocks"
+[[ $(luks_slot_for "$recovery_key" "$device") == "$recovery_slot" && $(rekey_state_get recovery_slot) == "$recovery_slot" ]] ||
+  fail "the replacement reuses the reserved slot"
+pass "an unacknowledged recovery key is revoked and replaced in its slot, and the owner told"
 
-luks_kill_other_slots "$device" "$password" "$owner_slot" "$recovery_slot"
-[[ $(luks_dump_slots "$device" | sort) == $(printf '%s\n' "$owner_slot" "$recovery_slot" | sort) ]] || fail "only selected slots should survive"
-pass "slot retirement preserves both owner and recovery credentials"
+# Added but never shown (killed before the journal said so): replaced silently.
+fixture
+printf '2 never-shown\n' >>"$slots"
+printf 'recovery_slot=2\n' >"$REKEY_STATE"
+chmod 600 "$REKEY_STATE"
+prepare_luks_recovery "$device"
+[[ $RECOVERY_REPLACED == "0" && -z $(luks_slot_for never-shown "$device") && $(luks_slot_for "$recovery_key" "$device") == "2" ]] ||
+  fail "a key never shown is replaced without a warning" "$(cat "$slots")"
+pass "a recovery key added but never shown is replaced without asking the owner to replace a copy"
 
-rekey_state_put recovery_shown 0
-shown_before=$(wc -l <"$test_tmp/shown")
+# The reserved slot never takes the staged or an owner's slot.
+fixture
+printf 'recovery_slot=0\nowner_slot=1\n' >"$REKEY_STATE"
+chmod 600 "$REKEY_STATE"
+prepare_luks_recovery "$device"
+[[ $(rekey_state_get recovery_slot) == "2" && -n $(luks_slot_for fixture-staged "$device") && -n $(luks_slot_for previous-owner "$device") ]] ||
+  fail "a recorded slot that holds the staged or the owner's key is never revoked" "$(cat "$slots")"
+pass "a recovery slot that names the staged or the owner's slot is reserved afresh"
+
+# An acknowledged slot that went missing is replaced, and the owner told.
+fixture
+printf 'recovery_slot=5\nrecovery_shown=1\n' >"$REKEY_STATE"
+chmod 600 "$REKEY_STATE"
+prepare_luks_recovery "$device"
+[[ $RECOVERY_REPLACED == "1" && $(luks_slot_for "$recovery_key" "$device") == "5" ]] || fail "a missing acknowledged key is replaced"
+grep -q 'acknowledged recovery slot 5 is missing' "$LOG_FILE" || fail "the log says why"
+pass "an acknowledged recovery slot missing from the header is replaced and the owner told"
+
+fixture
+printf 'nothing' >"$PROVISIONING_DIR/luks-key"
+if prepare_luks_recovery "$device"; then fail "a staged key that opens nothing fails the recovery step"; fi
+[[ $(wc -l <"$slots") == "2" && $(shown_count) == "0" ]] || fail "nothing is added or shown without the staged key"
+pass "the recovery key is added only while the staged key still opens the disk"
+
+fixture
 touch "$test_tmp/add-fail"
 if prepare_luks_recovery "$device"; then fail "key creation failure must propagate"; fi
-[[ $(wc -l <"$test_tmp/shown") == "$shown_before" ]] || fail "failed key creation must never display key"
+[[ $(shown_count) == "0" ]] || fail "failed key creation must never display key"
 grep -Fq 'fixture add failure' "$LOG_FILE" || fail "key creation diagnostics retained"
 pass "failed key creation is diagnosable and never displays an unusable key"
 
+fixture
 OMARCHY_PROVISION_WORKER=1
 if prepare_luks_recovery "$device"; then fail "background worker must not prepare recovery display"; fi
+[[ $(wc -l <"$slots") == "2" && ! -e $REKEY_STATE ]] || fail "the worker changes nothing"
 pass "recovery preparation is restricted to the foreground caller"

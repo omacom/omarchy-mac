@@ -25,6 +25,7 @@ operations=(
   reset-prepare reset-verify reset-rollback
   update-preflight update-verify
   boot-rebuild
+  luks-slots
 )
 
 usage() {
@@ -83,6 +84,8 @@ fi
 # also changes: apple_optional in test/shell.d/lifecycle-dispatch-test.sh,
 # the empty mac-boot case in test/shell.d/luks-rekey-journal-test.sh, and the
 # Apple column and registration table in docs/lifecycle-dispatch.md.
+# Its boot checks prove the owner's and the recovery slot, so luks-slots, which
+# records them, is required too.
 # /usr/lib/omarchy/mac-boot/limine-ready already lives in that directory as a
 # boot hook, not an operation: entrypoints are added beside it.
 case $platform in
@@ -93,6 +96,7 @@ case $platform in
       provision-prepare provision-commit provision-verify
       reset-prepare reset-verify reset-rollback
       update-verify
+      luks-slots
     )
     ;;
   *)

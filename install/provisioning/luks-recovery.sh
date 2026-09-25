@@ -1,16 +1,18 @@
-# Shared LUKS owner/recovery-slot operations; sourcing performs no setup.
+# A recovery passphrase beside the owner's LUKS password, added with the staged
+# install key through the re-key journal; sourcing performs no setup.
 # Caller contract:
-# - Source luks-rekey.sh first: the slot lookups and the journal
-#   (luks_slot_for, luks_dump_slots, rekey_state_get, rekey_state_put) are its.
-# - Set PROVISIONING_DIR (contains luks-key), REKEY_STATE, LOG_FILE and password.
-# - Provide log_step, say and foreground-only show_recovery_key callbacks.
+# - Source luks-rekey.sh first and meet its contract: the journal, the slot
+#   lookups and the staged key are its.
+# - Provide a foreground-only show_recovery_key callback that succeeds only
+#   after the owner acknowledges the key. prepare_luks_recovery sets
+#   recovery_key and RECOVERY_REPLACED for it.
 # - Call with tracing disabled while secrets are in scope. Cryptsetup receives
 #   secret material through key files/process substitution, never argv values.
-# - prepare_luks_recovery writes recovery_key and RECOVERY_REPLACED for the UI;
-#   the callback must succeed only after the owner acknowledges the key.
-# - The journal contains slot numbers and acknowledgement state, never keys.
-# These functions do not choose a platform, change boot files, or activate a
-# provisioning policy. The caller decides whether recovery is part of setup.
+# The journal records the reserved slot (recovery_slot) and the owner's view of
+# its key (recovery_shown: 0 once added, 1 once acknowledged), never keys. The
+# re-key keeps an acknowledged recovery slot and retires any other. These
+# functions do not choose a platform or change boot files: the caller decides
+# whether recovery is part of setup.
 
 # 48 base32 characters (A-Z2-7), shown as groups of 4. Never written to disk.
 generate_recovery_passphrase() {
@@ -25,116 +27,69 @@ generate_recovery_passphrase() {
   printf '%s' "$grouped"
 }
 
+# Whether $1 has the form generate_recovery_passphrase gives every recovery key.
+luks_recovery_passphrase() {
+  local -
+  set +x
+  [[ $1 =~ ^([A-Z2-7]{4}-){11}[A-Z2-7]{4}$ ]]
+}
+
 luks_slot_present() {
   local device=$1 slot=$2 found
   found=$(luks_dump_slots "$device" | awk -v s="$slot" '$1 == s { print; exit }')
   [[ -n $found ]]
 }
 
-# Add $1 (passphrase) to $2 (device) once. If a slot number is already recorded,
-# never add another: reuse it when it still exists, otherwise fail. The recovery
-# passphrase stays in memory of this attempt only.
-luks_ensure_slot() {
-  local passphrase=$1 device=$2 name=$3 current recorded xtrace_on=0
-  recorded=$(rekey_state_get "$name" || true)
-  if [[ -n $recorded ]]; then
-    if luks_slot_present "$device" "$recorded"; then
-      # A retry may have collected a different login password. Refuse before
-      # account creation rather than reusing a slot that password cannot open.
-      if [[ $name == "owner_slot" ]]; then
-        current=$(luks_slot_for "$passphrase" "$device")
-        [[ $current == "$recorded" ]] || return 1
-      fi
-      printf '%s' "$recorded"
-      return 0
-    fi
-    log_step "recorded $name $recorded is missing from $device; not adding another slot"
-    say --foreground 1 "The recorded ${name/_/ } is missing; will not add another."
-    return 1
-  fi
-  [[ -n $passphrase ]] || return 1
-  [[ $- == *x* ]] && xtrace_on=1
-  set +x
-  [[ $name == "owner_slot" ]] || return 1
-  # A crash after luksAddKey but before the journal write must not add a duplicate.
-  current=$(luks_slot_for "$passphrase" "$device")
-  if [[ -z $current ]]; then
-    if ! { cryptsetup luksAddKey --key-file "$PROVISIONING_DIR/luks-key" "$device" <(printf '%s' "$passphrase") ; } 2>>"$LOG_FILE"; then
-      if (( xtrace_on )); then set -x; fi
-      return 1
-    fi
-  fi
-  current=$(luks_slot_for "$passphrase" "$device")
-  if (( xtrace_on )); then set -x; fi
-  [[ -n $current ]] || return 1
-  rekey_state_put "$name" "$current" || return 1
-  printf '%s' "$current"
-}
-
-# Foreground only: persist the intended slot before adding its key, verify it,
-# then display and durably acknowledge it. An interrupted, unacknowledged slot
-# is revoked before replacement; an acknowledged slot is retained on retry.
+# Foreground only, before the re-key's worker runs. Reserve a free slot in the
+# journal, add a new key there with the staged install key, show it and record
+# the owner's acknowledgement, each step journaled so a retry resumes: an
+# acknowledged key is kept, and one added but never acknowledged is revoked and
+# replaced, RECOVERY_REPLACED telling the owner when they may have seen it. The
+# owner's own slot is the re-key's, so a retry may still choose a new password.
 prepare_luks_recovery() {
+  local -
   set +x
   [[ -z ${OMARCHY_PROVISION_WORKER:-} ]] || return 1
-  local device=$1 owner_slot recovery_slot occupied slot
+  local device=$1 slot shown staged occupied candidate
   RECOVERY_REPLACED=0
-  owner_slot=$(luks_ensure_slot "$password" "$device" owner_slot) || return 1
-  recovery_slot=$(rekey_state_get recovery_slot || true)
-  if [[ $(rekey_state_get recovery_shown || true) == "1" ]]; then
-    [[ -n $recovery_slot ]] && luks_slot_present "$device" "$recovery_slot"
-    return
+  slot=$(rekey_state_get recovery_slot || true)
+  shown=$(rekey_state_get recovery_shown || true)
+
+  if [[ $shown == "1" ]]; then
+    luks_slot_present "$device" "$slot" && return 0
+    log_step "the acknowledged recovery slot ${slot:-?} is missing from $device; replacing its key"
+    RECOVERY_REPLACED=1
+  elif [[ $shown == "0" ]]; then
+    RECOVERY_REPLACED=1
   fi
 
-  if [[ -n $recovery_slot ]]; then
-    [[ $recovery_slot =~ ^([0-9]|[12][0-9]|3[01])$ && $recovery_slot != "$owner_slot" ]] || return 1
-    if luks_slot_present "$device" "$recovery_slot"; then
-      cryptsetup luksKillSlot -q --key-file <(printf '%s' "$password") "$device" "$recovery_slot" 2>>"$LOG_FILE" || return 1
+  staged=$(staged_key_slot "$device")
+  if [[ -z $staged ]]; then
+    log_step "the staged LUKS key no longer unlocks $device; cannot add a recovery key"
+    return 1
+  fi
+
+  if [[ $slot =~ ^([0-9]|[12][0-9]|3[01])$ && $slot != "$staged" && $slot != "$(rekey_state_get owner_slot || true)" ]]; then
+    if luks_slot_present "$device" "$slot"; then
+      cryptsetup luksKillSlot -q --key-file "$PROVISIONING_DIR/luks-key" "$device" "$slot" 2>>"$LOG_FILE" || return 1
     fi
-    RECOVERY_REPLACED=1
   else
     occupied=$(luks_dump_slots "$device") || return 1
-    for (( slot=0; slot<32; slot++ )); do
-      if ! grep -Fxq "$slot" <<<"$occupied"; then
-        recovery_slot=$slot
+    slot=""
+    for (( candidate = 0; candidate < 32; candidate++ )); do
+      if ! grep -Fxq "$candidate" <<<"$occupied"; then
+        slot=$candidate
         break
       fi
     done
-    [[ -n $recovery_slot ]] || return 1
-    rekey_state_put recovery_slot "$recovery_slot" || return 1
+    [[ -n $slot ]] || return 1
+    rekey_state_put recovery_slot "$slot" || return 1
   fi
 
   recovery_key=$(generate_recovery_passphrase) || return 1
-  cryptsetup luksAddKey --key-slot "$recovery_slot" --key-file <(printf '%s' "$password") "$device" <(printf '%s' "$recovery_key") 2>>"$LOG_FILE" || return 1
-  [[ $(luks_slot_for "$recovery_key" "$device") == "$recovery_slot" ]] || return 1
+  cryptsetup luksAddKey --key-slot "$slot" --key-file "$PROVISIONING_DIR/luks-key" "$device" <(printf '%s' "$recovery_key") 2>>"$LOG_FILE" || return 1
+  [[ $(luks_slot_for "$recovery_key" "$device") == "$slot" ]] || return 1
+  rekey_state_put recovery_shown 0 || return 1
   show_recovery_key "$recovery_key" || return 1
-  rekey_state_put recovery_shown 1 || return 1
-}
-
-# Kill every LUKS slot except the ones listed after the device. Uses the owner's
-# password as the remaining authorized key.
-luks_kill_other_slots() {
-  local device="$1" password="$2" slot other_slots keep xtrace_on=0
-  shift 2
-  if ! other_slots=$(luks_dump_slots "$device"); then
-    log_step "luksDump failed while retiring slots; will retry from the recorded phase"
-    say --foreground 1 "Could not enumerate LUKS slots; will retry."
-    return 1
-  fi
-  [[ $- == *x* ]] && xtrace_on=1
-  set +x
-  for slot in $other_slots; do
-    keep=0
-    for keep_slot in "$@"; do
-      [[ $slot == "$keep_slot" ]] && keep=1 && break
-    done
-    (( keep )) && continue
-    if ! { cryptsetup luksKillSlot -q --key-file <(printf '%s' "$password") "$device" "$slot" ; } 2>>"$LOG_FILE"; then
-      if (( xtrace_on )); then set -x; fi
-      log_step "failed to kill LUKS slot $slot; will retry from the recorded phase"
-      say --foreground 1 "Could not remove a leftover LUKS key; will retry."
-      return 1
-    fi
-  done
-  if (( xtrace_on )); then set -x; fi
+  rekey_state_put recovery_shown 1
 }

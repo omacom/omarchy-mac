@@ -29,7 +29,7 @@ for pattern in /boot/omarchy encrypt.state rd.luks.key /etc/default/grub omarchy
   ! grep -Fq -- "$pattern" "$ROOT/bin/omarchy-provision-owner" ||
     fail "omarchy-provision-owner leaves $pattern to the boot package" "$(grep -Fn -- "$pattern" "$ROOT/bin/omarchy-provision-owner")"
 done
-for operation in provision-prepare provision-commit provision-verify; do
+for operation in provision-prepare provision-commit provision-verify luks-slots; do
   [[ -x $work/stage/usr/lib/omarchy/mac-boot/$operation ]] || fail "omarchy-mac-boot ships $operation"
 done
 pass "owner provisioning handles Apple boot files only through the boot package's dispatch entrypoints"

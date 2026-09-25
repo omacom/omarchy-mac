@@ -8,7 +8,15 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # a system drive under / and a data drive; cryptsetup is either a slot-table fake
 # or the real binary on file-backed volumes; chpasswd records the accounts. Each
 # cryptsetup and chpasswd call is a crash point, so a run can be killed after
-# every step and rerun, like a power loss.
+# every step and rerun, like a power loss. The runs repeat on an Apple fixture,
+# where a fake omarchy-mac-boot records the owner's slot through the real
+# omarchy-lifecycle-dispatch; on the x86 fixture that is a no-op.
+
+# Root's dispatcher ignores the fixtures and sees this machine.
+if (( EUID == 0 )) && [[ $("$(dirname -- "${BASH_SOURCE[0]}")/../../bin/omarchy-hw-platform") == "apple-silicon" ]]; then
+  echo "ok - running as root on Apple Silicon, where dispatch ignores fixtures; skipping"
+  exit 0
+fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -16,6 +24,8 @@ trap 'rm -rf "$tmp"' EXIT
 old_password=old-password
 new_password='new pass:word'
 recovery_key=recovery-passphrase
+# The form of a recovery key owner provisioning makes.
+formatted_recovery=ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567-ABCD-EFGH-IJKL-MNOP
 data_password=data-password
 journal=$tmp/state/omarchy/drive-password.state
 
@@ -196,8 +206,40 @@ SH
 
 chmod +x "$tmp"/bin/* "$tmp/real/cryptsetup"
 
-export TEST_TMP=$tmp OMARCHY_PATH=$ROOT XDG_STATE_HOME=$tmp/state SUDO_USER=owner
+# omarchy-mac-boot's luks-slots, run by dispatch with an empty environment: it
+# records its arguments and is a crash point like the rest.
+fake_platform "$tmp/x86" generic
+fake_platform "$tmp/apple" apple-silicon
+mkdir -p "$tmp/lifecycle/usr/lib/omarchy/mac-boot"
+cat >"$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots" <<SH
+#!/bin/bash
+[[ ! -e $tmp/record-fail ]] || exit 1
+printf '%s\n' "\$*" >>"$tmp/slot-record"
+count=\$(( \$(cat "$tmp/steps") + 1 ))
+echo "\$count" >"$tmp/steps"
+printf '%s slots recorded\n' "\$count" >>"$tmp/trace"
+if (( count == \$(cat "$tmp/crash-at") )); then
+  kill -9 "\$PPID"
+  kill -9 \$\$
+fi
+SH
+chmod 755 "$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots"
+chmod -R go-w "$tmp/lifecycle"
+
+export TEST_TMP=$tmp OMARCHY_PATH=$ROOT XDG_STATE_HOME=$tmp/state SUDO_USER=owner OMARCHY_LIFECYCLE_ROOT=$tmp/lifecycle
 base_path=$PATH
+platform=x86
+
+# The command's PATH for this backend on this platform fixture.
+use() {
+  backend=$1 platform=$2
+  export OMARCHY_PROC_ROOT=$tmp/$platform/proc
+  if [[ $backend == "fake" ]]; then
+    export PATH="$tmp/$platform/bin:$tmp/bin:$ROOT/bin:$base_path"
+  else
+    export PATH="$tmp/$platform/bin:$tmp/real:$tmp/bin:$ROOT/bin:$base_path"
+  fi
+}
 data=$tmp/dev/data
 
 # The slot the key opens, or nothing.
@@ -236,7 +278,7 @@ volume() {
 
 # / on the system drive, which also holds a recovery key; a data drive beside it.
 fixture() {
-  rm -rf "$tmp/state" "$tmp/output" "$tmp/trace" "$tmp"/dev/*
+  rm -rf "$tmp/state" "$tmp/output" "$tmp/trace" "$tmp"/dev/* "$tmp/slot-record" "$tmp/record-fail"
   unset TEST_OPEN_FAIL TEST_CHPASSWD_FAIL TEST_CHANGE_FAIL TEST_CHANGE_PARTIAL TEST_KILL_FAIL TEST_FINDMNT_FAIL CRASH_ORPHAN
   system=$tmp/dev/system
   recovery=${1-$recovery_key}
@@ -256,6 +298,7 @@ attempt() {
   shift
   if (( $# )); then printf '%s\n' "$@" >"$tmp/inputs"; else : >"$tmp/inputs"; fi
   echo 0 >"$tmp/steps"
+  echo "$crash_at" >"$tmp/crash-at"
   : >"$tmp/trace"
   {
     CRASH_AT=$crash_at bash -c 'TEST_PID=$$ exec bash ${TEST_TRACE:+-x} "$0"' "$ROOT/bin/omarchy-drive-password"
@@ -269,8 +312,27 @@ consistent() {
     fail "$backend: $context: the login and root passwords are the disk password" "$(cat "$tmp/accounts" "$tmp/output")"
   [[ -n $(opens "$system" "$password") ]] || fail "$backend: $context: the disk opens with that password" "$(cat "$tmp/output")"
   [[ -z $(opens "$system" "$other") ]] || fail "$backend: $context: the other password no longer opens the disk" "$(cat "$tmp/trace" "$tmp/output")"
-  [[ -z $recovery || -n $(opens "$system" "$recovery_key") ]] || fail "$backend: $context: the recovery key still opens the disk"
+  [[ -z $recovery || -n $(opens "$system" "$recovery") ]] || fail "$backend: $context: the recovery key still opens the disk"
   [[ ! -e $journal ]] || fail "$backend: $context: the journal is gone" "$(cat "$journal")"
+  recorded "$context" "$password"
+}
+
+# On Apple the boot package holds the slot the owner's password opens: recorded
+# whenever the key moved. x86 records nothing and runs no extra sudo.
+recorded() {
+  local context=$1 password=$2 slot
+  if [[ $platform == "apple" ]]; then
+    slot=$(opens "$system" "$password")
+    if [[ -s $tmp/slot-record ]]; then
+      [[ $(tail -n 1 "$tmp/slot-record") == "owner=$slot" ]] ||
+        fail "$backend: apple: $context: the owner's slot is recorded" "$(cat "$tmp/slot-record")"
+    else
+      [[ $slot == "0" ]] || fail "$backend: apple: $context: a key that moved is recorded" "$(cat "$tmp/trace")"
+    fi
+  else
+    [[ ! -e $tmp/slot-record ]] && ! grep -q 'lifecycle-dispatch' "$tmp/sudo-calls" ||
+      fail "$backend: x86: $context: no slot is recorded and no dispatch runs under sudo"
+  fi
 }
 
 said() {
@@ -307,12 +369,13 @@ else
   pass "cryptsetup is not installed; skipping the file-backed volume runs"
 fi
 
+matrix=()
 for backend in "${backends[@]}"; do
-  if [[ $backend == "fake" ]]; then
-    export PATH="$tmp/bin:$ROOT/bin:$base_path"
-  else
-    export PATH="$tmp/real:$tmp/bin:$ROOT/bin:$base_path"
-  fi
+  matrix+=("$backend x86" "$backend apple")
+done
+
+for run_spec in "${matrix[@]}"; do
+  use $run_spec
 
   fixture
   attempt 0 "$old_password" "$new_password" "$new_password" || fail "$backend: changing the system disk password succeeds" "$(cat "$tmp/output")"
@@ -383,11 +446,10 @@ for backend in "${backends[@]}"; do
       no_secrets "rerun after '$point'"
     done
   done
-  pass "$backend: killed after each of $total_steps steps, and each rerun after each of its own, the disk, login and root end on one password"
+  pass "$backend $platform: killed after each of $total_steps steps, and each rerun after each of its own, the disk, login and root end on one password"
 done
 
-backend=fake
-export PATH="$tmp/bin:$ROOT/bin:$base_path"
+use fake x86
 
 fixture
 export TEST_CHANGE_FAIL=1
@@ -564,3 +626,47 @@ said "The new password is the current one."
 ! grep -q 'luksChangeKey\|chpasswd' "$tmp/sudo-calls" && [[ ! -e $journal && $(account owner) == "$old_password" ]] ||
   fail "refused passwords change nothing"
 pass "drive password rejects empty, mismatched and unchanged passphrases before changing anything"
+
+# The recovery key stays: the system disk refuses it as the current password,
+# and a new password in its form.
+use fake apple
+fixture "$formatted_recovery"
+if attempt 0 "$formatted_recovery" "$new_password" "$new_password"; then fail "the recovery key is refused as the current password"; fi
+said "That is the recovery key."
+if attempt 0 "$old_password" "$formatted_recovery" "$formatted_recovery"; then fail "a new password in the recovery key's form is refused"; fi
+said "That has the form of a recovery key."
+! grep -q 'luksChangeKey\|chpasswd' "$tmp/sudo-calls" && [[ ! -e $journal && ! -e $tmp/slot-record ]] || fail "refusing the recovery key changes nothing"
+consistent "recovery key refused" "$old_password"
+attempt 0 "$old_password" "$new_password" "$new_password" || fail "the current password still changes the disk" "$(cat "$tmp/output")"
+consistent "after refusing the recovery key" "$new_password"
+pass "the system disk keeps its recovery key: refused as the current password, and its form as a new one"
+
+# A slot the boot package could not record keeps the journal: the rerun records it.
+use fake apple
+fixture
+touch "$tmp/record-fail"
+if attempt 0 "$old_password" "$new_password" "$new_password"; then fail "a failed record fails the command"; fi
+said "Could not record the new key slot for the boot checks."
+[[ -e $journal && $(account owner) == "$new_password" && ! -e $tmp/slot-record ]] || fail "a failed record keeps the journal"
+rm "$tmp/record-fail"
+attempt 0 "$new_password" || fail "the rerun records the slot" "$(cat "$tmp/output")"
+[[ -s $tmp/slot-record ]] || fail "the rerun records the moved key's slot"
+consistent "rerun after a failed record" "$new_password"
+pass "apple: the change finishes only once the boot package recorded the owner's new slot"
+
+# An omarchy-mac-boot older than luks-slots cannot record the slot either.
+fixture
+mv "$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots" "$tmp/luks-slots.off"
+if attempt 0 "$old_password" "$new_password" "$new_password"; then fail "an Apple boot package without luks-slots fails the command"; fi
+said "luks-slots on apple-silicon needs omarchy-mac-boot"
+[[ -e $journal && $(account owner) == "$new_password" ]] || fail "a boot package without luks-slots keeps the journal"
+mv "$tmp/luks-slots.off" "$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots"
+attempt 0 "$new_password" || fail "the rerun with the boot package updated finishes" "$(cat "$tmp/output")"
+consistent "rerun after updating the boot package" "$new_password"
+pass "apple: a boot package without luks-slots keeps the change unfinished, naming the package"
+
+fixture
+echo "$data" >"$tmp/select"
+attempt 0 "$data_password" "$new_password" "$new_password" || fail "apple: a data drive changes" "$(cat "$tmp/output")"
+[[ ! -e $tmp/slot-record && -n $(opens "$data" "$new_password") ]] || fail "apple: a data drive records no slot"
+pass "apple: only the system disk's slot is recorded"
