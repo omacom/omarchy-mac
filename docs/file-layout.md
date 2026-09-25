@@ -54,6 +54,8 @@ behind, which arms `omarchy-provision-owner.service` (shipped from
 `setup-form.sh`). On first boot `bin/omarchy-provision-owner` creates the
 user on tty1 and runs the finalize step itself.
 
+On an encrypted install `omarchy-provision-owner` then re-keys LUKS from the staged install key to the owner's password through `install/provisioning/luks-rekey.sh`, which journals each step (phase and slot numbers, never keys) in `/var/lib/omarchy/provisioning/luks-rekey.state` so an interrupted first boot resumes. Setup finishes only once the staged key opens nothing, and removes the journal with `pending`, so a retry after the staged key is retired must use the password the disk holds.
+
 Current generated theme state lives under
 `~/.local/state/omarchy/current/`. Keep `~/.config/omarchy/` for files a user
 may intentionally version in a dotfile manager, such as user themes, hooks,
