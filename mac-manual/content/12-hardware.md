@@ -37,7 +37,7 @@ This is what the first release is qualified against on both reference Macs. <spa
 | Apple GPU | <span class="status ok">works</span> | Mesa `vulkan-asahi`, hardware acceleration. A desktop on `llvmpipe` means something is wrong. |
 | Internal display, brightness | <span class="status ok">works</span> | The panel includes the strip beside the notch |
 | Keyboard, backlight, trackpad | <span class="status ok">works</span> | Drivers loaded early, so they work at the passphrase prompt. The backlight follows the ambient light sensor. See [Keyboard and trackpad]({{page:keyboard}}). |
-| Wi-Fi, Bluetooth | <span class="status ok">works</span> | NetworkManager with the iwd backend. Wi-Fi on BCM4378 and BCM4387 chips recovers after resume. |
+| Wi-Fi, Bluetooth | <span class="status ok">works</span> | NetworkManager with the iwd backend. Wi-Fi on BCM4378 and BCM4387 chips recovers after resume. Wi-Fi 6E Macs join on 2.4 and 5 GHz: a 6 GHz join passes no traffic with the current firmware. |
 | Speakers, microphone, headphones | <span class="status ok">works</span> | Asahi's DSP chain with `speakersafetyd` protecting the speakers. The microphone array is mapped, and a headset microphone takes priority when plugged in. |
 | Suspend and resume | <span class="status ok">works</span> | |
 | Battery, lid, power profiles | <span class="status ok">works</span> | |
