@@ -239,4 +239,3 @@ a, button { touch-action: manipulation; }
 @media (min-width: 640px) { .footer-inner { padding: 2rem 1.5rem; } }
 .footer a { color: var(--t-text-secondary); text-decoration: underline; text-decoration-color: var(--t-border-strong); text-underline-offset: 3px; }
 .footer a:hover { text-decoration-color: var(--t-brand); }
-
