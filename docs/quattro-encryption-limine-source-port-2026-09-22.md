@@ -109,3 +109,14 @@ A review with VM qualification on the rc Limine image (`mac-image-13-rc-9ad40024
 - `omarchy-refresh-limine` recreates a missing menu and parses every `ESP_PATH` form.
 
 Residual: a power loss during the rebuild itself, before the flush, can still leave the template menu on the ESP. A power loss after the keyslot is added but before activation leaves an unused keyslot, whose passphrase exists only inside the encrypted root, and a `configured` journal; the next successful owner setup retires the slot.
+
+## Landing on quattro-upstream (2026-09-25)
+
+Landed together with the generic re-key journal (#517) and the merge blockers from the Apple Silicon gap audit (`docs/apple-silicon-gap-audit.md`, #513):
+
+- `install/provisioning/luks-recovery.sh` uses `luks-rekey.sh` for the slot lookups and the journal, keeping only the recovery-passphrase and slot-reuse parts. The journal write no longer changes the provisioning directory to mode 700, which would have stopped the new user's setup reading the stashed Node tarball. The non-Apple re-key is #517's journaled `luks_rekey`; Apple Silicon keeps the `encrypt.state` re-key with its recovery slot.
+- The GRUB console leaf carries omarchy-mx-mac #248: the root-device wait goes on only on a systemd initramfs, joining an existing `rootflags=`, and comes off a busybox `encrypt` line, where a second `rootflags=` replaced `rootflags=subvol=@` and the Mac stopped booting. `omarchy-mac-initramfs-hooks` resolves the HOOKS mkinitcpio builds with.
+- The `omarchy-mac-boot` payload (initramfs drop-ins, conversion hook, vendor firmware, first boot, presets, ALPM hook) moved from the paired boot recipe into `packages/omarchy-mac/boot/files`, at omarchy-mac-boot 20260921-10 (maralcbr/omarchy-pkgs#202: the owner's keyboard layout and dock keyboards at the disk prompt). `install DESTDIR` stages the whole package; the recipe keeps packaging metadata and the pacman scriptlet.
+- `install/omarchy-apple.packages` names `omarchy-mac-boot`, which owner setup and factory reset require on Apple Silicon.
+
+Merge criteria are the runtime suite, the boot package tests and these blockers. The complete candidate transaction and VM runs move to the signed candidate set and the first convergence install on the M2 Max; an M3 install is out of scope for the convergence.
