@@ -251,6 +251,21 @@ output=$(first_boot "$root") || fail "running the first-boot hardware setup agai
   fail "running the first-boot hardware setup again does nothing" "$output"
 pass "running the first-boot hardware setup again does nothing"
 
+# The live platform is asked once the manifest is retired, so it is the
+# hardware's even where the detector cannot tell a booted root (this fixture
+# runs no systemd): an Apple image under VM acceptance boots on generic aarch64.
+fake_platform "$test_tmp/vm" generic-aarch64
+reset_logs
+root=$(new_root vm)
+write_manifest "$root"
+build "$root" >/dev/null || fail "the fixture image builds for a VM boot"
+output=$(OMARCHY_IMAGE_ROOT="$root" OMARCHY_PATH="$fixture" OMARCHY_PROC_ROOT="$test_tmp/vm/proc" \
+  PATH="$test_tmp/vm/bin:$stub_bin:$ROOT/bin:/usr/local/bin:/usr/bin:/bin" "$ROOT/bin/omarchy-provision-hardware") ||
+  fail "the first boot on other hardware finishes" "$output"
+[[ $output == *"First boot of an image built for apple-silicon, on generic-aarch64 hardware"* ]] ||
+  fail "the first boot reports the hardware it runs on, not the image target" "$output"
+pass "the first boot reports the hardware it runs on, not the image target"
+
 # A failed step stays queued with everything after it; the next boot resumes there.
 reset_logs
 root=$(new_root resume)
