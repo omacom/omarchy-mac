@@ -124,7 +124,7 @@ for tool in qemu-system-aarch64 fdtput socat sgdisk mkfs.vfat losetup btrfs cryp
 done
 sudo -n true 2>/dev/null || fail "passwordless sudo is required (losetup, cryptsetup, mounts, chroot)"
 [[ -z $image_dir || -f $signing_key ]] || fail "signing key $signing_key is missing"
-[[ -z $payload ]] || payload=$(realpath -- "$payload")
+[[ -z $payload ]] || payload=$(realpath -m -- "$payload")
 
 # A failed run's directory is kept and a passing one's deleted, so evidence
 # must never live beneath the state directory.
@@ -315,13 +315,15 @@ close_last() {
   unset 'mappers[-1]'
 }
 
-# Prints the slot a passphrase file opens, nothing when no slot takes it (exit
-# 2), and fails on any other error, which must not read as a refusal.
+# Sets SLOT to the slot a passphrase file opens, or empties it when no slot
+# takes the passphrase (exit 2). Any other error fails the run: it must not
+# read as a refusal. Not for a command substitution, where fail cannot stop it.
 luks_slot() {
   local out status=0
+  SLOT=""
   out=$(sudo -n cryptsetup open --test-passphrase --verbose --key-file "$2" "$1" 2>&1) || status=$?
   case $status in
-    0) sed -n 's/^Key slot \([0-9]*\) unlocked.*/\1/p' <<<"$out" ;;
+    0) SLOT=$(sed -n 's/^Key slot \([0-9]*\) unlocked.*/\1/p' <<<"$out") ;;
     2) ;;
     *) fail "cryptsetup could not test a passphrase on $1 (exit $status): $out" ;;
   esac
@@ -629,9 +631,10 @@ console_login() {
 }
 
 # Runs a command in the console shell, answering prompts from a table of
-# "extended-regex=reply" pairs until it exits; sets guest_status.
+# "extended-regex=reply" pairs until it exits; sets guest_status, and
+# guest_output to what the console showed meanwhile.
 guest_run() {
-  local what=$1 command=$2 pattern='__exit_[0-9]+__' pair last=""
+  local what=$1 command=$2 pattern='__exit_[0-9]+__' pair last="" start=$serial_pos
   shift 2
   declare -A replies=()
   for pair in "$@"; do
@@ -643,6 +646,7 @@ guest_run() {
     serial_expect "$pattern" "$what" 600
     if [[ $serial_match =~ ^__exit_([0-9]+)__$ ]]; then
       guest_status=${BASH_REMATCH[1]}
+      guest_output=$(tail -c +$((start + 1)) "$serial_log" | head -c $((serial_pos - start)) | tr -d '\0') || true
       return 0
     fi
     # A prompt redrawn after its answer is not asked again.
@@ -768,7 +772,10 @@ scenario_first_boot() {
   mount_tracked -o ro "${dev}p1" "$work/esp"
   sudo -n test ! -e "$work/esp/omarchy/install.conf" || fail "first-boot: install.conf is still on the ESP"
   sudo -n grep -Fq 'boot():/EFI/Linux/omarchy_' "$work/esp/limine.conf" || fail "first-boot: limine.conf boots no Omarchy UKI"
-  sudo -n grep -Fq "machine-id=$(sudo -n cat "$work/mnt/etc/machine-id")" "$work/esp/limine.conf" ||
+  local machine_id
+  machine_id=$(sudo -n cat "$work/mnt/etc/machine-id")
+  [[ $machine_id =~ ^[0-9a-f]{32}$ ]] || fail "first-boot: first boot left no machine ID"
+  sudo -n grep -Fq "machine-id=$machine_id" "$work/esp/limine.conf" ||
     fail "first-boot: the deferred Limine step did not rebuild the menu for this Mac"
   ok "first-boot: install.conf consumed, root left plain, keyring made, the deferred Limine step rebuilt the menu and UKI for this Mac, owner setup finished and the console login is up"
   check_plymouth first-boot
@@ -811,8 +818,8 @@ scenario_conversion() {
   luks=$(sudo -n blkid -c /dev/null -o value -s UUID "${dev}p3")
   owner_key=$(passphrase_file owner "$owner_password")
   recovery_file=$(passphrase_file recovery "$recovery_key")
-  owner_slot=$(luks_slot "${dev}p3" "$owner_key")
-  recovery_slot=$(luks_slot "${dev}p3" "$recovery_file")
+  luks_slot "${dev}p3" "$owner_key"; owner_slot=$SLOT
+  luks_slot "${dev}p3" "$recovery_file"; recovery_slot=$SLOT
   [[ -n $owner_slot ]] || fail "conversion: the owner's password does not open the disk"
   [[ -n $recovery_slot && $recovery_slot != "$owner_slot" ]] || fail "conversion: the recovery key does not open the disk in a slot of its own"
   [[ $(luks_slot_count "${dev}p3") == 2 ]] ||
@@ -878,21 +885,28 @@ scenario_password_change() {
   unlock_prompt password-change
   serial_type "$owner_password"
   console_login password-change "$owner_password"
-  guest_run "password-change: omarchy-drive-password" omarchy-drive-password \
-    "\[sudo\] password for [a-z]+:=$owner_password" \
-    "Current encryption password=$owner_password" \
-    "Enter passphrase to be changed:=$owner_password" \
-    "New encryption password=$new_password" \
-    "Confirm new encryption password=$new_password"
+  local replies=("\[sudo\] password for [a-z]+:=$owner_password" "Current encryption password=$owner_password"
+    "Enter passphrase to be changed:=$owner_password" "New encryption password=$new_password" "Confirm new encryption password=$new_password")
+  guest_run "password-change: omarchy-drive-password" omarchy-drive-password "${replies[@]}"
+  # Its drive list is an unprivileged blkid, which only reads the cache a root
+  # blkid leaves in /run/blkid: before one has run this boot, it finds no drive.
+  if ((guest_status != 0)) && [[ $guest_output == *"No encrypted drives"* ]]; then
+    not_ok "password-change: omarchy-drive-password finds no encrypted drive until root has run blkid this boot (its unprivileged blkid only reads /run/blkid/blkid.tab)"
+    guest_run "password-change: sudo blkid" "sudo blkid >/dev/null" "${replies[0]}"
+    guest_run "password-change: omarchy-drive-password" omarchy-drive-password "${replies[@]}"
+  fi
   ((guest_status == 0)) || fail "password-change: omarchy-drive-password exited $guest_status (see ${log##*/})"
   settle_guest
   stop_guest
   attach -P "$disk"; dev=$ATTACHED
   old_key=$(passphrase_file owner "$owner_password")
   new_key=$(passphrase_file new "$new_password")
-  [[ -n $(luks_slot "${dev}p3" "$new_key") ]] || fail "password-change: the new password does not open the disk"
-  [[ -z $(luks_slot "${dev}p3" "$old_key") ]] || fail "password-change: the old password still opens the disk"
-  [[ -n $(luks_slot "${dev}p3" "$(passphrase_file recovery "$recovery_key")") ]] || fail "password-change: the recovery key no longer opens the disk"
+  luks_slot "${dev}p3" "$new_key"
+  [[ -n $SLOT ]] || fail "password-change: the new password does not open the disk"
+  luks_slot "${dev}p3" "$old_key"
+  [[ -z $SLOT ]] || fail "password-change: the old password still opens the disk (slot $SLOT)"
+  luks_slot "${dev}p3" "$(passphrase_file recovery "$recovery_key")"
+  [[ -n $SLOT ]] || fail "password-change: the recovery key no longer opens the disk"
   [[ $(luks_slot_count "${dev}p3") == 2 ]] || fail "password-change: $(luks_slot_count "${dev}p3") key slots after the change, not 2"
   detach_last
   ok "password-change: the new password opens the disk, the old one no longer does, the recovery slot stays"
@@ -937,8 +951,10 @@ owner_password=$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)
 secrets+=("$owner_password")
 recovery_key=""
 guest_status=""
+guest_output=""
 DISK_CMDLINE=""
 OPENED=""
+SLOT=""
 
 ran=()
 for name in "${scenarios[@]}"; do [[ -z ${selected[$name]:-} ]] || ran+=("$name"); done
