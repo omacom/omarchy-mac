@@ -166,6 +166,12 @@ with tempfile.TemporaryDirectory() as temporary:
         audio = mapped(selected, signal=False, monitor_mute=True)
         m.reconcile(audio, state())
         assert audio.default == m.MONITOR and not audio.probes, selected
+        # Muting while the monitor is sampled silences it; that is still a mute.
+        audio = mapped(selected, signal=False)
+        sample = audio.signal
+        audio.signal = lambda source: (audio.monitor.update(mute=True), sample(source))[1]
+        m.reconcile(audio, state())
+        assert audio.default == m.MONITOR and audio.probes == [m.MONITOR], selected
     # Other inputs are the user's; the microphone is not even opened for them.
     audio = Audio(default='usb-mic'); audio.carries_signal = False
     m.reconcile(audio, state())

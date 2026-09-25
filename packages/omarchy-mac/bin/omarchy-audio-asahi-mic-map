@@ -257,11 +257,12 @@ def reconcile(audio, state, save_only=False):
         # Only a monitor that carries the microphone may be the default input;
         # a linked one can still carry digital silence (#505), for example when
         # the volume keys muted the mapping sink while WirePlumber briefly made it
-        # the default output. A muted monitor is the user's microphone mute: it
-        # stays selectable and selected, and is never sampled.
-        if select_monitor or current_input == MONITOR:
-            if any(obj['name'] == MONITOR and audible(obj) for obj in audio.objects('sources')):
-                silent = not audio.signal(MONITOR)
+        # the default output. A muted monitor is the user's microphone mute, even
+        # one muted while it is sampled: it stays selectable and selected.
+        def monitor_audible():
+            return any(obj['name'] == MONITOR and audible(obj) for obj in audio.objects('sources'))
+        if (select_monitor or current_input == MONITOR) and monitor_audible():
+            silent = not audio.signal(MONITOR) and monitor_audible()
         graph = audio.graph()
         validate_endpoints(graph)
         if not all(links(graph, output, input_) for input_ in inputs):
