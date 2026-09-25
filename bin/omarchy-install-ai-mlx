@@ -5,16 +5,17 @@
 
 set -euo pipefail
 
-# The wheel is built for the M1 (t8103) only. Newer Apple GPUs need driver work
-# that is not done yet, so refuse rather than install something that cannot run.
+# The wheel supports the M1 (t8103), the M1 Max (t6001), and the M2 Max
+# (t6021) — the chips mlx-omarchy has verified on this driver path. Anything
+# else refuses rather than install something untested.
 if ! omarchy-hw-apple; then
   echo "Skipping: mlx-omarchy runs on Apple Silicon only."
   exit 0
 fi
 
 compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
-if ! grep -Faiq 'apple,t8103' "$compatible"; then
-  echo "Skipping: mlx-omarchy currently supports the M1 (t8103) only."
+if ! grep -Eaiq 'apple,t(8103|6001|6021)' "$compatible"; then
+  echo "Skipping: mlx-omarchy supports the M1 (t8103), the M1 Max (t6001), and the M2 Max (t6021) only."
   echo "This machine reports: $(tr '\0' '\n' <"$compatible" 2>/dev/null | paste -sd' ' - || echo unknown)"
   exit 0
 fi
@@ -35,6 +36,9 @@ for artifact in \
   "$PREFIX" \
   "$BIN/mlx-omarchy" \
   "$BIN/mlx-omarchy-demo" \
+  "$BIN/mlx-omarchy-info" \
+  "$BIN/mlx-omarchy-serve" \
+  "$BIN/omarchy-mlx-serve" \
   "$APPS/mlx-omarchy-demo.desktop"; do
   [ -e "$artifact" ] && existing+=("$artifact")
 done
@@ -51,11 +55,14 @@ if [ ${#existing[@]} -gt 0 ]; then
   exit 1
 fi
 
-# Pinned installer commit and its checksum. Bump both together; never point at a
-# moving branch, because this menu entry runs on other people's machines.
+# Pinned installer commit and its checksum. Bump both together; never point at
+# a moving branch, because this menu entry runs on other people's machines.
+# The ref is the release tag's commit, not the tip of main: install.sh resolves
+# the release it installs, so the script and the release assets it fetches
+# (patches, demo, serve CLI) have to come from the same tree.
 INSTALLER_REPO="joshuaswarren/mlx-omarchy"
-INSTALLER_REF="286ef7297b0db6576c70d9999c6f6b005ce1c8de"
-INSTALLER_SHA256="cdfa8a985d38984c68053c2765b50cc8875b7f894001c44d4c6732e47921ebf1"
+INSTALLER_REF="5738e29ec14b68814e30ffe8b8ce4e88c60e3ede"
+INSTALLER_SHA256="f4846caf38f6cb7d5fb66285d53e01e038d32d15b7d2bc82a2c9c6d135f67b08"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -76,7 +83,10 @@ echo "Installing mlx-omarchy..."
 # negation's status (always 0) and report a failure as a success, which is the
 # bug this entry is meant to avoid.
 set +e
-bash "$tmp/install.sh"
+# Pin the release as well: without it install.sh resolves the latest release
+# through the GitHub API (unauthenticated: 60 requests/hour per IP), and the
+# menu entry should install the same verified release every time it runs.
+MLX_OMARCHY_VERSION="v0.7.3" bash "$tmp/install.sh"
 status=$?
 set -e
 
@@ -92,7 +102,8 @@ if [ "$status" -ne 0 ]; then
   else
     echo "Cleanup did not finish. Files may remain in:" >&2
     echo "  $PREFIX" >&2
-    echo "  $BIN/mlx-omarchy, $BIN/mlx-omarchy-demo" >&2
+    echo "  $BIN/mlx-omarchy, $BIN/mlx-omarchy-demo, $BIN/mlx-omarchy-info," >&2
+    echo "  $BIN/mlx-omarchy-serve, $BIN/omarchy-mlx-serve" >&2
     echo "  $APPS/mlx-omarchy-demo.desktop" >&2
     echo "Run 'omarchy-remove-ai-mlx' before trying again." >&2
   fi
