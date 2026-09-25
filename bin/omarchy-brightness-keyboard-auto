@@ -186,7 +186,8 @@ apply_percent() {
 }
 
 # Off by accident rather than by the keyboard-brightness keys, which record
-# every level they set.
+# every level they set. Once auto takes over again that record is stale, so
+# every resume forgets it.
 left_off() {
   local current=$1 manual=""
 
@@ -210,6 +211,7 @@ tick() {
     last_set=$current
     if left_off "$current"; then
       paused=0
+      rm -f "$MANUAL_LEVEL_FILE"
     else
       paused=1
       pause_lux=$lux
@@ -228,7 +230,6 @@ tick() {
       return 0
     fi
     paused=0
-    # Auto overrides the hand-set level, so it no longer marks a choice.
     rm -f "$MANUAL_LEVEL_FILE"
   fi
 

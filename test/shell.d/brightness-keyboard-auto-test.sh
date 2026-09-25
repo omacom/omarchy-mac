@@ -137,7 +137,7 @@ esac
 SH
 cat >"$loop/bin/omarchy-hyprland-session-locked" <<'SH'
 #!/bin/bash
-[[ ${LOCKED:-0} == 1 ]]
+[[ ${LOCKED:-0} == "1" ]]
 SH
 cat >"$loop/bin/omarchy-hw-laptop-closed" <<'SH'
 #!/bin/bash
@@ -162,38 +162,52 @@ led() { cat "$loop/leds/kbd_backlight/brightness"; }
 lux() { printf '%s\n' "$1" >"$als_path"; }
 
 tick
-[[ $(led) == 226 ]] || fail "a dark room lights the keys" "got $(led)"
+(( $(led) == 226 )) || fail "a dark room lights the keys" "got $(led)"
 keys off
 LOCKED=1 tick
-[[ $(led) == 0 ]] || fail "a locked session keeps the keys blank" "got $(led)"
+(( $(led) == 0 )) || fail "a locked session keeps the keys blank" "got $(led)"
 tick
-[[ $(led) == 226 ]] || fail "keys left blank after unlock light up again" "got $(led)"
+(( $(led) == 226 )) || fail "keys left blank after unlock light up again" "got $(led)"
 printf '2\n' >"$loop/leds/kbd_backlight/brightness"
 tick
-[[ $(led) == 226 ]] || fail "a 1% leftover lights up again" "got $(led)"
+(( $(led) == 226 )) || fail "a 1% leftover lights up again" "got $(led)"
 pass "keys left off by lock blanking or a leftover light up again with the room"
 
-until [[ $(led) == 0 ]]; do
+until (( $(led) == 0 )); do
   keys down
   tick
 done
 tick
-[[ $(led) == 0 ]] || fail "keys turned off with the brightness keys stay off" "got $(led)"
+(( $(led) == 0 )) || fail "keys turned off with the brightness keys stay off" "got $(led)"
 keys off
 LOCKED=1 tick
 keys restore
 tick
-[[ $(led) == 0 ]] || fail "a deliberate off survives lock and wake" "got $(led)"
+(( $(led) == 0 )) || fail "a deliberate off survives lock and wake" "got $(led)"
 lux 150
 tick
-[[ $(led) == 43 ]] || fail "a deliberate off resumes once the room changes enough" "got $(led)"
+(( $(led) == 43 )) || fail "a deliberate off resumes once the room changes enough" "got $(led)"
 keys off
 tick
-[[ $(led) == 43 ]] || fail "after auto resumes, a lock blank is a leftover again" "got $(led)"
+(( $(led) == 43 )) || fail "after auto resumes, a lock blank is a leftover again" "got $(led)"
 pass "keys turned off by hand stay off until the room changes enough"
 
 keys up
 tick
 tick
-[[ $(led) == 68 ]] || fail "a visible level set by hand still pauses auto" "got $(led)"
+(( $(led) == 68 )) || fail "a visible level set by hand still pauses auto" "got $(led)"
 pass "a visible level set by hand still pauses automatic control"
+
+lux 26
+tick
+until (( $(led) == 0 )); do
+  keys down
+  tick
+done
+printf '2\n' >"$loop/leds/kbd_backlight/brightness"
+tick
+(( $(led) == 226 )) || fail "a leftover after a deliberate off lights up again" "got $(led)"
+keys off
+tick
+(( $(led) == 226 )) || fail "a relit leftover forgets the earlier deliberate off" "got $(led)"
+pass "a relit leftover forgets the earlier deliberate off"
