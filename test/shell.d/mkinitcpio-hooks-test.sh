@@ -117,6 +117,27 @@ grep -q "contradictory platform identity" "$test_tmp/contradiction.err" ||
   fail "a platform the detector cannot place stops the build" "stderr: $(<"$test_tmp/contradiction.err")"
 pass "a platform the detector cannot place stops the build"
 
+# A Mac that set up its own initramfs before the Apple boot package keeps it:
+# busybox encrypt unlocks through cryptdevice=, which sd-encrypt cannot parse,
+# and the asahi hook carries the firmware. The asahi hook marks such a root off
+# a Mac too. Busybox encrypt alone means nothing off Apple Silicon.
+legacy_encrypted="base udev plymouth autodetect microcode modconf kms keyboard keymap consolefont block encrypt asahi filesystems fsck"
+legacy_plain="base udev autodetect microcode modconf kms keyboard keymap consolefont block asahi filesystems fsck"
+for legacy in "$legacy_encrypted" "$legacy_plain" "${legacy_encrypted/ asahi / }"; do
+  new_etc
+  sed -i "s/^HOOKS=.*/HOOKS=($legacy)/" "$etc/mkinitcpio.conf"
+  assert_hooks "a Mac keeps its own HOOKS=($legacy)" apple-silicon "$legacy"
+done
+new_etc
+sed -i "s/^HOOKS=.*/HOOKS=($legacy_plain)/" "$etc/mkinitcpio.conf"
+assert_hooks "an asahi root keeps its HOOKS off a Mac" generic-aarch64 "$legacy_plain"
+new_etc
+sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt filesystems fsck)/" "$etc/mkinitcpio.conf"
+assert_hooks "busybox encrypt off Apple Silicon still gets the Omarchy baseline" generic "$x86_hooks"
+new_etc
+sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf kms keyboard keymap consolefont block filesystems fsck)/" "$etc/mkinitcpio.conf"
+assert_hooks "a Mac with a stock busybox line and no asahi hook gets the systemd baseline" apple-silicon "$apple_hooks"
+
 # A platform fragment sorts after the baseline and before omarchy_hooks.conf,
 # as omarchy-mac-boot's 90- drop-ins do. Its hooks must reach the image.
 new_etc
