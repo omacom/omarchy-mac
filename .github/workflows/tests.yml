@@ -1,0 +1,76 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [quattro-upstream]
+  push:
+    branches: [quattro-upstream, mac/57-ci]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  suites:
+    name: Shell suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ARCH_IMAGE: archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
+    steps:
+      - name: Check out omarchy-mac
+        uses: actions/checkout@v7
+        with:
+          path: omarchy-mac
+
+      # Packaging and installer coverage in the runtime suite reads the sibling
+      # recipe and ISO repositories.
+      - name: Check out omarchy-pkgs
+        uses: actions/checkout@v7
+        with:
+          repository: omacom/omarchy-pkgs
+          path: omarchy-pkgs
+          persist-credentials: false
+
+      - name: Check out omarchy-iso
+        uses: actions/checkout@v7
+        with:
+          repository: omacom/omarchy-iso
+          path: omarchy-iso
+          persist-credentials: false
+
+      - name: Start Arch container
+        id: arch
+        run: |
+          docker run -d --init --name arch \
+            -v "$GITHUB_WORKSPACE:/work" -w /work/omarchy-mac \
+            "$ARCH_IMAGE" sleep infinity
+          docker exec arch pacman -Syu --noconfirm --needed \
+            git jq lua python python-yaml nodejs npm ripgrep shellcheck imagemagick ffmpeg \
+            gum plocate openssh unzip bc libarchive libxkbcommon desktop-file-utils glib2 sqlite
+          docker exec arch useradd --create-home --uid "$(id -u)" tester
+
+      - name: Runtime suite (test/all)
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' }}
+        run: |
+          docker exec -u tester -e HOME=/home/tester \
+            -e OMARCHY_PATH=/work/omarchy-mac \
+            -e OMARCHY_PKGS_PATH=/work/omarchy-pkgs \
+            -e OMARCHY_ISO_PATH=/work/omarchy-iso \
+            arch bash -c 'PATH="$OMARCHY_PATH/bin:$PATH" ./test/all'
+
+      - name: omarchy-mac package suite
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' }}
+        run: docker exec -u tester -e HOME=/home/tester arch packages/omarchy-mac/test/all
+
+      - name: omarchy-mac boot package suite
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' && hashFiles('omarchy-mac/packages/omarchy-mac/boot/test/all') != '' }}
+        run: docker exec -u tester -e HOME=/home/tester arch packages/omarchy-mac/boot/test/all
