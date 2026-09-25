@@ -19,7 +19,7 @@
 # and root starts over in an empty environment, then reads only the live paths
 # with a fixed PATH.
 if (( EUID == 0 )) && [[ ${1:-} != --clean-environment ]]; then
-  exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin /bin/bash -p -- "$0" --clean-environment "$@"
+  exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin /bin/bash -p -- "${BASH_SOURCE[0]}" --clean-environment "$@"
 fi
 
 if (( EUID == 0 )); then
@@ -63,7 +63,8 @@ fi
 # systemd (a PID namespace whose PID 1 is the build). What cannot be seen, such
 # as PID 1's root to a normal user or /proc/1 behind hidepid, never makes a
 # build: a booted system always answers from its hardware, so builds run as
-# root with a /run of their own.
+# root with a /run of their own. A caller in a private PID namespace looks like
+# a build too, so nothing that asks the detector runs with PrivatePIDs=.
 booted() {
   local comm
 

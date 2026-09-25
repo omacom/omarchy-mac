@@ -152,10 +152,11 @@ fi
 # Root with a manifest at the live path: a private mount namespace lays a
 # fixture over /var/lib and /run, and in a PID namespace PID 1 is a copy of bash
 # named for what it plays, the build or systemd, and runs the detector.
-if (( EUID != 0 )) && unshare --user --map-root-user --mount --pid --fork --mount-proc true 2>/dev/null; then
-  mkdir -p "$test_tmp/init"
-  cp "$BASH" "$test_tmp/init/bash"
-  cp "$BASH" "$test_tmp/init/systemd"
+mkdir -p "$test_tmp/init"
+cp "$BASH" "$test_tmp/init/bash"
+cp "$BASH" "$test_tmp/init/systemd"
+if (( EUID != 0 )) && "$test_tmp/init/bash" -c true 2>/dev/null &&
+  unshare --user --map-root-user --mount --pid --fork --mount-proc true 2>/dev/null; then
   # $1 fixture, $2 PID 1 (bash or systemd), $3 a file to lay over the manifest.
   live_root() {
     local fixture=$1 init=$2 owner_file=${3:-}
@@ -210,7 +211,7 @@ actual:   $actual"
   grep -Fq "is not a root-owned regular file" "$test_tmp/error" || fail "root refuses a manifest another user owns" "$(cat "$test_tmp/error")"
   pass "root refuses a manifest another user owns"
 else
-  pass "no unprivileged user, mount and PID namespaces; skipping the live manifest probe"
+  pass "no unprivileged user, mount and PID namespaces, or an executable temporary directory; skipping the live manifest probe"
 fi
 
 require_platform_fixtures "the image-target fixtures"
@@ -447,3 +448,8 @@ packages=$(in_world on-a-mac env OMARCHY_PATH="$ROOT" "$ROOT/bin/omarchy-pkg-def
 [[ $packages == "$(OMARCHY_PATH="$ROOT" "$ROOT/bin/omarchy-pkg-defaults" generic-aarch64)" ]] ||
   fail "a generic image built on a Mac installs the generic aarch64 package set"
 pass "the default package set follows the image target"
+
+# A caller in a private PID namespace looks like a build, so no unit may use one.
+units=$(grep -rlE '^[[:space:]]*PrivatePIDs=' "$ROOT" --include='*.service' --include='*.conf' --exclude-dir=.git || true)
+[[ -z $units ]] || fail "no unit runs in a private PID namespace" "$units"
+pass "no unit runs in a private PID namespace"
