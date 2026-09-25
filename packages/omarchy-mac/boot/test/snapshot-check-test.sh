@@ -8,9 +8,11 @@ require_command gzip
 require_command b2sum
 
 # limine-snapper-sync runs /etc/boot/hooks/pre.d before it restores a snapshot
-# and stops the restore when a hook exits 100 or more. omarchy-mac-snapshot-check
-# is that hook on a Mac: the snapshot booted from the Limine menu is restored
-# only when it passes the boot check against the boot files outside it.
+# and post.d after it; a pre hook that exits 100 or more stops the restore, a
+# post hook keeps it from offering the reboot. omarchy-mac-snapshot-check is
+# both on a Mac: the snapshot booted from the Limine menu is restored only when
+# it passes the boot check against the boot files outside it, and whatever the
+# restore put back must hold that snapshot's boot files.
 check=$ROOT/bin/omarchy-mac-snapshot-check
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -22,12 +24,22 @@ hooks=$tmp/stage/etc/boot/hooks/pre.d
   fail "the package links the check into limine-snapper-sync's pre hooks"
 [[ $(find "$hooks" -mindepth 1 -printf '%f\n' | LC_ALL=C sort | head -n 1) == 04-omarchy-mac-snapshot-check ]] ||
   fail "the check runs before the Limine activation gate, so a GRUB Mac is told why"
-pass "the package installs the restore check as a limine-snapper-sync pre hook"
+[[ $(readlink "$tmp/stage/etc/boot/hooks/post.d/99-omarchy-mac-snapshot-check") == /usr/bin/omarchy-mac-snapshot-check ]] ||
+  fail "the package links the check into limine-snapper-sync's post hooks, after the others"
+pass "the package installs the restore check as a limine-snapper-sync pre and post hook"
 
 limine_mac_init "$tmp/mac"
 fake=$tmp/bin
 mkdir -p "$fake" "$tmp/check-stub"
-printf '#!/bin/bash\nexit "${TEST_APPLE:-0}"\n' >"$fake/omarchy-hw-apple-silicon"
+# TEST_PLATFORM: the platform the detector reports, or "error" when it cannot
+# tell. TEST_NO_DETECTOR leaves it out, as on a root from before it.
+mkdir -p "$tmp/detector" "$tmp/no-detector"
+cat >"$tmp/detector/omarchy-hw-platform" <<'SH'
+#!/bin/bash
+[[ ${TEST_PLATFORM:-apple-silicon} != error ]] || exit 1
+echo "${TEST_PLATFORM:-apple-silicon}"
+SH
+printf '#!/bin/bash\n[[ ${TEST_PLATFORM:-apple-silicon} == apple-silicon ]]\n' >"$fake/omarchy-hw-apple-silicon"
 printf '#!/bin/bash\nexit 0\n' >"$fake/limine-update"
 # pacman -Q lists the snapshot's packages; everything else is the fixture's.
 cat >"$fake/pacman" <<SH
@@ -40,7 +52,7 @@ exec $(printf '%q' "$mac_stubs/pacman") "\$@"
 SH
 # A boot check that must never run.
 printf '#!/bin/bash\necho ran >>"$CHECK_RAN"\nexit 1\n' >"$tmp/check-stub/omarchy-apple-silicon-boot-check"
-chmod +x "$fake"/* "$tmp/check-stub"/*
+chmod +x "$fake"/* "$tmp/check-stub"/* "$tmp/detector"/*
 
 tree_state() {
   find "$mac_root" -path "$mac_root/run" -prune -o -print0 | sort -z | xargs -0 stat -c '%n %s %Y %a' 2>/dev/null
@@ -50,9 +62,17 @@ tree_state() {
 snapshot_cmdline='root=UUID=r rw rootflags=subvol=/@/.snapshots/7/snapshot,x-systemd.device-timeout=0 quiet splash'
 live_cmdline='root=UUID=r rw rootflags=subvol=@,x-systemd.device-timeout=0 quiet splash'
 
+# The pre and post hooks as limine-snapper-sync finds them.
+mkdir -p "$tmp/hooks/pre.d" "$tmp/hooks/post.d"
+ln -s "$check" "$tmp/hooks/pre.d/04-omarchy-mac-snapshot-check"
+ln -s "$check" "$tmp/hooks/post.d/99-omarchy-mac-snapshot-check"
+post_hook=$tmp/hooks/post.d/99-omarchy-mac-snapshot-check
+
 # Runs the hook on the fixture Mac as limine-snapper-sync would: $1 is its
 # command line (HOOK_CMDLINE), $2 the kernel command line the Mac booted.
-# Extra arguments go to the check itself (a snapshot root).
+# Extra arguments go to the check itself (a snapshot root). TEST_HOOK runs
+# another link to it; $tmp/top is the btrfs top level, $tmp/restore.lock
+# limine-snapper-sync's restore lock.
 run_check() {
   local hook_cmdline=$1 cmdline=$2
   shift 2
@@ -62,11 +82,14 @@ run_check() {
   set +e
   (
     eval "$(limine_mac_env "$ROOT/bin" "${TEST_UNAME:-}")"
-    export PATH="${TEST_PATH_FIRST:-$fake}:$fake:$PATH"
+    local detector=$tmp/detector
+    [[ -z ${TEST_NO_DETECTOR:-} ]] || detector=$tmp/no-detector
+    export PATH="${TEST_PATH_FIRST:-$fake}:$fake:$detector:$PATH"
     export CHECK_RAN="$tmp/check-ran" HOOK_CMDLINE="$hook_cmdline" OMARCHY_CMDLINE="$tmp/cmdline"
     export OMARCHY_LIMINE_GATE="$mac_root/var/lib/omarchy/limine.enabled" OMARCHY_LIMINE_DEFAULT="$mac_root/etc/default/limine"
     export OMARCHY_BOOT_DIR="$mac_root/boot" OMARCHY_SNAPSHOTS_DIR="$tmp/snapshots"
-    bash "$check" "$@" </dev/null
+    export OMARCHY_SNAPSHOT_TOP="$tmp/top" OMARCHY_SNAPSHOT_RESTORE_LOCK="$tmp/restore.lock"
+    bash "${TEST_HOOK:-$tmp/hooks/pre.d/04-omarchy-mac-snapshot-check}" "$@" </dev/null
   ) >"$tmp/out" 2>"$tmp/err"
   status=$?
   set -e
@@ -97,9 +120,20 @@ for hook_cmdline in "" "--add 3" "--no-force-save --add 3" "--debounce" "--no-ho
   (( status == 0 )) && [[ ! -s $tmp/out && ! -s $tmp/err && ! -s $tmp/check-ran ]] ||
     fail "limine-snapper-sync '$hook_cmdline' passes the hook untouched"
 done
-TEST_APPLE=1 TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$snapshot_cmdline"
+TEST_PLATFORM=generic TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$snapshot_cmdline"
 (( status == 0 )) && [[ ! -s $tmp/err && ! -s $tmp/check-ran ]] || fail "a restore on anything but a Mac is not this hook's to check"
 pass "the hook stays out of everything but a restore on a Mac"
+
+TEST_PLATFORM=error TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$snapshot_cmdline"
+expect_refused "a restore where the platform cannot be told" "Cannot tell which platform this is"
+[[ ! -s $tmp/check-ran ]] || fail "no boot check runs when the platform cannot be told"
+pass "a restore is refused when the platform cannot be told"
+
+TEST_NO_DETECTOR=1 TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$live_cmdline"
+expect_refused "a restore from the running system of a root without the platform detector" "open Snapshots"
+TEST_NO_DETECTOR=1 TEST_PLATFORM=generic TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$snapshot_cmdline"
+(( status == 0 )) && [[ ! -s $tmp/err && ! -s $tmp/check-ran ]] || fail "a root without the detector and not a Mac is not this hook's to check"
+pass "a root from before the platform detector asks omarchy-hw-apple-silicon"
 
 # The snapshot booted from the Limine menu matches the boot files: restored.
 limine_mac
@@ -140,8 +174,8 @@ expect_refused "a snapshot from before a kernel update" \
   "/boot/vmlinuz-linux-aurora is not the $mac_kver kernel linux-aurora installed" \
   "A snapshot holds the root file system only" \
   "taken before a kernel" \
-  "first install its kernel and boot firmware packages on the" \
-  "linux-aurora 6.17.0.aurora1-1" "m1n1-aurora 1.5.2-1" "uboot-asahi 2026.07-2"
+  "first install its kernel, boot firmware and Limine" \
+  "linux-aurora 6.17.0.aurora1-1" "m1n1-aurora 1.5.2-1" "uboot-asahi 2026.07-2" "limine 12.9.0-1"
 pass "a snapshot from before a kernel update is refused, with why and what to do"
 
 # An m1n1 update since the snapshot: boot.bin on the ESP holds the new m1n1.
@@ -153,6 +187,14 @@ expect_refused "a snapshot from before an m1n1 update" \
   "Snapshot 7 does not match this Mac's boot files" \
   "m1n1/boot.bin on the system ESP (/boot/efi) is not m1n1, linux-aurora $mac_kver's device trees, U-Boot"
 pass "a snapshot from before a boot firmware update is refused"
+
+# A Limine update since the snapshot: the ESP holds the new loader.
+limine_mac
+printf 'LIMINE next\n' >"$mac_esp/EFI/BOOT/BOOTAA64.EFI"
+run_check "--restore" "$snapshot_cmdline"
+expect_refused "a snapshot from before a Limine update" \
+  "Snapshot 7 does not match this Mac's boot files" "BOOTAA64.EFI" "limine 12.9.0-1"
+pass "a snapshot from before a Limine update is refused, and its Limine package is named"
 
 # A snapshot from before Limine was activated carries no Limine setup.
 limine_mac
@@ -200,6 +242,14 @@ expect_refused "kernel files from a snapshot with another kernel" \
   "A snapshot holds the root file system only"
 run_check "--restore-kernels" "$live_cmdline"
 expect_refused "kernel files with no snapshot named" "names no snapshot"
+# From a snapshot boot /.snapshots is empty: the snapshot is read off the top level.
+rm -rf "$tmp/snapshots"
+snapshot_tree "$tmp/top/@/.snapshots/7/snapshot" "linux-aurora kernel $mac_kver"
+run_check "--restore-kernels 7" "$snapshot_cmdline"
+expect_allowed "kernel files from a snapshot read off the top level"
+rm -rf "$tmp/top"
+run_check "--restore-kernels 7" "$snapshot_cmdline"
+expect_refused "kernel files from a snapshot that cannot be read" "Cannot read snapshot 7"
 pass "restoring a snapshot's kernel files alone needs the kernel on /boot"
 
 # The subvolume swap on a Mac that boots GRUB checks the snapshot root it is
@@ -222,3 +272,75 @@ run_check "" "$live_cmdline" "$tmp/tree"
 (( status == 1 )) && grep -Fq "This snapshot has no linux-aurora kernel" "$tmp/err" ||
   fail "a snapshot root from another kernel package is refused (status $status: $(cat "$tmp/err"))"
 pass "a snapshot root is checked for the kernel on /boot"
+
+# After the restore: @ is whatever limine-snapper-sync put back, the booted
+# snapshot or one picked from its own list. $1 is its kernel image; the rest of
+# its boot files are the running root's. Snapshot 12 is the backup of the
+# previous root the restore made.
+restored_root() {
+  local restored=$tmp/top/@
+  rm -rf "$tmp/top"
+  mkdir -p "$tmp/top" "$restored/.snapshots/7" "$restored/.snapshots/12"
+  cp -a "$mac_root/usr" "$restored/usr"
+  printf '%s\n' "$1" >"$restored/usr/lib/modules/$mac_kver/vmlinuz"
+  printf 'linux-aurora\n' >"$restored/usr/lib/modules/$mac_kver/pkgbase"
+  : >"$restored/usr/lib/modules/$mac_kver/modules.dep"
+  echo restored >"$tmp/restore.lock"
+}
+run_post() {
+  TEST_HOOK=$post_hook run_check "$@"
+}
+expect_undo() {
+  local description=$1
+  shift
+  expect_refused "$description" "The restore put back a root this Mac's boot files do not match" \
+    "Do not reboot yet" "pick snapshot 12, the backup this restore just made" "$@"
+}
+
+limine_mac
+restored_root "linux-aurora kernel $mac_kver"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_allowed "a restored root with the running root's boot files"
+grep -Fq "The restored root matches this Mac's boot files" "$tmp/out" || fail "the post hook says the restored root matches"
+for hook_cmdline in "" "--add 3" "--restore-kernels 7"; do
+  rm -rf "$tmp/top/@/usr/lib/modules"
+  run_post "$hook_cmdline" "$snapshot_cmdline"
+  (( status == 0 )) && [[ ! -s $tmp/out && ! -s $tmp/err ]] || fail "limine-snapper-sync '$hook_cmdline' passes the post hook untouched"
+done
+restored_root "linux-aurora kernel from another build"
+printf 'cancelled\n' >"$tmp/restore.lock"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+(( status == 0 )) && [[ ! -s $tmp/err ]] || fail "a restore that did not finish leaves the post hook nothing to check"
+pass "the post hook passes a restored root with the booted snapshot's boot files, and stays out of the rest"
+
+limine_mac
+restored_root "linux-aurora kernel from another build"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot picked from the list with another kernel" \
+  "The restored root has linux-aurora $mac_kver, not the linux-aurora kernel on the boot partition"
+restored_root "linux-aurora kernel $mac_kver"
+printf 'm1n1 stage 2 from an earlier m1n1-aurora\n' >"$tmp/top/@/usr/lib/asahi-boot/m1n1.bin"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot picked from the list with another m1n1" "m1n1 or U-Boot is not the one on the ESP"
+restored_root "linux-aurora kernel $mac_kver"
+limine_mac_dtb "$tmp/top/@${mac_dtbs[0]}" "from an earlier build"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot picked from the list with other device trees" "device trees are not the ones in m1n1 on the ESP"
+restored_root "linux-aurora kernel $mac_kver"
+printf 'LIMINE earlier\n' >"$tmp/top/@/usr/share/limine/BOOTAA64.EFI"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot picked from the list with another Limine" "Limine is not the one on the ESP"
+pass "the post hook refuses a restored root with other boot files, and says how to undo it"
+
+# The UKI the restore put back must carry the restored kernel.
+limine_mac
+restored_root "linux-aurora kernel $mac_kver"
+{ printf 'linux-aurora kernel 6.16.0-aurora9-ARCH\n'; printf 'initrd\n'; } >"$mac_esp/EFI/Linux/omarchy_linux-aurora.efi"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a restore that put back a UKI with another kernel" "does not carry the restored root's $mac_kver kernel"
+limine_mac
+restored_root "linux-aurora kernel $mac_kver"
+rm -rf "$tmp/top/@"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_refused "a restore that left no @" "left no root subvolume @"
+pass "the post hook checks the UKI the restore put back"

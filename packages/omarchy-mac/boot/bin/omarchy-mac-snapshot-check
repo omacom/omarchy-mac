@@ -14,34 +14,54 @@
 # for the subvolume swap (omarchy-system-snapshot-restore) on a Mac that still
 # boots GRUB.
 #
-# With no argument it is the limine-snapper-sync pre hook
-# /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check and acts only on a
-# restore, which HOOK_CMDLINE names. A Limine Mac restores the snapshot it
-# booted from the Limine menu; that running root, and the kernel Limine saved
-# with it, must pass omarchy-apple-silicon-boot-check --boot-chain against the
-# live boot files. Status 100 makes the hook runner stop the restore before it
-# changes anything. It runs before 05-omarchy-mac-limine-gate so a GRUB Mac is
-# told why.
+# With no argument it is limine-snapper-sync's restore hook, and acts only on a
+# restore, which HOOK_CMDLINE names. It is linked twice, and the directory it
+# runs from says which half it is:
+#
+# - /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check, before the restore. A
+#   Limine Mac restores from a snapshot it booted from the Limine menu; that
+#   running root, and the kernel Limine saved with it, must pass
+#   omarchy-apple-silicon-boot-check --boot-chain against the live boot files.
+#   Status 100 stops the restore before it changes anything. It sorts before
+#   05-omarchy-mac-limine-gate so a GRUB Mac is told why.
+# - /etc/boot/hooks/post.d/99-omarchy-mac-snapshot-check, after it and after
+#   limine-snapper-sync's own post hooks.
+#   limine-snapper-restore's own list can put back a snapshot other than the one
+#   booted, so the restored @ must hold the running root's boot files, and the
+#   UKI the restore put on the ESP its kernel. Status 100 keeps the restore from
+#   offering the reboot, and the message says how to undo it.
 
 set -uo pipefail
 
+root=${OMARCHY_BOOT_CHECK_ROOT:-}
 boot_dir=${OMARCHY_BOOT_DIR:-/boot}
 snapshots_dir=${OMARCHY_SNAPSHOTS_DIR:-/.snapshots}
 cmdline_file=${OMARCHY_CMDLINE:-/proc/cmdline}
+limine_default=${OMARCHY_LIMINE_DEFAULT:-/etc/default/limine}
+# limine-snapper-sync 1.32 keeps it in /run/lock, 1.30 in /tmp.
+if [[ -n ${OMARCHY_SNAPSHOT_RESTORE_LOCK:-} ]]; then
+  restore_locks=("$OMARCHY_SNAPSHOT_RESTORE_LOCK")
+else
+  restore_locks=(/run/lock/limine-snapper-restore.lock /tmp/limine-snapper-restore.lock)
+fi
+top=${OMARCHY_SNAPSHOT_TOP:-}
+top_mounted=""
+boot_kver=""
 
 why_outside() {
   cat >&2 <<'MESSAGE'
 
 A snapshot holds the root file system only. The kernel and initramfs on the
-boot partition, and m1n1, the device trees and U-Boot on the EFI system
+boot partition, and m1n1, the device trees, U-Boot and Limine on the EFI system
 partition, stay as they are, so a restored snapshot would boot with boot files
-that do not match it. This happens when the snapshot was taken before a kernel
-or boot firmware update.
+that do not match it. This happens when the snapshot was taken before a kernel,
+boot firmware or Limine update.
 MESSAGE
 }
 
 # The snapshot at $1 carries the kernel on /boot: a module tree of the
-# installed Apple kernel package whose image is the one on /boot.
+# installed Apple kernel package whose image is the one on /boot. Sets
+# boot_kver to its release.
 carries_boot_kernel() {
   local tree=$1 label=$2 kernel image dir found=0
   local -a versions=()
@@ -60,6 +80,7 @@ carries_boot_kernel() {
     versions+=("${dir##*/}")
     if [[ -f $dir/modules.dep ]] && cmp -s "$dir/vmlinuz" "$image"; then
       found=1
+      boot_kver=${dir##*/}
     fi
   done
   (( found )) && return 0
@@ -69,19 +90,37 @@ carries_boot_kernel() {
   else
     echo "$label has no $kernel kernel, the kernel on the boot partition." >&2
   fi
-  why_outside
-  cat >&2 <<'MESSAGE'
-Restore a snapshot taken with the current kernel. To restore this one, first
-install its kernel package on the current system, then restore it.
-MESSAGE
   return 1
 }
 
-# On a refusal the restore aborts and a terminal opened for it closes: keep
-# the explanation on screen until it has been read.
+# The btrfs top level, read-only: the restored @ and every snapshot are there,
+# even from a snapshot boot, whose /.snapshots is an empty directory.
+mount_top() {
+  local uuid
+  [[ -z $top ]] || return 0
+  uuid=$(grep -Eo '(^|[[:space:]])root=UUID=[^[:space:]]+' "$cmdline_file" 2>/dev/null | tail -n 1 | sed 's/.*root=UUID=//')
+  [[ -n $uuid ]] || return 1
+  top=$(mktemp -d /run/omarchy-snapshot-top.XXXXXX) || return 1
+  if ! mount -o ro,subvolid=5 "/dev/disk/by-uuid/$uuid" "$top"; then
+    rmdir "$top"
+    top=""
+    return 1
+  fi
+  top_mounted=$top
+  trap unmount_top EXIT
+}
+
+unmount_top() {
+  if [[ -n $top_mounted ]]; then
+    umount "$top_mounted" && rmdir "$top_mounted"
+  fi
+}
+
+# A refused restore aborts, and a terminal opened for it closes: keep the
+# explanation on screen until it has been read.
 refuse() {
   if [[ -t 0 ]]; then
-    read -r -p "Press Enter to close. " _ || true
+    read -r -t 300 -p "Press Enter to close. " _ || true
   fi
   exit 100
 }
@@ -105,18 +144,19 @@ booted_snapshot() {
   return 1
 }
 
-# The kernel and boot firmware packages installed in the running root.
+# The kernel, boot firmware and Limine packages installed in the running root.
 boot_packages() {
-  pacman -Q 2>/dev/null | awk '$1 ~ /^(linux-aurora|linux-asahi|m1n1-aurora|m1n1|uboot-asahi)$/ { print "  " $0 }'
+  pacman -Q 2>/dev/null | awk '$1 ~ /^(linux-aurora|linux-asahi|m1n1-aurora|m1n1|uboot-asahi|limine)$/ { print "  " $0 }'
 }
 
-hook() {
-  local mode="" kernels_id="" want_id=0 word number reason packages
+# restore, kernels <id> or nothing, from limine-snapper-sync's arguments.
+restore_mode() {
+  local word want_id=0 mode=""
   local -a words
   read -r -a words <<<"${HOOK_CMDLINE:-}"
   for word in "${words[@]}"; do
     if (( want_id )); then
-      kernels_id=$word
+      mode="kernels $word"
       want_id=0
       continue
     fi
@@ -128,17 +168,50 @@ hook() {
         ;;
     esac
   done
+  printf '%s\n' "$mode"
+}
+
+# Only a Mac's restores are this hook's to check; a platform that cannot be
+# told is not waved through. A root from before the platform detector has only
+# omarchy-hw-apple-silicon.
+on_a_mac() {
+  local platform
+  if ! command -v omarchy-hw-platform >/dev/null 2>&1; then
+    omarchy-hw-apple-silicon
+    return
+  fi
+  if ! platform=$(omarchy-hw-platform); then
+    echo "Cannot tell which platform this is, so the restore cannot be checked against its boot files; not restoring." >&2
+    refuse
+  fi
+  [[ $platform == apple-silicon ]]
+}
+
+before_restore() {
+  local mode number reason packages tree id
+  mode=$(restore_mode)
   [[ -n $mode ]] || exit 0
-  omarchy-hw-apple-silicon || exit 0
+  on_a_mac || exit 0
 
   # Kernel files alone (snapper rollback's plugin): the snapshot's kernel must
   # be the one on /boot, or the root would boot a kernel it has no modules for.
-  if [[ $mode == kernels ]]; then
-    if [[ ! $kernels_id =~ ^[0-9]+$ ]]; then
+  if [[ $mode == kernels* ]]; then
+    id=${mode#kernels}
+    id=${id# }
+    if [[ ! $id =~ ^[0-9]+$ ]]; then
       echo "limine-snapper-sync --restore-kernels names no snapshot; not restoring kernel files on this Mac." >&2
       refuse
     fi
-    if ! carries_boot_kernel "$snapshots_dir/$kernels_id/snapshot" "Snapshot $kernels_id"; then
+    tree=$snapshots_dir/$id/snapshot
+    if [[ ! -d $tree/usr ]]; then
+      mount_top && tree=$top/@/.snapshots/$id/snapshot
+    fi
+    if [[ ! -d $tree/usr ]]; then
+      echo "Cannot read snapshot $id, so its kernel cannot be checked against the boot partition; not restoring its kernel files." >&2
+      refuse
+    fi
+    if ! carries_boot_kernel "$tree" "Snapshot $id"; then
+      why_outside
       refuse
     fi
     exit 0
@@ -189,8 +262,8 @@ MESSAGE
     packages=$(boot_packages)
     cat >&2 <<'MESSAGE'
 Reboot into the current system, or restore a snapshot taken since that update.
-To restore this one, first install its kernel and boot firmware packages on the
-current system, then boot the snapshot again and restore it.
+To restore this one, first install its kernel, boot firmware and Limine
+packages on the current system, then boot the snapshot again and restore it.
 MESSAGE
     if [[ -n $packages ]]; then
       echo "This snapshot has:" >&2
@@ -201,8 +274,98 @@ MESSAGE
   echo "Snapshot $number matches this Mac's boot files"
 }
 
+# The first way the restored root at $1 does not boot with the live boot files,
+# which the running root was checked against before the restore.
+restored_mismatch() {
+  local restored=$1 kernel esp uki size linux
+  carries_boot_kernel "$restored" "The restored root" 2>&1 || return 0
+  if ! diff -rq "$root/usr/lib/modules/$boot_kver/dtbs" "$restored/usr/lib/modules/$boot_kver/dtbs" >/dev/null 2>&1; then
+    echo "The restored root's $boot_kver device trees are not the ones in m1n1 on the ESP."
+    return 0
+  fi
+  if ! diff -rq "$root/usr/lib/asahi-boot" "$restored/usr/lib/asahi-boot" >/dev/null 2>&1; then
+    echo "The restored root's m1n1 or U-Boot is not the one on the ESP."
+    return 0
+  fi
+  if ! cmp -s "$root/usr/share/limine/BOOTAA64.EFI" "$restored/usr/share/limine/BOOTAA64.EFI"; then
+    echo "The restored root's Limine is not the one on the ESP."
+    return 0
+  fi
+  if ! kernel=$(omarchy-mac-kernel 2>/dev/null); then
+    echo "Cannot tell which Apple kernel is installed."
+    return 0
+  fi
+  esp=$(sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$limine_default" 2>/dev/null | tail -n 1)
+  uki=$root$esp/EFI/Linux/omarchy_$kernel.efi
+  if [[ -z $esp || ! -f $uki ]]; then
+    echo "The restore left no Limine UKI at ${esp:-the ESP}/EFI/Linux/omarchy_$kernel.efi."
+    return 0
+  fi
+  if ! command -v objcopy >/dev/null 2>&1; then
+    echo "objcopy (binutils) is not installed; not checking the kernel inside the restored UKI" >&2
+    return 1
+  fi
+  if ! linux=$(mktemp); then
+    echo "Cannot make a scratch file to read the restored UKI."
+    return 0
+  fi
+  size=$(stat -c %s "$boot_dir/vmlinuz-$kernel")
+  if ! objcopy -O binary --only-section=.linux "$uki" "$linux" 2>/dev/null ||
+    (( $(stat -c %s "$linux") < size )) || ! cmp -s -n "$size" "$boot_dir/vmlinuz-$kernel" "$linux"; then
+    echo "The UKI the restore put on the ESP does not carry the restored root's $boot_kver kernel."
+    rm -f "$linux"
+    return 0
+  fi
+  rm -f "$linux"
+  return 1
+}
+
+after_restore() {
+  local lock restored="" reason backup
+  [[ $(restore_mode) == restore ]] || exit 0
+  for lock in "${restore_locks[@]}"; do
+    if [[ -f $lock && $(<"$lock") == restored ]]; then
+      restored=1
+    fi
+  done
+  [[ -n $restored ]] || exit 0
+  on_a_mac || exit 0
+
+  if ! mount_top; then
+    reason="Cannot read the restored root to check it against this Mac's boot files."
+  elif [[ ! -d $top/@/usr ]]; then
+    reason="The restore left no root subvolume @ to check."
+  else
+    reason=$(restored_mismatch "$top/@")
+  fi
+  if [[ -z $reason ]]; then
+    echo "The restored root matches this Mac's boot files"
+    exit 0
+  fi
+
+  backup=$(find "$top/@/.snapshots" -mindepth 1 -maxdepth 1 -regex '.*/[0-9]+' -printf '%f\n' 2>/dev/null | sort -n | tail -n 1)
+  {
+    echo "The restore put back a root this Mac's boot files do not match:"
+    printf '  %s\n' "$reason"
+  } >&2
+  why_outside
+  cat >&2 <<MESSAGE
+Do not reboot yet. Only the snapshot booted from the Limine menu is checked
+before a restore, and this one was picked from the restore's own list.
+To put the previous root back, run omarchy-snapshot restore again, press l,
+and pick ${backup:+snapshot $backup, }the backup this restore just made.
+To restore another snapshot, boot it from the Limine menu and restore it there.
+MESSAGE
+  exit 100
+}
+
 case $# in
-  0) hook ;;
+  0)
+    case ${0%/*} in
+      */post.d) after_restore ;;
+      *) before_restore ;;
+    esac
+    ;;
   1)
     case $1 in
       -h | --help)
@@ -210,7 +373,14 @@ case $# in
         exit 0
         ;;
     esac
-    carries_boot_kernel "$1" "This snapshot" || exit 1
+    if ! carries_boot_kernel "$1" "This snapshot"; then
+      why_outside
+      cat >&2 <<'MESSAGE'
+Restore a snapshot taken with the current kernel. To restore this one, first
+install its kernel package on the current system, then restore it.
+MESSAGE
+      exit 1
+    fi
     ;;
   *)
     echo "Usage: omarchy-mac-snapshot-check [<snapshot root>]" >&2
