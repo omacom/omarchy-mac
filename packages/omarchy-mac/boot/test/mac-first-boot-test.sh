@@ -202,6 +202,7 @@ expect_stop() {
 
 expect_handoff() {
   run attempt || fail "$1: the attempt failed"
+  [[ ! -e $root/var/lib/omarchy/mac-first-boot/last-error ]] || fail "$1: a successful hand-off leaves no error behind"
   [[ ! -e $root/boot/efi/omarchy/install.conf ]] || fail "$1: the ESP copy is still there"
   [[ ! -e $root/var/lib/omarchy/mac-first-boot/pending ]] || fail "$1: pending remains"
   [[ ! -e $root/var/lib/omarchy/mac-first-boot/encrypt-pending ]] || fail "$1: encrypt-pending was written"
