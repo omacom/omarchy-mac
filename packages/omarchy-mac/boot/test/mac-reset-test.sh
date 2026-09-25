@@ -404,12 +404,19 @@ run reset-prepare "$next" "$root/dev/luks" || fail "prepare" "$(cat "$test_tmp/e
 TEST_NO_STAGE=1 run reset-rollback || fail "rollback without staging room" "$(cat "$test_tmp/err")"
 [[ $(boot_tree) == "$before" ]] || fail "without staging room the backup still restores every file"
 limine_fixture
+before=$(boot_tree)
 run reset-prepare "$next" "$root/dev/luks" || fail "prepare" "$(cat "$test_tmp/err")"
 if TEST_NO_STAGE=1 TEST_NO_UKI_RESTORE=1 run reset-rollback; then fail "a UKI that cannot come back fails rollback"; fi
 error_says "stay in /run/omarchy-mac-boot/reset"
 grep -q "machine-id=$new_id" "$menu" || fail "the old menu is not restored over a UKI that could not be restored"
 [[ -d $reset_dir/boot ]] || fail "a partial restore keeps the saved copies"
-pass "restoring without staging room works, and a partial restore keeps the rebuilt menu and the copies"
+# A second attempt in the same boot: prepare refuses the saved copies, and the
+# rollback the caller then runs finishes the first attempt's restore.
+if run reset-prepare "$next" "$root/dev/luks"; then fail "a second reset waits for the first one's restore"; fi
+error_says "Restart before resetting again"
+run reset-rollback || fail "the retried rollback completes" "$(cat "$test_tmp/err")"
+[[ $(boot_tree) == "$before" && ! -e $reset_dir ]] || fail "the retried rollback restores the first attempt's boot files"
+pass "restoring without staging room works, a partial restore keeps the rebuilt menu and the copies, and a retry finishes it"
 
 # The saved menu's UKI paths are read the way Limine reads them: any key case,
 # the image_path alias, comments ignored, and a path without a hash refused.

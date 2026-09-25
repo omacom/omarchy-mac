@@ -127,10 +127,12 @@ reset_limine_menu() {
 
 FACTORY_ROOT_BOUND=()
 
+# The caller deletes the clone next: a bind that will not unmount is detached
+# lazily rather than left inside it.
 unbind_factory_root() {
   local dir
   for dir in "${FACTORY_ROOT_BOUND[@]}"; do
-    umount -R "$dir" 2>/dev/null || true
+    umount -R "$dir" 2>/dev/null || umount -R -l "$dir" 2>/dev/null || true
   done
   FACTORY_ROOT_BOUND=()
 }
