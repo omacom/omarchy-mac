@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 
 # omarchy:summary=Run a fixed boot lifecycle operation through the platform's boot package
 # omarchy:args=[--resolve] <operation> [arguments...]
@@ -14,6 +14,9 @@
 # --resolve prints the entrypoint an operation would run, or nothing when it is
 # a no-op here, so a caller can choose between a platform implementation and
 # its own generic path.
+#
+# -p keeps a root caller's environment from running code in this shell before
+# the first line: bash then ignores BASH_ENV and exported functions.
 
 set -euo pipefail
 
@@ -30,6 +33,15 @@ usage() {
   exit 2
 }
 
+listed() {
+  local item=$1 candidate
+  shift
+  for candidate in "$@"; do
+    [[ $candidate == "$item" ]] && return 0
+  done
+  return 1
+}
+
 resolve=0
 if [[ ${1:-} == "--resolve" ]]; then
   resolve=1
@@ -38,15 +50,16 @@ fi
 operation=${1:-}
 [[ -n $operation ]] || usage
 shift
-[[ " ${operations[*]} " == *" $operation "* ]] || usage
+listed "$operation" "${operations[@]}" || usage
 
 # A privileged caller must not let its environment choose what runs as root:
 # root resolves only the fixed paths below, and the detector beside this file
 # ignores its fixture roots. Fixture roots exist for unprivileged tests.
 fixed_path=/usr/local/sbin:/usr/local/bin:/usr/bin
-detector="$(dirname -- "${BASH_SOURCE[0]}")/omarchy-hw-platform"
+detect=("$(PATH=$fixed_path dirname -- "${BASH_SOURCE[0]}")/omarchy-hw-platform")
 if (( EUID == 0 )); then
   export PATH=$fixed_path
+  detect=(/usr/bin/env -i PATH="$fixed_path" "${detect[@]}")
   root=""
 else
   root=${OMARCHY_LIFECYCLE_ROOT:-}
@@ -57,7 +70,7 @@ else
   fi
 fi
 
-if ! platform=$("$detector"); then
+if ! platform=$("${detect[@]}"); then
   echo "Error: cannot determine the hardware platform for $operation" >&2
   exit 1
 fi
@@ -101,7 +114,7 @@ trusted() {
 entrypoint=$root$implementation/$operation
 
 if [[ ! -e $entrypoint && ! -L $entrypoint ]]; then
-  if [[ " ${required[*]} " == *" $operation "* ]]; then
+  if listed "$operation" "${required[@]}"; then
     echo "Error: $operation on $platform needs $package, which provides $implementation/$operation; it is not installed" >&2
     exit 1
   fi

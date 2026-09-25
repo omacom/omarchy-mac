@@ -157,6 +157,9 @@ for arguments in "" "unknown-operation" "--resolve" "--resolve unknown-operation
   (( status == 2 )) && [[ $output == Usage:* ]] || fail "'$arguments' is a usage error" "status $status: $output"
   [[ ! -e $tmp/ran ]] || fail "'$arguments' runs nothing"
 done
+status=0
+output=$(on apple-silicon "$full" "provision-prepare provision-commit" 2>&1) || status=$?
+(( status == 2 )) && [[ ! -e $tmp/ran ]] || fail "two operation names in one argument are a usage error" "status $status: $output"
 pass "an operation outside the fixed set is a usage error"
 
 rm -f "$tmp/ran"
@@ -187,6 +190,14 @@ if unshare --user --map-root-user true 2>/dev/null; then
   (( status != 0 )) && [[ ! -e $tmp/ran && $output != *"$tmp"* && $output == *" /usr/lib/omarchy/mac-boot/provision-commit"* ]] ||
     fail "root ignores a fixture root in its environment" "status $status: $output"
   pass "root ignores fixture roots when resolving an operation"
+
+  printf 'touch %q\n' "$tmp/bash-env-ran" >"$tmp/bash-env"
+  dirname() { touch "$tmp/function-ran"; echo /nonexistent; }
+  export -f dirname
+  BASH_ENV="$tmp/bash-env" unshare --user --map-root-user "$dispatch" --resolve provision-commit >/dev/null 2>&1 || true
+  unset -f dirname
+  [[ ! -e $tmp/bash-env-ran && ! -e $tmp/function-ran ]] || fail "root runs no code from BASH_ENV or exported functions"
+  pass "root runs no code from BASH_ENV or exported functions"
 else
   pass "no unprivileged user namespace; skipping the root override probe"
 fi
