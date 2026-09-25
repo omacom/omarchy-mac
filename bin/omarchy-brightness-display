@@ -40,7 +40,15 @@ use_apple_display() {
 }
 
 use_ddc_display() {
-  [[ -n $monitor ]] && ! monitor_is_internal
+  [[ -n $monitor ]] || return 1
+  monitor_is_internal && return 1
+  # apple-drm never creates a per-connector ddc node. Probing DDC anyway
+  # walks SoC SMBus (USB-PD, speaker amp) for ~3s and changes nothing.
+  compgen -G "${OMARCHY_DRM_CLASS:-/sys/class/drm}/card*-$monitor/ddc" >/dev/null
+}
+
+use_backlight_display() {
+  [[ -z $monitor ]] || monitor_is_internal
 }
 
 if (( $# == 0 )); then
@@ -50,11 +58,12 @@ if (( $# == 0 )); then
   elif use_ddc_display; then
     omarchy-brightness-display-ddc "$monitor"
     exit
+  elif use_backlight_display; then
+    device="$(omarchy-hw-display)" || exit 1
+    backlight_brightness "$device"
+    exit
   fi
-
-  device="$(omarchy-hw-display)" || exit 1
-  backlight_brightness "$device"
-  exit
+  exit 1
 fi
 
 step="$1"
@@ -85,7 +94,7 @@ if use_apple_display; then
 elif use_ddc_display; then
   brightness="$(omarchy-brightness-display-ddc "$monitor" "$step")" || exit 1
   (( no_osd )) || omarchy-osd -i brightness -p "$brightness"
-else
+elif use_backlight_display; then
   # Current device highlighted
   device="$(omarchy-hw-display)" || exit 1
 
@@ -119,4 +128,6 @@ else
 
   # Show the new brightness in OSD
   (( no_osd )) || omarchy-osd -i brightness -p "$(backlight_brightness "$device")"
+else
+  exit 1
 fi
