@@ -15,7 +15,7 @@ The first form runs the operation. `--resolve` prints the entrypoint the operati
 | --- | --- | --- |
 | The platform registers no boot package (`generic`, `generic-aarch64`, and `qualcomm` today) | no-op, exit 0 | prints nothing, exit 0 |
 | The entrypoint exists and passes the trust rules | execs it; its exit status is the result | prints its path |
-| A required operation has no entrypoint, and the package is not installed | exit 3: `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
+| A required operation has no entrypoint, and the package is not installed | exit 3 (an entrypoint's own status could also be 3; with `--resolve` it is only this): `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
 | A required operation has no entrypoint, but the package is installed (its pacman record says so) | exit 1: `Error: <operation> on <platform> needs <path>, which <package> <version> does not provide; update <package>` | same error |
 | An optional operation has no entrypoint | no-op, exit 0 | prints nothing, exit 0 |
 | The entrypoint fails the trust rules | exit 1: `Error: refusing <path>: ...` (optional operations too) | same error |
@@ -90,7 +90,7 @@ A dispatch point takes one of two shapes:
 | `rebuild_next_boot_apple` (factory-kernel coherence refusal, rebuild in the factory root, `verify_limine_hashes`) | `reset-prepare`, `reset-verify` | Ticket 34 |
 | mx-mac's reset rollback, not yet in #503 | `reset-rollback` | Ticket 34 |
 | `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning uses it now. |
-| `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` runs the check limited to the boot chain (`--boot-chain`), with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. It leaves out what the next boot does not read: package file drift, a second installed kernel, LUKS keyslots and provisioning leftovers, and an m1n1 image its owner took over with `M1N1_UPDATE_DISABLED`. On failure it says not to reboot and how to rebuild the boot files. |
+| `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` runs the check limited to the boot chain (`--boot-chain`), with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. It holds only the kernel image, device trees and m1n1 against their packages, checks the kernel the boot menu starts first when both kernels are installed, and leaves out LUKS keyslots, provisioning leftovers and an m1n1 image its owner took over with `M1N1_UPDATE_DISABLED`. On failure it says not to reboot and how to rebuild the boot files. |
 
 - **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #503 put them and are sourced by absolute path.
 - **Owner and recovery slots:** #503's `rekey_luks_apple` sequence folds into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`). Only its boot step is `provision-commit`.

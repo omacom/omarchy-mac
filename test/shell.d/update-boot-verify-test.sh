@@ -125,6 +125,10 @@ for platform in generic generic-aarch64 qualcomm; do
   [[ ! -e $tmp/boot-ran ]] || fail "$platform: no Mac entrypoint runs" "$(cat "$tmp/boot-ran")"
   [[ ! -s $tmp/sudo ]] || fail "$platform: the boot checks ask for no root" "$(cat "$tmp/sudo")"
 done
+# Warnings on stderr, such as bash's for a locale it cannot load, are not an
+# entrypoint to run as root.
+LC_ALL=xx_XX.UTF-8 run_update generic "$tmp/failing"
+(( status == 0 )) && [[ ! -s $tmp/sudo ]] || fail "generic: stderr noise asks for no root" "status $status: $(cat "$tmp/sudo" "$tmp/err")"
 pass "x86, generic aarch64 and Qualcomm updates are unchanged: no boot check runs, nothing asks for root and the reboot is offered"
 
 # Apple: preflight runs before the keyring and packages change, and verify
