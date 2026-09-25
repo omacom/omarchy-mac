@@ -39,6 +39,7 @@ if [[ ${1:-} == "-y" ]] || omarchy-update-confirm; then
   omarchy-update-stay-awake start
 
   omarchy-update-dev
+  omarchy-update-boot preflight
   omarchy-update-keyring
 
   # Migrations ship with the packages installed here and are written against
@@ -51,6 +52,11 @@ if [[ ${1:-} == "-y" ]] || omarchy-update-confirm; then
   omarchy-update-mise
   omarchy-update-orphan-pkgs
 
+  # The update is not finished, and offers no reboot, until the boot files the
+  # steps above left are shown to boot the updated system.
+  boot_verified=true
+  omarchy-update-boot verify || boot_verified=false
+
   omarchy-update-analyze-logs
   omarchy-update-status
 
@@ -60,5 +66,10 @@ if [[ ${1:-} == "-y" ]] || omarchy-update-confirm; then
   omarchy-update-stay-awake stop
   trap - EXIT
 
-  omarchy-update-restart
+  if [[ $boot_verified == "true" ]]; then
+    omarchy-update-restart
+  else
+    echo -e "\e[31m\nThe update is not finished: its boot files did not pass verification (see above). Do not reboot until omarchy update completes.\e[0m" >&2
+    exit 1
+  fi
 fi

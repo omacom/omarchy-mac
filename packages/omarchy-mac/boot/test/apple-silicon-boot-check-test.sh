@@ -626,6 +626,8 @@ limine_system() {
   local limine_esp=$1 fstab_row=$2 cmdline=$3 uki
   system linux-asahi
   mkdir -p "$root/var/lib/omarchy" "$root/etc" "$root/usr/share/limine" "$root$limine_esp/EFI/Linux" "$root$limine_esp/EFI/BOOT"
+  # m1n1 sits on the system ESP, which on these Macs is the one Limine uses.
+  [[ $limine_esp == /boot/efi ]] || mv "$esp/m1n1" "$root$limine_esp/m1n1"
   : >"$root/var/lib/omarchy/limine.enabled"
   printf 'ESP_PATH="%s"\nENABLE_UKI=yes\n' "$limine_esp" >"$root/etc/default/limine"
   [[ -z $fstab_row ]] || printf '%s\n' "$fstab_row" >"$root/etc/fstab"
@@ -694,3 +696,37 @@ limine_system /boot/efi '' 'root=UUID=r rw quiet'
 run_check
 expect_fail "no fstab row (Omarchy's btrfs @) and no subvolume flag" "does not select rootflags=subvol=@"
 pass "the Limine entry's rootflags follow the root filesystem"
+
+# U-Boot boots the loader on the system ESP the device tree names, so the
+# Limine files checked on ESP_PATH must be the ones there.
+limine_on_system_esp() {
+  limine_system /boot/efi 'UUID=r / btrfs rw,subvol=/@ 0 0' 'root=UUID=r rw rootflags=subvol=@ quiet'
+  mkdir -p "$root/proc/device-tree/chosen" "$existing"
+  printf '%s\0' "$partuuid" >"$root/proc/device-tree/chosen/asahi,efi-system-partition"
+  cp -a "$esp/." "$existing/"
+}
+limine_on_system_esp
+TEST_EXISTING_MOUNT="$existing" run_check
+expect_pass "a Limine Mac whose system ESP holds the Limine files ESP_PATH names"
+limine_on_system_esp
+rm -rf "$existing/EFI" "$existing/limine.conf"
+TEST_EXISTING_MOUNT="$existing" run_check
+expect_fail "a Limine Mac whose ESP_PATH is another ESP than the system one" "/boot/efi/EFI/BOOT/BOOTAA64.EFI is not the one on the system ESP (PARTUUID=$partuuid), which U-Boot boots"
+limine_on_system_esp
+printf 'GRUB\n' >"$existing/EFI/BOOT/BOOTAA64.EFI"
+TEST_EXISTING_MOUNT="$existing" run_check
+expect_fail "a system ESP whose loader slot is not the checked Limine" "/boot/efi/EFI/BOOT/BOOTAA64.EFI is not the one on the system ESP"
+limine_on_system_esp
+printf 'older\n' >>"$existing/EFI/Linux/omarchy_linux-asahi.efi"
+TEST_EXISTING_MOUNT="$existing" run_check
+expect_fail "a system ESP with another UKI" "/boot/efi/EFI/Linux/omarchy_linux-asahi.efi is not the one on the system ESP"
+limine_on_system_esp
+sed -i 's/quiet$/quiet splash/' "$existing/limine.conf"
+TEST_EXISTING_MOUNT="$existing" run_check
+expect_fail "a system ESP with another menu" "/boot/efi/limine.conf is not the one on the system ESP"
+limine_on_system_esp
+printf 'M1N1_UPDATE_DISABLED=1\n' >"$root/etc/default/update-m1n1"
+printf 'GRUB\n' >"$existing/EFI/BOOT/BOOTAA64.EFI"
+TEST_EXISTING_MOUNT="$existing" run_check --boot-chain
+expect_fail "an m1n1 left to its owner beside another loader on the system ESP" "/boot/efi/EFI/BOOT/BOOTAA64.EFI is not the one on the system ESP"
+pass "a Limine Mac boots the Limine, menu and UKI on the system ESP"

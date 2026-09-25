@@ -75,6 +75,7 @@ for command in \
   omarchy-update-aur-pkgs \
   omarchy-update-mise \
   omarchy-update-orphan-pkgs \
+  omarchy-update-boot \
   omarchy-hook \
   omarchy-update-analyze-logs \
   omarchy-shell \
