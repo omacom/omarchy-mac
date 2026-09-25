@@ -16,8 +16,8 @@ systemctl enable sddm.service
 # whole session down. [Install] pulls in systemd-oomd.socket via Also=, which
 # is what the user manager reports app.slice candidacy over.
 #
-# Not on Apple Silicon: that install ships neither the oomd drop-ins nor the
-# zram swap they are tuned against (see the omarchy-settings package), so
-# enabling the killer there would run it on its stock thresholds alone.
+# Not on Apple Silicon: Macs have never run systemd-oomd, and enabling it there
+# is a change of its own, even though omarchy-settings now ships the oomd
+# drop-ins and zram swap on every platform.
 omarchy-hw-apple-silicon ||
 systemctl enable systemd-oomd.service

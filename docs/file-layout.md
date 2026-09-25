@@ -327,6 +327,8 @@ constructing its offline mirror.
 
 A platform's default package set is the base list plus its architecture's and its platform's additions: `install/omarchy-aarch64.packages` on every aarch64 platform, then `install/omarchy-apple.packages` on Apple Silicon or `install/omarchy-qualcomm.packages` on Qualcomm. `omarchy-pkg-defaults [platform]` prints the composed set (for the running machine by default, via `omarchy-hw-platform`), and `omarchy-reinstall-pkgs` installs it. The pacman repositories follow the platform the same way: `default/pacman/` on x86_64, `default/pacman/aarch64/` on other aarch64 platforms, and `default/pacman/apple-silicon/`, the only one with the Asahi repository, on Apple Silicon.
 
+`omarchy-settings` ships the same files on every architecture. The platform-specific ones (the mkinitcpio, Limine, zram and oomd drop-ins) decide at runtime whether they apply; `default/settings-runtime-profile` lists each one and tells the package recipe the source works this way.
+
 ## Explicit resync (`omarchy-reinstall-configs`)
 
 When an existing user wants to reset to shipped defaults:

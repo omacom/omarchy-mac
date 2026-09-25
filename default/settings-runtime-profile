@@ -1,0 +1,20 @@
+# omarchy-settings ships the same files on every architecture when its source
+# has this file: the recipe stops leaving drop-ins out of the aarch64 package.
+# Each platform-specific file below takes its decision at runtime instead.
+#
+# etc/mkinitcpio.conf.d/omarchy_hooks.conf
+#   Sets the HOOKS baseline everywhere except on Apple Silicon
+#   (omarchy-hw-apple-silicon), whose boot package composes its own.
+# etc/mkinitcpio.conf.d/thunderbolt_module.conf
+#   thunderbolt? is optional, so a kernel without the module skips it.
+# etc/limine-entry-tool.d/, default/limine/, the limine-snapper-notify mask
+#   Read only where Limine and limine-snapper-sync are installed. On Apple
+#   Silicon the boot package's /etc/default/limine outranks the drop-ins.
+# etc/systemd/oomd.conf.d/, usr/lib/systemd/user/app.slice.d/10-oomd.conf
+#   Inert unless install/config/enable-services.sh enables systemd-oomd.
+# usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf,
+# etc/sysctl.d/99-omarchy-sysctl.conf, etc/tmpfiles.d/omarchy-zswap.conf
+#   Swap on zram everywhere: the installer provides zram-generator on x86_64,
+#   install/omarchy-aarch64.packages on aarch64.
+# etc/modprobe.d/omarchy-usb-autosuspend.conf
+#   Applies where usbcore is a module; Apple Silicon kernels build it in.
