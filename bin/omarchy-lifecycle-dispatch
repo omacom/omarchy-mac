@@ -26,6 +26,7 @@ operations=(
   update-preflight update-verify
   boot-rebuild
   luks-slots
+  migrate
 )
 
 usage() {

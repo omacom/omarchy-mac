@@ -1,0 +1,4 @@
+#!/bin/bash
+fixture=${MIGRATE_FIXTURE:?}
+echo "cryptsetup $*" >>"$fixture/pacman.log"
+[[ $1 == "luksHeaderBackup" ]] && echo "LUKS header of $2" >"$4"

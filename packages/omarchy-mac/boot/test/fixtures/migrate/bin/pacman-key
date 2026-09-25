@@ -1,0 +1,32 @@
+#!/bin/bash
+# pacman-key for the fixtures: <gpgdir>/keys lists "fingerprint validity".
+set -euo pipefail
+fixture=${MIGRATE_FIXTURE:?}
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+gpgdir=$root/etc/pacman.d/gnupg
+action="" args=()
+while (( $# )); do
+  case $1 in
+    --gpgdir) gpgdir=$2; shift 2 ;;
+    --keyserver) shift 2 ;;
+    --populate | --recv-keys | --lsign-key | --delete) action=$1; shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+keys=$gpgdir/keys
+set_key() {
+  grep -v "^$1 " "$keys" >"$keys.new" || true
+  [[ -z $2 ]] || echo "$1 $2" >>"$keys.new"
+  mv "$keys.new" "$keys"
+}
+echo "pacman-key $action ${args[*]}" >>"$fixture/pacman.log"
+case $action in
+  --populate)
+    for name in "${args[@]}"; do
+      while read -r fpr; do set_key "$fpr" f; done <"$root/usr/share/pacman/keyrings/$name-trusted"
+    done
+    ;;
+  --recv-keys) [[ -f $fixture/keyserver/${args[0]} ]] || exit 1; set_key "${args[0]}" - ;;
+  --lsign-key) grep -q "^${args[0]} " "$keys" || exit 1; set_key "${args[0]}" f ;;
+  --delete) set_key "${args[0]}" "" ;;
+esac
