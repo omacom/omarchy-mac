@@ -211,3 +211,16 @@ keys off
 tick
 (( $(led) == 226 )) || fail "a relit leftover forgets the earlier deliberate off" "got $(led)"
 pass "a relit leftover forgets the earlier deliberate off"
+
+until (( $(led) == 0 )); do
+  keys down
+  tick
+done
+last_set=""
+paused=0
+tick
+(( $(led) == 226 )) || fail "a restarted loop takes the keys back" "got $(led)"
+keys off
+tick
+(( $(led) == 226 )) || fail "a restarted loop forgets the earlier deliberate off" "got $(led)"
+pass "a restarted loop forgets the earlier deliberate off"

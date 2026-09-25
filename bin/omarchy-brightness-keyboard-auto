@@ -186,18 +186,17 @@ apply_percent() {
 }
 
 # Off by accident rather than by the keyboard-brightness keys, which record
-# every level they set. Once auto takes over again that record is stale, so
-# every resume forgets it.
+# every level they set.
 left_off() {
   local current=$1 manual=""
 
   (( current * 100 <= max * EFFECTIVELY_OFF_PERCENT )) || return 1
   [[ -r $MANUAL_LEVEL_FILE ]] && manual=$(<"$MANUAL_LEVEL_FILE")
-  [[ $manual != "$current" ]]
+  [[ $manual != $current ]]
 }
 
 tick() {
-  local lux current delta threshold
+  local lux current delta threshold took_over=0
 
   lux=$(read_lux) || return 0
 
@@ -207,11 +206,13 @@ tick() {
 
   current=$(brightnessctl -d "$device" get) || return 0
 
-  if [[ -n $last_set && $current != "$last_set" ]]; then
+  if [[ -z $last_set ]]; then
+    took_over=1
+  elif [[ $current != "$last_set" ]]; then
     last_set=$current
     if left_off "$current"; then
       paused=0
-      rm -f "$MANUAL_LEVEL_FILE"
+      took_over=1
     else
       paused=1
       pause_lux=$lux
@@ -230,6 +231,11 @@ tick() {
       return 0
     fi
     paused=0
+    took_over=1
+  fi
+
+  # Auto has the keys again, so an earlier hand-set level is no longer a choice.
+  if (( took_over )); then
     rm -f "$MANUAL_LEVEL_FILE"
   fi
 
