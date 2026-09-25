@@ -13,11 +13,12 @@ matching guide before starting:
 
 # Documentation Layout
 
-Three documentation trees, split by genre and audience:
+Four documentation trees, split by genre and audience:
 
 - `agents/skills/` - task procedure ("do this when doing X"), for anyone working on the codebase
 - `docs/` - reference on how the system is shaped (file layout, update pipeline, theming, shell architecture), for anyone working on the codebase; skills link here for depth
 - `manual/` - end-user documentation for using Omarchy, published; never codebase internals
+- `mac-manual/` - end-user documentation for Omarchy on Apple Silicon Macs, built into its own site; Mac-only, so it never goes into `manual/` and stays out of upstream desktop submissions
 
 # Style
 

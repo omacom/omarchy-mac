@@ -1,0 +1,102 @@
+<svg viewBox="0 0 900 620" role="img" aria-label="How the Mac packages, the package repository and the installer fit together" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/></marker><marker id="arrow-brand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow brand"/></marker></defs>
+<rect class="lane" x="16" y="16" width="276" height="370"/>
+<text class="lane-title" x="30" y="40">omacom/omarchy-mac</text>
+<text class="lane-sub" x="30" y="58">Mac packages and tooling</text>
+<rect class="lane" x="312" y="16" width="276" height="370"/>
+<text class="lane-title" x="326" y="40">omacom/omarchy-pkgs</text>
+<text class="lane-sub" x="326" y="58">the signed package repository</text>
+<rect class="lane" x="608" y="16" width="276" height="370"/>
+<text class="lane-title" x="622" y="40">omacom/omarchy-mac-installer</text>
+<text class="lane-sub" x="622" y="58">the macOS app and the image</text>
+<path class="edge" d="M 272 107.0 C 302.0 107.0 302.0 115.5 332 115.5" marker-end="url(#arrow)"/>
+<path class="edge" d="M 272 207.0 C 302.0 207.0 302.0 115.5 332 115.5" marker-end="url(#arrow)"/>
+<path class="edge" d="M 272 447.0 C 302.0 447.0 302.0 115.5 332 115.5" marker-end="url(#arrow)"/>
+<path class="edge" d="M 272 547.0 C 302.0 547.0 302.0 115.5 332 115.5" marker-end="url(#arrow)"/>
+<path class="edge" d="M 450.0 161 C 450.0 175.5 450.0 175.5 450.0 190" marker-end="url(#arrow)"/>
+<path class="edge" d="M 450.0 264 C 450.0 277.0 450.0 277.0 450.0 290" marker-end="url(#arrow)"/>
+<path class="edge" d="M 568 327.0 C 598.0 327.0 598.0 107.0 628 107.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 746.0 144 C 746.0 167.0 746.0 167.0 746.0 190" marker-end="url(#arrow)"/>
+<path class="edge brand" d="M 746.0 264 C 746.0 277.0 746.0 277.0 746.0 290" marker-end="url(#arrow-brand)"/>
+<path class="edge" d="M 568 327.0 C 598.0 327.0 598.0 327.0 628 327.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 746.0 410 C 746.0 387.0 746.0 387.0 746.0 364" marker-end="url(#arrow)"/>
+<g class="node">
+<rect x="36" y="70" width="236" height="74"/>
+<text class="n-title" x="48" y="91">omarchy-mac</text>
+<text class="n-sub" x="48" y="110">microphone, Wi-Fi resume,</text>
+<text class="n-sub" x="48" y="127">notch, Wi-Fi backend</text>
+</g>
+<g class="node">
+<rect x="36" y="170" width="236" height="74"/>
+<text class="n-title" x="48" y="191">omarchy-mac-boot</text>
+<text class="n-sub" x="48" y="210">initramfs, encryption,</text>
+<text class="n-sub" x="48" y="227">first boot, Limine</text>
+</g>
+<g class="node">
+<rect x="36" y="270" width="236" height="74"/>
+<text class="n-title" x="48" y="291">Mac tooling</text>
+<text class="n-sub" x="48" y="310">release, VM and hardware</text>
+<text class="n-sub" x="48" y="327">acceptance</text>
+</g>
+<g class="node">
+<rect x="332" y="70" width="236" height="91"/>
+<text class="n-title" x="344" y="91">Recipes</text>
+<text class="n-sub" x="344" y="110">commit-pinned sources:</text>
+<text class="n-sub" x="344" y="127">omarchy, omarchy-mac,</text>
+<text class="n-sub" x="344" y="144">linux-aurora, m1n1, U-Boot</text>
+</g>
+<g class="node">
+<rect x="332" y="190" width="236" height="74"/>
+<text class="n-title" x="344" y="211">Signed builds</text>
+<text class="n-sub" x="344" y="230">aarch64 only, edge first,</text>
+<text class="n-sub" x="344" y="247">rc and stable once qualified</text>
+</g>
+<g class="node tone-blue">
+<rect x="332" y="290" width="236" height="74"/>
+<text class="n-title" x="344" y="311">[omarchy] for aarch64</text>
+<text class="n-sub" x="344" y="330">pkgs.omarchy.org, signed</text>
+<text class="n-sub" x="344" y="347">with the Omarchy key</text>
+</g>
+<g class="node tone-blue">
+<rect x="628" y="70" width="236" height="74"/>
+<text class="n-title" x="640" y="91">Mac image</text>
+<text class="n-sub" x="640" y="110">signed packages pinned</text>
+<text class="n-sub" x="640" y="127">to one commit</text>
+</g>
+<g class="node tone-brand">
+<rect x="628" y="190" width="236" height="74"/>
+<text class="n-title" x="640" y="211">Installer app</text>
+<text class="n-sub" x="640" y="230">notarized .pkg, signed</text>
+<text class="n-sub" x="640" y="247">channel catalogs</text>
+</g>
+<g class="node">
+<rect x="628" y="290" width="236" height="74"/>
+<text class="n-title" x="640" y="311">Your Mac</text>
+<text class="n-sub" x="640" y="330">installs, first boot,</text>
+<text class="n-sub" x="640" y="347">then omarchy update</text>
+</g>
+<g class="node tone-ext">
+<rect x="36" y="410" width="236" height="74"/>
+<text class="n-title" x="48" y="431">omacom/omarchy</text>
+<text class="n-sub" x="48" y="450">the desktop: omarchy,</text>
+<text class="n-sub" x="48" y="467">omarchy-settings</text>
+</g>
+<g class="node tone-ext">
+<rect x="36" y="510" width="236" height="74"/>
+<text class="n-title" x="48" y="531">Aurora and Asahi</text>
+<text class="n-sub" x="48" y="550">aurora-silicon/linux, m1n1,</text>
+<text class="n-sub" x="48" y="567">U-Boot, installer engine</text>
+</g>
+<g class="node tone-ext">
+<rect x="628" y="410" width="236" height="74"/>
+<text class="n-title" x="640" y="431">Arch Linux ARM</text>
+<text class="n-sub" x="640" y="450">core, extra, alarm and</text>
+<text class="n-sub" x="640" y="467">asahi-alarm mirrors</text>
+</g>
+<g class="node tone-brand"><rect x="16" y="595" width="14" height="14"/></g>
+<text class="legend" x="36" y="606">signed installer artefact</text>
+<g class="node tone-blue"><rect x="251.5" y="595" width="14" height="14"/></g>
+<text class="legend" x="271.5" y="606">signed packages or image</text>
+<g class="node tone-ext"><rect x="479.5" y="595" width="14" height="14"/></g>
+<text class="legend" x="499.5" y="606">external source</text>
+</svg>

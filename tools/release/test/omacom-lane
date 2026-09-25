@@ -1,0 +1,483 @@
+#!/bin/bash
+#
+# tools/release/mac-release and mac-aurora-pin on the omacom lane, against a
+# fake omacom/omarchy-pkgs, a fake omacom/omarchy-mac, channel databases
+# served from a directory and a fake gh. bin/repo in the fake packages
+# repository applies an advance to those databases the way advance-channel
+# would, so a whole promotion runs: pin, gates, widening, scoped advance.
+#
+#   tools/release/test/omacom-lane
+
+set -euo pipefail
+
+TOOLS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+release=$TOOLS/mac-release
+pin=$TOOLS/mac-aurora-pin
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "not ok - $1" >&2
+  [[ ! -f $tmp/out ]] || sed 's/^/  | /' "$tmp/out" >&2
+  exit 1
+}
+
+sha() { printf '%s' "$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1; }
+hex() { printf "$1%.0s" {1..40}; }
+
+export GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.invalid GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.invalid
+export GIT_CONFIG_GLOBAL=$tmp/gitconfig GIT_CONFIG_NOSYSTEM=1
+git config --global init.defaultBranch master
+git config --global protocol.file.allow always
+git config --global uploadpack.allowFilter true
+git config --global uploadpack.allowAnySHA1InWant true
+
+# ── omarchy-mac: three commits on quattro-upstream ──────────────────────────
+git init --quiet "$tmp/mac-work"
+for n in 1 2 3; do
+  echo "$n" >"$tmp/mac-work/version"
+  git -C "$tmp/mac-work" add version
+  git -C "$tmp/mac-work" commit --quiet -m "change $n"
+  declare "mac$n=$(git -C "$tmp/mac-work" rev-parse HEAD)"
+done
+git -C "$tmp/mac-work" checkout --quiet -b side "$mac1"
+echo side >"$tmp/mac-work/version"
+git -C "$tmp/mac-work" commit --quiet -am side
+side=$(git -C "$tmp/mac-work" rev-parse HEAD)
+git clone --quiet --bare "$tmp/mac-work" "$tmp/omarchy-mac.git"
+git -C "$tmp/omarchy-mac.git" branch --quiet -m master quattro-upstream
+
+# ── omacom/omarchy-pkgs master ──────────────────────────────────────────────
+k1=$(hex a)
+k2=$(hex b)
+archive=$(printf 'c%.0s' {1..64})
+recipe() {
+  local name=$1 version=$2 commit=$3 channels=$4 extra=${5:-}
+  mkdir -p "$tmp/pkgs-work/pkgbuilds/$name/.omarchy"
+  cat >"$tmp/pkgs-work/pkgbuilds/$name/PKGBUILD" <<EOF
+pkgname=$name
+pkgver=${version%-*}
+pkgrel=${version##*-}
+arch=('aarch64')
+_commit=$commit
+source=("git+https://example.invalid/omarchy-mac.git#commit=\${_commit}")
+sha256sums=('SKIP')
+EOF
+  printf '{"source": "local", "channels": %s%s}\n' "$channels" "$extra" >"$tmp/pkgs-work/pkgbuilds/$name/.omarchy/package.json"
+}
+git init --quiet "$tmp/pkgs-work"
+recipe omarchy-mac 1.0-1 "$mac1" '["edge"]'
+recipe omarchy-mac-boot 1.0-1 "$mac1" '["edge"]'
+mkdir -p "$tmp/pkgs-work/pkgbuilds/linux-aurora/.omarchy" "$tmp/pkgs-work/bin"
+cat >"$tmp/pkgs-work/pkgbuilds/linux-aurora/PKGBUILD" <<EOF
+_auroraver=7.1.12
+_aurorarel=2
+pkgrel=9
+
+_commit=$k1
+
+pkgbase=linux-aurora
+pkgname=(linux-aurora linux-aurora-headers)
+pkgver="\${_auroraver}.aurora\${_aurorarel}"
+arch=('aarch64')
+source=(
+  https://github.com/aurora-silicon/linux/archive/\${_commit}.tar.gz
+  config
+)
+sha256sums=('$(printf 'a%.0s' {1..64})'
+            'SKIP')
+EOF
+printf '{"source": "local", "channels": ["edge", "rc"]}\n' >"$tmp/pkgs-work/pkgbuilds/linux-aurora/.omarchy/package.json"
+
+# bin/repo advance as advance-channel does it for the named packages: copy
+# their source-channel entries into the target database.
+cat >"$tmp/pkgs-work/bin/repo" <<'STUB'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$FAKE_WORLD/advance.log"
+[[ $1 == advance ]] || exit 2
+shift
+from="" to="" arch="" packages=() dry=0
+while (( $# )); do
+  case $1 in
+    --dry-run) dry=1; shift ;;
+    --from) from=$2; shift 2 ;;
+    --to) to=$2; shift 2 ;;
+    --arch) arch=$2; shift 2 ;;
+    --package) shift; while (( $# )) && [[ $1 != --* ]]; do packages+=("$1"); shift; done ;;
+    *) shift ;;
+  esac
+done
+src=$(mktemp -d) dst=$(mktemp -d)
+tar -xf "$FAKE_WORLD/db/$from/$arch/omarchy.db.tar.zst" -C "$src"
+[[ ! -f $FAKE_WORLD/db/$to/$arch/omarchy.db.tar.zst ]] || tar -xf "$FAKE_WORLD/db/$to/$arch/omarchy.db.tar.zst" -C "$dst"
+field() { awk -v key="%$2%" '$0 == key { getline; print; exit }' "$1/desc"; }
+for dir in "$src"/*; do
+  name=$(field "$dir" NAME)
+  base=$(field "$dir" BASE)
+  for package in "${packages[@]}"; do
+    [[ $package == "$name" || $package == "$base" ]] || continue
+    [[ " ${FAKE_HOST_MISSING:-} " != *" $(basename "$dir") "* ]] || continue
+    # FAKE_HOST_ALREADY: the host's tree holds it in the target already,
+    # though the published database does not; its sync publishes it.
+    if [[ -d $dst/$(basename "$dir") ]] || { (( dry )) && [[ " ${FAKE_HOST_ALREADY:-} " == *" $(basename "$dir") "* ]]; }; then
+      present=$((${present:-0} + 1))
+      continue
+    fi
+    copied=$((${copied:-0} + 1))
+    if (( dry )); then
+      printf '  would copy: %s (+ .sig)\n' "$(field "$dir" FILENAME)"
+      continue
+    fi
+    for old in "$dst"/*; do
+      [[ ! -f $old/desc || $(field "$old" NAME) != "$name" ]] || rm -rf "$old"
+    done
+    cp -R "$dir" "$dst/"
+  done
+done
+if [[ -n ${FAKE_HOST_EXTRA:-} ]] && (( dry )); then
+  printf '  would copy: %s (+ .sig)\n' "$FAKE_HOST_EXTRA"
+  copied=$((${copied:-0} + 1))
+fi
+printf '\033[0;34m==>\033[0m Copied: %s | Already present: %s | Differing (kept): 0 | Not eligible: 0\n' "${copied:-0}" "${present:-0}"
+(( ! dry )) || exit 0
+mkdir -p "$FAKE_WORLD/db/$to/$arch"
+tar -cf "$FAKE_WORLD/db/$to/$arch/omarchy.db.tar.zst" -C "$dst" .
+if [[ -n ${FAKE_MOVE_X86:-} ]]; then
+  printf 'moved\n' >>"$FAKE_WORLD/db/stable/x86_64/omarchy.db.tar.zst"
+fi
+STUB
+chmod +x "$tmp/pkgs-work/bin/repo"
+git -C "$tmp/pkgs-work" add -A
+git -C "$tmp/pkgs-work" commit --quiet -m base
+git clone --quiet --bare "$tmp/pkgs-work" "$tmp/pkgs.git"
+git -C "$tmp/pkgs-work" remote add origin "$tmp/pkgs.git"
+
+# Land on master what a merged pull request would.
+merge() {
+  git -C "$tmp/pkgs-work" fetch --quiet origin
+  git -C "$tmp/pkgs-work" checkout --quiet -B master origin/master
+  git -C "$tmp/pkgs-work" checkout --quiet "origin/$1" -- pkgbuilds
+  git -C "$tmp/pkgs-work" commit --quiet -am "merge $1"
+  git -C "$tmp/pkgs-work" push --quiet origin master
+  sed -i.bak "s|^$1 OPEN|$1 MERGED|" "$tmp/prs" && rm -f "$tmp/prs.bak"
+}
+
+# ── channel databases ───────────────────────────────────────────────────────
+# db CHANNEL ARCH name|base|version|bytes... (bytes names the build: two
+# entries with the same version and other bytes are two builds)
+db() {
+  local channel=$1 arch=$2 entry name base version bytes dir
+  shift 2
+  dir=$(mktemp -d)
+  for entry in "$@"; do
+    IFS='|' read -r name base version bytes <<<"$entry"
+    mkdir -p "$dir/$name-$version"
+    printf '%%FILENAME%%\n%s-%s-%s.pkg.tar.zst\n\n%%NAME%%\n%s\n\n%%BASE%%\n%s\n\n%%VERSION%%\n%s\n\n%%SHA256SUM%%\n%s\n\n' \
+      "$name" "$version" "$arch" "$name" "$base" "$version" "$(sha "$name $version ${bytes:-1}")" >"$dir/$name-$version/desc"
+  done
+  mkdir -p "$tmp/world/db/$channel/$arch"
+  tar -cf "$tmp/world/db/$channel/$arch/omarchy.db.tar.zst" -C "$dir" .
+  rm -rf "$dir"
+}
+x86() {
+  db edge x86_64 'hello|hello|1-1'
+  db rc x86_64 'hello|hello|1-1'
+  db stable x86_64 'hello|hello|1-1'
+}
+
+# ── gh ──────────────────────────────────────────────────────────────────────
+mkdir -p "$tmp/bin"
+: >"$tmp/prs"
+cat >"$tmp/bin/gh" <<'STUB'
+#!/bin/bash
+set -euo pipefail
+printf 'gh %s\n' "$*" >>"$FAKE_WORLD/gh.log"
+case "$1 ${2:-}" in
+  "auth token") exit 1 ;;
+  "pr list")
+    head=""
+    while (( $# )); do [[ $1 == --head ]] && head=$2; shift; done
+    awk -v head="$head" '$1 == head { printf "%s %s\n", $2, $3 }' "$FAKE_WORLD/prs" | tail -n 1
+    ;;
+  "pr create")
+    head=""
+    while (( $# )); do [[ $1 == --head ]] && head=$2; shift; done
+    number=$(( $(wc -l <"$FAKE_WORLD/prs") + 100 ))
+    printf '%s OPEN %s\n' "$head" "$number" >>"$FAKE_WORLD/prs"
+    printf 'https://github.com/omacom/omarchy-pkgs/pull/%s\n' "$number"
+    ;;
+  "api repos/aurora-silicon/linux/branches/"*) printf '%s\n' "$FAKE_KERNEL_HEAD" ;;
+  "api repos/aurora-silicon/linux/contents/Makefile"*)
+    IFS=. read -r v p s <<<"$FAKE_KERNEL_VERSION"
+    printf 'VERSION = %s\nPATCHLEVEL = %s\nSUBLEVEL = %s\n' "$v" "$p" "$s"
+    ;;
+  *) echo "unexpected gh $*" >&2; exit 2 ;;
+esac
+STUB
+chmod +x "$tmp/bin/gh"
+
+printf 'MAC_RELEASE_AUTHOR_NAME="Release Tester"\nMAC_RELEASE_AUTHOR_EMAIL=release@example.invalid\n' >"$tmp/settings.conf"
+export PATH="$tmp/bin:$PATH" FAKE_WORLD=$tmp/world FAKE_KERNEL_HEAD=$k1 FAKE_KERNEL_VERSION=7.1.12
+export MAC_RELEASE_PKGS_GIT="file://$tmp/pkgs.git" MAC_RELEASE_SOURCE_GIT="file://$tmp/omarchy-mac.git"
+export MAC_RELEASE_DB_BASE="file://$tmp/world/db" MAC_RELEASE_CONFIG=$tmp/settings.conf
+mkdir -p "$tmp/world"
+ln -s "$tmp/prs" "$tmp/world/prs"
+unset OMARCHY_REPO_HOST
+
+run() { "$BASH" "$@" >"$tmp/out" 2>&1; }
+has() { grep -Fq -- "$1" "$tmp/out" || fail "$2: expected '$1'"; }
+
+# ── nothing to move ─────────────────────────────────────────────────────────
+x86
+db edge aarch64 'omarchy-mac|omarchy-mac|1.0-1' 'omarchy-mac-boot|omarchy-mac-boot|1.0-1' \
+  'linux-aurora|linux-aurora|7.1.12.aurora2-9' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-9'
+db rc aarch64 'omarchy-mac|omarchy-mac|1.0-1' 'omarchy-mac-boot|omarchy-mac-boot|1.0-1' \
+  'linux-aurora|linux-aurora|7.1.12.aurora2-9' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-9'
+run "$release" --dry-run || fail "a dry run with nothing to move failed"
+has "moves:           nothing (rc already serves edge's set)" "nothing to move"
+has "recipe:          m1n1-aurora absent on master" "an absent recipe"
+has "dry run: nothing was changed" "the dry run"
+run "$release" || fail "a release with nothing to move failed"
+has "nothing to promote" "nothing to promote"
+[[ ! -e $tmp/world/advance.log ]] || fail "nothing to move still advanced"
+echo "ok - with edge and rc serving one set there is nothing to promote"
+
+# ── the pin ─────────────────────────────────────────────────────────────────
+run "$release" --dry-run "$mac2" || fail "the dry run of a release failed"
+has "pin:             omarchy-mac 1.0-1 -> 1.0-2 (_commit -> ${mac2:0:12}" "the runtime pin"
+has "pin:             omarchy-mac-boot 1.0-1 -> 1.0-2" "the boot pin"
+has "waits for:       omarchy-mac 1.0-2 (after the pin merges) on edge" "the pending publication"
+run "$release" --dry-run "$side" && fail "a commit off quattro-upstream was accepted"
+has "is not on omacom/omarchy-mac quattro-upstream" "a commit off the branch"
+run "$release" "$mac2" && fail "the pin did not stop for the merge"
+has "opened pull request #100 pinning ${mac2:0:12}" "the pin pull request"
+pin_branch=$(git -C "$tmp/pkgs.git" for-each-ref --format='%(refname:short)' "refs/heads/mac-release/pin-${mac2:0:12}-*")
+[[ -n $pin_branch ]] || fail "no pin branch was pushed"
+git -C "$tmp/pkgs.git" show "$pin_branch:pkgbuilds/omarchy-mac/PKGBUILD" | grep -Fxq "_commit=$mac2" ||
+  fail "the pin branch does not pin omarchy-mac"
+git -C "$tmp/pkgs.git" show "$pin_branch:pkgbuilds/omarchy-mac-boot/PKGBUILD" | grep -Fxq 'pkgrel=2' ||
+  fail "the pin branch does not bump omarchy-mac-boot"
+[[ $(git -C "$tmp/pkgs.git" diff --name-only master "$pin_branch" | tr '\n' ' ') == "pkgbuilds/omarchy-mac-boot/PKGBUILD pkgbuilds/omarchy-mac/PKGBUILD " ]] ||
+  fail "the pin branch changes more than the two recipes: $(git -C "$tmp/pkgs.git" diff --name-status master "$pin_branch" | head -n 5 | tr '\n' ' ')"
+git -C "$tmp/pkgs.git" log -1 --format='%an <%ae>' "$pin_branch" | grep -Fxq 'Release Tester <release@example.invalid>' ||
+  fail "the pin commit is not the configured author"
+run "$release" "$mac2" && fail "an open pin pull request did not stop"
+has "pull request #100 pins ${mac2:0:12}" "the open pull request"
+[[ $(grep -c 'pr create' "$tmp/world/gh.log") == 1 ]] || fail "a second pin pull request was opened"
+echo "ok - a release pins the Mac recipes through one pull request and waits for its merge"
+
+merge "$pin_branch"
+run "$release" --dry-run "$mac1" && fail "a release that moves the pin backwards was accepted"
+has "which $mac1 does not descend from" "a backwards pin"
+run "$release" "$mac2" && fail "a release did not wait for the edge publication"
+has "edge does not serve master's set yet: omarchy-mac 1.0-2" "the edge publication"
+echo "ok - a pin never moves backwards, and promotion waits for CI to publish master's version to edge"
+
+# ── gates ───────────────────────────────────────────────────────────────────
+db edge aarch64 'omarchy-mac|omarchy-mac|1.0-2' 'omarchy-mac-boot|omarchy-mac-boot|1.0-2' \
+  'linux-aurora|linux-aurora|7.1.12.aurora2-9' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-9'
+run "$release" --dry-run "$mac2" || fail "the dry run after the edge publication failed"
+digest=$(sed -n 's/.*set digest:      \([0-9a-f]\{64\}\).*/\1/p' "$tmp/out")
+[[ $digest =~ ^[0-9a-f]{64}$ ]] || fail "the plan names no set digest"
+has "moves:           omarchy-mac 1.0-1 -> 1.0-2" "the runtime move"
+has "kernel or boot:  omarchy-mac-boot 1.0-2" "the boot move"
+has "widen:           omarchy-mac omarchy-mac-boot to rc" "the widening"
+has "advance:         bin/repo advance --from edge --to rc --arch aarch64 --package omarchy-mac omarchy-mac-boot --skip-prod-check" "the scoped advance"
+has "would copy:      omarchy-mac-1.0-2-aarch64.pkg.tar.zst (+ .sig)" "the copied file"
+run "$release" "$mac2" && fail "a promotion went ahead without VM evidence"
+has "needs VM acceptance evidence" "the VM gate"
+has "  set_sha256=$digest" "the VM gate's lines"
+printf 'format=1\nset_sha256=%s\nstatus=failed\n' "$digest" >"$tmp/vm-bad"
+run "$release" --vm-evidence "$tmp/vm-bad" "$mac2" && fail "a failed VM run was accepted"
+has "does not record acceptance of this set" "a failed VM record"
+printf 'format=1\nset_sha256=%s\nstatus=accepted\nstatus=failed\n' "$digest" >"$tmp/vm-bad"
+run "$release" --vm-evidence "$tmp/vm-bad" "$mac2" && fail "a VM record saying both accepted and failed was accepted"
+has "does not record acceptance of this set" "a contradictory VM record"
+printf 'VM acceptance of the Mac set\nformat=1\nset_sha256=%s\nstatus=accepted\nrun_id=vm-1\n' "$digest" >"$tmp/vm"
+run "$release" --vm-evidence "$tmp/vm" "$mac2" && fail "a boot move went ahead without hardware evidence"
+has "this promotion moves omarchy-mac-boot 1.0-2" "the hardware gate"
+has "  boot=omarchy-mac-boot 1.0-2" "the hardware gate's lines"
+printf 'set_sha256=%s\nboot=omarchy-mac-boot 1.0-2\nboot=omarchy-mac 1.0-2\n' "$digest" >"$tmp/hw-bad"
+run "$release" --vm-evidence "$tmp/vm" --hardware-evidence "$tmp/hw-bad" "$mac2" && fail "a hardware record with an extra line was accepted"
+has "does not record exactly what this promotion moves" "an inexact hardware record"
+printf 'Cold boots on the M1 Pro and the M2 Max\nset_sha256=%s\nboot=omarchy-mac-boot 1.0-2\n' "$digest" >"$tmp/hw"
+echo "ok - promotion needs VM evidence of the set's digest and hardware evidence of exactly its boot moves"
+
+# ── widening and the advance ────────────────────────────────────────────────
+gates=(--vm-evidence "$tmp/vm" --hardware-evidence "$tmp/hw")
+run "$release" "${gates[@]}" "$mac2" && fail "the widening did not stop for the merge"
+has "widening omarchy-mac omarchy-mac-boot to rc" "the widening pull request"
+widen=$(git -C "$tmp/pkgs.git" for-each-ref --format='%(refname:short)' "refs/heads/mac-release/widen-rc-${digest:0:12}-*")
+[[ $(git -C "$tmp/pkgs.git" show "$widen:pkgbuilds/omarchy-mac/.omarchy/package.json" | jq -c .channels) == '["edge","rc"]' ]] ||
+  fail "the widening does not add rc to omarchy-mac's channels"
+[[ $(git -C "$tmp/pkgs.git" diff --name-only master "$widen" | tr '\n' ' ') == "pkgbuilds/omarchy-mac-boot/.omarchy/package.json pkgbuilds/omarchy-mac/.omarchy/package.json " ]] ||
+  fail "the widening changes more than channel membership: $(git -C "$tmp/pkgs.git" diff --name-status master "$widen" | head -n 5 | tr '\n' ' ')"
+merge "$widen"
+run "$release" "${gates[@]}" "$mac2" && fail "the advance ran without a build host"
+has "set OMARCHY_REPO_HOST" "the build host"
+[[ ! -e $tmp/world/advance.log ]] || fail "an advance ran without a build host"
+FAKE_HOST_EXTRA=omarchy-mac-1.0-3-aarch64.pkg.tar.zst OMARCHY_REPO_HOST=build-host run "$release" "${gates[@]}" "$mac2" &&
+  fail "an advance went ahead although the build host would copy another set"
+has "it would copy omarchy-mac-1.0-3-aarch64.pkg.tar.zst, which were not qualified" "the host preflight"
+[[ $(grep -vc -- '--dry-run' "$tmp/world/advance.log") == 0 ]] || fail "the advance ran after a failed preflight"
+FAKE_HOST_MISSING=omarchy-mac-1.0-2 OMARCHY_REPO_HOST=build-host run "$release" "${gates[@]}" "$mac2" &&
+  fail "an advance went ahead although the build host does not hold the whole set"
+has "it would not copy omarchy-mac-1.0-2-aarch64.pkg.tar.zst: the host's tree lacks them in edge" "a host tree without part of the set"
+[[ $(grep -vc -- '--dry-run' "$tmp/world/advance.log") == 0 ]] || fail "the advance ran without the whole set on the host"
+rm -f "$tmp/world/advance.log"
+before_x86=$(cat "$tmp/world/db"/*/x86_64/omarchy.db.tar.zst | { sha256sum 2>/dev/null || shasum -a 256; })
+# The host already holds omarchy-mac in rc though rc does not serve it (an
+# earlier advance whose sync failed): the operator settles that first.
+FAKE_HOST_ALREADY=omarchy-mac-1.0-2 OMARCHY_REPO_HOST=build-host run "$release" "${gates[@]}" "$mac2" &&
+  fail "an advance went ahead although the host already holds a move the target does not serve"
+has "it would not copy omarchy-mac-1.0-2-aarch64.pkg.tar.zst" "a host tree ahead of the target"
+has "run bin/repo sync --mirror rc --arch aarch64 on the host" "the way back from a failed sync"
+[[ $(grep -vc -- '--dry-run' "$tmp/world/advance.log") == 0 ]] || fail "the advance ran with the host ahead of the target"
+rm -f "$tmp/world/advance.log"
+OMARCHY_REPO_HOST=build-host run "$release" "${gates[@]}" "$mac2" || fail "the promotion failed"
+has "promoted omarchy-mac omarchy-mac-boot to rc/aarch64 (set $digest)" "the promotion"
+[[ $(cat "$tmp/world/advance.log") == "advance --from edge --to rc --arch aarch64 --package omarchy-mac omarchy-mac-boot --skip-prod-check --dry-run
+advance --from edge --to rc --arch aarch64 --package omarchy-mac omarchy-mac-boot --skip-prod-check" ]] ||
+  fail "the advance was not a dry run then one run scoped to aarch64 and the moved packages: $(cat "$tmp/world/advance.log")"
+[[ $before_x86 == "$(cat "$tmp/world/db"/*/x86_64/omarchy.db.tar.zst | { sha256sum 2>/dev/null || shasum -a 256; })" ]] ||
+  fail "an x86_64 database moved"
+run "$release" "$mac2" || fail "a promoted release did not settle"
+has "nothing to promote" "a promoted release"
+echo "ok - widening goes through a pull request, and one scoped aarch64 advance promotes exactly the moved packages"
+
+# ── refusals ────────────────────────────────────────────────────────────────
+rm -f "$tmp/world/advance.log"
+db edge aarch64 'omarchy-mac|omarchy-mac|1.0-3'
+db rc aarch64 'omarchy-mac|omarchy-mac|1.0-2'
+recipe omarchy-mac 1.0-3 "$mac2" '["edge", "rc"]'
+git -C "$tmp/pkgs-work" commit --quiet -am "omarchy-mac 1.0-3"
+git -C "$tmp/pkgs-work" push --quiet origin master
+run "$release" --dry-run --package omarchy-mac || fail "the dry run of a runtime-only move failed"
+has "kernel or boot:  none" "a runtime-only move"
+digest=$(sed -n 's/.*set digest:      \([0-9a-f]\{64\}\).*/\1/p' "$tmp/out")
+printf 'format=1\nset_sha256=%s\nstatus=accepted\n' "$digest" >"$tmp/vm3"
+FAKE_MOVE_X86=1 OMARCHY_REPO_HOST=build-host run "$release" --package omarchy-mac --vm-evidence "$tmp/vm3" &&
+  fail "an advance that moved an x86_64 database was reported as done"
+has "an x86_64 database moved during the advance" "the x86_64 check"
+if (( EUID != 0 )); then
+  db rc aarch64 'omarchy-mac|omarchy-mac|1.0-2'
+  chmod 000 "$tmp/world/db/rc/x86_64/omarchy.db.tar.zst"
+  run "$release" --dry-run --package omarchy-mac && fail "an unreadable x86_64 database read as an empty channel"
+  has "could not read rc/x86_64/omarchy.db" "an unreadable database"
+  chmod 644 "$tmp/world/db/rc/x86_64/omarchy.db.tar.zst"
+fi
+echo "ok - a runtime-only move needs no hardware evidence, and an x86_64 change during the advance or an unreadable database stops"
+
+db edge aarch64 'linux-aurora|linux-aurora|7.1.12.aurora2-9|2' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-9'
+db rc aarch64 'linux-aurora|linux-aurora|7.1.12.aurora2-9|1' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-9'
+run "$release" --dry-run --package linux-aurora || fail "the dry run of a conflicting set failed"
+has "conflict:        linux-aurora 7.1.12.aurora2-9: rc holds other bytes under that version" "a same-version conflict"
+prs_before=$(grep -c 'pr create' "$tmp/world/gh.log")
+rm -f "$tmp/world/advance.log"
+OMARCHY_REPO_HOST=build-host run "$release" --package linux-aurora && fail "a release whose only difference is a conflict succeeded"
+has "rc holds other bytes under that version" "a conflict on the real path"
+printf '{"source": "local", "release_ring": "fast", "channels": ["edge", "rc"]}\n' >"$tmp/pkgs-work/pkgbuilds/linux-aurora/.omarchy/package.json"
+git -C "$tmp/pkgs-work" commit --quiet -am "fast ring"
+git -C "$tmp/pkgs-work" push --quiet origin master
+db rc aarch64 'linux-aurora|linux-aurora|7.1.12.aurora2-8' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-8'
+run "$release" --dry-run --to rc --package linux-aurora || fail "the dry run of a fast-ring kernel failed"
+has "blocked:         linux-aurora: release_ring=fast builds natively for rc" "a fast-ring package"
+has "advance:         blocked until the above is fixed" "a blocked advance"
+db edge aarch64 'omarchy-mac|omarchy-mac|1.0-3' 'linux-aurora|linux-aurora|7.1.12.aurora2-9' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-9'
+db rc aarch64 'omarchy-mac|omarchy-mac|1.0-2' 'linux-aurora|linux-aurora|7.1.12.aurora2-8' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-8'
+recipe omarchy-mac 1.0-3 "$mac2" '["edge"]'
+git -C "$tmp/pkgs-work" commit --quiet -am "omarchy-mac edge only"
+git -C "$tmp/pkgs-work" push --quiet origin master
+run "$release" --dry-run --package omarchy-mac --package linux-aurora || fail "the dry run of a mixed set failed"
+digest=$(sed -n 's/.*set digest:      \([0-9a-f]\{64\}\).*/\1/p' "$tmp/out")
+printf 'format=1\nset_sha256=%s\nstatus=accepted\n' "$digest" >"$tmp/vm4"
+printf 'set_sha256=%s\nboot=linux-aurora 7.1.12.aurora2-9\nboot=linux-aurora-headers 7.1.12.aurora2-9\n' "$digest" >"$tmp/hw4"
+OMARCHY_REPO_HOST=build-host run "$release" --package omarchy-mac --package linux-aurora --vm-evidence "$tmp/vm4" --hardware-evidence "$tmp/hw4" &&
+  fail "a set with a fast-ring package was promoted"
+has "cannot promote: linux-aurora: release_ring=fast" "a blocked set on the real path"
+[[ $(grep -c 'pr create' "$tmp/world/gh.log") == "$prs_before" ]] || fail "a refused promotion opened a pull request"
+[[ ! -e $tmp/world/advance.log ]] || fail "a refused promotion advanced"
+printf '{"source": "local", "release_ring": "fast", "pinned": true, "channels": ["edge", "rc", "stable"]}\n' >"$tmp/pkgs-work/pkgbuilds/linux-aurora/.omarchy/package.json"
+git -C "$tmp/pkgs-work" commit --quiet -am "pinned"
+git -C "$tmp/pkgs-work" push --quiet origin master
+db stable aarch64 'linux-aurora|linux-aurora|7.1.12.aurora2-7' 'linux-aurora-headers|linux-aurora|7.1.12.aurora2-7'
+run "$release" --dry-run --to stable --package linux-aurora || fail "the dry run of a pinned stable promotion failed"
+! grep -Fq "blocked:" "$tmp/out" || fail "a pinned package was blocked from stable, where it never builds natively"
+has "advance:         bin/repo advance --from rc --to stable --arch aarch64 --package linux-aurora" "a pinned stable promotion"
+echo "ok - a same-version conflict and a fast-ring package are refused on the real path before any pull request or advance"
+
+# ── a narrow pin, then the rest of the same commit ─────────────────────────
+prs_before=$(grep -c 'pr create' "$tmp/world/gh.log")
+run "$release" "$mac3" && fail "a release with a blocked package went ahead"
+has "cannot promote: linux-aurora: pinned builds natively for rc" "a blocked package with a pending pin"
+[[ $(grep -c 'pr create' "$tmp/world/gh.log") == "$prs_before" ]] || fail "a blocked release opened a pin pull request"
+run "$release" --package omarchy-mac "$mac3" && fail "the narrow pin did not stop for the merge"
+has "pinning ${mac3:0:12}" "the narrow pin"
+narrow=$(git -C "$tmp/pkgs.git" for-each-ref --format='%(refname:short)' "refs/heads/mac-release/pin-${mac3:0:12}-*")
+merge "$narrow"
+run "$release" --package omarchy-mac --package omarchy-mac-boot "$mac3" && fail "the rest of the pin did not stop for its merge"
+has "pinning ${mac3:0:12}" "the rest of the pin"
+rest=$(git -C "$tmp/pkgs.git" for-each-ref --format='%(refname:short)' "refs/heads/mac-release/pin-${mac3:0:12}-*" | grep -vxF "$narrow")
+[[ $(git -C "$tmp/pkgs.git" diff --name-only master "$rest") == pkgbuilds/omarchy-mac-boot/PKGBUILD ]] ||
+  fail "the rest of the pin is not omarchy-mac-boot alone"
+echo "ok - a blocked set opens no pin, and a pin merged for part of the set does not stop the rest of the same commit's pin"
+
+# ── mac-aurora-pin on omacom ────────────────────────────────────────────────
+run "$pin" pin --dry-run --archive-sha256 "$(printf 'a%.0s' {1..64})" && fail "a pin to the pinned head was accepted"
+has "nothing changed:" "an unchanged pin"
+run "$pin" pin --dry-run && fail "a pin to the pinned head was accepted without a digest"
+has "nothing changed:" "an unchanged pin without a digest"
+FAKE_KERNEL_HEAD=$k2 FAKE_KERNEL_VERSION=7.1.13 run "$pin" pin --dry-run --archive-sha256 "$archive" || fail "the pin dry run failed"
+has "7.1.12.aurora2-9 -> 7.1.13.aurora2-1" "a new kernel version"
+has "+_commit=$k2" "the new commit"
+has "+sha256sums=('$archive'" "the archive digest"
+has "+pkgrel=1" "the reset pkgrel"
+has "dry run: would open a pull request on omacom/omarchy-pkgs (mac-aurora/pin-${k2:0:12} -> master)" "the pin pull request"
+[[ -z $(git -C "$tmp/pkgs.git" branch --list "mac-aurora/*") ]] || fail "a dry run pushed a branch"
+FAKE_KERNEL_HEAD=$k2 FAKE_KERNEL_VERSION=7.1.9 run "$pin" pin --dry-run --archive-sha256 "$archive" && fail "a pin to an older kernel was accepted"
+has "would move linux-aurora backwards (7.1.12.aurora2-9 -> 7.1.9.aurora2-1)" "an older kernel"
+git -C "$tmp/pkgs.git" archive master pkgbuilds/linux-aurora | tar -x -C "$tmp"
+cp -R "$tmp/pkgbuilds/linux-aurora" "$tmp/aurora-before"
+FAKE_KERNEL_HEAD=$k2 FAKE_KERNEL_VERSION=7.1.13 run "$pin" pin --dry-run --archive-sha256 "$archive" --recipe "$tmp/pkgbuilds/linux-aurora" ||
+  fail "the pin dry run on a recipe directory failed"
+has "+_commit=$k2" "the dry run's change to a recipe directory"
+diff -r "$tmp/aurora-before" "$tmp/pkgbuilds/linux-aurora" >/dev/null || fail "--dry-run --recipe edited the recipe"
+ln -s "$tmp/pkgbuilds/linux-aurora" "$tmp/aurora-link"
+mkdir "$tmp/aurora-files"
+ln -s "$tmp/pkgbuilds/linux-aurora/PKGBUILD" "$tmp/aurora-files/PKGBUILD"
+for recipe_path in "$tmp/aurora-link" "$tmp/aurora-files"; do
+  FAKE_KERNEL_HEAD=$k2 FAKE_KERNEL_VERSION=7.1.13 run "$pin" pin --dry-run --archive-sha256 "$archive" --recipe "$recipe_path" ||
+    fail "the pin dry run through a symlink failed"
+  diff -r "$tmp/aurora-before" "$tmp/pkgbuilds/linux-aurora" >/dev/null || fail "--dry-run --recipe edited the recipe through a symlink"
+done
+(cd "$tmp/pkgbuilds/linux-aurora" && FAKE_KERNEL_HEAD=$k2 FAKE_KERNEL_VERSION=7.1.13 "$BASH" "$pin" pin --dry-run --archive-sha256 "$archive" --recipe . >"$tmp/out" 2>&1) ||
+  fail "the pin dry run with --recipe . failed"
+has "+_commit=$k2" "--recipe ."
+FAKE_KERNEL_HEAD=$k2 FAKE_KERNEL_VERSION=7.1.9 run "$pin" pin --archive-sha256 "$archive" --recipe "$tmp/pkgbuilds/linux-aurora" &&
+  fail "a pin to an older kernel was accepted in place"
+diff -r "$tmp/aurora-before" "$tmp/pkgbuilds/linux-aurora" >/dev/null || fail "a refused pin left edits in the recipe"
+FAKE_KERNEL_HEAD=$k2 FAKE_KERNEL_VERSION=7.1.12 run "$pin" pin --archive-sha256 "$archive" --recipe "$tmp/pkgbuilds/linux-aurora" ||
+  fail "the in-place pin failed"
+grep -Fxq "_commit=$k2" "$tmp/pkgbuilds/linux-aurora/PKGBUILD" || fail "the in-place pin did not edit the recipe"
+FAKE_KERNEL_HEAD=$k2 FAKE_KERNEL_VERSION=7.1.12 run "$pin" pin --archive-sha256 "$archive" || fail "the pin failed"
+git -C "$tmp/pkgs.git" show "mac-aurora/pin-${k2:0:12}:pkgbuilds/linux-aurora/PKGBUILD" | grep -Fxq 'pkgrel=10' ||
+  fail "the pin branch does not bump pkgrel"
+[[ $(git -C "$tmp/pkgs.git" diff --name-only master "mac-aurora/pin-${k2:0:12}") == pkgbuilds/linux-aurora/PKGBUILD ]] ||
+  fail "the Aurora pin branch changes more than the recipe: $(git -C "$tmp/pkgs.git" diff --name-status master "mac-aurora/pin-${k2:0:12}" | head -n 5 | tr '\n' ' ')"
+git -C "$tmp/pkgs.git" log -1 --format='%an' "mac-aurora/pin-${k2:0:12}" | grep -Fxq 'Release Tester' ||
+  fail "the Aurora pin commit is not the configured author"
+run "$pin" promote stable --dry-run || fail "the promote dry run failed"
+has "promotion:       rc -> stable on aarch64" "promotion to stable"
+has "set:             linux-aurora m1n1-aurora" "the Aurora set"
+echo "ok - mac-aurora-pin pins omacom's linux-aurora forward only and promotes through mac-release"
+
+MAC_RELEASE_DB_BASE="file://localhost$tmp/world/db" run "$release" --dry-run && fail "a file URL with a host was read as empty channels"
+has "must be file:///<absolute path>" "an unsupported file URL"
+
+# ── lanes ───────────────────────────────────────────────────────────────────
+run "$release" --lane fork --help || fail "the fork lane's help failed"
+has "mac-release --lane fork [--dry-run]" "the fork lane's usage"
+run "$release" --lane nowhere && fail "an unknown lane was accepted"
+has "unknown lane nowhere" "an unknown lane"
+echo "ok - --lane fork runs the fork adapter, and an unknown lane is refused"
