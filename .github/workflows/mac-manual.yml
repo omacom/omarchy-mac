@@ -1,0 +1,40 @@
+name: Mac manual
+
+on:
+  push:
+    branches: [quattro-upstream]
+    paths:
+      - "mac-manual/**"
+      - ".github/workflows/mac-manual.yml"
+  pull_request:
+    paths:
+      - "mac-manual/**"
+      - ".github/workflows/mac-manual.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "markdown==3.7"
+      - name: Diagrams match their generator
+        run: |
+          python3 mac-manual/diagrams/gen.py
+          # An untracked diagram is not a diff, so check porcelain status rather than git diff.
+          if [[ -n $(git status --porcelain -- mac-manual/diagrams) ]]; then
+            echo "mac-manual/diagrams is out of date; run mac-manual/diagrams/gen.py and commit"
+            git status --porcelain -- mac-manual/diagrams
+            exit 1
+          fi
+      - name: Build and check links
+        run: python3 mac-manual/build.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: mac-manual/dist
