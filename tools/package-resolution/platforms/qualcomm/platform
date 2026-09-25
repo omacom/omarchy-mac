@@ -1,5 +1,5 @@
 # Sourced by check. Lists are relative to the repository root.
-lists=(install/omarchy-base.packages)
+lists=(install/omarchy-base.packages install/omarchy-aarch64.packages install/omarchy-qualcomm.packages)
 packages=(omarchy omarchy-settings)
 forbidden_repos=('asahi*' omarchy-aarch64)
 forbidden_packages=("${mac_only[@]}")
