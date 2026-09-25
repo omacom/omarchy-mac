@@ -974,9 +974,6 @@ unpack_payload
 build_generic_kernel
 fetch_uefi
 make_apple_dtb
-for name in "${ran[@]}"; do
-  "scenario_${name//-/_}"
-done
 {
   echo "run_id=$run_id"
   echo "lane=$lane"
@@ -985,5 +982,8 @@ done
   echo "host=$(uname -n) $(uname -r)"
   echo "harness_commit=$(git -C "$acceptance" rev-parse HEAD 2>/dev/null || true)"
 } >>"$evidence_dir/run.txt"
+for name in "${ran[@]}"; do
+  "scenario_${name//-/_}"
+done
 ((checks_failed == 0)) || { echo "not ok - one or more checks failed (see $evidence_dir/run.txt)" >&2; exit 1; }
 say "all scenarios passed: ${ran[*]}"
