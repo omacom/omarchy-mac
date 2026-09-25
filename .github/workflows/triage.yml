@@ -1,0 +1,60 @@
+name: Triage GitHub work
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to triage
+        required: true
+        type: string
+      apply:
+        description: Apply high-confidence additive labels/comments
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: triage-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  triage:
+    runs-on: ubuntu-24.04
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      TRIAGE_APPLY: ${{ inputs.apply || false }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install TypeSafe SDK
+        run: python -m pip install --disable-pip-version-check -r tools/requirements-triage.txt
+
+      - name: Collect issue and open PR state
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" > /tmp/issue.json
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" > /tmp/pr-pages.json
+          jq -s 'add' /tmp/pr-pages.json > /tmp/prs.json
+
+      - name: Run Jev triage preview
+        run: |
+          python tools/jev_triage.py --issue-json /tmp/issue.json --prs-json /tmp/prs.json \
+            > triage-result.json
+          cat triage-result.json >> "$GITHUB_STEP_SUMMARY"
+
+      # Enable TRIAGE_APPLY only after preview results have been reviewed.
+      # Writes are additive and idempotent; no existing labels are replaced.
