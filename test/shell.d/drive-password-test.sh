@@ -4,8 +4,9 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
-# omarchy-drive-password against fake drives. blkid, findmnt and lsblk describe
-# a system drive under / and a data drive; cryptsetup is either a slot-table fake
+# omarchy-drive-password against fake drives. findmnt and lsblk describe a
+# system drive under / and a data drive, and blkid has the empty cache a user
+# sees until root runs blkid in that boot; cryptsetup is either a slot-table fake
 # or the real binary on file-backed volumes; chpasswd records the accounts. Each
 # cryptsetup and chpasswd call is a crash point, so a run can be killed after
 # every step and rerun, like a power loss. The runs repeat on an Apple fixture,
@@ -48,8 +49,7 @@ SH
 
 cat >"$tmp/bin/blkid" <<'SH'
 #!/bin/bash
-[[ $* == "-t TYPE=crypto_LUKS -o device" ]] || exit 99
-cat "$TEST_TMP/drives"
+exit 2
 SH
 
 cat >"$tmp/bin/findmnt" <<'SH'
@@ -64,12 +64,20 @@ if [[ $1 == "-dno" && $2 == "UUID" ]]; then
   cat "$3.uuid"
   exit
 fi
+if [[ $* == "-nrpo NAME,FSTYPE" ]]; then
+  echo "/dev/fake-disk "
+  while IFS= read -r drive; do
+    printf '%s crypto_LUKS\n/dev/mapper/%s btrfs\n' "$drive" "${drive##*/}"
+  done <"$TEST_TMP/drives"
+  exit
+fi
 [[ $* == "-nsrpo NAME,TYPE,FSTYPE /dev/mapper/root" ]] || exit 98
 cat "$TEST_TMP/root-ancestry"
 SH
 
 cat >"$tmp/bin/omarchy-drive-select" <<'SH'
 #!/bin/bash
+printf '%s\n' "$@" >"$TEST_TMP/offered"
 cat "$TEST_TMP/select"
 SH
 
@@ -287,7 +295,7 @@ volume() {
 
 # / on the system drive, which also holds a recovery key; a data drive beside it.
 fixture() {
-  rm -rf "$tmp/state" "$tmp/output" "$tmp/trace" "$tmp"/dev/* "$tmp/slot-record" "$tmp/record-fail"
+  rm -rf "$tmp/state" "$tmp/output" "$tmp/trace" "$tmp/offered" "$tmp"/dev/* "$tmp/slot-record" "$tmp/record-fail"
   unset TEST_OPEN_FAIL TEST_CHPASSWD_FAIL TEST_CHANGE_FAIL TEST_CHANGE_PARTIAL TEST_KILL_FAIL TEST_FINDMNT_FAIL TEST_TOKEN_SLOT CRASH_ORPHAN
   system=$tmp/dev/system
   recovery=${1-$recovery_key}
@@ -490,6 +498,13 @@ for run_spec in "${matrix[@]}"; do
 done
 
 use fake x86
+
+fixture
+printf '%s\n%s\n%s\n' "$system" "$data" "$data" >"$tmp/drives"
+attempt 0 "$old_password" "$new_password" "$new_password" || fail "a fresh boot finds the system disk without a blkid cache" "$(cat "$tmp/output")"
+[[ $(cat "$tmp/offered") == "$system"$'\n'"$data" ]] || fail "each LUKS drive lsblk names is offered once" "$(cat "$tmp/offered")"
+consistent "fresh boot" "$new_password"
+pass "before root has run blkid, every LUKS drive is offered once and the system disk changes"
 
 fixture
 printf '5\t%s\n' tpm-sealed-key >>"$system.slots"
