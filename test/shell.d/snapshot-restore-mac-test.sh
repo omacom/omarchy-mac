@@ -87,6 +87,7 @@ snapshot_root_tree() {
   rm -rf "$tree"
   mkdir -p "$tree/.snapshots/12"
   cp -a "$mac_root/usr" "$mac_root/etc" "$mac_root/var" "$tree/"
+  install -m755 /dev/null "$tree/usr/bin/limine-update"
   modules=$tree/usr/lib/modules/$mac_kver
   printf '%s\n' "$2" >"$modules/vmlinuz"
   printf 'linux-aurora\n' >"$modules/pkgbase"
@@ -225,7 +226,7 @@ rm "$mac_root/var/lib/omarchy/limine.enabled"
 run_swap_restore apple-silicon
 grep -Fq "run as root" "$tmp/err" || fail "a GRUB Mac reaches the subvolume swap" "$(cat "$tmp/err")"
 TEST_CMDLINE=$snapshot_cmdline run_swap_restore apple-silicon
-(( status != 0 )) && grep -Fq "running a snapshot from before Limine was activated on it, which cannot be restored" "$tmp/err" ||
+(( status != 0 )) && grep -Fq "a snapshot boot cannot be restored by swapping the root subvolume; reboot into the current system first" "$tmp/err" ||
   fail "the subvolume swap refuses a Mac's snapshot boot with why" "$(cat "$tmp/err")"
 run_swap_restore generic
 grep -Fq "run as root" "$tmp/err" && ! grep -Fq Limine "$tmp/err" || fail "x86 reaches the subvolume swap as before" "$(cat "$tmp/err")"

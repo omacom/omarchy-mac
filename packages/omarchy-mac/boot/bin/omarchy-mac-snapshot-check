@@ -329,7 +329,7 @@ fstab_root() {
 restored_mismatch() {
   local restored=$1 kernel esp uki size linux
   # As the pre hook refuses a booted root from before the Limine activation.
-  if [[ ! -f $restored/var/lib/omarchy/limine.enabled || ! -f $restored/etc/default/limine ]]; then
+  if [[ ! -f $restored/var/lib/omarchy/limine.enabled || ! -f $restored/etc/default/limine || ! -x $restored/usr/bin/limine-update ]]; then
     echo "The restored root is from before Limine was activated on this Mac; it would bring back a system that boots through GRUB."
     return 0
   fi
