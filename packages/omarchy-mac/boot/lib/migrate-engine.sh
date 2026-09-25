@@ -336,10 +336,11 @@ find_target() {
 }
 
 # Prints the key that made a detached signature, or fails. A revoked or expired
-# key or signature does not count.
+# key or signature does not count. gpgv reads the set's keyring file and needs
+# no agent, so nothing depends on where a gpg-agent socket could live.
 signer_of() {
   local home=$1 file=$2 signature=$3 status
-  status=$(gpg --batch --homedir "$home" --status-fd 1 --verify "$signature" "$file" 2>/dev/null) || return 1
+  status=$(gpgv --homedir "$home" --keyring "$home/key.gpg" --status-fd 1 "$signature" "$file" 2>/dev/null) || return 1
   awk '$1 != "[GNUPG:]" { next }
     $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED|KEYREVOKED)$/ { bad = 1 }
     $2 == "GOODSIG" { good = 1 }
@@ -353,8 +354,8 @@ verify_candidate_set() {
   local dir=$1 home=$2 manifest=$1/manifest.json receipt=$1/signing.json name sha digest
   rm -rf "$home"
   mkdir -m 700 "$home"
-  if ! gpg --batch --homedir "$home" --import "$dir/candidate-signing-key.asc" >/dev/null 2>&1 ||
-    ! gpg --batch --homedir "$home" --with-colons --list-keys | awk -F: '$1 == "fpr" { print $10 }' | grep -qx "$target_fingerprint"; then
+  if ! gpg --batch --homedir "$home" --dearmor <"$dir/candidate-signing-key.asc" >"$home/key.gpg" 2>/dev/null ||
+    ! gpg --batch --homedir "$home" --with-colons --show-keys "$home/key.gpg" 2>/dev/null | awk -F: '$1 == "fpr" { print $10 }' | grep -qx "$target_fingerprint"; then
     echo "its key is not $target_fingerprint"
     return 1
   fi

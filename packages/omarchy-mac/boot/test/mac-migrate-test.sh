@@ -10,6 +10,7 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # device probes replaced by the stand-ins in fixtures/migrate/bin. Candidate
 # sets are signed with a disposable key by the real gpg.
 require_command gpg
+require_command gpgv
 require_command jq
 require_command flock
 
