@@ -139,11 +139,11 @@ run_deferred_steps() {
     cmp -s "$steps" <(printf '%s\n' 'install/hardware/apple/limine-boot.sh') ||
       fail "deferred-steps does not match the supported image contract"
   fi
-  # System hardware setup already ran inside the image builder. Only the
-  # boot activation needs the installed machine identity on first boot.
-  [[ -n ${OMARCHY_PATH:-} ]] || fail "OMARCHY_PATH is missing"
-  bash -eE -c 'source "$OMARCHY_PATH/install/hardware/apple/limine-boot.sh"' \
-    >>"$log_file" 2>&1 || fail "the deferred hardware steps failed"
+  # The image build queued its hardware setup for this machine. Run it now that
+  # the keyring exists, before owner setup; a failed step stays queued and the
+  # retry resumes there. omarchy-provision-hardware.service then finds nothing.
+  "$root/usr/bin/omarchy-provision-hardware" >>"$log_file" 2>&1 ||
+    fail "the deferred hardware steps failed"
 }
 
 # What a deferred-user image carries for owner provisioning, plus the services
