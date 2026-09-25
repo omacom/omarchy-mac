@@ -112,7 +112,10 @@ if [[ $(initramfs_inputs) != "$(<"$omarchy_image_initramfs_baseline")" ]]; then
 fi
 rm -f "$omarchy_image_initramfs_baseline"
 
-rm -f "$omarchy_image_systemd_dir/multi-user.target.wants/$omarchy_image_unit" "$omarchy_image_systemd_dir/$omarchy_image_unit"
+# Disabled, not deleted: a platform first boot that runs this while the
+# service's start job waits would otherwise fail that job at the next
+# daemon-reload. The emptied queue keeps the unit from running.
+rm -f "$omarchy_image_systemd_dir/multi-user.target.wants/$omarchy_image_unit"
 rm -f "$omarchy_image_queue"
 if (( EUID == 0 )); then
   systemctl daemon-reload 2>/dev/null || true
