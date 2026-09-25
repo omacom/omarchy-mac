@@ -83,6 +83,28 @@ fi
 
 mkdir -p "$(dirname "$OMARCHY_INSTALL_LOG_FILE")"
 
+# Images ship no pacman sync databases, so a step that installs a package fails
+# until they are fetched. Only then, once per run, are they fetched and the step
+# retried: an image that carries its steps' packages never gets here, and one
+# that cannot reach the network yet keeps the step queued for the next run.
+sync_databases_missing() {
+  local config=$omarchy_image_root/etc/pacman.conf dbpath repo
+
+  dbpath=$(pacman-conf --config "$config" DBPath 2>/dev/null) || return 1
+  while IFS= read -r repo; do
+    [[ -f $omarchy_image_root$dbpath/sync/$repo.db ]] || return 0
+  done < <(pacman-conf --config "$config" --repo-list 2>/dev/null)
+  return 1
+}
+
+synced=0
+sync_and_retry() {
+  (( ! synced )) && sync_databases_missing || return 1
+  synced=1
+  echo "Fetching the package databases the image does not ship, then retrying $step"
+  pacman -Sy </dev/null >>"$OMARCHY_INSTALL_LOG_FILE" 2>&1
+}
+
 while (( ${#remaining[@]} )); do
   step=${remaining[0]}
   [[ $step == install/hardware/*.sh && $step != *..* ]] || fail "Deferred step is not a hardware setup step: $step"
@@ -94,10 +116,12 @@ while (( ${#remaining[@]} )); do
     echo "Skipping deferred hardware step $step: this Omarchy no longer ships it"
   else
     echo "Running deferred hardware step $step"
-    run_logged "$script" || {
-      echo "Error: Deferred hardware step failed: $step (see $OMARCHY_INSTALL_LOG_FILE); the next run resumes here" >&2
-      exit 75
-    }
+    until run_logged "$script"; do
+      sync_and_retry || {
+        echo "Error: Deferred hardware step failed: $step (see $OMARCHY_INSTALL_LOG_FILE); the next run resumes here" >&2
+        exit 75
+      }
+    done
   fi
 
   remaining=("${remaining[@]:1}")
