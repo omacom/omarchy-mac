@@ -43,12 +43,15 @@ hook_option() {
 # Parses the preset's options the way parseopts does: bundled short flags,
 # a short option's value attached or next, --long=value or --long value,
 # and a unique prefix of a long option. Anything it cannot place fails.
+# Words after -- are positional, which mkinitcpio ignores.
 preset_option_args() {
   local arg name value i char candidate matches
   while (( $# )); do
     arg=$1
     shift
-    if [[ $arg == --?* ]]; then
+    if [[ $arg == -- ]]; then
+      break
+    elif [[ $arg == --?* ]]; then
       name=${arg#--}
       value=""
       if [[ $name == *=* ]]; then

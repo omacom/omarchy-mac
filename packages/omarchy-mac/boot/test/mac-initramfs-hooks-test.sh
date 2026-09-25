@@ -38,6 +38,9 @@ preset "default_config=$systemd" "default_options=(--skiphooks=systemd,sd-encryp
 printf 'HOOKS="base systemd block sd-encrypt filesystems"\n' >"$tmp/scalar.conf"
 preset "default_config=$tmp/scalar.conf" "default_options=(-vS systemd,sd-encrypt -Audev,encrypt)"
 [[ $(hooks) == "base block filesystems udev encrypt" ]] || fail "a scalar HOOKS and bundled -vS resolve as mkinitcpio does" "$(hooks)"
+preset "default_config=$systemd" "default_options=(-S autodetect -- -S systemd)"
+[[ $(hooks) == "base systemd asahi microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems fsck" ]] ||
+  fail "-- ends the options, as parseopts does" "$(hooks)"
 preset 'default_options="--skip systemd"'
 [[ " $(CONF=$systemd hooks) " != *" systemd "* ]] || fail "a unique long prefix (--skip) is --skiphooks"
 for options in "(-c $busybox)" "(-c$busybox)" "\"-c $busybox\"" "(--config=$busybox)" "(--conf $busybox)"; do
