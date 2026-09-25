@@ -9,7 +9,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-rollback update-preflight update-verify boot-rebuild)
-apple_optional=(update-preflight)
+apple_optional=(update-preflight boot-rebuild)
 
 for platform in apple-silicon qualcomm generic-aarch64 generic; do
   fake_platform "$tmp/$platform" "$platform"
@@ -188,9 +188,9 @@ if unshare --user --map-root-user true 2>/dev/null; then
   chmod +x "$tmp/rootbin/omarchy-hw-platform"
   rm -f "$tmp/ran"
   status=0
-  output=$(OMARCHY_LIFECYCLE_ROOT="$full" unshare --user --map-root-user "$tmp/rootbin/omarchy-lifecycle-dispatch" provision-commit 2>&1) ||
+  output=$(OMARCHY_LIFECYCLE_ROOT="$full" unshare --user --map-root-user "$tmp/rootbin/omarchy-lifecycle-dispatch" reset-prepare 2>&1) ||
     status=$?
-  (( status != 0 )) && [[ ! -e $tmp/ran && $output != *"$tmp"* && $output == *" /usr/lib/omarchy/mac-boot/provision-commit"* ]] ||
+  (( status != 0 )) && [[ ! -e $tmp/ran && $output != *"$tmp"* && $output == *" /usr/lib/omarchy/mac-boot/reset-prepare"* ]] ||
     fail "root ignores a fixture root in its environment" "status $status: $output"
   pass "root ignores fixture roots when resolving an operation"
 
