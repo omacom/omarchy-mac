@@ -67,3 +67,12 @@ source "$ROOT/install/helpers/pacman.sh"
 cp() { fail 'offline unqualified ARM finalization must preserve existing files'; }
 omarchy_pacman_finalize stable
 pass 'offline finalization performs no sync or live configuration replacement'
+
+# The package-resolution fixtures resolve the same repositories, in the same
+# order, as each platform's edge template.
+for fixture in apple:apple-silicon qualcomm:aarch64 generic-aarch64:aarch64; do
+  [[ $(repositories "$ROOT/tools/package-resolution/platforms/${fixture%%:*}/pacman.conf") == \
+    "$(repositories "$ROOT/default/pacman/${fixture#*:}/pacman-edge.conf")" ]] ||
+    fail "the ${fixture%%:*} resolution fixture follows default/pacman/${fixture#*:}"
+done
+pass "package-resolution fixtures follow each platform's repositories"
