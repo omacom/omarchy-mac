@@ -8,6 +8,8 @@ set -e
 
 source "$OMARCHY_PATH/install/helpers/browser-policy.sh"
 
+opt_path="${OMARCHY_OPT_PATH:-/opt}"
+
 setup_chromium_policy_directory() {
   browser_policy_setup_dir "$1"
 }
@@ -15,6 +17,17 @@ setup_chromium_policy_directory() {
 announce_browser_installed() {
   echo ""
   echo "$1 browser installed. Make it the default via Setup > Defaults > Browser."
+}
+
+# The widevine package registers its CDM for Chromium and Firefox only; Brave
+# looks for one in its own install directory.
+link_widevine_cdm() {
+  local cdm="$opt_path/WidevineCdm/chromium"
+  local install_dir="$opt_path/$1"
+
+  if [[ -d $cdm && -d $install_dir && ! -e $install_dir/WidevineCdm ]]; then
+    sudo ln -sfn "$cdm" "$install_dir/WidevineCdm"
+  fi
 }
 
 copy_chromium_flags() {
@@ -63,6 +76,7 @@ brave)
 
   setup_chromium_policy_directory /etc/brave/policies/managed
   copy_chromium_flags ~/.config/brave-flags.conf
+  link_widevine_cdm brave-bin
   omarchy-theme-set-browser
   announce_browser_installed "Brave"
   ;;
@@ -72,6 +86,7 @@ brave-origin)
 
   setup_chromium_policy_directory /etc/brave/policies/managed
   copy_chromium_flags ~/.config/brave-origin-flags.conf
+  link_widevine_cdm brave-origin-bin
   omarchy-theme-set-browser
   announce_browser_installed "Brave Origin"
   ;;
