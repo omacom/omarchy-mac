@@ -53,6 +53,10 @@ A hook installed in a transaction does not check that transaction: pacman loads 
 2. Platform packages come in a later transaction: `install/omarchy-apple.packages`, the kernel and the boot chain. The Apple image builder installs the settings package first, writes the image-target manifest, then installs the Apple set.
 3. `omarchy-apply-hardware` starts with `install/hardware/platform-guard.sh`. It fails when the hook or its script is missing, then runs `omarchy-platform-guard --installed`, which checks every installed package against the platform, so anything an installer placed without the guard is caught. System setup before it installs no packages. `test/shell.d/platform-guard-test.sh` checks this order.
 
+## Services and entry points
+
+The guard keeps platform packages off other machines; their services and commands still re-check the platform when they activate. Every `omarchy-mac` command asks `omarchy-hw-apple-silicon` before acting, and every unit carries an `ExecCondition=`. `packages/omarchy-mac/test/platform-test.sh` holds each command and unit to that.
+
 ## Packaging
 
 The `omarchy-settings` recipe installs the two files. Until the upstream source it builds carries them, the lines are conditional:
