@@ -84,9 +84,9 @@ fi
 mkdir -p "$(dirname "$OMARCHY_INSTALL_LOG_FILE")"
 
 # Images ship no pacman sync databases, so a step that installs a package fails
-# until they are fetched. Only then, once per run, are they fetched and the step
-# retried: an image that carries its steps' packages never gets here, and one
-# that cannot reach the network yet keeps the step queued for the next run.
+# until they are fetched. Only after a step fails, once per run, are they fetched
+# and the step retried: while every step succeeds (an image carrying its steps'
+# packages) nothing is fetched, and offline the step stays queued for the next run.
 sync_databases_missing() {
   local config=$omarchy_image_root/etc/pacman.conf dbpath repo
 

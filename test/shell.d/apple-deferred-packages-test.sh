@@ -48,7 +48,7 @@ step_packages=()
 for step in "${apple_steps[@]}"; do
   export PKG_LOG="$test_tmp/${step//\//_}.packages"
   : >"$PKG_LOG"
-  OMARCHY_PATH="$ROOT" PATH="$stub_bin:/usr/bin:/bin" bash -eE -c 'source "$1"' bash "$ROOT/$step" >/dev/null 2>&1 ||
+  OMARCHY_PATH="$ROOT" PATH="$stub_bin:/usr/bin:/bin" "$BASH" -eE -c 'source "$1"' bash "$ROOT/$step" >/dev/null 2>&1 ||
     fail "$step runs on a stubbed Mac"
   [[ -s $PKG_LOG ]] || fail "$step installs packages on a stubbed Mac; if its gate changed, update this test"
   while IFS= read -r package; do
