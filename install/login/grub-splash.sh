@@ -18,7 +18,7 @@ pending="${OMARCHY_GRUB_SPLASH_PENDING:-/var/lib/omarchy/migrations/grub-splash-
 [[ -f $grub_default ]] || return 0
 
 # HOOKS is whatever mkinitcpio.conf and then the conf.d drop-ins leave behind.
-# A drop-in that already names plymouth (the x86 omarchy_hooks.conf) means the
+# A drop-in that already names plymouth (Omarchy's 00-omarchy-hooks.conf) means the
 # main file is left alone.
 effective_hooks=$(
   # Drop-ins (including omarchy_hooks.conf) expand XKBLAYOUT from vconsole.conf,
