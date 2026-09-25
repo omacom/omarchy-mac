@@ -12,7 +12,9 @@
 # names the platform and the build host's device tree is never read.
 #
 # Fixture roots let unprivileged tests fake the device tree, PID 1 and the image
-# root, but a privileged caller must not let its environment pick the platform.
+# root. Naming any of them makes the whole view a fixture: nothing live is read,
+# not even the device tree when only the image root is named. A privileged
+# caller must not let its environment pick the platform at all.
 # Privileged mode (-p) keeps exported functions and BASH_ENV out of this shell,
 # and root starts over in an empty environment, then reads only the live paths
 # with a fixed PATH.
@@ -54,17 +56,23 @@ if ! machine=$(uname -m) || [[ -z $machine ]]; then
   exit 1
 fi
 
-# A booted system is one systemd runs from PID 1's root. An image build runs in
-# a chroot on its build host, where PID 1's root is another; in a PID namespace
-# of its own, where PID 1 is the build and systemd never started; or without
-# /proc. When PID 1 is visible but its root cannot be compared, as for a normal
-# user, a running systemd decides.
+# A booted system is one systemd runs as PID 1 from this root. An image build
+# is told apart by what it shows: no /run/systemd/system (arch-chroot, pacstrap
+# and the image builder give the root a /run of its own), PID 1's root being
+# another (a chroot on the build host), or PID 1 being something other than
+# systemd (a PID namespace whose PID 1 is the build). What cannot be seen, such
+# as PID 1's root to a normal user or /proc/1 behind hidepid, never makes a
+# build: a booted system always answers from its hardware, so builds run as
+# root with a /run of their own.
 booted() {
+  local comm
+
   [[ -d $image_root/run/systemd/system ]] || return 1
   if [[ -n $proc && -e $proc/1/root ]]; then
-    [[ $proc/1/root -ef $image_root/ ]]
-  else
-    [[ -n $proc && ( -e $proc/1 || -L $proc/1 ) ]]
+    [[ $proc/1/root -ef $image_root/ ]] || return 1
+  fi
+  if [[ -n $proc && -r $proc/1/comm ]]; then
+    read -r comm <"$proc/1/comm" && [[ $comm == "systemd" ]] || return 1
   fi
 }
 

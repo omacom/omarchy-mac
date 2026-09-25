@@ -36,11 +36,13 @@ SH
 
 # $1 world, $2 how PID 1 sees the root: chroot (PID 1 is the build host's),
 # own (PID 1 runs in the root, as in a PID namespace or a booted system),
-# hidden (PID 1 is visible but its root is not, as for a normal user).
-# Without a call the world has no /proc/1, as in a root without /proc.
+# hidden (PID 1 is visible but its root is not, as for a normal user); $3 what
+# PID 1 is, systemd unless named. Without a call the world has no /proc/1, as
+# in a root without /proc or behind hidepid.
 pid1() {
   local dir="$test_tmp/worlds/$1"
   mkdir -p "$dir/proc/1"
+  echo "${3:-systemd}" >"$dir/proc/1/comm"
   case $2 in
     chroot) ln -s ../../host "$dir/proc/1/root" ;;
     own) ln -s ../../image "$dir/proc/1/root" ;;
@@ -95,19 +97,24 @@ if (( EUID != 0 )); then
   root_runner=(unshare --user --map-root-user)
 fi
 if (( EUID == 0 )) || unshare --user --map-root-user true 2>/dev/null; then
-  # A world that would make any environment-led detector answer apple-silicon.
-  world hostile aarch64 apple,j416c apple,t6021 apple,arm-platform
-  pid1 hostile chroot
-  manifest hostile "$apple_manifest"
-  hostile_dir="$test_tmp/worlds/hostile"
-  cat >"$test_tmp/bash-env" <<'SH'
-echo apple-silicon
-exit 0
-SH
-
   live=$("${root_runner[@]}" "$detector") || fail "root detects the live platform"
   apple_live=0
   "${root_runner[@]}" "$ROOT/bin/omarchy-hw-apple-silicon" || apple_live=$?
+
+  # A world that would make any environment-led detector answer with another
+  # platform than the live one.
+  if [[ $live == "apple-silicon" ]]; then
+    hostile=qualcomm
+    hostile_tokens=("lenovo,yoga-slim7x" "qcom,x1e80100")
+  else
+    hostile=apple-silicon
+    hostile_tokens=("apple,j416c" "apple,t6021" "apple,arm-platform")
+  fi
+  world hostile aarch64 "${hostile_tokens[@]}"
+  pid1 hostile chroot
+  manifest hostile $'format=1\nplatform='"$hostile"$'\n'
+  hostile_dir="$test_tmp/worlds/hostile"
+  printf 'echo %s\nexit 0\n' "$hostile" >"$test_tmp/bash-env"
 
   # Exported functions shadow commands and even builtins in a plain bash, and
   # BASH_ENV runs before its first line; --clean-environment is what the
@@ -116,11 +123,11 @@ SH
     OMARCHY_PROC_ROOT="$hostile_dir/proc" OMARCHY_SYS_ROOT="$hostile_dir/sys" OMARCHY_IMAGE_ROOT="$hostile_dir/image"
     PATH="$hostile_dir/bin:$ROOT/bin:$PATH" BASH_ENV="$test_tmp/bash-env"
     'BASH_FUNC_uname%%=() { echo aarch64; }'
-    'BASH_FUNC_mapfile%%=() { tokens=(apple,j416c); }'
+    'BASH_FUNC_mapfile%%=() { tokens=('"${hostile_tokens[0]}"'); }'
     'BASH_FUNC_stat%%=() { echo 0 644; }'
     'BASH_FUNC_dirname%%=() { echo '"$hostile_dir/bin"'; }'
   )
-  printf '#!/bin/bash\necho apple-silicon\n' >"$hostile_dir/bin/omarchy-hw-platform"
+  printf '#!/bin/bash\necho %s\n' "$hostile" >"$hostile_dir/bin/omarchy-hw-platform"
   chmod +x "$hostile_dir/bin/omarchy-hw-platform"
   for flag in "" --clean-environment; do
     args=()
@@ -143,44 +150,61 @@ else
 fi
 
 # Root with a manifest at the live path: a private mount namespace lays a
-# fixture over /var/lib and /run, and a PID namespace makes this process PID 1,
-# as the image builder's isolated chroot does.
+# fixture over /var/lib and /run, and in a PID namespace PID 1 is a copy of bash
+# named for what it plays, the build or systemd, and runs the detector.
 if (( EUID != 0 )) && unshare --user --map-root-user --mount --pid --fork --mount-proc true 2>/dev/null; then
+  mkdir -p "$test_tmp/init"
+  cp "$BASH" "$test_tmp/init/bash"
+  cp "$BASH" "$test_tmp/init/systemd"
+  # $1 fixture, $2 PID 1 (bash or systemd), $3 a file to lay over the manifest.
   live_root() {
-    local fixture=$1 owner_file=${2:-}
-    unshare --user --map-root-user --mount --pid --fork --mount-proc bash -c '
+    local fixture=$1 init=$2 owner_file=${3:-}
+    unshare --user --map-root-user --mount --pid --fork --mount-proc "$test_tmp/init/$init" -c '
       mount --bind "$1/var/lib" /var/lib && mount --bind "$1/run" /run || exit 99
       if [[ -n $3 ]]; then mount --bind "$3" /var/lib/omarchy/image/target || exit 99; fi
-      exec "$2"
-    ' bash "$fixture" "$detector" "$owner_file" 2>"$test_tmp/error"
+      "$2"
+      status=$?
+      exit "$status"
+    ' "$init" "$fixture" "$detector" "$owner_file" 2>"$test_tmp/error"
   }
-  fixture="$test_tmp/live-root"
-  mkdir -p "$fixture/var/lib/omarchy/image" "$fixture/run"
-  printf '%s' "$apple_manifest" >"$fixture/var/lib/omarchy/image/target"
-
   baseline=$(unshare --user --map-root-user --mount --pid --fork --mount-proc "$detector") ||
     fail "root detects the live platform in a PID namespace"
-  if [[ $(uname -m) == aarch64 ]]; then
-    actual=$(live_root "$fixture") || fail "root reads the live manifest in a build" "$(cat "$test_tmp/error")"
-    [[ $actual == apple-silicon ]] || fail "root reads the live manifest in a build" "actual: $actual"
-  else
-    if live_root "$fixture" >/dev/null; then
-      fail "root reads the live manifest in a build, and an Apple target on $(uname -m) contradicts it"
+
+  # A target the hardware would not give, so only the manifest can name it.
+  target=apple-silicon
+  [[ $baseline != "apple-silicon" ]] || target=qualcomm
+  fixture="$test_tmp/live-root"
+  mkdir -p "$fixture/var/lib/omarchy/image" "$fixture/run"
+  printf 'format=1\nplatform=%s\n' "$target" >"$fixture/var/lib/omarchy/image/target"
+
+  expect_live_manifest() {
+    local description=$1 actual
+    if [[ $(uname -m) == aarch64 ]]; then
+      actual=$(live_root "$fixture" bash) || fail "$description" "$(cat "$test_tmp/error")"
+      [[ $actual == "$target" ]] || fail "$description" "expected: $target
+actual:   $actual"
+    else
+      if live_root "$fixture" bash >/dev/null; then
+        fail "$description, and a $target target on $(uname -m) contradicts it"
+      fi
+      grep -Fq "/var/lib/omarchy/image/target names $target hardware but the CPU is" "$test_tmp/error" ||
+        fail "$description" "$(cat "$test_tmp/error")"
     fi
-    grep -Fq "/var/lib/omarchy/image/target names apple-silicon hardware but the CPU is" "$test_tmp/error" ||
-      fail "root reads the live manifest in a build" "$(cat "$test_tmp/error")"
-  fi
-  pass "root answers with the live manifest while systemd does not run the root"
+    pass "$description"
+  }
+  expect_live_manifest "root answers with the live manifest in a build with a /run of its own"
 
   mkdir -p "$fixture/run/systemd/system"
-  actual=$(live_root "$fixture") || fail "a booted root ignores the live manifest" "$(cat "$test_tmp/error")"
+  expect_live_manifest "root answers with the live manifest in a build whose PID 1 is not systemd, with systemd in /run"
+
+  actual=$(live_root "$fixture" systemd) || fail "a booted root ignores the live manifest" "$(cat "$test_tmp/error")"
   [[ $actual == "$baseline" ]] || fail "a booted root ignores the live manifest" "expected: $baseline
 actual:   $actual"
   pass "a booted root answers with its hardware despite a manifest"
   rmdir "$fixture/run/systemd/system"
 
   # A file the namespace's root does not own: the real root's, unmapped here.
-  if live_root "$fixture" /etc/os-release >/dev/null; then
+  if live_root "$fixture" bash /etc/os-release >/dev/null; then
     fail "root refuses a manifest another user owns"
   fi
   grep -Fq "is not a root-owned regular file" "$test_tmp/error" || fail "root refuses a manifest another user owns" "$(cat "$test_tmp/error")"
@@ -212,11 +236,15 @@ expect arm-host apple-silicon "an Apple image built in a chroot on a generic aar
 
 # The image builder's isolated chroot: a PID namespace whose PID 1 is the build.
 world builder aarch64 raspberrypi,5-model-b brcm,bcm2712
-pid1 builder own
+pid1 builder own bash
 manifest builder "$apple_manifest"
 expect builder apple-silicon "an Apple image built in its own PID namespace is Apple Silicon"
 
-# A root without /proc at all.
+# The same with the host's /run bound in: PID 1 is still not systemd.
+systemd_runs builder
+expect builder apple-silicon "a PID namespace build ignores the host's systemd in a bound /run"
+
+# A root without /proc, with a /run of its own.
 world no-proc aarch64
 manifest no-proc "$apple_manifest"
 expect no-proc apple-silicon "an Apple image built without /proc is Apple Silicon"
@@ -269,12 +297,17 @@ systemd_runs booted-vm
 manifest booted-vm "$apple_manifest"
 expect booted-vm generic-aarch64 "a booted VM with an Apple manifest is generic aarch64"
 
-# A normal user sees PID 1 but not its root; a running systemd decides.
+# What a normal user cannot see never makes a build: PID 1's root, or PID 1
+# itself behind hidepid.
 world user-view aarch64 apple,j416c apple,t6021 apple,arm-platform
 pid1 user-view hidden
 systemd_runs user-view
 manifest user-view $'format=1\nplatform=generic-aarch64\n'
 expect user-view apple-silicon "a booted system whose PID 1 root cannot be compared uses its hardware"
+world hidepid aarch64 apple,j416c apple,t6021 apple,arm-platform
+systemd_runs hidepid
+manifest hidepid "not a manifest"
+expect hidepid apple-silicon "a booted system whose PID 1 is hidden uses its hardware"
 
 # --- No manifest --------------------------------------------------------------
 
