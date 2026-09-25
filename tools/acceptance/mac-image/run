@@ -124,6 +124,7 @@ for tool in qemu-system-aarch64 fdtput socat sgdisk mkfs.vfat losetup btrfs cryp
 done
 sudo -n true 2>/dev/null || fail "passwordless sudo is required (losetup, cryptsetup, mounts, chroot)"
 [[ -z $image_dir || -f $signing_key ]] || fail "signing key $signing_key is missing"
+[[ -z $payload ]] || payload=$(realpath -- "$payload")
 
 # A failed run's directory is kept and a passing one's deleted, so evidence
 # must never live beneath the state directory.
@@ -206,12 +207,11 @@ verify_image_dir() {
   lane=$(field lane "$image_file")
   [[ $lane == edge || $lane == rc || $lane == stable ]] || fail "IMAGE names no lane"
   if [[ -f $image_dir/IMAGE.sig ]]; then
-    local home
-    home=$(mktemp -d)
+    local home=$work/gnupg-image
+    mkdir -p -m 700 "$home"
     gpg --batch --homedir "$home" --import "$signing_key" 2>/dev/null
     gpg --batch --homedir "$home" --verify "$image_dir/IMAGE.sig" "$image_file" 2>/dev/null ||
-      { rm -rf "$home"; fail "IMAGE.sig does not verify with $signing_key"; }
-    rm -rf "$home"
+      fail "IMAGE.sig does not verify with $signing_key"
     image_signature="signed by the repository key"
   fi
   line=$(field payload "$image_dir/PROVENANCE")
@@ -315,10 +315,16 @@ close_last() {
   unset 'mappers[-1]'
 }
 
-# Prints the slot a passphrase file opens, or fails the command.
+# Prints the slot a passphrase file opens, nothing when no slot takes it (exit
+# 2), and fails on any other error, which must not read as a refusal.
 luks_slot() {
-  sudo -n cryptsetup open --test-passphrase --verbose --key-file "$2" "$1" 2>&1 |
-    sed -n 's/^Key slot \([0-9]*\) unlocked.*/\1/p'
+  local out status=0
+  out=$(sudo -n cryptsetup open --test-passphrase --verbose --key-file "$2" "$1" 2>&1) || status=$?
+  case $status in
+    0) sed -n 's/^Key slot \([0-9]*\) unlocked.*/\1/p' <<<"$out" ;;
+    2) ;;
+    *) fail "cryptsetup could not test a passphrase on $1 (exit $status): $out" ;;
+  esac
 }
 
 luks_slot_count() {
@@ -356,35 +362,32 @@ build_generic_kernel() {
   curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 --retry 3 -o "$work/dl/$pkg.sig" "$db_url/$pkg.sig" ||
     fail "could not fetch $pkg.sig"
   local home
-  home=$(mktemp -d)
+  home=$work/gnupg-alarm
+  mkdir -p -m 700 "$home"
   # The snapshot's packages carry Arch Linux ARM's builder signature; the keyring
   # package inside the image root holds the same keys.
-  local rootdev lower=$work/lower merged=$work/merged
+  local rootdev lower=$work/lower
   attach -r "$work/payload/root.img"; rootdev=$ATTACHED
-  mkdir -p "$lower" "$merged" "$work/upper" "$work/overlay-work"
+  mkdir -p "$lower" "$work/merged" "$work/upper" "$work/overlay-work"
   mount_tracked -o ro,subvol=@ "$rootdev" "$lower"
-  mount_tracked -t overlay overlay -o "lowerdir=$lower,upperdir=$work/upper,workdir=$work/overlay-work" "$merged"
   gpg --batch --homedir "$home" --import "$lower"/usr/share/pacman/keyrings/archlinuxarm.gpg 2>/dev/null ||
     fail "the image root has no archlinuxarm keyring"
   gpg --batch --homedir "$home" --trust-model always --verify "$work/dl/$pkg.sig" "$work/dl/$pkg" 2>/dev/null ||
     fail "$pkg is not signed by an Arch Linux ARM key"
-  rm -rf "$home"
   local path
   for path in update:/usr/lib/omarchy/mac-boot/update-verify \
       snapshot-restore:/etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check \
       factory-reset:/usr/lib/omarchy/mac-boot/reset-prepare; do
     ! sudo -n test -e "$lower${path#*:}" || image_ships[${path%%:*}]=${path#*:}
   done
-  for d in dev proc sys; do
-    sudo -n mount --rbind "/$d" "$merged/$d" && sudo -n mount --make-rslave "$merged/$d" || fail "bind /$d"
-    mounts+=("$merged/$d")
-  done
-  mount_tracked -t tmpfs tmpfs "$merged/tmp"
-  sudo -n cp "$work/dl/$pkg" "$merged/tmp/kernel.pkg.tar.xz"
   local image_kernel
   image_kernel=$(ls "$lower/usr/lib/modules")
   [[ $(wc -l <<<"$image_kernel") == 1 ]] || fail "the image root holds more than one kernel: $image_kernel"
-  sudo -n chroot "$merged" bash -euo pipefail -c '
+  # The overlay and the chroot's /dev, /proc and /sys live in a private mount
+  # namespace that ends with the build. Bound into the host's, they propagate
+  # into every service's namespace, where the host's unmount does not reach
+  # them, and the payload's loop device stays busy until a reboot.
+  local chroot_script='
     bsdtar -xf /tmp/kernel.pkg.tar.xz -C / --exclude=.PKGINFO --exclude=.MTREE --exclude=.BUILDINFO --exclude=.INSTALL
     ver=$(ls /usr/lib/modules | grep -vx "$1" | head -n 1)
     [[ -n $ver ]] || { echo "no generic kernel version" >&2; exit 1; }
@@ -395,8 +398,16 @@ build_generic_kernel() {
     grep -q "Running build hook: \[asahi\]" /tmp/mkinitcpio.log
     cp /boot/Image /tmp/Image-generic
     printf "%s\n" "$ver" >/tmp/generic.version
-  ' bash "$image_kernel" || fail "the generic initramfs did not build inside the image root"
-  sudo -n cp "$merged/tmp/Image-generic" "$merged/tmp/initramfs-generic.img" "$merged/tmp/generic.version" "$merged/tmp/mkinitcpio.log" "$work/generic/"
+  '
+  sudo -n unshare --mount --propagation private bash -euo pipefail -c '
+    work=$1 lower=$2 merged=$1/merged
+    mount -t overlay overlay -o "lowerdir=$lower,upperdir=$work/upper,workdir=$work/overlay-work" "$merged"
+    for d in dev proc sys; do mount --rbind "/$d" "$merged/$d"; done
+    mount -t tmpfs tmpfs "$merged/tmp"
+    cp "$work/dl/$3" "$merged/tmp/kernel.pkg.tar.xz"
+    chroot "$merged" bash -euo pipefail -c "$5" bash "$4"
+    cp "$merged/tmp/Image-generic" "$merged/tmp/initramfs-generic.img" "$merged/tmp/generic.version" "$merged/tmp/mkinitcpio.log" "$work/generic/"
+  ' bash "$work" "$lower" "$pkg" "$image_kernel" "$chroot_script" || fail "the generic initramfs did not build inside the image root"
   sudo -n chown "$(id -u):$(id -g)" "$work/generic"/*
   local hook_files
   hook_files=$(lsinitcpio "$work/generic/initramfs-generic.img" | grep -c 'omarchy-mac-encrypt') || true
@@ -590,7 +601,8 @@ owner_setup() {
     recovery_key=$serial_match
     secrets+=("$recovery_key")
     serial_expect 'to continue' "$what: recovery key acknowledgement" 60
-    serial_expect 'I wrote it down' "$what: acknowledgement prompt" 60
+    # gum draws the placeholder's first letter in the cursor's style.
+    serial_expect 'wrote it down' "$what: acknowledgement prompt" 60
     serial_type 'I wrote it down'
   fi
   serial_expect 'login: |Setup hit an error' "$what: owner setup finished and the console login" "$setup_timeout"
@@ -601,11 +613,16 @@ owner_setup() {
 # so readiness is an echo whose output differs from its typed line.
 console_login() {
   local what=$1 password=$2 tries=0
-  serial_expect 'login: ' "$what: console login prompt" 120
+  serial_expect 'login: ' "$what: console login prompt"
   serial_type "$owner_user"
   serial_expect 'Password: ' "$what: console password prompt" 60
   serial_type "$password"
-  until serial_find '__ready_28__|Login incorrect' 15; do
+  local status
+  while true; do
+    status=0
+    serial_find '__ready_28__|Login incorrect' 15 || status=$?
+    ((status != 0)) || break
+    ((status != 2)) || fail "$what: the guest exited (see ${serial_log##*/})"
     ((++tries < 8)) || fail "$what: no shell after logging in (see ${serial_log##*/})"
     serial_type 'echo __ready_$((20+8))__'
   done
@@ -694,8 +711,8 @@ owner_state() {
 # The boot splash: the theme configured, and the theme in the UKI Limine boots.
 check_plymouth() {
   local root=$work/mnt theme uki
-  theme=$(sudo -n awk -F= '/^\[Daemon\]/ { d = 1; next } /^\[/ { d = 0 } d && $1 == "Theme" { t = $2 } END { print t }' "$root/etc/plymouth/plymouthd.conf" 2>/dev/null)
-  [[ -n $theme ]] || theme=$(sudo -n awk -F= '$1 == "Theme" { t = $2 } END { print t }' "$root/usr/share/plymouth/plymouthd.defaults" 2>/dev/null)
+  theme=$(sudo -n awk -F= '/^\[Daemon\]/ { d = 1; next } /^\[/ { d = 0 } d && $1 == "Theme" { t = $2 } END { print t }' "$root/etc/plymouth/plymouthd.conf" 2>/dev/null) || true
+  [[ -n $theme ]] || theme=$(sudo -n awk -F= '$1 == "Theme" { t = $2 } END { print t }' "$root/usr/share/plymouth/plymouthd.defaults" 2>/dev/null) || true
   if [[ $theme != omarchy ]]; then
     not_ok "$1: the Plymouth theme is ${theme:-unset}, not omarchy"
     return 0
@@ -752,7 +769,9 @@ scenario_first_boot() {
   mount_tracked -o ro "${dev}p1" "$work/esp"
   sudo -n test ! -e "$work/esp/omarchy/install.conf" || fail "first-boot: install.conf is still on the ESP"
   sudo -n grep -Fq 'boot():/EFI/Linux/omarchy_' "$work/esp/limine.conf" || fail "first-boot: limine.conf boots no Omarchy UKI"
-  ok "first-boot: install.conf consumed, root left plain, keyring made, Limine menu boots the UKI, owner setup finished and the console login is up"
+  sudo -n grep -Fq "machine-id=$(sudo -n cat "$work/mnt/etc/machine-id")" "$work/esp/limine.conf" ||
+    fail "first-boot: the deferred Limine step did not rebuild the menu for this Mac"
+  ok "first-boot: install.conf consumed, root left plain, keyring made, the deferred Limine step rebuilt the menu and UKI for this Mac, owner setup finished and the console login is up"
   check_plymouth first-boot
   check_snapshots first-boot
   skip "first-boot: default audio sink: N/A in a VM (no Apple audio device, so no card profile to fall back from); hardware validation checks it"
@@ -839,10 +858,10 @@ scenario_second_boot() {
   boot_guest "$disk" "$log" "$DISK_CMDLINE"
   unlock_prompt second-boot
   serial_type not-the-password
-  serial_expect 'Passphrase incorrect|Failed to activate' "second-boot: a wrong password refused" 120
-  unlock_prompt second-boot
+  serial_expect 'passphrase for disk' "second-boot: the prompt again after a wrong password" 120
   serial_type "$owner_password"
   serial_expect 'login: ' "second-boot: login prompt"
+  grep -aq 'Failed to activate with specified passphrase' "$log" || fail "second-boot: the wrong password was not reported as refused"
   no_emergency second-boot
   stop_guest
   ok "second-boot: Limine's command line asks for the disk password, refuses a wrong one, unlocks with the owner's and reaches the login prompt"
@@ -874,6 +893,7 @@ scenario_password_change() {
   new_key=$(passphrase_file new "$new_password")
   [[ -n $(luks_slot "${dev}p3" "$new_key") ]] || fail "password-change: the new password does not open the disk"
   [[ -z $(luks_slot "${dev}p3" "$old_key") ]] || fail "password-change: the old password still opens the disk"
+  [[ -n $(luks_slot "${dev}p3" "$(passphrase_file recovery "$recovery_key")") ]] || fail "password-change: the recovery key no longer opens the disk"
   [[ $(luks_slot_count "${dev}p3") == 2 ]] || fail "password-change: $(luks_slot_count "${dev}p3") key slots after the change, not 2"
   detach_last
   ok "password-change: the new password opens the disk, the old one no longer does, the recovery slot stays"
