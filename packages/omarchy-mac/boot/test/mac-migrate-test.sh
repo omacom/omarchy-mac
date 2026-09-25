@@ -22,7 +22,7 @@ fail() {
 }
 
 tmp=$(mktemp -d)
-trap 'gpgconf --homedir "$tmp/signer" --kill gpg-agent 2>/dev/null; gpgconf --homedir "$tmp/other" --kill gpg-agent 2>/dev/null; rm -rf "$tmp"' EXIT
+trap 'for home in signer other subkey-home; do gpgconf --homedir "$tmp/$home" --kill gpg-agent 2>/dev/null; done; rm -rf "$tmp"' EXIT
 stubs=$ROOT/test/fixtures/migrate/bin
 steps=(preflight backup keyring prefetch repositories transaction boot-chain loader reboot retire)
 official=40DFB630FF42BCFFB047046CF0134EE680CAC571
@@ -36,6 +36,8 @@ make_key() {
 }
 signer=$(make_key signer)
 other=$(make_key other)
+gpg --batch --homedir "$tmp/signer" --armor --export "$signer" >"$tmp/signer.asc" 2>/dev/null
+gpg --batch --homedir "$tmp/other" --armor --export "$other" >"$tmp/other.asc" 2>/dev/null
 
 # The candidate set as tools/release/candidate-set signs it.
 make_set() {
@@ -474,10 +476,45 @@ refused "a set signed by another key" "does not verify: its key is not $other"
 new_fixture refusals
 resign_set "$F/set" "$tmp/other"
 refused "a set re-signed by an untrusted key" "does not verify: its key is not $signer"
+# A key file that also carries the pinned key passes its fingerprint check;
+# each signature must still be the pinned key's.
+new_fixture refusals
+resign_set "$F/set" "$tmp/other"
+cat "$tmp/signer.asc" >>"$F/set/candidate-signing-key.asc"
+refused "a receipt signed by another key in the key file" "does not verify: signing.json is not signed by $signer"
+new_fixture refusals
+cat "$tmp/other.asc" >>"$F/set/candidate-signing-key.asc"
+package=$(jq -r '.packages[1].filename' "$F/set/manifest.json")
+rm "$F/set/$package.sig"
+gpg --batch --homedir "$tmp/other" --detach-sign --no-armor -o "$F/set/$package.sig" "$F/set/$package" 2>/dev/null
+refused "a package signed by another key in the key file" "does not verify: $package is not signed by $signer"
+new_fixture refusals
+mkdir -p "$F/usr-bin"
+for command in /usr/bin/*; do
+  [[ ${command##*/} == "gpgv" ]] || ln -s "$command" "$F/usr-bin/"
+done
+digest=$(fixture_digest)
+status=0
+output=$(OMARCHY_MAC_MIGRATE_ROOT=$R MIGRATE_FIXTURE=$F PATH="$stubs:$F/usr-bin" "$R/usr/bin/omarchy-mac-migrate" run 2>&1) || status=$?
+(( status == 2 )) && grep -q "gpgv is not installed" <<<"$output" && [[ ! -e $(state_dir) && $(fixture_digest) == "$digest" ]] ||
+  fail "without gpgv a candidate set is refused, and says why" "status $status: $output"
 new_fixture refusals
 jq '.packages |= map(select(.name != "uboot-asahi"))' "$F/set/manifest.json" >"$F/manifest" && mv "$F/manifest" "$F/set/manifest.json"
 refused "a changed manifest" "signing.json does not bind this manifest"
 pass "preflight refuses unsupported cohorts, legacy unlock, untrusted repositories, busy or incoherent systems, low power or space and unverifiable sets, changing nothing"
+
+# A key whose signing subkey made the signatures is named by its primary fingerprint.
+mkdir -m 700 "$tmp/subkey-home"
+gpg --batch --homedir "$tmp/subkey-home" --pinentry-mode loopback --passphrase '' --quick-gen-key "Migration test subkey" ed25519 cert 1d 2>/dev/null
+subkey_primary=$(gpg --batch --homedir "$tmp/subkey-home" --with-colons --list-secret-keys 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+gpg --batch --homedir "$tmp/subkey-home" --pinentry-mode loopback --passphrase '' --quick-add-key "$subkey_primary" ed25519 sign 1d 2>/dev/null
+new_fixture subkey
+rm -rf "$F/set"
+make_set "$F/set" "$tmp/subkey-home"
+sed -i "s/^fingerprint=.*/fingerprint=$subkey_primary/" "$R/etc/omarchy-mac/migration-target"
+output=$(migrate run 2>&1) || fail "a set signed by the pinned key's signing subkey verifies" "$output"
+grep -q "Reboot to finish" <<<"$output" || fail "the subkey-signed set migrates to its reboot" "$output"
+pass "signatures count only when the pinned key (or its signing subkey) made them, whatever else the key file holds"
 
 new_fixture elsewhere
 echo generic-aarch64 >"$F/platform"

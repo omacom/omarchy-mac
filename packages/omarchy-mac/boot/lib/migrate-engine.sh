@@ -564,6 +564,9 @@ preflight() {
     [[ -z $problem ]] || reasons+=("$problem")
   done < <(pacman_trust_problems "$pacman_conf")
 
+  if [[ $target_type == "candidate-set" ]] && ! command -v gpgv >/dev/null; then
+    reasons+=("gpgv is not installed (gnupg), so the candidate set's signatures cannot be checked")
+  fi
   if low_battery; then
     reasons+=("the battery is below 30% and no charger is connected")
   fi
