@@ -5,7 +5,7 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 leaf="$ROOT/install/hardware/fix-fkeys.sh"
-migration="$ROOT/migrations/1789132067.sh"
+migration="$ROOT/migrations/1790327324.sh"
 media="$ROOT/default/hypr/bindings/media.lua"
 utilities="$ROOT/default/hypr/bindings/utilities.lua"
 
@@ -15,7 +15,8 @@ trap 'rm -rf "$test_tmp"' EXIT
 stub_bin="$test_tmp/bin"
 calls="$test_tmp/calls.log"
 conf="$test_tmp/hid_apple.conf"
-mkdir -p "$stub_bin"
+state="$test_tmp/state"
+mkdir -p "$stub_bin" "$state"
 
 cat >"$stub_bin/omarchy-hw-apple-silicon" <<'SH'
 #!/bin/bash
@@ -30,12 +31,9 @@ printf '\n' >>"$TEST_LOG"
 "$@"
 SH
 
-cat >"$stub_bin/mkinitcpio" <<'SH'
+cat >"$stub_bin/omarchy-mac-setup-keyboard" <<'SH'
 #!/bin/bash
-printf 'mkinitcpio' >>"$TEST_LOG"
-printf '\t%s' "$@" >>"$TEST_LOG"
-printf '\n' >>"$TEST_LOG"
-exit "${MKINITCPIO_STATUS:-0}"
+exit "${SETUP_KEYBOARD_STATUS:-0}"
 SH
 
 cat >"$stub_bin/omarchy-brightness-keyboard" <<'SH'
@@ -55,12 +53,8 @@ run_leaf() {
     TEST_LOG="$calls" bash -c 'source "$1"' _ "$leaf"
 }
 
-pending="$test_tmp/var/lib/omarchy/migrations/1789132067-initramfs-pending"
-
 run_migration() {
-  APPLE_SILICON="${1:-0}" OMARCHY_HID_APPLE_CONF="$conf" \
-    OMARCHY_HID_APPLE_FNMODE="$test_tmp/missing-fnmode" \
-    OMARCHY_HID_APPLE_PENDING="$pending" \
+  APPLE_SILICON="${1:-0}" OMARCHY_MIGRATION_STATE="$state" \
     PATH="$stub_bin:$PATH" TEST_LOG="$calls" \
     bash -euo pipefail "$migration"
 }
@@ -72,57 +66,42 @@ run_leaf 0
 pass "x86 install still writes fnmode=2"
 
 rm -f "$conf"
+: >"$calls"
 run_leaf 1
-[[ $(<"$conf") == "options hid_apple fnmode=1" ]] ||
-  fail "Apple Silicon install writes fnmode=1" "$(cat "$conf")"
-pass "Apple Silicon install writes fnmode=1"
+[[ ! -e $conf && ! -s $calls ]] || fail "Apple Silicon install leaves the keyboard mode to omarchy-mac"
+pass "Apple Silicon install leaves the keyboard mode to omarchy-mac"
 
 printf 'options hid_apple fnmode=0\n' >"$conf"
-run_leaf 1
+run_leaf 0
 [[ $(<"$conf") == "options hid_apple fnmode=0" ]] ||
   fail "install leaves an existing hid_apple.conf alone"
 pass "install leaves an existing hid_apple.conf alone"
 
-rm -f "$conf"
 : >"$calls"
-run_migration 0
-[[ ! -e $conf ]] || fail "the fnmode migration does not write on x86"
-! grep -q mkinitcpio "$calls" || fail "the fnmode migration does not rebuild initramfs on x86"
-pass "the fnmode migration is a no-op off Apple Silicon"
+run_migration 0 >/dev/null
+[[ ! -s $calls ]] || fail "the keyboard migration is a no-op off Apple Silicon"
+pass "the keyboard migration is a no-op off Apple Silicon"
 
-printf 'options hid_apple fnmode=2\n' >"$conf"
-: >"$calls"
-run_migration 1
-[[ $(<"$conf") == "options hid_apple fnmode=1" ]] ||
-  fail "the migration rewrites the stock fnmode=2 default on Apple Silicon" "$(cat "$conf")"
-grep -q $'mkinitcpio\t-P' "$calls" || fail "the migration rebuilds the initramfs after rewriting fnmode"
-[[ ! -e $pending ]] || fail "a successful rebuild clears the pending marker"
-pass "the migration rewrites fnmode=2 on Apple Silicon"
+for spec in ': 2' '1789132067 1' '1790305681 3'; do
+  read -r fork generated <<<"$spec"
+  rm -f "$state"/*
+  [[ $fork == : ]] || touch "$state/$fork.sh"
+  : >"$calls"
+  run_migration 1 >/dev/null
+  [[ $(<"$calls") == $'sudo\tomarchy-mac-setup-keyboard\t'"$generated" ]] ||
+    fail "the keyboard migration names fnmode=$generated as generated after $fork" "$(cat "$calls")"
+done
+pass "the keyboard migration names the line each fork generated"
 
-# A failed rebuild must leave the migration pending, and the rerun must rebuild
-# even though the config already reads fnmode=1.
-printf 'options hid_apple fnmode=2\n' >"$conf"
-: >"$calls"
-if MKINITCPIO_STATUS=1 run_migration 1 2>/dev/null; then
-  fail "the migration reports a failed initramfs rebuild"
+if SETUP_KEYBOARD_STATUS=1 run_migration 1 >/dev/null; then
+  fail "a failed keyboard setup fails the migration so it retries"
 fi
-[[ $(<"$conf") == "options hid_apple fnmode=1" ]] ||
-  fail "a failed rebuild keeps the rewritten config" "$(cat "$conf")"
-[[ -f $pending ]] || fail "a failed rebuild leaves the pending marker"
-: >"$calls"
-run_migration 1
-grep -q $'mkinitcpio\t-P' "$calls" || fail "the rerun rebuilds the initramfs it still owes"
-[[ ! -e $pending ]] || fail "the rerun clears the pending marker after rebuilding"
-[[ $(<"$conf") == "options hid_apple fnmode=1" ]] || fail "the rerun leaves the config as fnmode=1"
-pass "a failed initramfs rebuild stays pending and retries"
+pass "a failed keyboard setup fails the migration so it retries"
 
-printf 'options hid_apple fnmode=0\n' >"$conf"
-: >"$calls"
-run_migration 1
-[[ $(<"$conf") == "options hid_apple fnmode=0" ]] ||
-  fail "the migration leaves a user-chosen fnmode alone"
-! grep -q mkinitcpio "$calls" || fail "the migration does not rebuild initramfs when leaving fnmode alone"
-pass "the migration leaves a user-chosen fnmode alone"
+matches=$(grep -l 'fnmode' "$ROOT"/migrations/*.sh)
+[[ $matches == "$migration" ]] ||
+  fail "one migration changes the keyboard mode, so an update rebuilds the boot image once" "$matches"
+pass "one migration changes the keyboard mode, so an update rebuilds the boot image once"
 
 grep -F 'omarchy-brightness-shift up' "$media" >/dev/null ||
   fail "SHIFT+brightness up goes through the shift wrapper"
