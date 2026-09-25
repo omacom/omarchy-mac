@@ -21,7 +21,14 @@ SH
 case "$*" in
   -Qq) cat "$MAC_STATE/installed" ;;
   "-Qlq "*) [[ -f $MAC_STATE/files-$2 ]] && cat "$MAC_STATE/files-$2" ;;
-  "-Qkk "*) printf '%s: 2 total files, 0 altered files\n' "$2" ;;
+  "-Qkk "*)
+    if [[ -e $MAC_STATE/drift-$2 ]]; then
+      printf 'warning: %s: /usr/lib/modules/x/kernel/drift.ko.zst (Size mismatch)\n' "$2" >&2
+      printf '%s: 2 total files, 1 altered files\n' "$2"
+      exit 1
+    fi
+    printf '%s: 2 total files, 0 altered files\n' "$2"
+    ;;
   *) exit 1 ;;
 esac
 SH
@@ -54,6 +61,15 @@ SH
   cat >"$mac_stubs/lsblk" <<'SH'
 #!/bin/bash
 exit 0
+SH
+  cat >"$mac_stubs/blkid" <<'SH'
+#!/bin/bash
+exit 2
+SH
+  cat >"$mac_stubs/cryptsetup" <<'SH'
+#!/bin/bash
+[[ $1 == luksDump && -f $MAC_STATE/luks-dump ]] || exit 1
+cat "$MAC_STATE/luks-dump"
 SH
   # A fixture UKI is the kernel followed by a marker: .linux is the whole file.
   cat >"$mac_stubs/objcopy" <<'SH'
@@ -96,13 +112,14 @@ limine_mac_boot_bin() {
 # The Limine menu entry for the UKI, with the hash Limine verifies.
 limine_mac_menu() {
   local uki=$mac_esp/EFI/Linux/omarchy_linux-aurora.efi
-  printf '/+Omarchy\n  //linux-aurora\n    protocol: efi\n    path: boot():/EFI/Linux/omarchy_linux-aurora.efi#%s\n    cmdline: root=UUID=r rw rootflags=subvol=@ quiet\n' \
-    "$(b2sum "$uki" | cut -d' ' -f1)" >"$mac_esp/limine.conf"
+  printf '/+Omarchy\n  //linux-aurora\n    protocol: efi\n    path: boot():/EFI/Linux/omarchy_linux-aurora.efi#%s\n    cmdline: %s\n' \
+    "$(b2sum "$uki" | cut -d' ' -f1)" "$mac_cmdline" >"$mac_esp/limine.conf"
 }
 
 limine_mac() {
   local modules=$mac_root/usr/lib/modules/$mac_kver dtb
   mac_dtbs=(/usr/lib/modules/$mac_kver/dtbs/t6000-j314s.dtb /usr/lib/modules/$mac_kver/dtbs/t6020-j414s.dtb /usr/lib/modules/$mac_kver/dtbs/t8103-j274.dtb)
+  mac_cmdline="root=UUID=r rw rootflags=subvol=@ quiet"
   rm -rf "$mac_root" "$mac_state"
   mkdir -p "$modules/dtbs" "$mac_root/usr/lib/asahi-boot" "$mac_root/usr/bin" "$mac_root/usr/share/limine" \
     "$mac_root/etc/default" "$mac_root/var/lib/omarchy" "$mac_root/run" \
@@ -165,6 +182,27 @@ SH
     printf '%s\n' "${mac_dtbs[@]}"
   } >"$mac_state/files-linux-aurora"
   printf '/usr/lib/asahi-boot/\n/usr/lib/asahi-boot/m1n1.bin\n' >"$mac_state/files-m1n1-aurora"
+}
+
+# Makes the fixture an encrypted Mac whose owner setup finished: crypttab, the
+# Limine entry's rd.luks.name=, a systemd initramfs with the cryptsetup
+# generator, and the owner and recovery keyslots. $1 adds keyslots beyond those.
+limine_mac_luks() {
+  local uuid=0422663f-9969-4953-900f-b342703b7e84 slot
+  printf '/dev/mapper/root / btrfs rw,subvol=/@ 0 0\n' >"$mac_root/etc/fstab"
+  printf 'root UUID=%s none luks\n' "$uuid" >"$mac_root/etc/crypttab"
+  printf 'usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\nusr/bin/init\nusr/bin/systemd-cryptsetup\nusr/lib/systemd/system-generators/systemd-cryptsetup-generator\n' \
+    "$mac_kver" >"$mac_state/initramfs"
+  mkdir -p "$mac_root/boot/omarchy"
+  printf 'format=1\nphase=finished\npartition=p\nluks_uuid=%s\nowner_slot=0\nrecovery_slot=1\n' "$uuid" >"$mac_root/boot/omarchy/encrypt.state"
+  {
+    printf 'LUKS header information\nKeyslots:\n'
+    for (( slot = 0; slot < 2 + ${1:-0}; slot++ )); do
+      printf '  %s: luks2\n' "$slot"
+    done
+  } >"$mac_state/luks-dump"
+  mac_cmdline="root=UUID=r rw rootflags=subvol=@ rd.luks.name=$uuid=root quiet"
+  limine_mac_menu
 }
 
 # The environment the check reads the fixture through, one export per line:

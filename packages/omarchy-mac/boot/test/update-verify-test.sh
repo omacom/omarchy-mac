@@ -101,3 +101,60 @@ printf 'usr/lib/modules/6.16.0-aurora9-ARCH/kernel/x.ko\n' >"$mac_state/initramf
 verify 6.16.0-aurora9-ARCH
 expect_refused "an initramfs built for the previous kernel" "does not hold the $mac_kver modules"
 pass "update-verify refuses a wrong device tree, a stale m1n1, a missing or stale UKI, another Limine or a stale initramfs, and says not to reboot"
+
+# update-verify checks only what the next boot reads. What the full boot check
+# also holds against a Mac, the next boot does not read, so it never fails an
+# update: the full check still refuses it.
+full_check() {
+  set +e
+  (
+    eval "$(limine_mac_env "$ROOT/bin")"
+    bash "$ROOT/bin/omarchy-apple-silicon-boot-check"
+  ) >"$tmp/full-out" 2>"$tmp/full-err"
+  full_status=$?
+  set -e
+}
+
+beyond_boot_chain() {
+  local description=$1 reason=$2
+  full_check
+  (( full_status == 1 )) && grep -Fq "$reason" "$tmp/full-err" ||
+    fail "the full boot check refuses $description" "status $full_status: $(cat "$tmp/full-err")"
+  verify
+  expect_verified "$description"
+}
+
+limine_mac
+limine_mac_luks
+full_check
+(( full_status == 0 )) || fail "the full boot check passes an encrypted Limine Mac" "$(cat "$tmp/full-err")"
+verify
+expect_verified "an encrypted Limine Mac"
+limine_mac_luks 1
+beyond_boot_chain "an encrypted Mac with a third LUKS keyslot" "throwaway LUKS keyslot still present"
+limine_mac
+printf 'M1N1_UPDATE_DISABLED=1\n' >>"$mac_root/etc/default/update-m1n1"
+printf 'built by its owner\n' >>"$mac_esp/m1n1/boot.bin"
+beyond_boot_chain "an m1n1 image its owner took over" "M1N1_UPDATE_DISABLED is set"
+grep -Fq "m1n1/boot.bin is its owner's and is not checked" "$tmp/out" || fail "update-verify says it left m1n1 to its owner" "$(cat "$tmp/out")"
+limine_mac
+printf 'linux-asahi\n' >>"$mac_state/installed"
+beyond_boot_chain "a Mac with a second kernel installed" "cannot tell which kernel boots"
+grep -Fq "running linux-aurora $mac_kver" "$tmp/out" || fail "update-verify checks the kernel whose m1n1 is installed" "$(cat "$tmp/out")"
+limine_mac
+: >"$mac_state/drift-linux-aurora"
+beyond_boot_chain "a kernel package file that drifted from its mtree" "linux-aurora files do not match the package mtree"
+pass "update-verify passes a healthy Mac with an extra keyslot, an owner-built m1n1, a second kernel or drifted package files"
+
+limine_mac
+limine_mac_luks
+printf 'usr/lib/modules/%s/kernel/x.ko\nusr/bin/init\n' "$mac_kver" >"$mac_state/initramfs"
+verify
+expect_refused "an encrypted Mac whose initramfs cannot unlock the root" "does not contain sd-encrypt"
+limine_mac
+limine_mac_luks
+mac_cmdline="root=UUID=r rw rootflags=subvol=@ quiet"
+limine_mac_menu
+verify
+expect_refused "an encrypted Mac whose Limine entry does not unlock the root" "does not set rd.luks.name= for the encrypted root"
+pass "update-verify still refuses an encrypted Mac whose next boot cannot unlock its root"
