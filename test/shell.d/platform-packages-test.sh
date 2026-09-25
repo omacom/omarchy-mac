@@ -15,7 +15,7 @@ names() {
 }
 
 # Package names that exist only for Apple Silicon.
-apple_only='^(omarchy-mac(-.*)?|linux-aurora(-.*)?|linux-asahi(-.*)?|m1n1(-.*)?|uboot-asahi|asahi-.*|avd-fw|libva-v4l2_request-avd|speakersafetyd|widevine)$'
+apple_only='^(omarchy-mac(-.*)?|linux-aurora(-.*)?|linux-asahi(-.*)?|m1n1(-.*)?|uboot-asahi|asahi-.*|alsa-ucm-conf-asahi|vulkan-asahi|avd-fw|libva-v4l2_request-avd|speakersafetyd|widevine)$'
 
 base=$(names "$ROOT/install/omarchy-base.packages")
 aarch64=$(names "$ROOT/install/omarchy-aarch64.packages")
