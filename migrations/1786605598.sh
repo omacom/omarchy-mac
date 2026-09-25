@@ -10,21 +10,22 @@ echo "Rebuild the initramfs so NVIDIA-only systems shed nouveau's unused GSP fir
 # dropped out. A user-edited omarchy_hooks.conf (pacman leaves the packaged
 # update as a .pacnew) keeps kms and correctly skips the rebuild.
 
+baseline_conf="${OMARCHY_MKINITCPIO_BASELINE_CONF:-/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf}"
 hooks_conf="${OMARCHY_MKINITCPIO_HOOKS_CONF:-/etc/mkinitcpio.conf.d/omarchy_hooks.conf}"
 nvidia_conf="${OMARCHY_MKINITCPIO_NVIDIA_CONF:-/etc/mkinitcpio.conf.d/nvidia.conf}"
 rebuild_marker="${OMARCHY_KMS_REBUILD_MARKER:-/var/lib/omarchy/migrations/1786605598}"
 
 omarchy-cmd-present limine-mkinitcpio || exit 0
-[[ -f $hooks_conf && -f $nvidia_conf ]] || exit 0
+[[ -f $baseline_conf && -f $hooks_conf && -f $nvidia_conf ]] || exit 0
 
 # The rebuild is machine-wide, but migrations run once per user: a marker
 # records completion so another user's run does not repeat it, while a missing
 # marker still retries an interrupted rebuild.
 [[ ! -e $rebuild_marker ]] || exit 0
 
-# Source the drop-ins in mkinitcpio's order (nvidia.conf sorts first) and read
-# the HOOKS they produce. Skip conservatively if evaluation fails.
-hooks=$(bash -c 'source "$1" && source "$2" && echo " ${HOOKS[*]} "' -- "$nvidia_conf" "$hooks_conf") || exit 0
+# Source the drop-ins in mkinitcpio's order (the baseline, then nvidia.conf) and
+# read the HOOKS they produce. Skip conservatively if evaluation fails.
+hooks=$(bash -c 'source "$1" && source "$2" && source "$3" && echo " ${HOOKS[*]} "' -- "$baseline_conf" "$nvidia_conf" "$hooks_conf") || exit 0
 
 [[ $hooks != *" kms "* ]] || exit 0
 
