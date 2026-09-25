@@ -6,6 +6,7 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 guard="$ROOT/default/libalpm/scripts/omarchy-platform-guard"
 hook="$ROOT/default/libalpm/hooks/00-omarchy-platform-guard.hook"
+leaf="$ROOT/install/hardware/platform-guard.sh"
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
@@ -280,3 +281,53 @@ if "$guard" --bogus >/dev/null 2>&1; then
   fail "the guard rejects unknown arguments"
 fi
 pass "the guard rejects unknown arguments"
+
+# Hardware setup runs the leaf first. A fresh install reaches it only after the
+# installer's transactions, so it proves the guard is resident before hardware
+# setup installs anything, and checks what the installer already placed.
+alpm="$test_tmp/alpm"
+run_leaf() {
+  local platform="$1"
+  OMARCHY_ALPM_ROOT="$alpm" OMARCHY_PACMAN_DB="${GUARD_DB:-$db}" OMARCHY_PROC_ROOT="$test_tmp/$platform/proc" \
+    OMARCHY_IMAGE_TARGET="$test_tmp/no-manifest" PATH="$test_tmp/$platform/bin:$ROOT/bin:$PATH" \
+    bash -eE -c 'source "$1"' bash "$leaf" >"$test_tmp/out" 2>"$test_tmp/err"
+}
+
+mkdir -p "$alpm"
+if run_leaf apple-silicon; then
+  fail "hardware setup refuses to start without the platform guard"
+fi
+grep -Fq "install omarchy-settings in a transaction before hardware setup" "$test_tmp/err" ||
+  fail "a missing guard is explained" "$(cat "$test_tmp/err")"
+mkdir -p "$alpm/usr/share/libalpm/hooks"
+cp "$hook" "$alpm/usr/share/libalpm/hooks/"
+if run_leaf apple-silicon; then
+  fail "hardware setup refuses to start when the hook's guard is missing"
+fi
+mkdir -p "$alpm/usr/share/libalpm/scripts"
+ln -s "$guard" "$alpm/usr/share/libalpm/scripts/omarchy-platform-guard"
+GUARD_DB="$test_tmp/installed-apple" run_leaf apple-silicon || fail "hardware setup starts with the guard resident" "$(cat "$test_tmp/err")"
+if GUARD_DB="$test_tmp/installed-apple" run_leaf qualcomm; then
+  fail "hardware setup refuses packages the installer placed for another platform"
+fi
+mkdir -p "$alpm/etc/pacman.d/hooks"
+ln -s /dev/null "$alpm/etc/pacman.d/hooks/00-omarchy-platform-guard.hook"
+GUARD_DB="$test_tmp/installed-apple" run_leaf qualcomm || fail "a masked guard is the administrator's choice" "$(cat "$test_tmp/err")"
+grep -Fq "overrides the pacman platform guard" "$test_tmp/out" || fail "a masked guard is reported" "$(cat "$test_tmp/out")"
+pass "hardware setup starts only with the platform guard resident"
+
+# Fresh-install order: nothing before the leaf installs a package. The system
+# setup leaves run before hardware setup, and the leaf is hardware setup's first.
+mapfile -t system_leaves < <(sed -n 's|^run_logged "\$OMARCHY_INSTALL/\(.*\)"$|\1|p' "$ROOT/install/config/all.sh")
+(( ${#system_leaves[@]} > 0 )) || fail "system setup leaves are listed"
+installers='omarchy-pkg-add|pacman[[:space:]]+(-[[:alpha:]]*[SU]|--sync|--upgrade)|omarchy-setup-mac'
+for system_leaf in "${system_leaves[@]}"; do
+  ! grep -Eq "$installers" "$ROOT/install/$system_leaf" || fail "system setup installs no packages before hardware setup" "$system_leaf"
+done
+config_line=$(grep -n 'source "\$OMARCHY_INSTALL/config/all.sh"' "$ROOT/bin/omarchy-apply-system" | cut -d: -f1)
+hardware_line=$(grep -n -E '^[[:space:]]*omarchy-apply-hardware[[:space:]]+--' "$ROOT/bin/omarchy-apply-system" | head -n 1 | cut -d: -f1)
+[[ -n $config_line && -n $hardware_line ]] && (( config_line < hardware_line )) || fail "system setup precedes hardware setup"
+first_hardware_leaf=$(sed -n 's|^run_logged "\$OMARCHY_INSTALL/\(.*\)"$|\1|p' "$ROOT/install/hardware/all.sh" | head -n 1)
+[[ $first_hardware_leaf == "hardware/platform-guard.sh" ]] ||
+  fail "the platform guard check is hardware setup's first step" "first: $first_hardware_leaf"
+pass "fresh-install setup installs nothing before the platform guard is proven resident"

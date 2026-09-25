@@ -51,6 +51,7 @@ A hook installed in a transaction does not check that transaction: pacman loads 
 
 1. The installer installs `omarchy-settings` in a transaction before any platform package. The ISO does: its early bootstrap transaction installs the settings package before the runtime and `omarchy-base.packages`.
 2. Platform packages come in a later transaction: `install/omarchy-apple.packages`, the kernel and the boot chain. The Apple image builder installs the settings package first, writes the image-target manifest, then installs the Apple set.
+3. `omarchy-apply-hardware` starts with `install/hardware/platform-guard.sh`. It fails when the hook or its script is missing, then runs `omarchy-platform-guard --installed`, which checks every installed package against the platform, so anything an installer placed without the guard is caught. System setup before it installs no packages. `test/shell.d/platform-guard-test.sh` checks this order.
 
 ## Packaging
 
