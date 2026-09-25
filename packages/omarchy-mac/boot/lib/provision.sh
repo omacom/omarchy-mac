@@ -1,6 +1,7 @@
 # Sourced by the owner provisioning entrypoints in /usr/lib/omarchy/mac-boot
 # (provision-prepare, provision-commit, provision-verify), which
-# omarchy-lifecycle-dispatch runs; do not run independently. The runtime's
+# omarchy-lifecycle-dispatch runs, and by the factory reset entrypoints before
+# factory-reset.sh; do not run independently. The runtime's
 # docs/lifecycle-dispatch.md is their contract.
 #
 # The entrypoints set MAC_BOOT_ROOT before sourcing: empty on a live system, a
@@ -29,7 +30,7 @@ refuse() {
 
 require_apple_silicon() {
   [[ $(omarchy-hw-platform 2>/dev/null) == apple-silicon ]] ||
-    refuse "omarchy-mac-boot provisioning runs only on Apple Silicon Macs."
+    refuse "This omarchy-mac-boot entrypoint runs only on Apple Silicon Macs."
 }
 
 # An image keeps the key, encrypt.state and the initramfs on its Boot

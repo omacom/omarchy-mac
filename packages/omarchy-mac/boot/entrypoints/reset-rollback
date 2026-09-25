@@ -1,0 +1,20 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch reset-rollback. Factory reset runs this when
+# anything failed after reset-prepare, while the previous root is still the
+# active one: the boot files and encrypt.state go back to what they were.
+# Nothing to restore is a success.
+
+set -euo pipefail
+
+# Root reads only the live system and a fixed PATH; unprivileged tests may
+# stage the package under a fixture root.
+MAC_BOOT_ROOT=""
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+else
+  MAC_BOOT_ROOT=${OMARCHY_MAC_BOOT_ROOT:-}
+fi
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/provision.sh"
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/factory-reset.sh"
+reset_rollback "$@"
