@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 script=$ROOT/files/usr/lib/omarchy/mac-first-boot/omarchy-mac-first-boot
 unit=$ROOT/files/usr/lib/systemd/system/omarchy-mac-first-boot.service
+hardware_dropin=$ROOT/files/usr/lib/systemd/system/omarchy-provision-hardware.service.d/20-mac-first-boot.conf
 arm_key_file=${script%/*}/omarchy-arm-repository.key
 arm_repository_key=C81AC3E2A99556F9B21D5FEA3DD49BC9F8360BDC
 keyring_master_fpr=$(printf 'A%.0s' {1..40})
@@ -134,19 +135,29 @@ STUB
 printf '#!/bin/bash\n' >"$stubs/sleep"
 chmod +x "$stubs"/*
 
+# omarchy-provision-hardware: runs the queue the image build deferred.
 deferred_stub() {
   cat >"$1" <<'STUB'
 #!/bin/bash
-[[ -n ${OMARCHY_PATH:-} && $OMARCHY_PATH == /* ]] || {
-  echo "OMARCHY_PATH is unset" >&2
+(( $# == 0 )) || {
+  echo "omarchy-provision-hardware takes no arguments: $*" >&2
   exit 1
 }
 root=$OMARCHY_MAC_FIRST_BOOT_ROOT
-echo "keyring=$([[ -f $root/var/lib/omarchy/mac-first-boot/keyring ]] && echo yes || echo no)" >>"$CASE/deferred.log"
-echo deferred >>"$CASE/deferred.log"
+state=$root/var/lib/omarchy/mac-first-boot
+{
+  echo "keyring=$([[ -f $state/keyring ]] && echo yes || echo no)"
+  echo "owner-staged=$([[ -e $root/etc/systemd/system/omarchy-provision-owner.service ]] && echo yes || echo no)"
+  echo "pending=$([[ -e $state/pending ]] && echo yes || echo no)"
+  echo deferred
+} >>"$CASE/deferred.log"
 if [[ -e $CASE/deferred-fails ]]; then
   rm -f "$CASE/deferred-fails"
   echo "deferred failed" >&2
+  exit 75
+fi
+if [[ -e $CASE/deferred-refuses ]]; then
+  echo "untrusted manifest" >&2
   exit 1
 fi
 STUB
@@ -170,8 +181,7 @@ new_case() {
   : >"$case_dir/sync.log"
   : >"$case_dir/deferred.log"
   : >"$case_dir/pacman-key.log"
-  mkdir -p "$root/usr/share/omarchy/install/hardware/apple"
-  deferred_stub "$root/usr/share/omarchy/install/hardware/apple/limine-boot.sh"
+  deferred_stub "$root/usr/bin/omarchy-provision-hardware"
 }
 
 run() {
@@ -196,6 +206,7 @@ expect_stop() {
 
 expect_handoff() {
   run attempt || fail "$1: the attempt failed"
+  [[ ! -e $root/var/lib/omarchy/mac-first-boot/last-error ]] || fail "$1: a successful hand-off leaves no error behind"
   [[ ! -e $root/boot/efi/omarchy/install.conf ]] || fail "$1: the ESP copy is still there"
   [[ ! -e $root/var/lib/omarchy/mac-first-boot/pending ]] || fail "$1: pending remains"
   [[ ! -e $root/var/lib/omarchy/mac-first-boot/encrypt-pending ]] || fail "$1: encrypt-pending was written"
@@ -240,6 +251,17 @@ grep -Fq 'plymouth quit' "$script" && grep -Fq 'take_console' "$script" && grep 
 grep -Fq 'omarchy-mac-encrypt.failed' "$script" && grep -Fq 'last-encrypt-failure' "$script" ||
   fail "the script reports an encryption failure the initrd recorded, once"
 echo 'ok - the unit logs to the journal and holds no terminal; the script owns tty1 only for its failure screen'
+
+# The generic deferred-hardware service runs after first boot, which drains the
+# queue once the keyring exists.
+[[ $(grep -v '^#' "$hardware_dropin") == \
+  $'[Unit]\nAfter=omarchy-mac-first-boot.service NetworkManager.service\nConditionPathExists=!/var/lib/omarchy/mac-first-boot/pending\n\n[Service]\nExecStartPre=-/usr/bin/nm-online -q -s -t 30' ]] ||
+  fail "omarchy-provision-hardware.service waits for first boot and the network, and never starts while first boot is pending"
+grep -Fq 'provision=$root/usr/bin/omarchy-provision-hardware' "$script" ||
+  fail "first boot runs omarchy-provision-hardware"
+! grep -Fq 'install/hardware/apple/limine-boot.sh"' "$script" ||
+  fail "first boot no longer sources the Limine activation leaf itself"
+echo 'ok - first boot hands deferred hardware setup to omarchy-provision-hardware, which waits for it'
 
 new_case arm
 pending_mode=$(stat -c %a "$root/var/lib/omarchy/mac-first-boot/pending" 2>/dev/null ||
@@ -290,19 +312,32 @@ expect_handoff "a plain root"
   fail "a plain root keeps encrypt=0 for later tooling"
 echo 'ok - a LUKS root and a plain root both go straight to provisioning, keeping encrypt=0|1'
 
-# ── rerun after a failure resumes ──────────────────────────────────────────
-new_case resume
+# ── a hardware step that cannot finish yet does not strand first boot ──────
+# (say, one that needs the network on an offline first boot): it stays queued
+# for omarchy-provision-hardware.service, which runs once first boot is done.
+new_case unfinished-hardware
 write_esp 'format=1' 'encrypt=0' 'lane=edge'
 touch "$case_dir/deferred-fails"
-expect_stop "a deferred-steps failure" "the deferred hardware steps failed"
-[[ ! -e $root/boot/efi/omarchy/install.conf ]] || fail "consume survives the failed attempt"
-[[ $(<"$root/var/lib/omarchy/mac-first-boot/install.conf") == $'format=1\nencrypt=0\nlane=edge' ]] ||
-  fail "the consumed conf is kept for the retry"
-[[ -f $root/var/lib/omarchy/mac-first-boot/pending ]] || fail "pending remains after a failure"
+expect_handoff "a deferred hardware step that failed"
+[[ $(grep -c '^deferred$' "$case_dir/deferred.log") == 1 ]] || fail "first boot runs the deferred hardware setup once"
+grep -Fq 'deferred failed' "$root/var/log/omarchy-mac-first-boot.log" &&
+  grep -Fq 'deferred hardware setup is incomplete; omarchy-provision-hardware.service retries it' "$root/var/log/omarchy-mac-first-boot.log" ||
+  fail "the unfinished step and its retry are in the first-boot log"
+grep -Fq 'Some hardware setup could not finish yet (see /var/log/omarchy-mac-first-boot.log and /var/log/omarchy-install.log)' "$case_dir/out" ||
+  fail "the journal names both logs"
+echo 'ok - a deferred hardware step that cannot finish yet is left to its service and first boot hands off'
+
+# Any other failure means no hardware setup ran (an untrusted manifest or
+# queue): first boot stops and retries rather than handing off.
+new_case refused-hardware
+write_esp 'format=1' 'encrypt=0'
+touch "$case_dir/deferred-refuses"
+expect_stop "a deferred hardware setup that refused to run" 'the deferred hardware setup could not run (omarchy-provision-hardware exited 1)'
+! grep -q '^systemctl start' "$case_dir/systemctl.log" || fail "nothing is started when the hardware setup refused to run"
+rm -f "$case_dir/deferred-refuses"
 : >"$case_dir/systemctl.log"
-expect_handoff "a retry after deferred-steps failure"
-[[ $(grep -c '^deferred$' "$case_dir/deferred.log") == 2 ]] || fail "deferred steps run again on retry"
-echo 'ok - a failed attempt keeps pending, and the retry resumes from the consumed conf'
+expect_handoff "a retry once the hardware setup runs"
+echo 'ok - a deferred hardware setup that refused to run keeps first boot on its retry screen'
 
 # ── pending removed only on success ────────────────────────────────────────
 new_case pending-stays
@@ -321,20 +356,30 @@ echo 'ok - pending is removed only when first boot succeeds'
 # ── deferred-steps runner required ─────────────────────────────────────────
 new_case no-deferred
 write_esp 'format=1' 'encrypt=0'
-rm -f "$root/usr/share/omarchy/install/hardware/apple/limine-boot.sh"
-run attempt && fail "first boot must not hand off when the deferred-steps runner is absent"
-[[ -e $root/var/lib/omarchy/mac-first-boot/pending ]] || fail "pending stays armed when the runner is absent"
-grep -Fq 'the deferred hardware steps failed' "$root/var/lib/omarchy/mac-first-boot/last-error" 2>/dev/null ||
-  grep -Fq 'the deferred hardware steps failed' "$case_dir"/*.log 2>/dev/null ||
-  fail "the missing runner is named"
-echo 'ok - a runtime without omarchy-mac-run-deferred-steps keeps first boot pending'
+rm -f "$root/usr/bin/omarchy-provision-hardware"
+expect_stop "a runtime without omarchy-provision-hardware" "does not ship deferred hardware setup"
+! grep -q '^systemctl start' "$case_dir/systemctl.log" || fail "nothing is started without the deferred hardware setup"
+echo 'ok - a runtime without omarchy-provision-hardware keeps first boot pending'
 
 # A fresh-image contract allows exactly the one fixed activation leaf. The
 # existing no-marker cases exercise reset's normal first-boot path.
 new_case supported-deferred-contract
 write_esp 'format=1' 'encrypt=0'
 printf '%s\n' 'install/hardware/apple/limine-boot.sh' >"$root/var/lib/omarchy/mac-first-boot/deferred-steps"
+mkdir -p "$root/var/lib/omarchy/image"
+printf 'format=1\nplatform=apple-silicon\n' >"$root/var/lib/omarchy/image/target"
 expect_handoff "a supported deferred-steps contract"
+new_case retried-deferred-contract
+write_esp 'format=1' 'encrypt=0'
+printf '%s\n' 'install/hardware/apple/limine-boot.sh' >"$root/var/lib/omarchy/mac-first-boot/deferred-steps"
+mkdir -p "$root/var/lib/omarchy/image"
+printf 'format=1\nplatform=apple-silicon\n' >"$root/var/lib/omarchy/image/target.booted"
+expect_handoff "a fresh image whose manifest an earlier attempt retired"
+new_case deferred-contract-without-manifest
+write_esp 'format=1' 'encrypt=0'
+printf '%s\n' 'install/hardware/apple/limine-boot.sh' >"$root/var/lib/omarchy/mac-first-boot/deferred-steps"
+expect_stop "a fresh image without a build manifest" 'the image has no deferred hardware setup (/var/lib/omarchy/image/target is missing)'
+[[ ! -s $case_dir/deferred.log ]] || fail "a fresh image without a build manifest runs no hardware setup"
 for kind in other extra missing-newline symlink dangling-symlink directory; do
   new_case "unsupported-deferred-$kind"
   write_esp 'format=1' 'encrypt=0'
@@ -350,7 +395,7 @@ for kind in other extra missing-newline symlink dangling-symlink directory; do
   expect_stop "an unsupported deferred-steps contract ($kind)" 'deferred-steps'
   [[ ! -s $case_dir/deferred.log ]] || fail "invalid deferred-steps must not execute the activation leaf"
 done
-echo 'ok - first boot accepts only the fixed fresh-image contract and permits marker-free reset'
+echo 'ok - first boot accepts only the fixed fresh-image contract with its build manifest, and permits marker-free reset'
 
 # ── durable persist before ESP deletion ────────────────────────────────────
 new_case persist-sync-fails
@@ -450,7 +495,8 @@ write_esp 'format=1' 'encrypt=0'
 expect_handoff "keyring init"
 [[ $(<"$root/var/lib/omarchy/mac-first-boot/keyring") == "master=$keyring_master_fpr" ]] ||
   fail "the keyring record names this Mac's master key"
-[[ $(head -n 1 "$case_dir/deferred.log") == keyring=yes ]] || fail "deferred steps run after the keyring exists"
+[[ $(<"$case_dir/deferred.log") == $'keyring=yes\nowner-staged=no\npending=yes\ndeferred' ]] ||
+  fail "deferred hardware setup runs once the keyring exists, before owner setup is staged and first boot commits"
 [[ $(awk '/--init/{print "init"} /--populate /{print "populate"} /--add/{print "add"} /--lsign-key/{print "lsign"}' \
   "$case_dir/pacman-key.log") == $'init\npopulate' ]] ||
   fail "pacman-key initializes and populates the existing platform policy in order"
@@ -460,8 +506,9 @@ grep -Eq -- '--populate archlinuxarm asahi-alarm omarchy$' "$case_dir/pacman-key
 
 new_case keyring-retry
 write_esp 'format=1' 'encrypt=0' 'lane=edge'
-touch "$case_dir/deferred-fails"
-expect_stop "keyring before a deferred failure" "the deferred hardware steps failed"
+mv "$root/usr/bin/omarchy-provision-owner" "$case_dir/omarchy-provision-owner"
+expect_stop "keyring before a failed hand-off" "does not ship owner provisioning"
+mv "$case_dir/omarchy-provision-owner" "$root/usr/bin/omarchy-provision-owner"
 : >"$case_dir/systemctl.log"
 expect_handoff "retry after keyring init"
 [[ $(grep -c -- '--init' "$case_dir/pacman-key.log") == 1 ]] || fail "a retry does not initialise the keyring again"

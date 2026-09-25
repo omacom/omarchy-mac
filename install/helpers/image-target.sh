@@ -12,9 +12,10 @@
 #
 # While it exists, omarchy-apply-hardware queues each hardware leaf in
 # /var/lib/omarchy/image/deferred-steps instead of running it, and arms
-# omarchy-provision-hardware.service. On the machine's first boot that service
-# retires the manifest (to target.booted) and runs the queue on the real
-# hardware. Unknown manifest keys are ignored so the format can grow.
+# omarchy-provision-hardware.service. On the machine's first boot that service,
+# or the platform's own first boot, retires the manifest (to target.booted) and
+# runs the queue on the real hardware. Unknown manifest keys are ignored so the
+# format can grow.
 #
 # The manifest is also the only source of the image's platform: until that boot,
 # omarchy-hw-platform reports its platform instead of the build host's, so the

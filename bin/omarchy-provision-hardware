@@ -11,7 +11,9 @@
 # Steps run in order and each one that succeeds leaves the queue, so a failure
 # stops the run and the next run resumes at that step. Once the queue is empty
 # the initramfs is rebuilt if any step changed its configuration, and the
-# service disarms itself. With nothing deferred this does nothing.
+# service is disabled. With nothing deferred this does nothing. A step that
+# fails exits 75 (the step stays queued for the next run); anything else that
+# stops the run, such as an untrusted manifest or queue, exits 1.
 
 set -euo pipefail
 
@@ -92,8 +94,10 @@ while (( ${#remaining[@]} )); do
     echo "Skipping deferred hardware step $step: this Omarchy no longer ships it"
   else
     echo "Running deferred hardware step $step"
-    run_logged "$script" ||
-      fail "Deferred hardware step failed: $step (see $OMARCHY_INSTALL_LOG_FILE); the next run resumes here"
+    run_logged "$script" || {
+      echo "Error: Deferred hardware step failed: $step (see $OMARCHY_INSTALL_LOG_FILE); the next run resumes here" >&2
+      exit 75
+    }
   fi
 
   remaining=("${remaining[@]:1}")
@@ -112,7 +116,10 @@ if [[ $(initramfs_inputs) != "$(<"$omarchy_image_initramfs_baseline")" ]]; then
 fi
 rm -f "$omarchy_image_initramfs_baseline"
 
-rm -f "$omarchy_image_systemd_dir/multi-user.target.wants/$omarchy_image_unit" "$omarchy_image_systemd_dir/$omarchy_image_unit"
+# Disabled, not deleted: a platform first boot that runs this while the
+# service's start job waits would otherwise fail that job at the next
+# daemon-reload. The emptied queue keeps the unit from running.
+rm -f "$omarchy_image_systemd_dir/multi-user.target.wants/$omarchy_image_unit"
 rm -f "$omarchy_image_queue"
 if (( EUID == 0 )); then
   systemctl daemon-reload 2>/dev/null || true
