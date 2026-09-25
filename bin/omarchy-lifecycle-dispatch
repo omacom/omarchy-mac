@@ -113,10 +113,29 @@ trusted() {
 
 entrypoint=$root$implementation/$operation
 
+# The package's own pacman record tells a machine without it from one whose
+# copy predates the operation.
+installed_version() {
+  local record
+  for record in "$root/var/lib/pacman/local/$package"-[0-9]*/; do
+    [[ -d $record ]] || continue
+    record=${record%/}
+    printf '%s\n' "${record##*/"$package"-}"
+    return 0
+  done
+  return 1
+}
+
+# 3 is a machine without the platform's boot package at all, which a caller may
+# tell apart from a failure; 1 is everything else.
 if [[ ! -e $entrypoint && ! -L $entrypoint ]]; then
   if listed "$operation" "${required[@]}"; then
+    if version=$(installed_version); then
+      echo "Error: $operation on $platform needs $implementation/$operation, which $package $version does not provide; update $package" >&2
+      exit 1
+    fi
     echo "Error: $operation on $platform needs $package, which provides $implementation/$operation; it is not installed" >&2
-    exit 1
+    exit 3
   fi
   exit 0
 fi
