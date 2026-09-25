@@ -8,7 +8,7 @@
 # carries aarch64 and extracts Obsidian's own arm64 AppImage, so ask for that
 # one by name. Verified on an M2 Max: obsidian-appimage-1.12.7-1-aarch64 builds
 # and runs.
-if [[ $(uname -m) == "aarch64" ]] && omarchy-cmd-missing obsidian; then
+if omarchy-hw-apple-silicon && omarchy-cmd-missing obsidian; then
   echo "Installing Obsidian for Apple Silicon (the AppImage build)."
 
   # Try the repos first (a 118 MB AppImage). Upstream omarchy-pkg-add fails
