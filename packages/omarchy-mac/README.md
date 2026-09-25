@@ -18,6 +18,12 @@ Run `omarchy-mac-setup-user` as each target user with their HOME/XDG directories
 
 Vendor defaults use NetworkManager's `/usr/lib/NetworkManager/conf.d`, systemd's `/usr/lib/systemd`, modprobe's `/usr/lib/modprobe.d`, and WirePlumber's `/usr/share/wireplumber/wireplumber.conf.d`. Same-name `/etc` or user fragments retain precedence. Setup reports effective live NetworkManager/module configuration and systemd fragments. Review those reports and any drop-ins when diagnosing overrides; custom policy is never normalized to the package default.
 
+## Battery charge limit
+
+`omarchy battery charge limit [80|100]` shows or sets the `macsmc-battery` charge thresholds and refuses unless `omarchy-hw-platform` reports `apple-silicon`. It writes only the end threshold through `sudo`, since the driver derives the start threshold (80 restarts charging at 75; 100 restores full charging), and checks the SMC's readback. Full charging stays the default.
+
+A set limit is saved as `CHARGE_CONTROL_END_THRESHOLD=` in `/etc/udev/macsmc-battery.conf`, the file asahi-scripts' own rule restores from, so both agree on one value. The package's udev rule runs `/usr/lib/omarchy-mac/battery-charge-limit-restore` when the SMC battery appears at boot; it reapplies a saved 80 or 100 on Apple Silicon and otherwise leaves the SMC alone. Nothing needs enabling.
+
 ## Keyboard function-key mode
 
 The built-in keyboard binds to `hid_apple`, whose `fnmode` decides what the top row sends. Apple Silicon uses the kernel's default, `fnmode=3` (auto): Apple keyboards send mute, volume, brightness and media first with F1-F12 behind Fn, as in macOS, and the non-Apple boards `hid_apple` recognises (Keychron and similar) keep F-keys first. The package ships no `hid_apple` option and the desktop install leaf writes none on Apple Silicon, so any option the owner sets wins, whatever its file name. For F-keys first on the Mac, write `options hid_apple fnmode=2` to `/etc/modprobe.d/hid_apple.conf` and rebuild the boot image (`sudo mkinitcpio -P`, or `sudo omarchy-mac-boot-update` on a Limine Mac): `hid_apple` loads from the initramfs with the options it was built with.
