@@ -176,7 +176,16 @@ second_kernel
 cp "$tmp/limine.conf" "$mac_esp/limine.conf"
 verify
 expect_refused "a Mac whose menu starts the second kernel first" "linux-asahi boots with m1n1, but m1n1 is not installed"
-pass "update-verify still refuses a drifted kernel image, device tree or m1n1, and checks the kernel the menu starts"
+# A fresh image's database warnings explain nothing else pacman reports.
+limine_mac
+: >"$mac_state/fresh-image"
+printf '/usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\n' "$mac_kver" >"$mac_state/drift-linux-aurora"
+verify
+expect_verified "a fresh image with a drifted module"
+printf 'error: linux-aurora: could not read the mtree\n' >"$mac_state/report-linux-aurora"
+verify
+expect_refused "a package pacman cannot check, on a fresh image" "installed linux-aurora files do not match the package mtree: error: linux-aurora: could not read the mtree"
+pass "update-verify still refuses a drifted kernel image, device tree or m1n1, or a package pacman cannot check, and checks the kernel the menu starts"
 
 limine_mac
 limine_mac_luks

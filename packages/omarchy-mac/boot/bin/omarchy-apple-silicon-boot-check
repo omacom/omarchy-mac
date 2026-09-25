@@ -68,7 +68,9 @@ limine_esp_path() {
 }
 
 # The kernel the boot menu starts: the first kernel entry in Limine's menu,
-# where the tool writes the Omarchy block first, else GRUB's first entry.
+# where the tool writes the Omarchy block first and Omarchy's default_entry
+# points, else GRUB's first entry. A default_entry or GRUB_DEFAULT pointed
+# elsewhere is not followed.
 menu_kernel() {
   if [[ -e $(path /var/lib/omarchy/limine.enabled) && -f $(path /etc/default/limine) ]]; then
     sudo awk '{ sub(/^[[:space:]]+/, "") } /^\/\/linux-(aurora|asahi)$/ { print substr($0, 3); exit }' \
@@ -118,15 +120,17 @@ for package in "$kernel" "$bootloader"; do
   altered=$(grep -Ev ' altered files$' <<<"$mtree_output" |
     grep -Ev "^warning: database file for '[^']+' does not exist" |
     grep -Ev '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \(Modification time mismatch\)$' || true)
-  # --boot-chain holds only the files the boot files are built from: the
-  # kernel image, its device trees and m1n1.
+  # --boot-chain holds only the files the boot files are built from against
+  # the mtree: the kernel image, its device trees and m1n1. Drift in any other
+  # file of the package is left out; everything else pacman reports counts.
   if (( boot_chain )); then
-    altered=$(grep -E '^warning: [^:]+: /usr/lib/(modules/[^/]+/(vmlinuz|dtbs/)|asahi-boot/)' <<<"$altered" || true)
+    altered=$(awk '!/^warning: [^:]+: \// || /^warning: [^:]+: \/usr\/lib\/(modules\/[^\/]+\/(vmlinuz|dtbs\/)|asahi-boot\/)/' <<<"$altered")
   fi
   [[ -z $altered ]] || fail "installed $package files do not match the package mtree: $(head -n 1 <<<"$altered")"
-  # pacman exits 1 for the depmod lines alone; any other failure is one.
+  # pacman exits 1 for the depmod lines alone, and with --boot-chain for the
+  # file drift it leaves out; any other failure is one.
   (( mtree_status == 0 )) || grep -Fq '(Modification time mismatch)' <<<"$mtree_output" ||
-    { (( boot_chain )) && grep -q '^warning: ' <<<"$mtree_output"; } ||
+    { (( boot_chain )) && grep -Eq '^warning: [^:]+: /' <<<"$mtree_output"; } ||
     fail "pacman -Qkk $package failed"
 done
 

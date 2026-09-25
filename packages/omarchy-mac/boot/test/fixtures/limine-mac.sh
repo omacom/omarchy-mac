@@ -22,6 +22,13 @@ case "$*" in
   -Qq) cat "$MAC_STATE/installed" ;;
   "-Qlq "*) [[ -f $MAC_STATE/files-$2 ]] && cat "$MAC_STATE/files-$2" ;;
   "-Qkk "*)
+    # A fresh image has no sync databases; pacman warns about each.
+    [[ ! -e $MAC_STATE/fresh-image ]] || printf "warning: database file for 'core' does not exist (use '-Sy' to download)\n" >&2
+    # report-<package> is a diagnostic that is not about one file.
+    if [[ -e $MAC_STATE/report-$2 ]]; then
+      cat "$MAC_STATE/report-$2" >&2
+      exit 1
+    fi
     # drift-<package> names the file that drifted.
     if [[ -e $MAC_STATE/drift-$2 ]]; then
       printf 'warning: %s: %s (Size mismatch)\n' "$2" "$(cat "$MAC_STATE/drift-$2")" >&2
