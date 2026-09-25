@@ -204,6 +204,20 @@ add_directory_expansion() {
   sed -i '/^if \[ -z "\$DTBS" \]; then$/i if [ -d "$DTBS" ]; then\n    DTBS="${DTBS}/apple/t6*.dtb ${DTBS}/apple/t81*.dtb"\nfi\n' "$root/usr/bin/update-m1n1"
 }
 
+# A device tree as update-m1n1 and the boot check see one: the flattened device
+# tree magic and big-endian total size, then a body naming it.
+write_dtb() {
+  local body size
+  body="device tree ${1##*/}"$'\n'
+  size=$(( 8 + ${#body} ))
+  mkdir -p "$(dirname "$root$1")"
+  {
+    printf '\xd0\x0d\xfe\xed'
+    printf "$(printf '\\x%02x' $(( size >> 24 & 255 )) $(( size >> 16 & 255 )) $(( size >> 8 & 255 )) $(( size & 255 )))"
+    printf '%s' "$body"
+  } >"$root$1"
+}
+
 # boot.bin as update-m1n1 would have written it from the given device trees.
 write_boot_bin() {
   local dtb paths=()
@@ -239,8 +253,7 @@ system() {
   printf 'initramfs\n' >"$root/boot/initramfs-$kernel.img"
   printf 'linux /vmlinuz-%s root=UUID=x\ninitrd /initramfs-%s.img\n' "$kernel" "$kernel" >"$root/boot/grub/grub.cfg"
   for dtb in "${dtbs[@]}"; do
-    mkdir -p "$(dirname "$root$dtb")"
-    printf 'device tree %s\n' "${dtb##*/}" >"$root$dtb"
+    write_dtb "$dtb"
   done
   printf 'm1n1 stage 2 from %s\n' "$bootloader" >"$root/usr/lib/asahi-boot/m1n1.bin"
   printf 'u-boot\n' >"$root/usr/lib/asahi-boot/u-boot-nodtb.bin"
@@ -494,7 +507,9 @@ run_check
 expect_fail "a directory expansion this check does not know" "expands a DTBS directory in a way this check does not recognise"
 pass "a DTBS directory is expanded exactly as newer asahi-scripts do, and refused by an update-m1n1 that does not"
 
-# Device trees are concatenated in the collation pacman ran update-m1n1 under.
+# update-m1n1 concatenates device trees in the collation it ran under: C once
+# the shipped /etc/default/update-m1n1 pins it, the caller's before that. The
+# check accepts exactly the expected device trees in any order, and no others.
 utf8_locale=$(locale -a | grep -ixE 'en_US\.utf-?8' | head -1 || true)
 if [[ -z $utf8_locale ]]; then
   mkdir -p "$test_tmp/locales"
@@ -508,15 +523,35 @@ mapfile -t c_order < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
 mapfile -t utf8_order < <(printf '%s\n' "${names[@]}" | LC_ALL=$utf8_locale sort)
 [[ ${c_order[*]} != "${utf8_order[*]}" ]] || fail "the fixture's device trees sort differently in C and $utf8_locale" "${c_order[*]}"
 system linux-aurora "${names[*]}"
-write_boot_bin "${c_order[@]/#//usr/lib/modules/$kver/dtbs/}"
+cp "$ROOT/files/etc/default/update-m1n1" "$root/etc/default/update-m1n1"
+c_dtbs=("${c_order[@]/#//usr/lib/modules/$kver/dtbs/}")
+utf8_dtbs=("${utf8_order[@]/#//usr/lib/modules/$kver/dtbs/}")
+write_boot_bin "${c_dtbs[@]}"
 TEST_LANG=$utf8_locale run_check
-expect_pass "an image in C order, checked from a $utf8_locale session"
-write_boot_bin "${utf8_order[@]/#//usr/lib/modules/$kver/dtbs/}"
-TEST_LANG=$utf8_locale run_check
-expect_pass "an image in $utf8_locale order, checked from that session"
+expect_pass "an image in C order under the shipped defaults, checked from a $utf8_locale session"
+write_boot_bin "${utf8_dtbs[@]}"
 TEST_LANG=C run_check
-expect_fail "an image in $utf8_locale order, checked from a C session" "is not m1n1"
-pass "the device trees are compared in C order and in the session's collation, with a real $utf8_locale locale"
+expect_pass "an image written in $utf8_locale order, checked from a C session"
+TEST_LANG=$utf8_locale run_check
+expect_pass "an image written in $utf8_locale order, checked from that session"
+write_boot_bin "${c_dtbs[2]}" "${c_dtbs[0]}" "${c_dtbs[1]}"
+run_check
+expect_pass "the expected device trees in an order no collation gives"
+write_boot_bin "${c_dtbs[0]}" "${c_dtbs[0]}" "${c_dtbs[1]}" "${c_dtbs[2]}"
+run_check
+expect_fail "a device tree carried twice" "is not m1n1"
+write_boot_bin "${utf8_dtbs[@]:0:2}"
+run_check
+expect_fail "a device tree missing from a reordered image" "is not m1n1"
+write_dtb /opt/t9999-foreign.dtb
+write_boot_bin "${utf8_dtbs[@]}" /opt/t9999-foreign.dtb
+run_check
+expect_fail "a device tree the kernel does not ship" "is not m1n1"
+write_boot_bin "${utf8_dtbs[@]}"
+printf 'stale\n' >>"$esp/m1n1/boot.bin"
+run_check
+expect_fail "reordered device trees with a different tail" "is not m1n1"
+pass "the device trees are compared as a set, with a real $utf8_locale locale, and nothing else may differ"
 
 healthy_update_m1n1() {
   system linux-aurora

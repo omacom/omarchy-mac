@@ -1,0 +1,7 @@
+# Read by update-m1n1 (asahi-scripts) before it builds m1n1/boot.bin.
+#
+# update-m1n1 appends the device trees in the order its unquoted $DTBS glob
+# expands, and that order follows the locale of whoever runs it: pacman's
+# hook inherits the caller's. The C locale gives the same boot.bin however it
+# is rebuilt, which the boot check can then reproduce byte for byte.
+export LC_ALL=C

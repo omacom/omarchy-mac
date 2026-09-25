@@ -7,6 +7,7 @@ destination=${1:?Usage: ./install DESTDIR}
 for file in bin/*; do install -Dm755 "$file" "$destination/usr/bin/${file##*/}"; done
 for file in lib/*; do install -Dm644 "$file" "$destination/usr/lib/omarchy-mac/boot/${file##*/}"; done
 for file in setup/*; do install -Dm644 "$file" "$destination/usr/lib/omarchy-mac/boot/setup/${file##*/}"; done
+for file in entrypoints/*; do install -Dm755 "$file" "$destination/usr/lib/omarchy/mac-boot/${file##*/}"; done
 # The initramfs, encryption and first-boot payload keeps its installed paths.
 while IFS= read -r -d '' file; do
   if [[ -L $file ]]; then
