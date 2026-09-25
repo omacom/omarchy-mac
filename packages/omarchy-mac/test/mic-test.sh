@@ -29,7 +29,7 @@ class Audio:
         self.linked = {}; self.missing = None; self.fail_link = None; self.fail_module = False
         self.fail_query = False; self.fail_graph = False; self.concurrent = False
         self.next_id = 100; self.auto_input = False; self.initial_input = default; self.no_dsp = False
-        self.playback_sinks = None
+        self.playback_sinks = None; self.carries_signal = True; self.probes = []; self.probe_choice = None
     def objects(self, kind):
         if self.fail_query: raise RuntimeError('live Pulse query failed')
         if kind == 'sources': return ([] if self.no_dsp else [obj(DSP)]) + [obj('usb-mic')] + ([copy.deepcopy(self.monitor)] if self.existing else [])
@@ -53,6 +53,10 @@ class Audio:
         if self.concurrent and len(self.linked) == 2: self.default = 'usb-mic'; self.output = 'headphones'
         return nodes
     def pause(self): pass
+    def signal(self, source):
+        self.probes.append(source)
+        if self.probe_choice is not None: self.default = self.probe_choice
+        return self.carries_signal
     def run(self, *args):
         self.calls.append(args)
         if args[0] == 'pw-link':
@@ -133,6 +137,76 @@ with tempfile.TemporaryDirectory() as temporary:
         assert not any('volume' in call[1] or 'mute' in call[1] for call in audio.calls)
         assert audio.default == (m.MONITOR if selected == DSP else selected)
         assert sum(call[1] == 'set-default-source' for call in audio.calls) == (1 if selected == DSP else 0)
+    # A mapped monitor that carries only digital silence (#505) never becomes
+    # the default input, and a default already left on it returns to the DSP.
+    # The mapping itself stays, so events do not rebuild it.
+    for selected in (DSP, ''):
+        audio = Audio(default=selected); audio.carries_signal = False
+        try: m.reconcile(audio, state())
+        except RuntimeError as error: assert 'no signal' in str(error), error
+        else: raise AssertionError('a silent mapping must be reported')
+        assert audio.default == selected and audio.probes == [m.MONITOR]
+        assert audio.existing and len(audio.linked) == 2, 'a silent mapping must not be rolled back'
+    def mapped(default, signal=True, monitor_mute=False):
+        audio = Audio(True, default); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
+        audio.sink = obj(m.SINK, 65536, False); audio.monitor = obj(m.MONITOR, 65536, monitor_mute)
+        audio.carries_signal = signal
+        return audio
+    audio = mapped(m.MONITOR, signal=False)
+    try: m.reconcile(audio, state())
+    except RuntimeError as error: assert 'no signal' in str(error), error
+    else: raise AssertionError('a silent default must be reported')
+    assert audio.default == DSP and audio.linked == {90: (21, 'existing'), 91: (22, 'existing')}
+    audio = mapped(m.MONITOR)
+    m.reconcile(audio, state())
+    assert audio.default == m.MONITOR and audio.probes == [m.MONITOR], 'a live mapped default stays'
+    # A muted mapping is the user's microphone mute: never sampled, never
+    # swapped for the unmuted DSP, and still selected after a default reset.
+    # The mute key mutes the sink side while the monitor is the default.
+    for selected in (m.MONITOR, DSP):
+        for side in ('monitor', 'sink'):
+            audio = mapped(selected, signal=False)
+            getattr(audio, side)['mute'] = True
+            m.reconcile(audio, state())
+            assert audio.default == m.MONITOR and not audio.probes, (selected, side)
+            # Muting while the monitor is sampled silences it; that is still a mute.
+            audio = mapped(selected, signal=False)
+            sample = audio.signal
+            audio.signal = lambda source, side=side, audio=audio, sample=sample: (getattr(audio, side).update(mute=True), sample(source))[1]
+            m.reconcile(audio, state())
+            assert audio.default == m.MONITOR and audio.probes == [m.MONITOR], (selected, side)
+    # A sample that could not be taken changes nothing and is reported.
+    for selected in (DSP, m.MONITOR):
+        audio = mapped(selected, signal=None)
+        try: m.reconcile(audio, state())
+        except RuntimeError as error: assert 'Could not sample' in str(error), error
+        else: raise AssertionError('an unsampled mapping must be reported')
+        assert audio.default == selected
+    # The supervisor samples a default mapping once, not on every event.
+    checked = set(); audio = mapped(m.MONITOR)
+    m.reconcile(audio, state(), checked=checked); m.reconcile(audio, state(), checked=checked)
+    assert audio.probes == [m.MONITOR] and audio.default == m.MONITOR
+    audio = mapped(m.MONITOR); m.reconcile(audio, state()); m.reconcile(audio, state())
+    assert audio.probes == [m.MONITOR, m.MONITOR]
+    # After an audio restart the mapping is rebuilt, possibly on recycled port
+    # IDs, while the configured default still names its monitor.
+    audio = Audio(default=m.MONITOR); audio.carries_signal = False
+    try: m.reconcile(audio, state(), checked=checked)
+    except RuntimeError as error: assert 'no signal' in str(error), error
+    else: raise AssertionError('a rebuilt silent mapping must be sampled')
+    assert audio.probes == [m.MONITOR] and audio.default == DSP
+    # Other inputs are the user's; the microphone is not even opened for them.
+    audio = Audio(default='usb-mic'); audio.carries_signal = False
+    m.reconcile(audio, state())
+    assert audio.default == 'usb-mic' and not audio.probes
+    # A choice made while the monitor is sampled wins over the result.
+    for signal in (True, False):
+        for selected in (DSP, m.MONITOR):
+            audio = mapped(selected, signal); audio.probe_choice = 'usb-mic'
+            try: m.reconcile(audio, state())
+            except RuntimeError: assert not signal
+            else: assert signal, 'a silent mapping must be reported'
+            assert audio.default == 'usb-mic', (signal, selected)
     audio = Audio(default='usb-mic'); audio.no_dsp = True
     try: m.reconcile(audio, state())
     except m.Deferred: pass
@@ -264,6 +338,24 @@ with tempfile.TemporaryDirectory() as temporary:
     sub = feed('exit 0'); elapsed = timed(sub)
     assert elapsed < 0.5 and sub.process is None, 'a lost subscription must yield a repair and resubscribe later'
     assert timed(m.Subscription(command=['/nonexistent/pactl'], retry=0.05)) < 0.5, 'a missing subscriber must degrade to a paced retry'
+# The live probe reads float samples from the monitor through parec: any
+# non-zero sample, however quiet, is signal; zeros (either sign) are digital
+# silence; a recorder that yields nothing is unknown.
+with tempfile.TemporaryDirectory() as temporary:
+    fake = Path(temporary) / 'parec'
+    def probe(script, timeout=1.0):
+        fake.write_text('#!/bin/bash\n' + script + '\n'); fake.chmod(0o755)
+        with mock.patch.dict(os.environ, {'PATH': temporary + os.pathsep + os.environ['PATH']}):
+            start = time.monotonic(); result = m.Audio().signal(m.MONITOR, timeout); return result, time.monotonic() - start
+    floats = 'python3 -c "import struct, sys; sys.stdout.buffer.write(struct.pack(\'<%df\' % {0}, *{1}))"; sleep 5'
+    result, elapsed = probe('[[ $1 == --device=omarchy_asahi_mic.monitor && $* == *--format=float32le* ]] || exit 1; ' + floats.format(2049, '[0.0] * 2048 + [1e-7]'))
+    assert result is True and elapsed < 0.9, ('a quiet non-zero sample is signal', elapsed)
+    result, elapsed = probe(floats.format(8192, '[0.0, -0.0] * 4096'))
+    assert result is False and 0.9 <= elapsed < 2.5, ('digital silence is not signal', elapsed)
+    result, elapsed = probe('exit 1')
+    assert result is None and elapsed < 0.9, 'a recorder that yields nothing is unknown'
+    with mock.patch.dict(os.environ, {'PATH': str(Path(temporary) / 'missing')}):
+        assert m.Audio().signal(m.MONITOR, 1.0) is None, 'a missing recorder is unknown'
 with mock.patch.object(m.Audio, 'run', return_value='536870912\tmodule-null-sink\tsink_name=omarchy_asahi_mic omarchy.asahi-mic.owner=test\t1'):
     assert m.Audio().modules()[0]['index'] == '536870912'
 unit = (root / 'vendor/systemd/user/omarchy-asahi-mic.service').read_text()

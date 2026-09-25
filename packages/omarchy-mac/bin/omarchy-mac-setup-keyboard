@@ -1,0 +1,65 @@
+#!/bin/bash
+# omarchy:summary=Hand the Apple keyboard function-key mode to the kernel default
+# omarchy:args=<1|2|3>
+# omarchy:hidden=true
+# The keyboard migration runs this on an upgraded Mac, naming the fnmode of the
+# hid_apple.conf line Omarchy generated there. A fixture root lets unprivileged
+# tests stage a system; root always acts on the live one.
+set -euo pipefail
+generated=${1:-}
+if [[ $# -ne 1 || $generated != [123] ]]; then
+  echo "Usage: omarchy-mac-setup-keyboard 1|2|3" >&2
+  exit 2
+fi
+root=
+(( EUID == 0 )) || root=${OMARCHY_MAC_FIXTURE_ROOT:-}
+omarchy-hw-apple-silicon || exit 0
+
+conf="$root/etc/modprobe.d/hid_apple.conf"
+configured="$root/var/lib/omarchy-mac/keyboard-configured"
+pending="$root/var/lib/omarchy-mac/keyboard-rebuild-pending"
+# A fork keyboard migration that still owes its rebuild had already replaced
+# the stock line with its own: fnmode=1 (quattro-upstream) or 3 (mx-mac).
+quattro_pending="$root/var/lib/omarchy/migrations/1789132067-initramfs-pending"
+mx_pending="$root/var/lib/omarchy/migrations/1790305681-boot-image-pending"
+[[ ! -f $quattro_pending ]] || generated=1
+[[ ! -f $mx_pending ]] || generated=3
+
+# The first run decides, so a later one (another user's migration) never
+# retires a line the owner wrote since. A line Omarchy did not generate here is
+# the owner's and stays. The rebuild is recorded before the file moves, so an
+# interrupted run still owes it.
+if [[ ! -f $configured ]]; then
+  if [[ -f $conf && ! -L $conf && $(<"$conf") =~ ^options\ hid_apple\ fnmode=$generated$ ]]; then
+    install -Dm644 /dev/null "$pending"
+    mv -f -- "$conf" "$conf.omarchy-mac-retired"
+  elif [[ -e $conf || -L $conf ]]; then
+    echo "Keeping the keyboard mode set in /etc/modprobe.d/hid_apple.conf"
+  fi
+  install -Dm644 /dev/null "$configured"
+fi
+[[ ! -f $quattro_pending && ! -f $mx_pending ]] || install -Dm644 /dev/null "$pending"
+[[ -f $pending ]] || exit 0
+
+# hid_apple loads from the initramfs, and mkinitcpio's modconf hook copies
+# modprobe.d into it, so a new mode reaches the keyboard only through a
+# rebuilt boot image: the UKI on a Limine Mac, the initramfs GRUB boots
+# otherwise. The marker clears only after the keyboard switched too, so a
+# failed or interrupted run retries both.
+echo "Rebuilding the boot image so the keyboard mode survives a reboot"
+if command -v omarchy-mac-limine-active >/dev/null && omarchy-mac-limine-active; then
+  omarchy-mac-boot-update
+else
+  mkinitcpio -P
+fi
+
+# Switch the running keyboard to the mode the rebuilt image loads: the value of
+# the last hid_apple fnmode option, written as-is since the parameter parses it
+# the way boot does, or the kernel's default of 3 (auto) without one.
+mode=$(modprobe -c | sed -nE 's/^options hid_apple (.* )?fnmode=("([^"]*)"|([^ "]*))( .*)?$/\3\4/p' | tail -n1) || mode=
+mode=${mode:-3}
+param="$root/sys/module/hid_apple/parameters/fnmode"
+if [[ -f $param ]] && ! { echo "$mode" >"$param"; } 2>/dev/null; then
+  echo "The keyboard switches to fnmode=$mode after the next reboot." >&2
+fi
+rm -f -- "$pending" "$quattro_pending" "$mx_pending"
