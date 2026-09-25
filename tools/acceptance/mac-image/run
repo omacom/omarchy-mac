@@ -610,8 +610,9 @@ owner_setup() {
   [[ $serial_match == 'login: ' ]] || fail "$what: owner setup hit an error (its log is in the guest's /var/log/omarchy-provision-owner.log)"
 }
 
-# Logs the owner in on the serial console. The shell's prompt is the owner's,
-# so readiness is an echo whose output differs from its typed line.
+# Logs the owner in on the serial console; returns 1 when the password is
+# refused. The shell's prompt is the owner's, so readiness is an echo whose
+# output differs from its typed line.
 console_login() {
   local what=$1 password=$2 tries=0
   serial_expect 'login: ' "$what: console login prompt"
@@ -627,7 +628,7 @@ console_login() {
     ((++tries < 8)) || fail "$what: no shell after logging in (see ${serial_log##*/})"
     serial_type 'echo __ready_$((20+8))__'
   done
-  [[ $serial_match == __ready_28__ ]] || fail "$what: $owner_user could not log in with the password"
+  [[ $serial_match == __ready_28__ ]]
 }
 
 # Runs a command in the console shell, answering prompts from a table of
@@ -884,7 +885,7 @@ scenario_password_change() {
   boot_guest "$disk" "$log" "$DISK_CMDLINE"
   unlock_prompt password-change
   serial_type "$owner_password"
-  console_login password-change "$owner_password"
+  console_login password-change "$owner_password" || fail "password-change: $owner_user could not log in with the password setup gave"
   local replies=("\[sudo\] password for [a-z]+:=$owner_password" "Current encryption password=$owner_password"
     "Enter passphrase to be changed:=$owner_password" "New encryption password=$new_password" "Confirm new encryption password=$new_password")
   guest_run "password-change: omarchy-drive-password" omarchy-drive-password "${replies[@]}"
@@ -914,12 +915,20 @@ scenario_password_change() {
   boot_guest "$disk" "$log" "$DISK_CMDLINE"
   unlock_prompt password-change
   serial_type "$new_password"
-  console_login password-change "$new_password"
-  guest_run "password-change: su to root" "su -c 'echo __root_\$((6*7))__' root" "Password: ?=$new_password"
-  grep -aq '__root_42__' "$log" || fail "password-change: root does not take the new password"
+  if console_login password-change "$new_password"; then
+    guest_run "password-change: su to root" "su -c 'echo __root_\$((6*7))__' root" "Password: ?=$new_password"
+    if grep -aq '__root_42__' "$log"; then
+      ok "password-change: the next boot unlocks with the new password, and it logs in $owner_user and root"
+    else
+      not_ok "password-change: the next boot unlocks with the new password and it logs in $owner_user, but root does not take it"
+    fi
+  elif console_login password-change "$owner_password"; then
+    not_ok "password-change: the next boot unlocks with the new password, but $owner_user still logs in with the old one: the login password did not follow the disk's"
+  else
+    not_ok "password-change: the next boot unlocks with the new password, but neither password logs in $owner_user"
+  fi
   no_emergency password-change
   stop_guest
-  ok "password-change: the next boot unlocks with the new password, and it logs in $owner_user and root"
 }
 
 # Cases whose lifecycle entrypoints no image ships yet. Each is named and runs
