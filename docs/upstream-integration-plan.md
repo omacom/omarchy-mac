@@ -33,7 +33,7 @@ Use reviewed PRs, with branch protection enforcing review once configured. After
 
 Keep contributions focused and preserve attribution. Mark new commits with `Upstream-Status: candidate`, `Upstream-Status: experimental` or `Upstream-Status: temporary`; explain the purpose and exit condition for experiments and temporary glue. Preserve shared history by default. Coordinate any exceptional rewrite; submission branches can be cleaned independently.
 
-Installer source, kernel recipes, MLX implementation and repository trust bootstrap belong in their appropriate projects. The upstream desktop submission must also exclude `packages/omarchy-mac/`; its shared interfaces, package dependency and migrations remain separately reviewable. ALS and Steam can be tested in the complete system while receiving separate upstream review. Steam's launcher is supplied by `omarchy-steam-fex`.
+Installer source, kernel recipes, MLX implementation and repository trust bootstrap belong in their appropriate projects. The upstream desktop submission must also exclude `packages/omarchy-mac/`; its shared interfaces, package dependency and migrations remain separately reviewable. It likewise excludes the Mac user manual in `mac-manual/`, which is Mac-only and published separately from Omarchy's `manual/`. ALS and Steam can be tested in the complete system while receiving separate upstream review. Steam's launcher is supplied by `omarchy-steam-fex`.
 
 The [dated merge tracker](upstream-integration-reference.md#upstream-merge-record) records the existing provisioning, battery, clock/weather, test-runner and Apple foundation contributions. Recheck their status and reconcile accepted changes before preparing submissions.
 

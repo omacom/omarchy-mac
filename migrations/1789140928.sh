@@ -1,6 +1,6 @@
 echo "Apple Silicon: enable PipeWire capture for the browser screen-share picker"
 
-[[ $(uname -m) == aarch64 ]] || exit 0
+omarchy-hw-apple-silicon || exit 0
 
 # Chromium/Brave only reach the picker when they use the PipeWire capturer.
 for conf in ~/.config/{chromium,brave,chrome,microsoft-edge-stable}-flags.conf; do

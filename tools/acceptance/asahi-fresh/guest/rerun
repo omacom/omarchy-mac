@@ -1,0 +1,33 @@
+#!/bin/bash
+
+set -euo pipefail
+
+work=/root/omarchy-fresh-vm
+verified_dir=$(find "$work/verified" -mindepth 1 -maxdepth 1 -type d -name 'asahi-quattro.*' -print -quit)
+fresh_installer="$verified_dir/omarchy-install-asahi-fresh.vm"
+release_sequence=$(sed -n 's/^sequence=//p' "$verified_dir/asahi-quattro-release")
+release_tag=$(sed -n 's/^release_tag=//p' "$verified_dir/asahi-quattro-release")
+source_commit=$(sed -n 's/^source_commit=//p' "$verified_dir/asahi-quattro-release")
+package_source_commit=$(sed -n 's/^package_source_commit=//p' "$verified_dir/asahi-quattro-release")
+pacman -Q >"$work/packages.before-rerun"
+sha256sum /var/lib/omarchy/asahi-quattro-release >"$work/release.before-rerun"
+
+expect <<EOF
+set timeout -1
+log_file $work/completed-rerun.log
+spawn env OMARCHY_ASAHI_RELEASE_SEQUENCE=$release_sequence OMARCHY_ASAHI_RELEASE_TAG=$release_tag OMARCHY_ASAHI_RELEASE_SOURCE=$source_commit OMARCHY_ASAHI_PACKAGE_SOURCE=$package_source_commit bash $fresh_installer --asahi-packages $verified_dir/bundle --user omarchy
+expect eof
+catch wait result
+set status [lindex \$result 3]
+if {\$status == 0} { exit 1 }
+exit 0
+EOF
+
+grep -Fq 'User already exists outside this release installation: omarchy' "$work/completed-rerun.log"
+pacman -Q >"$work/packages.after-rerun"
+sha256sum /var/lib/omarchy/asahi-quattro-release >"$work/release.after-rerun"
+cmp "$work/packages.before-rerun" "$work/packages.after-rerun"
+cmp "$work/release.before-rerun" "$work/release.after-rerun"
+ufw --force delete allow 22/tcp >/dev/null
+
+echo "ok - completed fresh installer rerun was rejected without state changes"
