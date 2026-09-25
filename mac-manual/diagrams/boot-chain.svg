@@ -1,0 +1,47 @@
+<svg viewBox="0 0 900 330" role="img" aria-label="Boot chain from Apple firmware to the Omarchy root file system" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/></marker><marker id="arrow-brand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow brand"/></marker></defs>
+<path class="edge" d="M 170 77.0 C 185.0 77.0 185.0 77.0 200 77.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 350 77.0 C 365.0 77.0 365.0 77.0 380 77.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 600 77.0 C 615.0 77.0 615.0 77.0 630 77.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 755.0 114 C 755.0 152.0 755.0 152.0 755.0 190" marker-end="url(#arrow)"/>
+<path class="edge" d="M 630 227.0 C 615.0 227.0 615.0 218.5 600 218.5" marker-end="url(#arrow)"/>
+<g class="node tone-ext">
+<rect x="20" y="40" width="150" height="74"/>
+<text class="n-title" x="32" y="61">iBoot</text>
+<text class="n-sub" x="32" y="80">Apple firmware,</text>
+<text class="n-sub" x="32" y="97">boot policy</text>
+</g>
+<g class="node tone-blue">
+<rect x="200" y="40" width="150" height="74"/>
+<text class="n-title" x="212" y="61">m1n1</text>
+<text class="n-sub" x="212" y="80">stage 1 + 2,</text>
+<text class="n-sub" x="212" y="97">m1n1-aurora</text>
+</g>
+<g class="node tone-blue">
+<rect x="380" y="40" width="220" height="74"/>
+<text class="n-title" x="392" y="61">U-Boot</text>
+<text class="n-sub" x="392" y="80">the UEFI on Apple</text>
+<text class="n-sub" x="392" y="97">Silicon, uboot-asahi</text>
+</g>
+<g class="node tone-blue">
+<rect x="630" y="40" width="250" height="74"/>
+<text class="n-title" x="642" y="61">Limine</text>
+<text class="n-sub" x="642" y="80">on the ESP, one entry</text>
+<text class="n-sub" x="642" y="97">per kernel and snapshot</text>
+</g>
+<g class="node tone-blue">
+<rect x="630" y="190" width="250" height="74"/>
+<text class="n-title" x="642" y="211">Kernel + initramfs</text>
+<text class="n-sub" x="642" y="230">linux-aurora, mkinitcpio,</text>
+<text class="n-sub" x="642" y="247">omarchy-mac-boot hooks</text>
+</g>
+<g class="node">
+<rect x="20" y="190" width="580" height="57"/>
+<text class="n-title" x="32" y="211">btrfs root</text>
+<text class="n-sub" x="32" y="230">@ subvolume, snapper snapshots, optional LUKS (sd-encrypt)</text>
+</g>
+<g class="node tone-ext"><rect x="16" y="305" width="14" height="14"/></g>
+<text class="legend" x="36" y="316">Apple firmware</text>
+<g class="node tone-blue"><rect x="169.0" y="305" width="14" height="14"/></g>
+<text class="legend" x="189.0" y="316">signed package from omacom/omarchy-pkgs</text>
+</svg>
