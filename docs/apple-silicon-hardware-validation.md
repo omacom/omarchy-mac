@@ -24,11 +24,11 @@ Run it after every boot that follows a kernel or boot-file change, once the owne
 | `repos`, `kernel-repo` | `core`, `extra`, `alarm` and `asahi-alarm` are configured, and a configured repository carries the running kernel package |
 | `boot-check` | `sudo omarchy-apple-silicon-boot-check` passes: kernel image, initramfs, the GRUB entry or Limine unified kernel image, and m1n1 stage 2 rebuilt and compared byte for byte, read-only. Skipped while an mx-mac kernel switch journal is open, since that boot check would record it |
 | `boot-file` | the unified kernel image, `limine.conf` and `m1n1/boot.bin` on the ESP of a Limine Mac (the kernel image and `grub.cfg` on a GRUB Mac) exist; their SHA-256 hashes are printed for the record |
-| `units` | `systemctl --failed` is empty for the system and the user |
+| `units` | `systemctl --failed` answers and is empty for the system and, when the user manager answers, the user |
 | `vendor-firmware` | `omarchy-vendor-firmware.service` finished in this boot |
 | `speakersafetyd` | `speakersafetyd` is active |
 | `displays` | Hyprland in the user's session reports at least one active display; compare the count and modes with the connected displays |
-| `sound-cards`, `default-sink` | the kernel sees the sound cards in `/proc/asound/cards` and PipeWire has a default sink (the model's speaker convolver on a Mac with speaker DSP) |
+| `sound-cards`, `default-sink` | the kernel sees the sound cards in `/proc/asound/cards` and PipeWire's default sink is a real device, not its dummy output (on the test Macs, the model's speaker convolver unless headphones or a display take over) |
 | `wifi`, `wifi-backend` | NetworkManager's Wi-Fi device is connected and NetworkManager uses iwd |
 | `bluetooth` | `bluetoothctl show` reports `Powered: yes` |
 | `snapshots` | `/.snapshots` is a btrfs subvolume |

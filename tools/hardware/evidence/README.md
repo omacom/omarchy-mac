@@ -2,9 +2,9 @@
 
 One directory per record, named `<date>-<subject>`, holding a `README.md` that says what was observed, on which Mac, from which inputs, and what the record does not claim. Small text captures (JSON reports, journals, inventories) sit beside it.
 
-Bulky or binary artifacts (build logs, state archives, images) are never committed. They live at an immutable location and `artifacts.tsv` pins each one by path, byte count, SHA-256 and URL. The URL must not be able to move: a GitHub raw URL at a full commit, a GitHub release asset, or a content-addressed object in the R2 bucket. The path names the record the artifact belongs to, as if it sat beside that record's README.
+Bulky or binary artifacts (build logs, state archives, images) are never committed. They live at an immutable location and `artifacts.tsv` pins each one by path, byte count, SHA-256 and URL. The URL must not be able to move: a GitHub raw or blob URL at a full commit, a GitHub release asset, or an object whose path carries the artifact's SHA-256 (content-addressed, as in the R2 bucket). The path names the record the artifact belongs to, as if it sat beside that record's README.
 
-`tools/hardware/evidence-verify` checks both rules: committed files stay text and at most 64 KiB, and every artifact entry is well formed and pinned. `tools/hardware/evidence-verify --fetch` downloads each artifact and compares its size and hash.
+`tools/hardware/evidence-verify` checks both rules: committed files stay text (no NUL bytes) and at most 64 KiB, and every artifact entry is well formed and pinned. `tools/hardware/evidence-verify --fetch` downloads each artifact and compares its size and hash.
 
 ## Records carried over from omarchy-mx-mac
 

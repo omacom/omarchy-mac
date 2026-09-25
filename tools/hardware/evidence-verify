@@ -2,8 +2,9 @@
 
 # Check the hardware evidence records: files kept in the repository stay small
 # and text-only, and every bulky artifact listed in evidence/artifacts.tsv is
-# pinned by size, SHA-256 and an https URL that cannot move (a GitHub raw URL
-# at a full commit, a GitHub release asset, or a content-addressed object).
+# pinned by size, SHA-256 and an https URL that cannot move: a GitHub raw or
+# blob URL at a full commit, a GitHub release asset, or an object whose path
+# carries the artifact's SHA-256.
 # --fetch also downloads each artifact and compares its bytes.
 
 set -euo pipefail
@@ -49,11 +50,11 @@ while IFS= read -r file; do
   size=$(wc -c <"$file" | tr -d ' ')
   if (( size > max_bytes )); then
     problem "$relative is $size bytes; publish it and list it in artifacts.tsv"
-  elif (( size > 0 )) && ! LC_ALL=C grep -qI '' "$file"; then
+  elif (( $(LC_ALL=C tr -cd '\000' <"$file" | wc -c) > 0 )); then
     problem "$relative is binary; publish it and list it in artifacts.tsv"
   fi
   [[ $relative == */README.md ]] && records=$((records + 1))
-done < <(find "$evidence" -type f ! -name '.*' | sort)
+done < <(find "$evidence" -type f | sort)
 (( records > 0 )) || problem "no evidence record (a README.md per directory) found"
 
 artifacts=0
@@ -80,7 +81,9 @@ while IFS=$'\t' read -r path bytes sha url extra || [[ -n $path ]]; do
       [[ $url =~ ^https://github\.com/[^/]+/[^/]+/(raw|blob)/[0-9a-f]{40}/ ]] ||
         problem "$where: GitHub URL is not pinned to a full commit: $url"
       ;;
-    https://*) ;;
+    https://github.com/*/releases/download/*/*) ;;
+    https://*/*"$sha"*) ;;
+    https://*) problem "$where: URL is neither commit-pinned, a release asset, nor content-addressed: $url" ;;
     *) problem "$where: URL must use https: $url" ;;
   esac
   if (( fetch )); then

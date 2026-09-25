@@ -98,6 +98,7 @@ stub findmnt <<'SH'
 SH
 stub systemctl <<'SH'
 #!/bin/bash
+[[ $* == *--failed* ]] && (( ${TEST_SYSTEMCTL_DOWN:-0} )) && exit 1
 case "$*" in
   "--failed --no-legend --plain") printf '%s' "${TEST_FAILED_UNITS:-}" ;;
   "--user --failed --no-legend --plain") printf '%s' "${TEST_FAILED_USER_UNITS:-}" ;;
@@ -115,7 +116,11 @@ echo '[{"name":"eDP-1","width":3456,"height":2160,"refreshRate":120.0},{"name":"
 SH
 stub wpctl <<'SH'
 #!/bin/bash
-printf '  * node.description = "MacBook Pro J416 Speakers"\n  * node.name = "audio_effect.j416-convolver"\n'
+if (( ${TEST_DUMMY_SINK:-0} )); then
+  printf '  * node.description = "Dummy Output"\n  * node.name = "auto_null"\n'
+else
+  printf '  * node.description = "MacBook Pro J416 Speakers"\n  * node.name = "audio_effect.j416-convolver"\n'
+fi
 SH
 stub nmcli <<'SH'
 #!/bin/bash
@@ -204,6 +209,19 @@ run_check && fail "a Limine Mac without its boot files fails"
 grep -Fxq "FAIL  boot-file        no unified kernel image under /boot/efi/EFI/Linux" "$test_tmp/out" || fail "a missing UKI is named" "$(cat "$test_tmp/out")"
 grep -Fxq "FAIL  boot-file        /boot/efi/limine.conf is missing on a limine Mac" "$test_tmp/out" || fail "a missing limine.conf is named" "$(cat "$test_tmp/out")"
 pass "a Limine Mac without its unified kernel image or limine.conf fails"
+make_fixture
+
+if TEST_SYSTEMCTL_DOWN=1 TEST_DUMMY_SINK=1 run_check; then
+  fail "an unanswered systemctl and a dummy sink fail"
+fi
+grep -Fxq "FAIL  units            systemctl cannot list failed units" "$test_tmp/out" || fail "an unanswered systemctl is not a pass" "$(cat "$test_tmp/out")"
+grep -Fxq "FAIL  default-sink     the default sink is PipeWire's dummy output" "$test_tmp/out" || fail "a dummy sink is not a pass" "$(cat "$test_tmp/out")"
+pass "an unanswered systemctl and PipeWire's dummy sink fail"
+
+rm "$fixture/run/user/$uid/bus"
+run_check || fail "no user manager is not a failure" "$(cat "$test_tmp/out")"
+grep -Fxq "PASS  units            no failed system units; no user manager to ask about user units" "$test_tmp/out" || fail "the units check says it could not ask the user manager" "$(cat "$test_tmp/out")"
+pass "the units check says when it could not ask the user manager"
 make_fixture
 
 if TEST_KVER=7.1.13-1-ARCH run_check; then

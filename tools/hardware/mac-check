@@ -7,6 +7,7 @@
 # Exits 1 when a check fails, 2 when this is not an Apple Silicon Mac.
 
 set -uo pipefail
+export LC_ALL=C
 
 root=${OMARCHY_HARDWARE_ROOT:-}
 passed=0 failed=0 warned=0 skipped=0
@@ -148,15 +149,22 @@ fi
 
 # Services
 
-mapfile -t failed_units < <(systemctl --failed --no-legend --plain 2>/dev/null | awk '{ print $1 }')
-if [[ -e $runtime/bus ]]; then
-  mapfile -t failed_user_units < <(XDG_RUNTIME_DIR=$runtime systemctl --user --failed --no-legend --plain 2>/dev/null | awk '{ print "user:" $1 }')
-  failed_units+=("${failed_user_units[@]}")
-fi
-if (( ${#failed_units[@]} )); then
-  report FAIL units "failed: $(joined "${failed_units[@]}")"
+if ! system_units=$(systemctl --failed --no-legend --plain 2>/dev/null); then
+  report FAIL units "systemctl cannot list failed units"
 else
-  report PASS units "no failed system or user units"
+  mapfile -t failed_units < <(awk 'NF { print $1 }' <<<"$system_units")
+  detail="no failed system or user units"
+  if [[ -e $runtime/bus ]] && user_units=$(XDG_RUNTIME_DIR=$runtime systemctl --user --failed --no-legend --plain 2>/dev/null); then
+    mapfile -t failed_user_units < <(awk 'NF { print "user:" $1 }' <<<"$user_units")
+    failed_units+=("${failed_user_units[@]}")
+  else
+    detail="no failed system units; no user manager to ask about user units"
+  fi
+  if (( ${#failed_units[@]} )); then
+    report FAIL units "failed: $(joined "${failed_units[@]}")"
+  else
+    report PASS units "$detail"
+  fi
 fi
 
 unit_property() {
@@ -204,7 +212,11 @@ if [[ ! -e $runtime/pipewire-0 ]]; then
 elif sink=$(XDG_RUNTIME_DIR=$runtime wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null) && [[ -n $sink ]]; then
   sink_name=$(sed -n 's/.*node\.name = "\(.*\)"/\1/p' <<<"$sink" | head -n1)
   sink_description=$(sed -n 's/.*node\.description = "\(.*\)"/\1/p' <<<"$sink" | head -n1)
-  report PASS default-sink "${sink_description:-unnamed}${sink_name:+ ($sink_name)}"
+  if [[ $sink_name == "auto_null" ]]; then
+    report FAIL default-sink "the default sink is PipeWire's dummy output"
+  else
+    report PASS default-sink "${sink_description:-unnamed}${sink_name:+ ($sink_name)}"
+  fi
 else
   report FAIL default-sink "PipeWire has no default audio sink"
 fi

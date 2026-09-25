@@ -53,9 +53,29 @@ grep -q "not pinned to a full commit" "$test_tmp/out" || fail "the unpinned URL 
 pass "an artifact URL on a branch is refused"
 
 reset_evidence
-sed -i.bak 's|https://|http://|' "$evidence/artifacts.tsv" && rm "$evidence/artifacts.tsv.bak"
-verify && fail "a plain http URL is refused"
-pass "an artifact URL without https is refused"
+{ head -c 40000 /dev/zero | tr '\0' 'a'; printf '\n\0tail\n'; } >"$evidence/2026-09-25-m2-cold-boot/late-nul.txt"
+printf 'hidden\0\n' >"$evidence/2026-09-25-m2-cold-boot/.hidden"
+verify && fail "late binary bytes and hidden files are refused"
+grep -q "late-nul.txt is binary" "$test_tmp/out" || fail "a NUL after the first 32 KiB is found" "$(cat "$test_tmp/out")"
+grep -q "\.hidden is binary" "$test_tmp/out" || fail "hidden files are checked" "$(cat "$test_tmp/out")"
+pass "binary bytes anywhere in a file, and hidden files, are refused"
+
+set_url() {
+  reset_evidence
+  awk -F'\t' -v OFS='\t' -v url="$1" 'NR > 1 { $4 = url } { print }' "$evidence/artifacts.tsv" >"$evidence/artifacts.tsv.new"
+  mv "$evidence/artifacts.tsv.new" "$evidence/artifacts.tsv"
+}
+sha=$(file_sha256 "$artifact_source")
+for url in "http://example.com/$sha/state.tar.gz" "https://example.com/latest/state.tar.gz" "https://github.com/owner/repo/raw/main/state.tar.gz"; do
+  set_url "$url"
+  verify && fail "a movable URL is refused: $url"
+done
+pass "movable artifact URLs are refused"
+for url in "https://github.com/owner/repo/releases/download/evidence-2026-09-25/state.tar.gz" "https://bucket.example.com/evidence/sha256/$sha/state.tar.gz" "https://github.com/owner/repo/blob/$commit/state.tar.gz"; do
+  set_url "$url"
+  verify || fail "an immutable URL verifies: $url" "$(cat "$test_tmp/out")"
+done
+pass "release assets, commit URLs and content-addressed objects verify"
 
 # --fetch downloads through curl; serve the published file locally.
 stub_bin="$test_tmp/bin"
