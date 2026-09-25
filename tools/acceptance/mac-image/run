@@ -951,9 +951,10 @@ entrypoint_case() {
 }
 
 # The runtime packages pacman -Q printed on the console, as "name version"
-# lines: the console's escape sequences (a hidden cursor) and line ends removed.
+# lines: line ends and the console's escape sequences removed, both CSI (a
+# hidden cursor) and OSC (the shell's systemd context markers).
 runtime_versions() {
-  tr -d '\r' | sed -E $'s/\x1b\\[[0-9;?]*[[:alpha:]]//g' |
+  tr -d '\r' | sed -E -e $'s/\x1b\\][^\x07\x1b]*(\x07|\x1b\\\\)//g' -e $'s/\x1b\\[[0-9;?]*[[:alpha:]]//g' |
     grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' | sort
 }
 
