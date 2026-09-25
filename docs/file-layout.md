@@ -54,6 +54,8 @@ behind, which arms `omarchy-provision-owner.service` (shipped from
 `setup-form.sh`). On first boot `bin/omarchy-provision-owner` creates the
 user on tty1 and runs the finalize step itself.
 
+Prebuilt images are set up away from the machine they will run on, so their hardware setup waits for that machine. The builder writes a root-owned manifest, `/var/lib/omarchy/image/target` (`format=1`, `platform=<omarchy-hw-platform value>`), before `omarchy-apply-system`. While it exists, `omarchy-apply-hardware` runs no hardware leaf: it queues each one in `/var/lib/omarchy/image/deferred-steps` and arms `omarchy-provision-hardware.service` (shipped from `install/provisioning/`). On the machine's first boot, before owner setup and the login screen, `bin/omarchy-provision-hardware` renames the manifest to `target.booted` and runs the queue in order, dropping each step that succeeds. A failed step stays queued for the next boot; once the queue is empty it rebuilds the initramfs if a step changed it and disarms the service, so later runs do nothing. `install/helpers/image-target.sh` holds the contract. Root always uses these fixed paths; no environment variable turns a live system into an image build.
+
 Current generated theme state lives under
 `~/.local/state/omarchy/current/`. Keep `~/.config/omarchy/` for files a user
 may intentionally version in a dotfile manager, such as user themes, hooks,
