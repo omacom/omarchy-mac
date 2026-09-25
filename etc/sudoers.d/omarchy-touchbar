@@ -1,0 +1,5 @@
+# Touch Bar mini apps borrow the Touch Bar from tiny-dfr and hand it back. The
+# handoff is a hotkey/menu action with no terminal to carry a password prompt,
+# so these two exact invocations run without one. The helper only stops or
+# starts tiny-dfr and toggles an ACL on the Touch Bar's own device nodes.
+%wheel ALL=(root) NOPASSWD: /usr/bin/omarchy-touchbar-handoff app, /usr/bin/omarchy-touchbar-handoff keys
