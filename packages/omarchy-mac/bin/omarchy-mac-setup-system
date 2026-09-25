@@ -6,7 +6,9 @@ set -euo pipefail
 root=${1:-/}
 root=${root%/}
 [[ -z $root || $root == /* ]] || exit 2
-omarchy-hw-apple-silicon || exit 0
+# A detector failure stops setup rather than reading as another platform.
+platform=$(omarchy-hw-platform)
+[[ $platform == "apple-silicon" ]] || exit 0
 share="$root/usr/share/omarchy-mac"
 
 # Retire only byte-identical generated files, never links (including masks).
@@ -14,7 +16,10 @@ retire() {
   local file=$1 original=$2
   if [[ -f $file && ! -L $file ]] && cmp -s "$file" "$original"; then
     if [[ -e $file.omarchy-mac-retired || -L $file.omarchy-mac-retired ]]; then
-      cmp -s "$file" "$file.omarchy-mac-retired" || return 1
+      if ! cmp -s "$file" "$file.omarchy-mac-retired"; then
+        echo "Error: $file.omarchy-mac-retired differs from $file; move it aside and rerun." >&2
+        return 1
+      fi
       rm -- "$file"
     else
       mv -- "$file" "$file.omarchy-mac-retired"
