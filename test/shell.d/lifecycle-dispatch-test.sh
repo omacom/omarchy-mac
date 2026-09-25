@@ -8,7 +8,7 @@ dispatch="$ROOT/bin/omarchy-lifecycle-dispatch"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-rollback update-preflight update-verify boot-rebuild migrate)
+operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback update-preflight update-verify boot-rebuild luks-slots migrate)
 apple_optional=(update-preflight boot-rebuild migrate)
 
 for platform in apple-silicon qualcomm generic-aarch64 generic; do
@@ -97,15 +97,28 @@ for operation in "${operations[@]}"; do
     output=$(on apple-silicon "$empty" --resolve "$operation" 2>&1) && [[ -z $output ]] ||
       fail "apple: optional $operation resolves to nothing without the boot package" "$output"
   else
-    (( status == 1 )) || fail "apple: required $operation fails without the boot package" "status: $status"
+    (( status == 3 )) || fail "apple: required $operation fails with status 3 without the boot package" "status: $status"
     [[ $output == "Error: $operation on apple-silicon needs omarchy-mac-boot, which provides /usr/lib/omarchy/mac-boot/$operation; it is not installed" ]] ||
       fail "apple: required $operation names the missing package and entrypoint" "$output"
-    if on apple-silicon "$empty" --resolve "$operation" >/dev/null 2>&1; then
-      fail "apple: required $operation does not resolve without the boot package"
-    fi
+    status=0
+    on apple-silicon "$empty" --resolve "$operation" >/dev/null 2>&1 || status=$?
+    (( status == 3 )) || fail "apple: required $operation does not resolve without the boot package" "status: $status"
   fi
 done
 pass "apple: without omarchy-mac-boot required operations fail with a clear message and optional ones are no-ops"
+
+# An installed omarchy-mac-boot that predates an operation is named with its
+# version, as an update away rather than missing.
+older=$tmp/older
+mkdir -p "$older/usr/lib/omarchy/mac-boot" "$older/var/lib/pacman/local/omarchy-mac-boot-20260921-10"
+for operation in "${operations[@]}"; do
+  [[ " ${apple_optional[*]} " == *" $operation "* ]] && continue
+  status=0
+  output=$(on apple-silicon "$older" "$operation" 2>&1) || status=$?
+  (( status == 1 )) && [[ $output == "Error: $operation on apple-silicon needs /usr/lib/omarchy/mac-boot/$operation, which omarchy-mac-boot 20260921-10 does not provide; update omarchy-mac-boot" ]] ||
+    fail "apple: an omarchy-mac-boot without $operation is named with its version" "status $status: $output"
+done
+pass "apple: an installed omarchy-mac-boot that lacks a required operation fails asking for its update"
 
 # An entrypoint anyone but root could have changed never runs, optional or not.
 untrusted() {

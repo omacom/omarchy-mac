@@ -1,0 +1,21 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch reset-verify <factory-root>. Read-only. Succeeds
+# only when the boot files reset-prepare rebuilt boot the factory root: its
+# kernel is the one in /boot, the initramfs loads the keyboard firmware before
+# the password prompt, the command line unlocks an encrypted root, and the
+# Limine menu has the factory root's entry with every UKI hash matching.
+
+set -euo pipefail
+
+# Root reads only the live system and a fixed PATH; unprivileged tests may
+# stage the package under a fixture root.
+MAC_BOOT_ROOT=""
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+else
+  MAC_BOOT_ROOT=${OMARCHY_MAC_BOOT_ROOT:-}
+fi
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/provision.sh"
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/factory-reset.sh"
+reset_verify "$@"

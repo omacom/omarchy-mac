@@ -194,8 +194,10 @@ kernel_release() {
   return 1
 }
 
+# What the next boot reads (kernel, initramfs, unlock, device trees, m1n1,
+# U-Boot, Limine), as omarchy update's update-verify checks it.
 boot_check_pending() {
-  env OMARCHY_BOOT_CHECK_ALLOW_PENDING_REBOOT=1 omarchy-apple-silicon-boot-check "$1"
+  env OMARCHY_BOOT_CHECK_ALLOW_PENDING_REBOOT=1 omarchy-apple-silicon-boot-check --boot-chain "$@"
 }
 
 key_trusted() {
@@ -544,7 +546,7 @@ preflight() {
   fi
   # Installed boot files, not the running kernel: an update that just replaced
   # the kernel leaves a reboot pending, and the migration replaces it anyway.
-  if ! check_output=$(env OMARCHY_BOOT_CHECK_ALLOW_PENDING_REBOOT=1 omarchy-apple-silicon-boot-check 2>&1); then
+  if ! check_output=$(boot_check_pending 2>&1); then
     reasons+=("the boot files are not coherent; repair them first: $(tail -n 1 <<<"$check_output")")
   fi
   if [[ -e $first_boot_marker || -e $legacy_first_boot_marker ]]; then
@@ -952,7 +954,7 @@ step_reboot() {
     die "this boot runs $(<"$R/proc/sys/kernel/osrelease"), not linux-aurora $release; the backups are in $backup"
   limine_mac && cmp -s "$R/usr/share/limine/BOOTAA64.EFI" "$R$esp/EFI/BOOT/BOOTAA64.EFI" ||
     die "this Mac did not boot through the packaged Limine"
-  output=$(omarchy-apple-silicon-boot-check linux-aurora 2>&1) || die "the boot check failed after the reboot: $(tail -n 1 <<<"$output")"
+  output=$(omarchy-apple-silicon-boot-check --boot-chain linux-aurora 2>&1) || die "the boot check failed after the reboot: $(tail -n 1 <<<"$output")"
 }
 
 # The completion record comes first: what is left after it is only cleanup,

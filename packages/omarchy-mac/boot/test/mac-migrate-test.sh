@@ -339,15 +339,15 @@ pass "packages, /etc, /boot, the ESP and the LUKS header are backed up before an
 [[ $(cat "$R/boot/efi/EFI/BOOT/BOOTAA64.EFI") == "limine 12.9" && -e $R/var/lib/omarchy/limine.enabled ]] ||
   fail "Limine takes the loader slot"
 grep -q "^limine-boot activate OMARCHY_PATH=/usr/share/omarchy" "$F/boot.log" || fail "a GRUB Mac is switched by the package's activation"
-[[ $(grep -n '' "$F/boot.log" | grep -E 'update-m1n1|update-grub|boot-check pending linux-aurora|limine-boot' | cut -d: -f2- | head -n 4 | tr '\n' '|') == \
-  "update-m1n1 |update-grub |boot-check pending linux-aurora|limine-boot activate OMARCHY_PATH=/usr/share/omarchy|" ]] ||
+[[ $(grep -n '' "$F/boot.log" | grep -E 'update-m1n1|update-grub|boot-check pending --boot-chain linux-aurora|limine-boot' | cut -d: -f2- | head -n 4 | tr '\n' '|') == \
+  "update-m1n1 |update-grub |boot-check pending --boot-chain linux-aurora|limine-boot activate OMARCHY_PATH=/usr/share/omarchy|" ]] ||
   fail "m1n1, the DTBs and U-Boot are rebuilt and checked before Limine takes the slot" "$(cat "$F/boot.log")"
 pass "the boot chain is rebuilt and checked before Limine replaces GRUB"
 
 reboot_into_aurora
 output=$(migrate verify 2>&1) || fail "the post-reboot verification completes the migration" "$output"
 [[ -f $state/complete && ! -e $state/reboot-pending && ! -e $state/cache ]] || fail "completion retires the working state"
-grep -q "^boot-check linux-aurora$" "$F/boot.log" || fail "the booted chain passes the full boot check"
+grep -q "^boot-check --boot-chain linux-aurora$" "$F/boot.log" || fail "the booted chain passes the boot check"
 grep -q "^systemctl disable omarchy-mac-migrate-verify.service" "$F/boot.log" || fail "the post-reboot check is disabled again"
 [[ ! -e $R/var/lib/omarchy/migrations/omarchy-aarch64-sync-pending ]] || fail "the collaboration repository's marker is retired"
 [[ $(migrate status) == *"State: complete"* ]] || fail "status reports completion"
@@ -438,7 +438,7 @@ refused "a pacman lock" "pacman is busy"
 new_fixture refusals
 echo "/boot/initramfs-linux-asahi.img does not hold the 6.19.1 modules" >"$F/boot-check-fail"
 refused "incoherent boot files" "boot files are not coherent"
-grep -q "^boot-check pending $" "$F/boot.log" || fail "preflight checks the installed boot files, not the running kernel" "$(cat "$F/boot.log")"
+grep -q "^boot-check pending --boot-chain$" "$F/boot.log" || fail "preflight checks the installed boot chain, not the running kernel" "$(cat "$F/boot.log")"
 new_fixture refusals
 mkdir -p "$R/var/lib/omarchy/mac-first-boot"
 : >"$R/var/lib/omarchy/mac-first-boot/pending"

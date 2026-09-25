@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # omarchy:summary=Check that the boot files match the installed Apple Silicon kernel and m1n1
-# omarchy:args=[linux-aurora|linux-asahi]
+# omarchy:args=[--boot-chain] [linux-aurora|linux-asahi]
 # omarchy:hidden=true
 # omarchy:requires-sudo=true
 
@@ -9,6 +9,14 @@
 # m1n1 image with the installed package files. Read the ESP through a private
 # read-only mount; never regenerate boot files or mutate a release channel.
 # An explicit pending-reboot override checks installed boot files only.
+#
+# --boot-chain checks only what the next boot reads, for omarchy update's
+# update-verify: the kernel, initramfs, unlock settings, device trees, m1n1
+# stage 2, U-Boot and Limine. It holds only the kernel image, device trees and
+# m1n1 against their package mtree, checks the kernel the boot menu starts
+# first when both kernels are installed, and leaves out LUKS keyslots and
+# provisioning leftovers and an m1n1 image its owner took over with
+# M1N1_UPDATE_DISABLED.
 
 set -euo pipefail
 
@@ -26,10 +34,15 @@ path() {
 
 case "${1:-}" in
   -h | --help)
-    echo "Usage: omarchy-apple-silicon-boot-check [linux-aurora|linux-asahi]"
+    echo "Usage: omarchy-apple-silicon-boot-check [--boot-chain] [linux-aurora|linux-asahi]"
     exit 0
     ;;
 esac
+boot_chain=0
+if [[ ${1:-} == "--boot-chain" ]]; then
+  boot_chain=1
+  shift
+fi
 (( $# <= 1 )) || fail "takes at most one kernel"
 
 workdir=$(mktemp -d)
@@ -48,15 +61,40 @@ installed=$(pacman -Qq) || fail "cannot list the installed packages"
 is_installed() {
   grep -Fxq -- "$1" <<<"$installed"
 }
+# The ESP Limine's tooling writes to: ESP_PATH, /boot/efi or on older
+# installs /boot.
+limine_esp_path() {
+  sudo sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$(path /etc/default/limine)" | tail -n 1
+}
+
+# The kernel the boot menu starts: the first kernel entry in Limine's menu,
+# where the tool writes the Omarchy block first and Omarchy's default_entry
+# points, else GRUB's first entry. A default_entry or GRUB_DEFAULT pointed
+# elsewhere is not followed.
+menu_kernel() {
+  if [[ -e $(path /var/lib/omarchy/limine.enabled) && -f $(path /etc/default/limine) ]]; then
+    sudo awk '{ sub(/^[[:space:]]+/, "") } /^\/\/linux-(aurora|asahi)$/ { print substr($0, 3); exit }' \
+      "$(path "$(limine_esp_path)/limine.conf")" 2>/dev/null
+  else
+    sudo grep -Eo 'vmlinuz-linux-(aurora|asahi)' "$(path /boot/grub/grub.cfg)" 2>/dev/null | sed -n '1s/^vmlinuz-//p'
+  fi
+}
+
 kernel=${1:-}
 if [[ -z $kernel ]]; then
   kernels=()
   for candidate in linux-aurora linux-asahi; do
     ! is_installed "$candidate" || kernels+=("$candidate")
   done
-  (( ${#kernels[@]} == 1 )) ||
-    fail "cannot tell which kernel boots: ${kernels[*]:-neither linux-aurora nor linux-asahi} installed"
-  kernel=${kernels[0]}
+  if (( boot_chain && ${#kernels[@]} == 2 )); then
+    kernel=$(menu_kernel || true)
+    [[ -n $kernel ]] ||
+      fail "cannot tell which kernel boots: linux-aurora and linux-asahi are installed, and the boot menu starts neither"
+  else
+    (( ${#kernels[@]} == 1 )) ||
+      fail "cannot tell which kernel boots: ${kernels[*]:-neither linux-aurora nor linux-asahi} installed"
+    kernel=${kernels[0]}
+  fi
 fi
 [[ -n ${bootloaders[$kernel]:-} ]] ||
   fail "$kernel is not a kernel this check knows; it checks linux-aurora with m1n1-aurora and linux-asahi with m1n1"
@@ -64,7 +102,9 @@ bootloader=${bootloaders[$kernel]}
 for package in "$kernel" "$bootloader"; do
   is_installed "$package" || fail "$kernel boots with $bootloader, but $package is not installed"
 done
-for package in linux-aurora m1n1-aurora linux-asahi m1n1; do
+rivals=(linux-aurora m1n1-aurora linux-asahi m1n1)
+(( ! boot_chain )) || rivals=()
+for package in "${rivals[@]}"; do
   [[ $package == "$kernel" || $package == "$bootloader" ]] || ! is_installed "$package" ||
     fail "$kernel boots with $bootloader, but $package is installed too"
 done
@@ -80,9 +120,17 @@ for package in "$kernel" "$bootloader"; do
   altered=$(grep -Ev ' altered files$' <<<"$mtree_output" |
     grep -Ev "^warning: database file for '[^']+' does not exist" |
     grep -Ev '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \(Modification time mismatch\)$' || true)
+  # --boot-chain holds only the files the boot files are built from against
+  # the mtree: the kernel image, its device trees and m1n1. Drift in any other
+  # file of the package is left out; everything else pacman reports counts.
+  if (( boot_chain )); then
+    altered=$(awk '!/^warning: [^:]+: \// || /^warning: [^:]+: \/usr\/lib\/(modules\/[^\/]+\/(vmlinuz|dtbs\/)|asahi-boot\/)/' <<<"$altered")
+  fi
   [[ -z $altered ]] || fail "installed $package files do not match the package mtree: $(head -n 1 <<<"$altered")"
-  # pacman exits 1 for the depmod lines alone; any other failure is one.
+  # pacman exits 1 for the depmod lines alone, and with --boot-chain for the
+  # file drift it leaves out; any other failure is one.
   (( mtree_status == 0 )) || grep -Fq '(Modification time mismatch)' <<<"$mtree_output" ||
+    { (( boot_chain )) && grep -Eq '^warning: [^:]+: /' <<<"$mtree_output"; } ||
     fail "pacman -Qkk $package failed"
 done
 
@@ -199,7 +247,7 @@ if (( has_crypttab_root )); then
   # First-boot window: throwaway keyfile and rd.luks.key= are allowed until
   # owner provisioning finishes (v3 item 1e). After that both must be gone,
   # the throwaway keyslot retired, and encrypt.state phase=finished.
-  if [[ ! -f $(path /var/lib/omarchy/provisioning/luks-key) && ! -f $(path /var/lib/omarchy/mac-first-boot/pending) ]]; then
+  if (( ! boot_chain )) && [[ ! -f $(path /var/lib/omarchy/provisioning/luks-key) && ! -f $(path /var/lib/omarchy/mac-first-boot/pending) ]]; then
     (( limine_mac )) || ! sudo grep -q 'rd.luks.key=' "$grub_cfg" ||
       fail "/boot/grub/grub.cfg still has rd.luks.key= after provisioning"
     [[ ! -e $(path /boot/omarchy/luks-key) ]] ||
@@ -228,7 +276,10 @@ if (( has_crypttab_root )); then
     [[ $owner_slot != "$recovery_slot" ]] ||
       fail "/boot/omarchy/encrypt.state records the same slot for owner and recovery"
 
-    mapfile -t luks_slots < <(awk '/^[[:space:]]+[0-9]+:[[:space:]]+luks2/ { sub(":", "", $1); print $1 }' <<<"$luks_dump")
+    # Only the keyslot section: a luks2-keyring token under "Tokens:" looks the same.
+    mapfile -t luks_slots < <(awk '
+      /^[^[:space:]]/ { keyslots = ($0 == "Keyslots:") }
+      keyslots && /^[[:space:]]+[0-9]+:[[:space:]]+luks2/ { sub(":", "", $1); print $1 }' <<<"$luks_dump")
     (( ${#luks_slots[@]} == 2 )) ||
       fail "throwaway LUKS keyslot still present after provisioning (${#luks_slots[@]} keyslots, expected 2)"
     [[ " ${luks_slots[*]} " == *" $owner_slot "* && " ${luks_slots[*]} " == *" $recovery_slot "* ]] ||
@@ -242,9 +293,7 @@ fi
 # the LUKS mapping) the system needs, and the U-Boot slot must hold the
 # installed Limine.
 if (( limine_mac )); then
-  # The ESP Limine's tooling writes to: ESP_PATH, /boot/efi or on older
-  # installs /boot.
-  limine_esp=$(sudo sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$(path /etc/default/limine)" | tail -n 1)
+  limine_esp=$(limine_esp_path)
   [[ $limine_esp == /* ]] || fail "/etc/default/limine names no ESP_PATH"
   limine_cfg=$(path "$limine_esp/limine.conf")
   limine_uki=$(path "$limine_esp/EFI/Linux/omarchy_$kernel.efi")
@@ -323,7 +372,7 @@ if (( limine_mac )); then
     mapper_uuid=$(sudo blkid -o value -s UUID /dev/mapper/root 2>/dev/null || true)
     [[ -z $mapper_uuid || ${limine_root#root=UUID=} == "$mapper_uuid" ]] ||
       fail "the Limine $kernel entry root=UUID= does not name the filesystem on /dev/mapper/root"
-    if [[ ! -f $(path /var/lib/omarchy/provisioning/luks-key) && ! -f $(path /var/lib/omarchy/mac-first-boot/pending) ]]; then
+    if (( ! boot_chain )) && [[ ! -f $(path /var/lib/omarchy/provisioning/luks-key) && ! -f $(path /var/lib/omarchy/mac-first-boot/pending) ]]; then
       grep -q 'rd.luks.key=' <<<"$limine_cmdline" &&
         fail "the Limine $kernel entry still has rd.luks.key= after provisioning"
     fi
@@ -386,7 +435,7 @@ if [[ -e $config_file ]]; then
     esac
   done <"$workdir/config"
 fi
-[[ -z $disabled ]] ||
+[[ -z $disabled ]] || (( boot_chain )) ||
   fail "M1N1_UPDATE_DISABLED is set in /etc/default/update-m1n1, so m1n1 does not follow the kernel and its device trees cannot be vouched for; remove it, run sudo update-m1n1, then omarchy update"
 
 # ls -d prints what matches, and nothing at all when nothing does.
@@ -567,6 +616,14 @@ else
 fi
 
 sudo test -f "$mountpoint/m1n1/boot.bin" || fail "the system ESP ($esp) has no m1n1/boot.bin"
+# U-Boot starts the loader on the system ESP, so the Limine, menu and UKI
+# checked above must be the ones there.
+if (( limine_mac )); then
+  for file in EFI/BOOT/BOOTAA64.EFI limine.conf "EFI/Linux/omarchy_$kernel.efi"; do
+    sudo cmp -s "$(path "$limine_esp/$file")" "$mountpoint/$file" ||
+      fail "$limine_esp/$file is not the one on the system ESP ($esp), which U-Boot boots; point ESP_PATH in /etc/default/limine at that ESP's mountpoint, then run sudo omarchy-mac-boot-update and omarchy update"
+  done
+fi
 report_running_release() {
   if (( pending_reboot )); then
     echo "Apple Silicon boot check: installed $kernel $kver boot files match; running $running_kver, reboot pending"
@@ -574,6 +631,11 @@ report_running_release() {
     echo "Apple Silicon boot check: running $kernel $kver; installed boot files match"
   fi
 }
+if [[ -n $disabled ]]; then
+  echo "Apple Silicon boot check: M1N1_UPDATE_DISABLED is set in /etc/default/update-m1n1, so m1n1/boot.bin is its owner's and is not checked"
+  report_running_release
+  exit 0
+fi
 if sudo cmp -s "$workdir/boot.bin" "$mountpoint/m1n1/boot.bin"; then
   report_running_release
   exit 0
