@@ -111,3 +111,4 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
   - setup stopping before the owner form when the boot package is missing or not ready
   - the stale-entry refresh rebuilding through `limine-update` on x86 and the boot package on Apple
   - the worker failing closed without it
+- `test/shell.d/provision-owner-luks-test.sh` runs owner provisioning through the dispatcher into `omarchy-mac-boot`'s staged entrypoints, and `packages/omarchy-mac/boot/test/mac-provision-test.sh` covers those entrypoints on their own (ticket 32).

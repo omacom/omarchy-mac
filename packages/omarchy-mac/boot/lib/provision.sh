@@ -32,6 +32,15 @@ require_apple_silicon() {
     refuse "omarchy-mac-boot provisioning runs only on Apple Silicon Macs."
 }
 
+# An image keeps the key, encrypt.state and the initramfs on its Boot
+# partition: with that unmounted, /boot is a directory on the root and every
+# check below would read the wrong files.
+require_boot_partition() {
+  [[ ! -e $INSTALL_CONF ]] ||
+    [[ $(findmnt -n -o UUID --mountpoint "$MAC_BOOT_ROOT/boot" 2>/dev/null) == "$BOOT_UUID" ]] ||
+    refuse "This Mac's Boot partition is not mounted at /boot."
+}
+
 grub_drop_rd_luks_key() {
   local file=${1:-$GRUB_DEFAULT} tmp
   [[ -f $file ]] || return 1
@@ -138,6 +147,7 @@ write_encrypt_state() {
     recovery_slot=""
     [[ $(state_get "$REKEY_STATE" recovery_shown || true) != 1 ]] ||
       recovery_slot=$(state_get "$REKEY_STATE" recovery_slot || true)
+    [[ $recovery_slot != "$owner_slot" ]] || recovery_slot=""
   fi
 
   install -d -m 755 "$(dirname "$ENCRYPT_STATE")" || return 1
@@ -188,6 +198,7 @@ encrypted_phase() {
 provision_prepare() {
   local phase
   require_apple_silicon
+  require_boot_partition
   phase=$(encrypt_state_get phase || true)
 
   if [[ -z $phase ]]; then
@@ -210,6 +221,7 @@ provision_prepare() {
 provision_commit() {
   local phase
   require_apple_silicon
+  require_boot_partition
   phase=$(encrypt_state_get phase || true)
   # The initramfs resumes an unfinished conversion with the boot-partition key.
   if [[ -e $ENCRYPT_STATE && -z $phase ]] || { [[ -n $phase && $phase != declined ]] && ! encrypted_phase "$phase"; }; then
@@ -242,6 +254,7 @@ provision_commit() {
 provision_verify() {
   local phase
   require_apple_silicon
+  require_boot_partition
 
   if [[ -e $BOOT_LUKS_KEY || -L $BOOT_LUKS_KEY ]]; then
     log_step "$BOOT_LUKS_KEY still holds the staged install key"

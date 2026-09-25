@@ -181,7 +181,7 @@ luks_rekey_verify() {
 
   if ! kept=$(luks_rekey_kept_slots) || ! slots=$(luks_dump_slots "$device") ||
     [[ $(sort -n <<<"$slots") != "$kept" ]]; then
-    log_step "LUKS slots other than the owner's remain on $device"
+    log_step "the LUKS slots on $device are not exactly the ones setup keeps"
     return 1
   fi
   if [[ -n $(staged_key_slot "$device") ]]; then

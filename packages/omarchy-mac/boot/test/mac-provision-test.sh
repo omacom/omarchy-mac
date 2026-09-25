@@ -54,6 +54,15 @@ else
   printf 'linux /vmlinuz-linux-aurora %s\n' "\$cmdline" >"$root/boot/grub/grub.cfg"
 fi
 SH
+cat >"$stub_bin/findmnt" <<'SH'
+#!/bin/bash
+# The Boot partition at /boot, as an image mounts it.
+if [[ " $* " == *" --mountpoint "* && " $* " == *" UUID "* && ${*: -1} == */boot ]]; then
+  echo "${TEST_BOOT_UUID-4f4d5801-424f-4f54-8000-000000000001}"
+  exit 0
+fi
+exec /usr/bin/findmnt "$@"
+SH
 cat >"$stub_bin/omarchy-mac-esp" <<'SH'
 #!/bin/bash
 [[ -n ${TEST_ESP-/boot/efi} ]] || exit 1
@@ -202,6 +211,19 @@ limine_fixture
 run provision-prepare || fail "a Limine Mac writing to the system ESP is ready" "$(cat "$test_tmp/err")"
 if TEST_ESP=/boot run provision-prepare; then fail "Limine writing to another ESP than the device tree's is refused"; fi
 pass "provision-prepare requires the boot files to go to the ESP the Mac boots from"
+
+# Without the Boot partition /boot is a directory on the root: nothing there
+# is the key, encrypt.state or the initramfs the Mac boots.
+fixture
+before=$(snapshot)
+for name in provision-prepare provision-commit provision-verify; do
+  if TEST_BOOT_UUID="" run "$name"; then fail "$name refuses while the Boot partition is not mounted"; fi
+  error_says "Boot partition is not mounted"
+done
+[[ $(snapshot) == "$before" && ! -s $calls ]] || fail "nothing changes without the Boot partition"
+rm "$root/var/lib/omarchy/mac-first-boot/install.conf" "$root/boot/omarchy/encrypt.state"
+TEST_BOOT_UUID="" run provision-prepare || fail "a Mac that did not start from an image has no Boot partition to require"
+pass "an image's entrypoints refuse to work without its Boot partition at /boot"
 
 # ── provision-commit and provision-verify ─────────────────────────────────
 fixture

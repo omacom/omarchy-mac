@@ -59,6 +59,15 @@ cat >"$stub_bin/omarchy-mac-kernel" <<'SH'
 #!/bin/bash
 echo linux-aurora
 SH
+cat >"$stub_bin/findmnt" <<'SH'
+#!/bin/bash
+# The Boot partition at /boot, as an image mounts it.
+if [[ " $* " == *" --mountpoint "* && " $* " == *" UUID "* && ${*: -1} == */boot ]]; then
+  echo "${TEST_BOOT_UUID-4f4d5801-424f-4f54-8000-000000000001}"
+  exit 0
+fi
+exec /usr/bin/findmnt "$@"
+SH
 cat >"$stub_bin/omarchy-mac-esp" <<'SH'
 #!/bin/bash
 echo /boot/efi

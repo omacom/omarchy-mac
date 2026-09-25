@@ -13,7 +13,9 @@
 
 set -uo pipefail
 
-esp_node=${OMARCHY_ESP_PARTUUID_FILE:-/proc/device-tree/chosen/asahi,efi-system-partition}
+# Tests may name another device-tree node; root always reads the live one.
+esp_node=/proc/device-tree/chosen/asahi,efi-system-partition
+(( EUID == 0 )) || esp_node=${OMARCHY_ESP_PARTUUID_FILE:-$esp_node}
 
 esp_uuid=""
 [[ ! -r $esp_node ]] || esp_uuid=$(tr -d '\0' <"$esp_node" | tr '[:upper:]' '[:lower:]')
