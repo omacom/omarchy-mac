@@ -1,0 +1,267 @@
+schema_version=1
+verification_kind=apple-build-environment
+omarchy_iso_source_commit=dfa58faded2b123ea01dbfadad20d22bdc0bd9fb
+archiso_source_commit=424e78130db2af6c1ceb55b442d7914b1109ff2b
+source_date_epoch=1787832096
+build_image=menci/archlinuxarm@sha256:1245992a2b371b5aeeede7dae44937ab29dc446e9e77abe263b99b02e5c1813d
+architecture=aarch64
+media_target=aarch64/apple-silicon
+artifact_filename=omarchy-2026.08.27-aarch64.iso
+artifact_size=3414530048
+artifact_sha256=e732b2bc025e382dcf5c75e43236f06dc1eb6db574a6c9e70a2a308af151b2c7
+platform_snapshot_sha256=3eb9bdb1edc9d145d854efba7f521fd6c90f5189bb8a4b7ae80b368664092a7e
+uname_machine=aarch64
+[container-os]
+NAME="Arch Linux ARM"
+PRETTY_NAME="Arch Linux ARM"
+ID=archarm
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;2;23;147;209"
+HOME_URL="https://archlinuxarm.org/"
+DOCUMENTATION_URL="https://archlinuxarm.org/wiki"
+SUPPORT_URL="https://archlinuxarm.org/forum"
+BUG_REPORT_URL="https://github.com/archlinuxarm/PKGBUILDs/issues"
+LOGO=archlinux-logo
+[build-host-packages]
+acl 2.4.0-1
+ada 3.4.4-1
+arch-install-scripts 31-2
+archlinux-keyring 20260727-1
+archlinuxarm-keyring 20240419-2
+asahi-alarm-keyring 20241216-1
+attr 2.6.0-1
+audit 4.2.1-1
+autoconf 2.73-1
+automake 1.18.1-1
+base 3-3
+base-devel 1-2
+bash 5.3.15-1
+binutils 2.46+r70+g155188ea10a7-1
+bison 3.8.2-8
+boost-libs 1.92.0-1
+brotli 1.2.0-1
+bzip2 1.0.8-6
+c-ares 1.34.8-1
+ca-certificates 20240618-1
+ca-certificates-mozilla 3.127-1
+ca-certificates-utils 20240618-1
+cairo 1.18.4-1
+coreutils 9.11-2
+cpio 2.15-3
+cryptsetup 2.8.7-1
+curl 8.21.0-1
+db5.3 5.3.28-7
+dbus 1.16.2-1
+dbus-broker 37-3
+dbus-broker-units 37-3
+dbus-units 37-3
+debugedit 5.3-2
+device-mapper 2.03.42-1
+diffutils 3.12-2
+dosfstools 4.2-5
+e2fsprogs 1.47.4-1
+elfutils 0.196-1
+expat 2.8.3-1
+fakeroot 1:1.37.2-3
+fftw 3.3.11-1
+file 5.48-1
+filesystem 2025.10.12-1
+findutils 4.11.0-1
+flex 2.6.4-6
+fontconfig 2:2.18.3-2
+freetype2 2.14.3-1
+fribidi 1.0.16-2
+gawk 5.4.1-1
+gc 8.2.12-1
+gcc 16.1.1+r12+g301eb08fa2c5-1
+gcc-libs 16.1.1+r12+g301eb08fa2c5-1
+gdb 17.2-1
+gdb-common 17.2-1
+gdbm 1.26-2
+gettext 1.0-2
+git 2.55.0-1
+glib2 2.88.3-1
+glibc 2.43+r22+g8362e8ce10b2-2
+gmp 6.3.0-3
+gnulib-l10n 20241231-1
+gnupg 2.4.9-3
+gnutls 3.8.13-2
+gpgme 2.1.2-1
+graphite 1:1.3.15-1
+grep 3.12-2
+groff 1.24.1-1
+grub 2:2.14-1.1
+guile 3.0.11-1
+gzip 1.14-2
+harfbuzz 14.3.1-1
+hwdata 0.410-1
+iana-etc 20260617-1
+icu 78.3-1
+imagemagick 7.1.2.30-1
+iproute2 7.2.0-1
+iptables 1:1.8.13-1
+iputils 20250605-1
+jansson 2.15.1-1
+jbigkit 2.1-8
+jq 1.8.2-1
+json-c 0.19-1
+kbd 2.10.0-1
+keyutils 1.6.3-4
+kmod 34.2-1
+krb5 1.22.2-1
+lcms2 2.19.1-1
+leancrypto 1.8.0-1
+libarchive 3.8.9-1
+libasan 16.1.1+r12+g301eb08fa2c5-1
+libassuan 3.0.0-1
+libatomic 16.1.1+r12+g301eb08fa2c5-1
+libbpf 1.7.0-1
+libburn 1.5.8-1
+libcap 2.78-1
+libcap-ng 0.9.5-1
+libdeflate 1.26-1
+libelf 0.196-1
+libevent 2.1.13-2
+libffi 3.8.0-1
+libgcc 16.1.1+r12+g301eb08fa2c5-1
+libgcrypt 1.12.2-1
+libgfortran 16.1.1+r12+g301eb08fa2c5-1
+libgomp 16.1.1+r12+g301eb08fa2c5-1
+libgpg-error 1.61-1
+libidn2 2.3.8-1
+libisl 0.28-1
+libisoburn 1.5.8.2-1
+libisofs 1.5.8.2-1
+libjpeg-turbo 3.2.0-2
+libksba 1.8.0-1
+libldap 2.6.13-1
+liblqr 0.4.3-1
+liblsan 16.1.1+r12+g301eb08fa2c5-1
+libluv 1.52.1-1
+libmakepkg-dropins 20-2
+libmnl 1.0.5-2
+libmpc 1.4.1-1
+libnetfilter_conntrack 1.1.1-1
+libnfnetlink 1.0.2-2
+libnftnl 1.3.1-1
+libnghttp2 1.70.0-1
+libnghttp3 1.18.0-1
+libngtcp2 1.25.0-1
+libnl 3.12.0-1
+libnsl 2.0.1-2
+libobjc 16.1.1+r12+g301eb08fa2c5-1
+libp11-kit 0.26.5-1
+libpcap 1.10.6-1
+libpng 1.6.58-2
+libpsl 0.21.5-2
+libquadmath 16.1.1+r12+g301eb08fa2c5-1
+libraqm 0.11.0-1
+libsasl 2.1.28-5
+libseccomp 2.6.0-1
+libsecret 0.21.7-1
+libssh2 1.11.1-7
+libstdc++ 16.1.1+r12+g301eb08fa2c5-1
+libsysprof-capture 50.0-6
+libtasn1 4.21.0-1
+libtiff 4.7.2-1
+libtirpc 1.3.7-1
+libtool 2.6.0+r23+gb08cb0a0-1
+libtsan 16.1.1+r12+g301eb08fa2c5-1
+libubsan 16.1.1+r12+g301eb08fa2c5-1
+libunistring 1.4.2-1
+libusb 1.0.30-1
+libutf8proc 2.11.3-1
+libuv 1.52.1-2
+libverto 0.3.2-6
+libvterm 0.3.3-2
+libwebp 1.6.0-2
+libx11 1.8.13-1
+libxau 1.0.12-1
+libxcb 1.17.0-1
+libxcrypt 4.5.2-1
+libxdmcp 1.1.5-2
+libxext 1.3.7-1
+libxml2 2.15.3-1
+libxrender 0.9.12-1
+licenses 20240728-1
+linux-api-headers 7.2-1
+lmdb 0.9.35-1
+lua51-lpeg 1.1.0-5
+luajit 2.1.1787165859+1ee778a-1
+lz4 1:1.10.0-2
+lzo 2.10-5
+m4 1.4.21-2
+make 4.4.1-3
+mkinitcpio 41.1-1
+mkinitcpio-busybox 1.36.1-1
+mpdecimal 4.0.1-3
+mpfr 4.2.2-1
+msgpack-c 7.0.1-1
+mtools 1:4.0.49-1
+ncurses 6.6-2
+neovim 0.12.5-1
+nettle 4.0-1
+nftables 1:1.1.6-3
+node-gyp 13.0.2-1
+nodejs 26.8.0-1
+nodejs-nopt 10.0.1-1
+npm 12.0.2-1
+npth 1.8-1
+omarchy-keyring 20251027-1
+oniguruma 6.9.10-1
+openssl 3.6.4-1
+p11-kit 0.26.5-1
+pacman 7.1.0.r9.g54d9411-2
+pacman-mirrorlist 20260411-2
+pam 1.7.2-2
+pambase 20260616-1
+patch 2.8-1
+pciutils 3.15.0-1
+pcre2 10.47-1
+perl 5.42.2-2
+perl-error 0.17030-3
+perl-mailtools 2.22-3
+perl-timedate 2.35-1
+pinentry 1.3.3-1
+pixman 0.46.4-1.1
+pkgconf 3.0.5-1
+popt 1.19-2
+procps-ng 4.0.7-1
+psmisc 23.7-2
+python 3.14.7-1
+readline 8.3.003-1
+sed 4.10-2
+semver 7.8.5-1
+shadow 4.20.0.arch1-1
+simdjson 1:4.6.8-1
+source-highlight 3.1.9-19
+sqlite 3.53.4-1
+squashfs-tools 4.7.5-1
+sudo 1.9.17.p2-6
+systemd 261.2-1
+systemd-libs 261.2-1
+systemd-sysvcompat 261.2-1
+tar 1.35-5
+texinfo 7.3-1
+tpm2-tss 4.2.0-2
+tree-sitter 0.26.9-1
+tree-sitter-c 0.24.1-2
+tree-sitter-cli 0.26.9-1
+tree-sitter-lua 0.5.0-3
+tree-sitter-markdown 0.5.3-2
+tree-sitter-query 0.8.0-2
+tree-sitter-vim 0.8.1-3
+tree-sitter-vimdoc 4.1.0-2
+tzdata 2026c-1
+unibilium 2.1.2-1
+util-linux 2.42.2-1
+util-linux-libs 2.42.2-1
+which 2.25-1
+xcb-proto 1.17.0-4
+xorgproto 2025.1-1
+xxhash 0.8.3-1
+xz 5.8.3-1
+zlib 1:1.3.2-3
+zlib-ng 2.3.3-1
+zstd 1.5.7-3
