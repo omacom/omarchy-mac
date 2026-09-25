@@ -1,0 +1,198 @@
+{
+  "schema": 1,
+  "candidate_only": true,
+  "set": "apple-test-073e489b5b85-20260925",
+  "created": "2026-09-25T19:50:33+1000",
+  "source": {
+    "repository": "omacom/omarchy-mac",
+    "commit": "073e489b5b8562335107e514bbf61009cd54a308",
+    "ref": "mac/04-land-503",
+    "pull_request": "omacom/omarchy-mac#527"
+  },
+  "location": {
+    "repository": "maralcbr/omarchy-pkgs",
+    "release": "apple-test-073e489b5b85-20260925",
+    "state": "draft"
+  },
+  "set_sha256": "6a0477b35e287e11630c620c3c91e35aa6582f18e945bb5488f9c85af84a63ba",
+  "signer": {
+    "key": "Omarchy Mac candidate test lane",
+    "receipt": "signing.json beside this manifest and in the release; its fingerprint is the trust anchor"
+  },
+  "builds": {
+    "omarchy-mac commit": {
+      "run": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36120335712",
+      "artifact": "candidate-set-36120335712-1",
+      "artifact_sha256": "904f132aceb20584375c7fa314e6e3b9d5f4ba03392e5db033c3b5898fc536d7",
+      "workflow": "maralcbr/omarchy-pkgs@e469b83ff602fd71fadc5b858db11193e7b3d598 .github/workflows/candidate-set.yml",
+      "image": "menci/archlinuxarm@sha256:1f453fcfd9f44ad5ff71f3603b3cd723359ec7829728515c4f9ccb851255169f",
+      "recipes": {
+        "omarchy": "omacom/omarchy-pkgs@4b60e4cd95972c16fbf3da634522a955cf7bf36c pkgbuilds/omarchy",
+        "omarchy-settings": "omacom/omarchy-pkgs@4b60e4cd95972c16fbf3da634522a955cf7bf36c pkgbuilds/omarchy-settings",
+        "arm-patch": "omarchy-mac/omarchy-pkgs-aarch64@8f7bf309aa399d5de6c7b5c4228e9e8a0109b17b patches/omarchy-first-run-packages.patch",
+        "omarchy-mac": "omacom/omarchy-pkgs@e4521c1bbdee0b0f88fe8588cbb3e3b08398a38e pkgbuilds/omarchy-mac",
+        "omarchy-mac-boot": "maralcbr/omarchy-pkgs@e469b83ff602fd71fadc5b858db11193e7b3d598 lab/recipes/omarchy-mac-boot (from omarchy-mac/omarchy-pkgs-aarch64@617a907f99a1339c81dc2b90c6a1b451ce140b3a)"
+      },
+      "checks": {
+        "omarchy-mac": "makepkg --check passed",
+        "omarchy-mac-boot": "makepkg --check passed (boot/test/all)",
+        "provenance": "source-revision markers match; no file in two packages"
+      },
+      "source_date_epoch": 1790328152
+    },
+    "test lanes": "omacom/omarchy-pkgs pull request builds (build-pr.yml, unsigned, never published); each artifact digest and recipe tree matches the pull request head"
+  },
+  "not_tested": [
+    "runtime dependency resolution and installation (ticket 23)",
+    "boot (tickets 25 and 26)"
+  ],
+  "packages": [
+    {
+      "name": "omarchy",
+      "version": "4.0.0.alpha.quattro.r1790328152.g073e489b5b85-1.361203357120001",
+      "arch": "aarch64",
+      "filename": "omarchy-4.0.0.alpha.quattro.r1790328152.g073e489b5b85-1.361203357120001-aarch64.pkg.tar.xz",
+      "sha256": "917b6a50fdab08071043b0af934b211f2a86171b59bb28bc2380443c9962e142",
+      "source": {
+        "repository": "omacom/omarchy-mac",
+        "commit": "073e489b5b8562335107e514bbf61009cd54a308"
+      },
+      "recipe": "omacom/omarchy-pkgs@4b60e4cd95972c16fbf3da634522a955cf7bf36c pkgbuilds/omarchy",
+      "build": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36120335712"
+    },
+    {
+      "name": "omarchy-settings",
+      "version": "4.0.0.alpha.quattro.r1790328152.g073e489b5b85-1.361203357120001",
+      "arch": "aarch64",
+      "filename": "omarchy-settings-4.0.0.alpha.quattro.r1790328152.g073e489b5b85-1.361203357120001-aarch64.pkg.tar.xz",
+      "sha256": "56d1365b17d609bc9d60de4c26a22a782982be0cd47b0fb535769c32314e9ae9",
+      "source": {
+        "repository": "omacom/omarchy-mac",
+        "commit": "073e489b5b8562335107e514bbf61009cd54a308"
+      },
+      "recipe": "omacom/omarchy-pkgs@4b60e4cd95972c16fbf3da634522a955cf7bf36c pkgbuilds/omarchy-settings",
+      "build": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36120335712"
+    },
+    {
+      "name": "omarchy-mac",
+      "version": "0.1.0-5.361203357120001",
+      "arch": "aarch64",
+      "filename": "omarchy-mac-0.1.0-5.361203357120001-aarch64.pkg.tar.xz",
+      "sha256": "89281c731e42e717f8766e2fbe87f1b5c89deb2f2bc77511085dd22e48f3cdf2",
+      "source": {
+        "repository": "omacom/omarchy-mac",
+        "commit": "073e489b5b8562335107e514bbf61009cd54a308"
+      },
+      "recipe": "omacom/omarchy-pkgs@e4521c1bbdee0b0f88fe8588cbb3e3b08398a38e pkgbuilds/omarchy-mac",
+      "build": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36120335712"
+    },
+    {
+      "name": "omarchy-mac-boot",
+      "version": "20260921-10.361203357120001",
+      "arch": "aarch64",
+      "filename": "omarchy-mac-boot-20260921-10.361203357120001-aarch64.pkg.tar.xz",
+      "sha256": "722d6ac00537f7eb36cbfb7e8389f518520e5fcfc8a6e9183791cfe196e5332e",
+      "source": {
+        "repository": "omacom/omarchy-mac",
+        "commit": "073e489b5b8562335107e514bbf61009cd54a308"
+      },
+      "recipe": "maralcbr/omarchy-pkgs@e469b83ff602fd71fadc5b858db11193e7b3d598 lab/recipes/omarchy-mac-boot (from omarchy-mac/omarchy-pkgs-aarch64@617a907f99a1339c81dc2b90c6a1b451ce140b3a)",
+      "build": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36120335712"
+    },
+    {
+      "name": "linux-aurora",
+      "version": "7.1.12.aurora2-10",
+      "arch": "aarch64",
+      "filename": "linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst",
+      "sha256": "9201253d17ada58381a2cfd116ec24315fbf5f3b458d75da9a2217ca04898c86",
+      "source": {
+        "repository": "omacom/omarchy-pkgs",
+        "pull_request": "omacom/omarchy-pkgs#625",
+        "commit": "14609a71a2eb9dbbf2685f0bda8364521903c5b4",
+        "recipe": "pkgbuilds/linux-aurora",
+        "recipe_tree": "77161bccd40bed272eab31a73f532dd45dc4b588"
+      },
+      "build": "https://github.com/omacom/omarchy-pkgs/actions/runs/36107770797",
+      "artifact": {
+        "name": "linux-aurora-aarch64-77161bccd40bed272eab31a73f532dd45dc4b588",
+        "sha256": "592bdc1a710c2e48949c85be24fa605f18d373c30eb04f628341f367c7120874"
+      }
+    },
+    {
+      "name": "linux-aurora-headers",
+      "version": "7.1.12.aurora2-10",
+      "arch": "aarch64",
+      "filename": "linux-aurora-headers-7.1.12.aurora2-10-aarch64.pkg.tar.zst",
+      "sha256": "cbc397e8b16e26e0297998ec80cc00884ac0a0f4ad286a0cba9dd3c9a4249d80",
+      "source": {
+        "repository": "omacom/omarchy-pkgs",
+        "pull_request": "omacom/omarchy-pkgs#625",
+        "commit": "14609a71a2eb9dbbf2685f0bda8364521903c5b4",
+        "recipe": "pkgbuilds/linux-aurora",
+        "recipe_tree": "77161bccd40bed272eab31a73f532dd45dc4b588"
+      },
+      "build": "https://github.com/omacom/omarchy-pkgs/actions/runs/36107770797",
+      "artifact": {
+        "name": "linux-aurora-aarch64-77161bccd40bed272eab31a73f532dd45dc4b588",
+        "sha256": "592bdc1a710c2e48949c85be24fa605f18d373c30eb04f628341f367c7120874"
+      }
+    },
+    {
+      "name": "m1n1-aurora",
+      "version": "1.6.1.aurora1-3",
+      "arch": "aarch64",
+      "filename": "m1n1-aurora-1.6.1.aurora1-3-aarch64.pkg.tar.zst",
+      "sha256": "5e01b73b0cf2145d9917621b2a3fab4b6703ee7f9e684aae4eb26e1e2ccafc34",
+      "source": {
+        "repository": "omacom/omarchy-pkgs",
+        "pull_request": "omacom/omarchy-pkgs#627",
+        "commit": "73d8b1e84e6a32899f914fb85b3707a6e92c3c9b",
+        "recipe": "pkgbuilds/m1n1-aurora",
+        "recipe_tree": "1485f563c10dbad9c10b648ba2e50539102555f4"
+      },
+      "build": "https://github.com/omacom/omarchy-pkgs/actions/runs/36108646823",
+      "artifact": {
+        "name": "m1n1-aurora-aarch64-1485f563c10dbad9c10b648ba2e50539102555f4",
+        "sha256": "df0ba147ce5767a6142dbde4fd2bb857eaa758cdd04a323290c611343c7a9724"
+      }
+    },
+    {
+      "name": "uboot-asahi",
+      "version": "2026.07.asahi2-4",
+      "arch": "aarch64",
+      "filename": "uboot-asahi-2026.07.asahi2-4-aarch64.pkg.tar.zst",
+      "sha256": "5f20164d0d4c4e5bb5fb2c344ae255fcccfeffec366fdd6194ed2b12b521918e",
+      "source": {
+        "repository": "omacom/omarchy-pkgs",
+        "pull_request": "omacom/omarchy-pkgs#627",
+        "commit": "73d8b1e84e6a32899f914fb85b3707a6e92c3c9b",
+        "recipe": "pkgbuilds/uboot-asahi",
+        "recipe_tree": "8ebb9dd41cc370509cfbc3a36a54f09b0e5e524d"
+      },
+      "build": "https://github.com/omacom/omarchy-pkgs/actions/runs/36108646823",
+      "artifact": {
+        "name": "uboot-asahi-aarch64-8ebb9dd41cc370509cfbc3a36a54f09b0e5e524d",
+        "sha256": "24be7e67050dbfd165b3907dc72ea4265fa84f25176621bd424737b952e75df5"
+      }
+    },
+    {
+      "name": "limine-mkinitcpio-hook",
+      "version": "1.39.0-2",
+      "arch": "aarch64",
+      "filename": "limine-mkinitcpio-hook-1.39.0-2-aarch64.pkg.tar.zst",
+      "sha256": "8d3c904056e0880db39152207f62cdff2d3c9cf16598dfb7eb512149f3ebd8b0",
+      "source": {
+        "repository": "omacom/omarchy-pkgs",
+        "pull_request": "omacom/omarchy-pkgs#631",
+        "commit": "baf6df3e8048037331ee41b6f1931a5dcc1f678c",
+        "recipe": "pkgbuilds/limine-mkinitcpio-hook",
+        "recipe_tree": "f5409e6fbed5e3885d7b7db38a80bf259196ca27"
+      },
+      "build": "https://github.com/omacom/omarchy-pkgs/actions/runs/36112419424",
+      "artifact": {
+        "name": "limine-mkinitcpio-hook-aarch64-f5409e6fbed5e3885d7b7db38a80bf259196ca27",
+        "sha256": "4b931841df59eb98a08027391036a1d38c10573ebb54186623d08e6ce1fb27ad"
+      }
+    }
+  ]
+}

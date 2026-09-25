@@ -1,0 +1,154 @@
+#!/bin/bash
+# tools/release/candidate-set against a local fake set with a disposable key.
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+tool=$root/candidate-set
+run_tool() { "$BASH" "$tool" "$@"; }
+tmp=$(mktemp -d)
+export CANDIDATE_SIGNING_GNUPGHOME=$tmp/gnupg
+cleanup() {
+  gpgconf --homedir "$CANDIDATE_SIGNING_GNUPGHOME" --kill gpg-agent 2>/dev/null || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+failures=0
+pass() { echo "ok - $1"; }
+fail() { echo "not ok - $1"; failures=$((failures + 1)); }
+expect_ok() {
+  local name=$1
+  shift
+  if "$@" >"$tmp/out" 2>&1; then pass "$name"; else fail "$name"; cat "$tmp/out"; fi
+}
+expect_fail() {
+  local name=$1 pattern=$2
+  shift 2
+  if "$@" >"$tmp/out" 2>&1; then
+    fail "$name (succeeded)"
+  elif grep -q -- "$pattern" "$tmp/out"; then
+    pass "$name"
+  else
+    fail "$name (wrong error)"
+    cat "$tmp/out"
+  fi
+}
+sha() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+
+set_dir=$tmp/set
+mkdir "$set_dir"
+head -c 4096 /dev/urandom >"$set_dir/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst"
+head -c 2048 /dev/urandom >"$set_dir/linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst"
+{
+  echo "omarchy-mac 0.1.0-5.1 omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst $(sha "$set_dir/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst")"
+  echo "linux-aurora 7.1.12.aurora2-10 linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst $(sha "$set_dir/linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst")"
+} | LC_ALL=C sort >"$tmp/lines"
+jq -n --arg a "$(sha "$set_dir/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst")" \
+  --arg b "$(sha "$set_dir/linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst")" --arg digest "$(sha "$tmp/lines")" \
+  '{schema: 1, candidate_only: true, set: "test-set", set_sha256: $digest, packages: [
+     {name: "omarchy-mac", version: "0.1.0-5.1", filename: "omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst", sha256: $a},
+     {name: "linux-aurora", version: "7.1.12.aurora2-10", filename: "linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst", sha256: $b}]}' \
+  >"$tmp/manifest.json"
+manifest=$tmp/manifest.json
+
+expect_fail "verify refuses an unsigned set" "set is not signed" run_tool verify "$manifest" "$(printf 'A%.0s' {1..40})" "$set_dir"
+expect_ok "sign creates the key, signs and verifies" run_tool sign "$manifest" "$set_dir"
+grep -q "tampered copy rejected" "$tmp/out" && pass "sign runs the tamper check" || fail "sign runs the tamper check"
+fingerprint=$(jq -r '.signer.fingerprint' "$set_dir/signing.json" 2>/dev/null || true)
+[[ $fingerprint =~ ^[0-9A-F]{40}$ ]] && pass "receipt records the signer" || fail "receipt records the signer"
+for file in omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst.sig linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst.sig signing.json.sig candidate-signing-key.asc; do
+  [[ -s $set_dir/$file ]] && pass "writes $file" || fail "writes $file"
+done
+expect_ok "verify accepts the signed set" run_tool verify "$manifest" "$fingerprint" "$set_dir"
+expect_ok "a second sign reuses the same key" run_tool sign "$manifest" "$set_dir"
+[[ $(jq -r '.signer.fingerprint' "$set_dir/signing.json") == "$fingerprint" ]] && pass "key is stable" || fail "key is stable"
+
+other=$tmp/other-gnupg
+mkdir -m 700 "$other"
+gpg --batch --homedir "$other" --pinentry-mode loopback --passphrase '' --quick-gen-key "other" ed25519 sign 1d 2>/dev/null
+other_fingerprint=$(gpg --batch --homedir "$other" --with-colons --list-keys 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+expect_fail "verify refuses another fingerprint" "is not the key" run_tool verify "$manifest" "$other_fingerprint" "$set_dir"
+
+cp -a "$set_dir" "$tmp/swapped"
+gpg --batch --homedir "$other" --armor --export "$other_fingerprint" >"$tmp/swapped/candidate-signing-key.asc"
+gpg --batch --homedir "$other" --detach-sign --no-armor -o "$tmp/swapped/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst.sig" --yes \
+  "$tmp/swapped/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst"
+expect_fail "a key shipped beside the files is not trusted" "is not the key" run_tool verify "$manifest" "$fingerprint" "$tmp/swapped"
+
+cp -a "$set_dir" "$tmp/resigned"
+gpg --batch --homedir "$other" --detach-sign --no-armor -o "$tmp/resigned/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst.sig" --yes \
+  "$tmp/resigned/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst"
+expect_fail "a package signed by another key fails" "signature does not verify" run_tool verify "$manifest" "$fingerprint" "$tmp/resigned"
+gpgconf --homedir "$other" --kill gpg-agent 2>/dev/null || true
+
+cp -a "$set_dir" "$tmp/tampered"
+printf 'X' | dd of="$tmp/tampered/linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst" bs=1 seek=100 conv=notrunc 2>/dev/null
+expect_fail "a modified package fails" "sha256" run_tool verify "$manifest" "$fingerprint" "$tmp/tampered"
+
+cp -a "$set_dir" "$tmp/receipt"
+jq '.set_sha256 = "0000"' "$set_dir/signing.json" >"$tmp/receipt/signing.json"
+expect_fail "a modified receipt fails" "signing.json is not signed" run_tool verify "$manifest" "$fingerprint" "$tmp/receipt"
+
+cp -a "$set_dir" "$tmp/missing"
+rm "$tmp/missing/linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst.sig"
+expect_fail "a missing signature fails" "missing linux-aurora" run_tool verify "$manifest" "$fingerprint" "$tmp/missing"
+
+jq '.packages[1].sha256 = "00"' "$manifest" >"$tmp/edited.json"
+expect_fail "sign refuses a set whose digest does not match" "set_sha256" run_tool sign "$tmp/edited.json" "$set_dir"
+# A manifest rewritten to match changed bytes no longer matches the receipt.
+cp -a "$set_dir" "$tmp/rewritten"
+printf 'X' | dd of="$tmp/rewritten/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst" bs=1 seek=10 conv=notrunc 2>/dev/null
+rewrite() { # manifest filter output
+  jq "$2" "$1" >"$3.tmp"
+  jq -r '.packages[] | "\(.name) \(.version) \(.filename) \(.sha256)"' "$3.tmp" | LC_ALL=C sort >"$tmp/lines"
+  jq --arg digest "$(sha "$tmp/lines")" '.set_sha256 = $digest' "$3.tmp" >"$3"
+}
+rewrite "$manifest" ".packages[0].sha256 = \"$(sha "$tmp/rewritten/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst")\"" "$tmp/rewritten.json"
+expect_fail "a manifest rewritten to match changed bytes fails" "another manifest" run_tool verify "$tmp/rewritten.json" "$fingerprint" "$tmp/rewritten"
+rewrite "$manifest" '.packages[0].filename = "../escape"' "$tmp/escape.json"
+expect_fail "sign refuses a path outside the set" "unsafe filename" run_tool sign "$tmp/escape.json" "$set_dir"
+
+# From a release: a fake gh serves and receives the release's files.
+release=$tmp/release
+mkdir -p "$release" "$tmp/bin" "$tmp/repo/set"
+cp "$set_dir"/*.pkg.tar.zst "$release/"
+jq '.location = {repository: "example/lab", release: "test-set"}' "$manifest" >"$tmp/repo/set/manifest.json"
+cat >"$tmp/bin/gh" <<EOF
+#!/bin/bash
+set -euo pipefail
+[[ \$1 == release && \$3 == test-set && \$4 == -R && \$5 == example/lab ]] || { echo "unexpected gh \$*" >&2; exit 1; }
+case \$2 in
+  download) [[ \$6 == -D ]] && cp "$release"/* "\$7/" ;;
+  upload)
+    shift 5
+    clobber=0
+    [[ \$1 == --clobber ]] && { clobber=1; shift; }
+    for file in "\$@"; do
+      [[ \$clobber == 1 || ! -e "$release/\${file##*/}" ]] || exit 1
+      cp "\$file" "$release/"
+    done ;;
+esac
+EOF
+chmod +x "$tmp/bin/gh"
+cp "$set_dir/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst.sig" "$release/"
+expect_ok "sign from a release uploads the signing files" env PATH="$tmp/bin:$PATH" "$BASH" "$tool" sign "$tmp/repo/set/manifest.json"
+[[ -f $release/signing.json && -f $release/omarchy-mac-0.1.0-5.1-aarch64.pkg.tar.zst.sig ]] && pass "release holds the signatures" || fail "release holds the signatures"
+cmp -s "$release/signing.json" "$tmp/repo/set/signing.json" && pass "receipt is copied beside the manifest" || fail "receipt is copied beside the manifest"
+expect_ok "verify from the release" env PATH="$tmp/bin:$PATH" "$BASH" "$tool" verify "$tmp/repo/set/manifest.json" "$fingerprint"
+expect_fail "a signed release is not signed again" "already signed" env PATH="$tmp/bin:$PATH" "$BASH" "$tool" sign "$tmp/repo/set/manifest.json"
+touch "$release/extra.pkg.tar.zst"
+expect_fail "a release holding files outside the set fails" "not part of the set" env PATH="$tmp/bin:$PATH" "$BASH" "$tool" verify "$tmp/repo/set/manifest.json" "$fingerprint"
+rm "$release/extra.pkg.tar.zst"
+
+# A revocation shipped with the key makes every signature fail.
+cp -a "$set_dir" "$tmp/revoked"
+sed 's/^:-----BEGIN/-----BEGIN/' "$CANDIDATE_SIGNING_GNUPGHOME/openpgp-revocs.d/$fingerprint.rev" >"$tmp/revocation.asc"
+revoked_home=$tmp/revoked-gnupg
+mkdir -m 700 "$revoked_home"
+gpg --batch --homedir "$revoked_home" --import "$set_dir/candidate-signing-key.asc" "$tmp/revocation.asc" 2>/dev/null
+gpg --batch --homedir "$revoked_home" --armor --export "$fingerprint" >"$tmp/revoked/candidate-signing-key.asc"
+gpgconf --homedir "$revoked_home" --kill gpg-agent 2>/dev/null || true
+expect_fail "a revoked key fails" "is not signed by" run_tool verify "$manifest" "$fingerprint" "$tmp/revoked"
+
+(( failures == 0 )) || { echo "$failures failed"; exit 1; }
+echo "all passed"
