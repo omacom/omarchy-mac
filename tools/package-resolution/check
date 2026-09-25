@@ -1,0 +1,448 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# pacman's diagnostics are parsed below.
+export LC_ALL=C
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd -- "$HERE/../.." && pwd)
+
+usage() {
+  cat <<'EOF'
+Usage: tools/package-resolution/check [--platforms DIR] [--work DIR] [PLATFORM...]
+
+Resolves each platform fixture's package set against the live databases of the
+repositories in its pacman.conf, inside a disposable pacman root, and checks:
+closure, forbidden repositories and packages, the linux provider, Mac-only
+dependencies, single file ownership, and equal-version and locally-newer
+transitions. Needs pacman, bsdtar and curl (any Arch Linux or Arch Linux ARM
+host or container); runs as a normal user and writes only to the work directory.
+
+  --platforms DIR  platform fixtures (default: tools/package-resolution/platforms)
+  --work DIR       keep databases and roots in DIR and reuse downloaded databases
+EOF
+}
+
+platforms_dir=$HERE/platforms
+work=""
+selected=()
+while (( $# > 0 )); do
+  case $1 in
+    --platforms) platforms_dir=${2:?--platforms needs a directory}; shift 2 ;;
+    --work) work=${2:?--work needs a directory}; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) usage >&2; exit 2 ;;
+    *) selected+=("$1"); shift ;;
+  esac
+done
+
+for tool in pacman pacman-conf vercmp bsdtar curl; do
+  if ! command -v "$tool" >/dev/null; then
+    echo "check needs $tool; run it on an Arch Linux or Arch Linux ARM host or container" >&2
+    exit 2
+  fi
+done
+
+if [[ -n $work ]]; then
+  mkdir -p "$work"
+  work=$(cd -- "$work" && pwd)
+else
+  work=$(mktemp -d "${TMPDIR:-/var/tmp}/package-resolution.XXXXXX")
+  trap 'rm -rf "$work"' EXIT
+fi
+
+if (( ${#selected[@]} == 0 )); then
+  for dir in "$platforms_dir"/*/; do
+    selected+=("$(basename "$dir")")
+  done
+fi
+for platform in "${selected[@]}"; do
+  if [[ ! $platform =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "Platform names are directory names under $platforms_dir: $platform" >&2
+    exit 2
+  fi
+done
+
+# shellcheck disable=SC2034 # read by the platform files
+mapfile -t mac_only < <(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$HERE/mac-only")
+
+failures=0
+
+ok() { printf 'ok    %s\n' "$*"; }
+note() { printf 'note  %s\n' "$*"; }
+skip() { printf 'skip  %s\n' "$*"; }
+failed() {
+  printf 'FAIL  %s\n' "$1"
+  [[ -z ${2:-} ]] || printf '%s\n' "$2" | sed 's/^/      /'
+  failures=$(( failures + 1 ))
+}
+
+# Globs become one anchored ERE so awk and [[ =~ ]] share them. An empty list
+# yields a pattern that matches nothing.
+globs_regex() {
+  local glob parts=()
+  for glob in "$@"; do
+    parts+=("$(sed -e 's/[]\\.[+^$(){}|]/\\&/g' -e 's/\*/.*/g' -e 's/?/./g' <<<"$glob")")
+  done
+  if (( ${#parts[@]} == 0 )); then
+    echo '^$'
+  else
+    local IFS='|'
+    echo "^(${parts[*]})\$"
+  fi
+}
+
+# Fetch the database and files database from the same server. The pair can
+# still disagree (Arch Linux ARM's lists a few packages in one only), so the
+# name-version entries of the files database are kept for the ownership check.
+# Downloads are shared between platforms by server URL.
+fetch_repo() {
+  local repo=$1 conf=$2 server dest
+  while IFS= read -r server; do
+    dest=$work/databases/${server//[^A-Za-z0-9._-]/_}
+    if [[ -s $dest/$repo.db && -s $dest/$repo.files && -s $dest/$repo.files.entries ]]; then
+      echo "$dest"
+      return 0
+    fi
+    mkdir -p "$dest"
+    if curl -fsSL --retry 3 --connect-timeout 20 -o "$dest/$repo.db.part" "$server/$repo.db" &&
+      curl -fsSL --retry 3 --connect-timeout 20 -o "$dest/$repo.files.part" "$server/$repo.files"; then
+      bsdtar -tf "$dest/$repo.files.part" | sed 's|/.*||' | sort -u >"$dest/$repo.files.entries"
+      mv "$dest/$repo.db.part" "$dest/$repo.db"
+      mv "$dest/$repo.files.part" "$dest/$repo.files"
+      echo "$dest"
+      return 0
+    fi
+  done < <(pacman-conf --config "$conf" --repo "$repo" Server)
+  return 1
+}
+
+# One line per sync package: repo, name, version, provides, depends, conflicts. Arch Linux
+# ARM still serves the older layout with dependency fields in a separate
+# depends file, so fields are collected per package directory.
+index_repo() {
+  local tree
+  tree=$(mktemp -d "$work/index.XXXXXX")
+  bsdtar -xf "$2" -C "$tree"
+  find "$tree" -mindepth 2 -maxdepth 2 -type f \( -name desc -o -name depends \) | awk -v repo="$1" '
+    {
+      entry = $0
+      sub(/\/[^\/]*$/, "", entry)
+      key = ""
+      while ((getline line < $0) > 0) {
+        if (line ~ /^%[A-Z0-9]+%$/) key = line
+        else if (line == "") key = ""
+        else if (key == "%NAME%") name[entry] = line
+        else if (key == "%VERSION%") version[entry] = line
+        else if (key == "%PROVIDES%") provides[entry] = provides[entry] (provides[entry] == "" ? "" : " ") line
+        else if (key == "%DEPENDS%") depends[entry] = depends[entry] (depends[entry] == "" ? "" : " ") line
+        else if (key == "%CONFLICTS%") conflicts[entry] = conflicts[entry] (conflicts[entry] == "" ? "" : " ") line
+      }
+      close($0)
+    }
+    END { for (e in name) print repo "\t" name[e] "\t" version[e] "\t" provides[e] "\t" depends[e] "\t" conflicts[e] }' | sort -t $'\t' -k2,2
+  rm -rf "$tree"
+}
+
+check_platform() {
+  local platform=$1
+  local dir=$platforms_dir/$platform
+  local lists=() packages=() forbidden_repos=() forbidden_packages=() transitions=() kernel=""
+  local -A unpublished=()
+
+  if [[ ! -f $dir/platform || ! -f $dir/pacman.conf ]]; then
+    failed "$platform: $dir needs a platform file and a pacman.conf"
+    return
+  fi
+  # shellcheck source=/dev/null
+  source "$dir/platform"
+
+  local pwork=$work/$platform
+  local dbpath=$pwork/db conf=$pwork/pacman.conf input=$pwork/input.conf
+  rm -rf "$dbpath" "$pwork/root"
+  mkdir -p "$dbpath/sync" "$dbpath/local" "$pwork/root" "$pwork/cache" "$pwork/gnupg" "$pwork/hooks"
+
+  alpm() {
+    pacman --config "$conf" --dbpath "$dbpath" --root "$pwork/root" --cachedir "$pwork/cache" \
+      --logfile "$pwork/pacman.log" --gpgdir "$pwork/gnupg" --hookdir "$pwork/hooks" --noconfirm "$@"
+  }
+
+  echo "== $platform"
+
+  sed -E 's/^[[:space:]]*Architecture[[:space:]]*=.*/Architecture = aarch64/' "$dir/pacman.conf" >"$input"
+  local repos=() repo source bad=()
+  mapfile -t repos < <(pacman-conf --config "$input" --repo-list)
+  printf '[options]\nArchitecture = aarch64\nSigLevel = Never\n' >"$conf"
+  : >"$pwork/index"
+  : >"$pwork/files-entries"
+  for repo in "${repos[@]}"; do
+    if ! source=$(fetch_repo "$repo" "$input"); then
+      failed "$platform: could not download the [$repo] databases"
+      return
+    fi
+    ln -s "$source/$repo.db" "$dbpath/sync/$repo.db"
+    ln -s "$source/$repo.files" "$dbpath/sync/$repo.files"
+    printf '\n[%s]\n' "$repo" >>"$conf"
+    index_repo "$repo" "$source/$repo.db" >>"$pwork/index"
+    sed "s|^|$repo/|" "$source/$repo.files.entries" >>"$pwork/files-entries"
+  done
+  alpm -Q >/dev/null 2>&1 || true
+  if [[ ! -f $dbpath/local/ALPM_DB_VERSION ]]; then
+    failed "$platform: pacman did not initialise the disposable local database"
+    return
+  fi
+
+  local forbidden_repo_regex forbidden_regex
+  forbidden_repo_regex=$(globs_regex "${forbidden_repos[@]}")
+  forbidden_regex=$(globs_regex "${forbidden_packages[@]}")
+
+  for repo in "${repos[@]}"; do
+    [[ ! $repo =~ $forbidden_repo_regex ]] || bad+=("$repo")
+  done
+  if (( ${#bad[@]} > 0 )); then
+    failed "$platform: forbidden repositories configured: ${bad[*]}"
+  else
+    ok "$platform: repositories ${repos[*]}"
+  fi
+
+  local wanted=() list entry
+  for list in "${lists[@]}"; do
+    [[ $list == /* ]] || list=$ROOT/$list
+    if [[ ! -f $list ]]; then
+      failed "$platform: package list $list does not exist"
+      continue
+    fi
+    mapfile -t -O "${#wanted[@]}" wanted < <(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$list")
+  done
+  wanted+=("${packages[@]}")
+  mapfile -t wanted < <(printf '%s\n' "${wanted[@]}" | awk 'NF && !seen[$0]++')
+
+  local missing=() targets=() out
+  local -A is_wanted=() is_missing=()
+  if ! out=$(alpm -Sp --print-format '%n' -- "${wanted[@]}" 2>&1); then
+    mapfile -t missing < <(sed -n 's/^error: target not found: //p' <<<"$out")
+  fi
+  for entry in "${wanted[@]}"; do
+    is_wanted[$entry]=1
+  done
+  for entry in "${missing[@]}"; do
+    is_missing[$entry]=1
+    if [[ -n ${unpublished[$entry]:-} ]]; then
+      skip "$platform: $entry (${unpublished[$entry]})"
+    else
+      failed "$platform: $entry is in no configured repository"
+    fi
+  done
+  for entry in "${!unpublished[@]}"; do
+    if [[ -n ${is_wanted[$entry]:-} && -z ${is_missing[$entry]:-} ]]; then
+      note "$platform: $entry now resolves; drop it from unpublished"
+    fi
+  done
+  for entry in "${wanted[@]}"; do
+    [[ -n ${is_missing[$entry]:-} ]] || targets+=("$entry")
+  done
+
+  if ! alpm -Sp --print-format '%r %n %v' -- "${targets[@]}" >"$pwork/closure" 2>"$pwork/closure.err"; then
+    failed "$platform: the package set does not resolve in one transaction" "$(grep -v '^warning:' "$pwork/closure.err" | head -20)"
+    return
+  fi
+  ok "$platform: ${#targets[@]} packages resolve to a closure of $(wc -l <"$pwork/closure") ($(awk '{ n[$1]++ } END { for (r in n) { printf "%s%s %d", sep, r, n[r]; sep = ", " } }' "$pwork/closure"))"
+
+  # pacman -Sp skips declared conflicts, so check them between closure packages
+  # here: each candidate is a closure package whose name or provide matches a
+  # conflict, and versioned conflicts are settled with vercmp.
+  local conflict owner other candidate op wanted_version clashes=()
+  local versioned='^([^<>=]+)(<=|>=|<|>|=)(.+)$'
+  while IFS=$'\t' read -r owner conflict other candidate; do
+    if [[ ! $conflict =~ $versioned ]]; then
+      clashes+=("$owner conflicts with $other ($conflict)")
+      continue
+    fi
+    op=${BASH_REMATCH[2]}
+    wanted_version=${BASH_REMATCH[3]}
+    [[ -n $candidate ]] || continue
+    case $op in
+      "<") (( $(vercmp "$candidate" "$wanted_version") < 0 )) ;;
+      "<=") (( $(vercmp "$candidate" "$wanted_version") <= 0 )) ;;
+      "=") (( $(vercmp "$candidate" "$wanted_version") == 0 )) ;;
+      ">=") (( $(vercmp "$candidate" "$wanted_version") >= 0 )) ;;
+      ">") (( $(vercmp "$candidate" "$wanted_version") > 0 )) ;;
+    esac && clashes+=("$owner conflicts with $other $candidate ($conflict)")
+  done < <(awk -F '\t' '
+    NR == FNR { in_closure[$1 "\t" $2] = 1; next }
+    ($1 "\t" $2) in in_closure {
+      names[$2] = $3; conflicts[$2] = $6
+      n = split($4, p, " ")
+      for (i = 1; i <= n; i++) {
+        provided = p[i]; version = ""
+        if (split(provided, pv, "=") == 2) { provided = pv[1]; version = pv[2] }
+        providers[provided] = providers[provided] " " $2 "=" version
+      }
+    }
+    END {
+      for (owner in conflicts) {
+        n = split(conflicts[owner], c, " ")
+        for (i = 1; i <= n; i++) {
+          target = c[i]; sub(/[<>=].*/, "", target)
+          if ((target in names) && target != owner) print owner "\t" c[i] "\t" target "\t" names[target]
+          m = split(providers[target], q, " ")
+          for (j = 1; j <= m; j++) {
+            split(q[j], pv, "=")
+            if (pv[1] != owner) print owner "\t" c[i] "\t" pv[1] "\t" pv[2]
+          }
+        }
+      }
+    }' <(awk '{ print $1 "\t" $2 }' "$pwork/closure") "$pwork/index")
+  if (( ${#clashes[@]} > 0 )); then
+    failed "$platform: conflicting packages in the closure" "$(printf '%s\n' "${clashes[@]}" | sort -u)"
+  else
+    ok "$platform: no declared conflicts between closure packages"
+  fi
+
+  local shadowed
+  shadowed=$(awk -F '\t' 'NR == FNR { repos[$2] = repos[$2] (repos[$2] == "" ? "" : ">") $1; next } repos[$2] ~ />/ { printf "%s%s (%s)", sep, $2, repos[$2]; sep = ", " }' "$pwork/index" <(awk '{ print "\t" $2 }' "$pwork/closure"))
+  [[ -z $shadowed ]] || note "$platform: closure names published in several repositories, first wins: $shadowed"
+
+  mapfile -t bad < <(re=$forbidden_regex awk '$2 ~ ENVIRON["re"] { print $1 "/" $2 }' "$pwork/closure")
+  if (( ${#bad[@]} > 0 )); then
+    failed "$platform: forbidden packages in the closure: ${bad[*]}"
+  else
+    ok "$platform: no forbidden packages in the closure"
+  fi
+
+  local offered=() chosen chosen_name mac_offered=()
+  mapfile -t offered < <(awk -F '\t' '$2 == "linux" { print $1 "/" $2; next } { n = split($4, p, " "); for (i = 1; i <= n; i++) if (p[i] == "linux" || p[i] ~ /^linux=/) { print $1 "/" $2; break } }' "$pwork/index")
+  provider() {
+    awk 'NR == FNR { offered[$0] = 1; next } ($1 in offered) { print; exit }' <(printf '%s\n' "${offered[@]}") -
+  }
+  if out=$(alpm -Sp --print-format '%r/%n %v' linux 2>&1); then
+    chosen=$(provider <<<"$out")
+    chosen_name=${chosen%% *}
+    chosen_name=${chosen_name#*/}
+    if [[ -z $chosen ]]; then
+      failed "$platform: pacman resolves linux to none of its providers" "$out"
+    elif [[ $chosen_name =~ $forbidden_regex ]]; then
+      failed "$platform: linux resolves to Mac-only $chosen"
+    else
+      ok "$platform: linux resolves to $chosen; offered by ${offered[*]}"
+    fi
+    mapfile -t mac_offered < <(printf '%s\n' "${offered[@]}" | re=$forbidden_regex awk '{ n = $0; sub(/^[^\/]*\//, "", n) } n ~ ENVIRON["re"]')
+    (( ${#mac_offered[@]} == 0 )) || note "$platform: Mac-only ${mac_offered[*]} still provides linux"
+  else
+    failed "$platform: linux does not resolve" "$(grep '^error' <<<"$out")"
+  fi
+
+  if (( ${#forbidden_packages[@]} > 0 )); then
+    mapfile -t bad < <(re=$forbidden_regex awk -F '\t' '$2 !~ ENVIRON["re"] { n = split($5, d, " "); for (i = 1; i <= n; i++) { dep = d[i]; sub(/[<>=].*/, "", dep); if (dep ~ ENVIRON["re"]) print $1 "/" $2 " -> " d[i] } }' "$pwork/index")
+    if (( ${#bad[@]} > 0 )); then
+      failed "$platform: packages depend on Mac-only names" "$(printf '%s\n' "${bad[@]}")"
+    else
+      ok "$platform: nothing in the configured repositories depends on a Mac-only name"
+    fi
+  fi
+
+  local closure_targets=() unlisted=() conflicts
+  mapfile -t closure_targets < <(awk '{ print $1 "/" $2 }' "$pwork/closure")
+  mapfile -t unlisted < <(awk 'NR == FNR { listed[$0] = 1; next } !(($1 "/" $2 "-" $3) in listed) { print $1 "/" $2 " " $3 }' "$pwork/files-entries" "$pwork/closure")
+  if (( ${#unlisted[@]} > 0 )); then
+    failed "$platform: the files databases lack the closure versions of" "$(printf '%s\n' "${unlisted[@]}")"
+  elif ! alpm -Fl -- "${closure_targets[@]}" >"$pwork/files" 2>"$pwork/files.err"; then
+    failed "$platform: could not list closure files" "$(head -20 "$pwork/files.err")"
+  else
+    conflicts=$(awk '{ owner = $1; path = substr($0, length(owner) + 2) } path ~ /\/$/ { next } (path in owners) && owners[path] != owner { print "/" path ": " owners[path] " " owner; next } { owners[path] = owner }' "$pwork/files")
+    if [[ -n $conflicts ]]; then
+      failed "$platform: files owned by more than one package" "$(head -20 <<<"$conflicts")"
+    else
+      ok "$platform: every file in the closure has one owner ($(grep -vc '/$' "$pwork/files") files)"
+    fi
+  fi
+
+  install_local() {
+    local repo=$1 name=$2 version=$3 installed=${4:-$3}
+    rm -rf "$dbpath/local/"*/
+    mkdir -p "$dbpath/local/$name-$installed"
+    bsdtar -xOf "$dbpath/sync/$repo.db" "$name-$version/*" |
+      awk -v v="$installed" '/^%[A-Z0-9]+%$/ { key = $0; print; next } key == "%VERSION%" && NF { print v; next } { print }' \
+        >"$dbpath/local/$name-$installed/desc"
+    printf '%%FILES%%\n\n' >"$dbpath/local/$name-$installed/files"
+    [[ $(alpm -Q -- "$name" 2>/dev/null) == "$name $installed" ]] || problems+=("pacman does not see the installed $name $installed")
+  }
+
+  expect() {
+    local outcome=$1 description=$2 plan
+    shift 2
+    if ! plan=$(alpm -Sp --print-format '%n %v' "$@" 2>&1); then
+      problems+=("$description: $(grep '^error' <<<"$plan" | head -1)")
+    elif [[ $outcome == "kept" ]] && grep -q "^$name " <<<"$plan"; then
+      problems+=("$description")
+    elif [[ $outcome == "replaced" ]] && ! grep -Fxq "$name $version" <<<"$plan"; then
+      problems+=("$description")
+    fi
+  }
+
+  # Sets line to "repo name version" for a package by its own name. Absence is a
+  # skip only when unpublished gives a reason; anything else fails.
+  published() {
+    local out
+    line=""
+    if out=$(alpm -Sp --print-format '%r %n %v' -- "$1" 2>&1); then
+      line=$(awk -v n="$1" '$2 == n' <<<"$out")
+      [[ -z $line ]] || return 0
+      failed "$platform: no package is named $1 (for $2)" "$out"
+    elif [[ -n ${unpublished[$1]:-} ]] && grep -q '^error: target not found' <<<"$out"; then
+      skip "$platform: $1 $2 (${unpublished[$1]})"
+    else
+      failed "$platform: $1 does not resolve for $2" "$(grep '^error' <<<"$out")"
+    fi
+    return 1
+  }
+
+  local line name version newer problems=()
+  if [[ -n $kernel ]] && published "$kernel" "linux with the kernel installed"; then
+    read -r repo name version <<<"$line"
+    install_local "$repo" "$name" "$version"
+    if (( ${#problems[@]} > 0 )); then
+      failed "$platform: ${problems[0]}"
+    elif out=$(alpm -Sp --print-format '%r/%n %v' linux 2>&1); then
+      note "$platform: with $kernel installed, linux resolves to $(provider <<<"$out")"
+    else
+      note "$platform: with $kernel installed, pacman -S linux fails: $(grep '^error' <<<"$out" | head -1)"
+    fi
+  fi
+
+  for name in "${transitions[@]}"; do
+    published "$name" transitions || continue
+    read -r repo name version <<<"$line"
+    if [[ $version =~ ^([0-9]+):(.*)$ ]]; then
+      newer="$(( BASH_REMATCH[1] + 1 )):${BASH_REMATCH[2]}"
+    else
+      newer="1:$version"
+    fi
+    (( $(vercmp "$newer" "$version") > 0 )) || { failed "$platform: $newer does not sort above $version"; continue; }
+    problems=()
+    install_local "$repo" "$name" "$version"
+    expect kept "-Su replaces an equal version" -u
+    expect replaced "-S does not reinstall an equal version" -- "$name"
+    expect kept "-S --needed reinstalls an equal version" --needed -- "$name"
+    install_local "$repo" "$name" "$version" "$newer"
+    expect kept "-Su replaces a locally newer $newer" -u
+    expect replaced "-S does not replace a locally newer $newer with $version" -- "$name"
+    if (( ${#problems[@]} > 0 )); then
+      failed "$platform: $name $version transitions" "$(printf '%s\n' "${problems[@]}")"
+    else
+      ok "$platform: $name $version: -Su keeps equal and newer installs; -S replaces both; -S --needed skips equal"
+    fi
+  done
+  rm -rf "$dbpath/local/"*/
+}
+
+for platform in "${selected[@]}"; do
+  check_platform "$platform"
+done
+
+if (( failures > 0 )); then
+  echo "$failures check(s) failed"
+  exit 1
+fi
+echo "all checks passed"
