@@ -1,0 +1,21 @@
+#!/bin/bash
+# udev runs this as the SMC battery appears, so a saved charge limit survives
+# reboots. It never fails the event: anything unexpected leaves the SMC alone.
+set -euo pipefail
+
+saved_file="/etc/udev/macsmc-battery.conf"
+end_file="/sys/class/power_supply/macsmc-battery/charge_control_end_threshold"
+
+[[ $(omarchy-hw-platform 2>/dev/null) == "apple-silicon" ]] || exit 0
+[[ -r $saved_file && -w $end_file ]] || exit 0
+
+limit=""
+while IFS= read -r line || [[ -n $line ]]; do
+  if [[ $line == CHARGE_CONTROL_END_THRESHOLD=* ]]; then
+    limit=${line#*=}
+  fi
+done <"$saved_file"
+
+if [[ $limit == "80" || $limit == "100" ]]; then
+  printf '%s\n' "$limit" >"$end_file" || true
+fi
