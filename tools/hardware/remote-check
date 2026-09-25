@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# Run tools/hardware/mac-check on a test Mac over SSH and print its report
+# under a header naming the Mac, this checkout's revision and the time. The
+# check is copied to a temporary file on the Mac, run through a login shell
+# (non-interactive SSH lacks OMARCHY_PATH) and removed. Runs on macOS's bash 3.2.
+
+set -euo pipefail
+
+if (( $# != 1 )) || [[ $1 == -* ]]; then
+  echo "Usage: tools/hardware/remote-check HOST" >&2
+  exit 2
+fi
+host=$1
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+revision=$(git -C "$here" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)
+
+remote=$(ssh "$host" 'mktemp /tmp/omarchy-mac-check.XXXXXX')
+if ! ssh "$host" "cat >$remote" <"$here/mac-check"; then
+  ssh "$host" "rm -f $remote" || true
+  echo "remote-check: could not copy the checks to $host" >&2
+  exit 1
+fi
+
+echo "Hardware check of $host from omarchy-mac $revision, $(date '+%Y-%m-%d %H:%M %z')"
+status=0
+ssh "$host" "bash -lc 'bash $remote'; status=\$?; rm -f $remote; exit \$status" </dev/null || status=$?
+exit "$status"

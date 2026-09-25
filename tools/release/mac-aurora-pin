@@ -1,0 +1,439 @@
+#!/bin/bash
+#
+# Move the Aurora kernel pin, or promote a pinned Aurora kernel.
+#
+#   mac-aurora-pin pin [--branch BRANCH] [--archive-sha256 SHA256] [--recipe DIR] [--dry-run]
+#   mac-aurora-pin promote rc|stable [--vm-evidence FILE] [--hardware-evidence FILE] [--dry-run]
+#   mac-aurora-pin --lane fork edge|rc|stable [--archive-sha256 SHA256] [--recipe DIR] [--dry-run]
+#
+# omacom (the default lane) has one recipe, pkgbuilds/linux-aurora, and lets
+# channels do what the fork's three recipes did. pin moves it to the head of
+# an aurora-silicon/linux branch (aurora-wip by default): _commit, the first
+# sha256sums entry and a new version (pkgrel + 1, or _auroraver from the
+# source Makefile with pkgrel=1), as a pull request on omacom/omarchy-pkgs;
+# once the owner merges it, CI publishes the build to the channels it ships
+# to. promote is mac-release for the Aurora set (linux-aurora, m1n1-aurora):
+# widen channel membership, then bin/repo advance --arch aarch64.
+#
+# The fork lane is omarchy-pkgs bin/mac-aurora-pin, moved: it pins
+# pkgbuilds/linux-aurora-<lane> of maralcbr/omarchy-pkgs asahi-quattro (edge:
+# aurora-wip, rc: aurora-rc; stable promotes the rc recipe's qualified pin)
+# and consults the lane's latest published INPUTS digest.
+#
+# --recipe DIR edits that recipe in place once every check has passed, and
+# only prints the change with --dry-run. Otherwise the tool makes a sparse
+# clone of the packages repository: --dry-run prints the change, and a real
+# run pushes a branch and opens a pull request. The archive is the one the recipe sources,
+# github.com/.../archive/<sha>.tar.gz; gh api's /tarball/<sha> is a different
+# archive and must not be hashed. --archive-sha256 skips the download.
+
+set -euo pipefail
+
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "mac-aurora-pin: needs bash 4 or newer (on macOS, run it with Homebrew bash)" >&2
+  exit 1
+fi
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO=aurora-silicon/linux
+ARCHIVE_PREFIX=https://github.com/$REPO/archive
+FORK_REPO=${ASAHI_QUATTRO_REPOSITORY:-maralcbr/omarchy-pkgs}
+FORK_GIT=${MAC_AURORA_FORK_GIT:-https://github.com/$FORK_REPO.git}
+FORK_BRANCH=asahi-quattro
+
+usage() {
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2
+  exit 64
+}
+
+fail() {
+  echo "mac-aurora-pin: $*" >&2
+  exit 1
+}
+die() { fail "$@"; }
+say() { printf '%s\n' "$*"; }
+stop() { fail "$1"; }
+
+lane=omacom
+args=()
+while (( $# > 0 )); do
+  if [[ $1 == "--lane" ]]; then
+    (( $# > 1 )) || usage
+    lane=$2
+    shift 2
+  else
+    args+=("$1")
+    shift
+  fi
+done
+set -- "${args[@]}"
+[[ $lane == omacom || $lane == fork ]] || usage
+
+command=${1:-}
+shift || true
+target=""
+if [[ $lane == omacom && $command == promote ]]; then
+  target=${1:-}
+  [[ $target == rc || $target == stable ]] || usage
+  shift
+fi
+archive_sha256=""
+recipe_dir=""
+dry_run=0
+branch=""
+passthrough=()
+while (( $# )); do
+  case $1 in
+    --archive-sha256|--recipe|--branch)
+      (( $# > 1 )) || usage
+      case $1 in
+        --archive-sha256) archive_sha256=$2 ;;
+        --recipe) recipe_dir=$2 ;;
+        --branch) branch=$2 ;;
+      esac
+      shift 2
+      ;;
+    --dry-run) dry_run=1; shift ;;
+    --vm-evidence|--hardware-evidence)
+      (( $# > 1 )) || usage
+      passthrough+=("$1" "$2")
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+[[ -z $archive_sha256 || $archive_sha256 =~ ^[0-9a-f]{64}$ ]] || fail "invalid archive sha256: $archive_sha256"
+
+source "$ROOT/lib/omacom.sh"
+command -v gh >/dev/null 2>&1 || fail "missing command: gh"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# In-place edits that work with GNU and BSD sed alike.
+sedi() {
+  local file=${!#}
+  sed "${@:1:$#-1}" "$file" >"$file.new" && cat "$file.new" >"$file" && rm -f "$file.new"
+}
+
+# ── shared: the upstream kernel ─────────────────────────────────────────────
+resolve_head() {
+  commit=$(gh api "repos/$REPO/branches/$1" --jq .commit.sha) || fail "could not read $REPO branch $1"
+  [[ $commit =~ ^[0-9a-f]{40}$ ]] || fail "$1 did not resolve to one commit: $commit"
+}
+
+download_archive_sha256() {
+  local url=$ARCHIVE_PREFIX/$commit.tar.gz dest=$work/archive.tar.gz
+  local attempt=0 delay=2 code token=${GH_TOKEN:-}
+  local -a headers=(-H 'Accept: application/vnd.github+json')
+  [[ -n $token ]] || token=$(gh auth token 2>/dev/null || true)
+  [[ -z $token ]] || headers+=(-H "Authorization: Bearer $token")
+  while ((attempt < 7)); do
+    attempt=$((attempt + 1))
+    # github.com/.../archive redirects to codeload.github.com; curl -L drops
+    # Authorization across hosts, --location-trusted keeps it so authenticated
+    # retries survive that redirect.
+    code=$(curl -sS --location-trusted -o "$dest" -w '%{http_code}' --retry 0 "${headers[@]}" "$url" || true)
+    if [[ $code == 200 && -s $dest ]]; then
+      tar -tzf "$dest" >/dev/null 2>&1 || fail "downloaded $url is not a gzip tarball"
+      sha256sum "$dest" | cut -d' ' -f1
+      return 0
+    fi
+    if [[ $code == 429 || $code == 000 ]]; then
+      sleep "$delay"
+      delay=$((delay * 2))
+      continue
+    fi
+    fail "could not download $url (HTTP $code)"
+  done
+  fail "could not download $url after retries (HTTP 429)"
+}
+
+makefile_version() {
+  local makefile="" member version patchlevel sublevel
+  if [[ -s $work/archive.tar.gz ]]; then
+    member=$(tar -tzf "$work/archive.tar.gz" 2>/dev/null | grep -E '^[^/]+/Makefile$' | head -1 || true)
+    [[ -z $member ]] || makefile=$(tar -xOf "$work/archive.tar.gz" "$member" 2>/dev/null || true)
+  fi
+  if [[ -z $makefile ]]; then
+    makefile=$(gh api "repos/$REPO/contents/Makefile?ref=$commit" -H 'Accept: application/vnd.github.raw') ||
+      fail "could not read Makefile at $commit"
+  fi
+  version=$(sed -n 's/^VERSION = \([0-9][0-9]*\)$/\1/p' <<<"$makefile" | head -1)
+  patchlevel=$(sed -n 's/^PATCHLEVEL = \([0-9][0-9]*\)$/\1/p' <<<"$makefile" | head -1)
+  sublevel=$(sed -n 's/^SUBLEVEL = \([0-9][0-9]*\)$/\1/p' <<<"$makefile" | head -1)
+  [[ $version =~ ^[0-9]+$ && $patchlevel =~ ^[0-9]+$ && $sublevel =~ ^[0-9]+$ ]] ||
+    fail "could not read VERSION, PATCHLEVEL and SUBLEVEL from the Makefile at $commit"
+  printf '%s.%s.%s\n' "$version" "$patchlevel" "$sublevel"
+}
+
+# A clone of GIT_URL's BRANCH in $work/pkgs with only the recipe directories
+# PATHS checked out; sets pkgs.
+clone_packages() {
+  local git_url=$1 git_branch=$2
+  shift 2
+  pkgs=$work/pkgs
+  git clone --quiet --filter=blob:none --no-checkout --sparse --branch "$git_branch" "$git_url" "$pkgs" 2>"$work/git.err" ||
+    fail "could not clone $git_url: $(tail -n 3 "$work/git.err")"
+  # Sparse, so the index keeps every other path and a commit changes only
+  # what was edited.
+  git -C "$pkgs" sparse-checkout set "$@" 2>"$work/git.err" &&
+    git -C "$pkgs" checkout --quiet "$git_branch" 2>>"$work/git.err" ||
+    fail "could not check out $*: $(tail -n 3 "$work/git.err")"
+}
+
+# Edits happen on a scratch copy of the recipe directory TARGET; $recipe is
+# the copy's PKGBUILD and $shown the one messages name. apply_edit puts the
+# result back only once every check has passed, and never on a dry run.
+take_recipe() {
+  target_dir=$1
+  shown=$target_dir/PKGBUILD
+  [[ -f $shown ]] || fail "no PKGBUILD in $target_dir"
+  mkdir -p "$work/edit"
+  recipe_dir=$work/edit/$(basename "$(cd "$target_dir" && pwd)")
+  # Regular files only: a symlink copied as a symlink would edit the original.
+  mkdir "$recipe_dir"
+  cp -RL "$target_dir/." "$recipe_dir/"
+  recipe=$recipe_dir/PKGBUILD
+}
+
+apply_edit() {
+  if (( ${in_clone:-0} )); then
+    cp -R "$recipe_dir/." "$target_dir/"
+    finish_in_clone "$@"
+  elif (( dry_run )); then
+    diff -ru "$target_dir" "$recipe_dir" || true
+    say "dry run: $shown is unchanged"
+  else
+    cp -R "$recipe_dir/." "$target_dir/"
+  fi
+}
+
+# After an edit in the clone: the change, and with no --dry-run a branch and a
+# pull request against BASE on PR_REPO.
+finish_in_clone() {
+  local pr_repo=$1 base=$2 pr_branch=$3 title=$4 body=$5 output
+  git -C "$pkgs" --no-pager diff --stat
+  git -C "$pkgs" --no-pager diff
+  if (( dry_run )); then
+    say "dry run: would open a pull request on $pr_repo ($pr_branch -> $base): $title"
+    return 0
+  fi
+  load_mac_settings "${MAC_RELEASE_CONFIG:-${ASAHI_RELEASE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/mac-release.conf}}"
+  [[ -n $author_name && -n $author_email ]] ||
+    fail "a pull request needs MAC_RELEASE_AUTHOR_NAME and MAC_RELEASE_AUTHOR_EMAIL (settings file or environment)"
+  git -C "$pkgs" checkout --quiet -B "$pr_branch"
+  GIT_AUTHOR_NAME=$author_name GIT_AUTHOR_EMAIL=$author_email GIT_COMMITTER_NAME=$author_name \
+    GIT_COMMITTER_EMAIL=$author_email git -C "$pkgs" commit --quiet -am "$title" || fail "could not commit"
+  git -C "$pkgs" push --quiet --force origin "HEAD:refs/heads/$pr_branch" 2>"$work/git.err" ||
+    fail "could not push $pr_branch: $(tail -n 3 "$work/git.err")"
+  output=$(gh pr create -R "$pr_repo" --base "$base" --head "$pr_branch" --title "$title" --body "$body" 2>&1) ||
+    fail "could not open the pull request: $output"
+  say "$output"
+}
+
+# ── fork lane ───────────────────────────────────────────────────────────────
+# omarchy-pkgs bin/mac-aurora-pin's rules, on one recipe directory.
+
+# A recipe without comments, pkgrel and _desc: what stable must share with rc.
+normalized() {
+  grep -Ev '^[[:space:]]*#|^pkgrel=|^_desc=' "$1"
+}
+
+# _commit, source[0] and the first sha256sums entry.
+pins() {
+  (cd "$recipe_dir" && startdir=$PWD "$BASH" -c '
+    source ./PKGBUILD >/dev/null 2>&1 || exit 1
+    printf "%s\n" "$_commit" "${source[0]}" "${sha256sums[0]}"
+  ')
+}
+
+recipe_field() {
+  (cd "$recipe_dir" && startdir=$PWD "$BASH" -c "source ./PKGBUILD >/dev/null 2>&1 || exit 1; printf '%s\n' \"\$$1\"")
+}
+
+# stable: the recipe becomes the rc recipe (every source, checksum, config and
+# toolchain), keeping only stable's own _desc and package version. Any
+# difference in those inputs is a change; none is "nothing changed".
+promote_stable() {
+  local rc_dir=$1 file rc_auroraver new_pkgrel desc
+  local -a rc_vals
+  for file in PKGBUILD config rust-toolchain.toml; do
+    [[ -f $rc_dir/$file ]] || fail "the rc recipe has no $file"
+  done
+  mapfile -t rc_vals < <(cd "$rc_dir" && startdir=$PWD "$BASH" -c '
+    source ./PKGBUILD >/dev/null 2>&1 || exit 1
+    printf "%s\n" "$_commit" "${sha256sums[0]}" "${_auroraver:-}"
+  ') || fail "could not read the rc pin in $rc_dir"
+  [[ ${rc_vals[0]:-} =~ ^[0-9a-f]{40}$ ]] || fail "the rc pin has no commit"
+  [[ ${rc_vals[1]:-} =~ ^[0-9a-f]{64}$ ]] || fail "the rc pin has no archive sha256"
+  [[ -z $archive_sha256 || $archive_sha256 == "${rc_vals[1]}" ]] ||
+    fail "--archive-sha256 differs from the rc pin's archive sha256"
+  rc_auroraver=${rc_vals[2]}
+  if cmp -s <(normalized "$rc_dir/PKGBUILD") <(normalized "$recipe") &&
+    cmp -s "$rc_dir/config" "$recipe_dir/config" &&
+    cmp -s "$rc_dir/rust-toolchain.toml" "$recipe_dir/rust-toolchain.toml"; then
+    fail "nothing changed: $shown already carries the rc pin ${rc_vals[0]}"
+  fi
+  if [[ -n $before_auroraver && $before_auroraver != "$rc_auroraver" ]]; then
+    new_pkgrel=1
+  else
+    new_pkgrel=$((before_pkgrel + 1))
+  fi
+  desc=$(grep -m1 '^_desc=' "$recipe") || fail "$shown has no _desc"
+  cp "$rc_dir/PKGBUILD" "$recipe"
+  cp "$rc_dir/config" "$rc_dir/rust-toolchain.toml" "$recipe_dir/"
+  [[ $(grep -c '^_desc=' "$recipe") == 1 ]] || fail "the rc recipe does not have exactly one _desc line"
+  DESC=$desc awk '/^_desc=/ { print ENVIRON["DESC"]; next } { print }' "$recipe" >"$work/PKGBUILD" &&
+    cat "$work/PKGBUILD" >"$recipe"
+  sedi -e "s/^pkgrel=.*/pkgrel=$new_pkgrel/" \
+    -e 's/selected by the Aurora rc kernel lane\./selected by the Aurora stable kernel lane, promoted from the rc pin./' "$recipe"
+  [[ $(pins | head -1) == "${rc_vals[0]}" ]] || fail "$shown did not take the rc pin"
+  echo "Promoted the rc pin ${rc_vals[0]} into $shown (pkgrel $new_pkgrel)"
+  promoted_commit=${rc_vals[0]}
+}
+
+# Tag of the latest published release for this lane, with its INPUTS in
+# $work/published/INPUTS. GitHub lists newest first.
+latest_published_inputs() {
+  local prefix tag listing other
+  case $fork_lane in
+    edge) prefix=aurora-edge- ;;
+    rc) prefix=aurora-packages- ;;
+    stable) prefix=aurora-stable-packages- ;;
+  esac
+  listing=$(gh api --paginate "repos/$FORK_REPO/releases?per_page=100" \
+    --jq '.[] | select(.draft == false) | .tag_name' 2>/dev/null) || return 1
+  tag=""
+  while IFS= read -r other; do
+    [[ $other == "$prefix"* ]] || continue
+    tag=$other
+    break
+  done <<<"$listing"
+  [[ -n $tag ]] || return 1
+  mkdir -p "$work/published"
+  rm -f "$work/published/INPUTS"
+  gh release download "$tag" --repo "$FORK_REPO" --pattern INPUTS --dir "$work/published" >/dev/null 2>&1 ||
+    return 1
+  [[ -f $work/published/INPUTS ]] || return 1
+  printf '%s\n' "$tag"
+}
+
+fork_pin() {
+  local pattern before tag digest src published_url published_sha kernel_ver after expected fork_branch rc_dir
+  local -a before_vals
+  fork_lane=$command
+  case $fork_lane in
+    edge) fork_branch=aurora-wip ;;
+    rc) fork_branch=aurora-rc ;;
+    stable) fork_branch="the rc pin" ;;
+    *) usage ;;
+  esac
+  if [[ -z $recipe_dir ]]; then
+    clone_packages "$FORK_GIT" "$FORK_BRANCH" "pkgbuilds/linux-aurora-$fork_lane" pkgbuilds/linux-aurora-rc
+    recipe_dir=$pkgs/pkgbuilds/linux-aurora-$fork_lane
+    in_clone=1
+  fi
+  rc_dir=${MAC_AURORA_RC_RECIPE:-$(dirname "$recipe_dir")/linux-aurora-rc}
+  take_recipe "$recipe_dir"
+  if [[ $fork_lane != stable ]]; then
+    resolve_head "$fork_branch"
+  fi
+  for pattern in '^_commit=[0-9a-f]\{40\}$' "^sha256sums=('[0-9a-f]\{64\}'$" '^pkgrel='; do
+    [[ $(grep -c "$pattern" "$recipe") == 1 ]] || fail "$shown does not have exactly one line matching $pattern"
+  done
+  before=$(pins) || fail "could not read $shown"
+  mapfile -t before_vals <<<"$before"
+  ((${#before_vals[@]} == 3)) || fail "could not read the pin of $shown"
+  before_pkgrel=$(recipe_field pkgrel) || fail "could not read pkgrel of $shown"
+  [[ $before_pkgrel =~ ^[1-9][0-9]*$ ]] || fail "pkgrel is not a positive integer: $before_pkgrel"
+  before_auroraver=""
+  if grep -q '^_auroraver=' "$recipe"; then
+    [[ $(grep -c '^_auroraver=' "$recipe") == 1 ]] || fail "$shown does not have exactly one _auroraver line"
+    before_auroraver=$(recipe_field _auroraver) || fail "could not read _auroraver of $shown"
+  fi
+
+  if [[ $fork_lane == stable ]]; then
+    promote_stable "$rc_dir"
+    commit=$promoted_commit
+  else
+    if [[ -z $archive_sha256 ]]; then
+      command -v curl >/dev/null 2>&1 || fail "missing command: curl"
+      archive_sha256=$(download_archive_sha256)
+    fi
+    kernel_ver=$(makefile_version)
+    if tag=$(latest_published_inputs); then
+      digest=$(sha256sum "$work/published/INPUTS" | cut -d' ' -f1)
+      src=$(sed -n 's/^source=linux-aurora|//p' "$work/published/INPUTS" | head -1)
+      published_url=${src%%|*}
+      published_sha=${src#*|}
+      if [[ $published_url == "$ARCHIVE_PREFIX/$commit.tar.gz" && $published_sha == "$archive_sha256" &&
+            ${before_vals[0]} == "$commit" && ${before_vals[2]} == "$archive_sha256" ]]; then
+        fail "nothing changed: $tag records input digest $digest for $fork_branch $commit"
+      fi
+    fi
+    if [[ ${before_vals[0]} == "$commit" && ${before_vals[2]} == "$archive_sha256" ]]; then
+      fail "nothing changed: $shown is already pinned to $fork_branch $commit"
+    fi
+    # A moved commit always gets a new package version: pkgver when the
+    # Makefile version changes, otherwise the next pkgrel.
+    if [[ -n $before_auroraver && $before_auroraver != "$kernel_ver" ]]; then
+      sedi -e "s/^_auroraver=.*/_auroraver=$kernel_ver/" -e "s/^pkgrel=.*/pkgrel=1/" "$recipe"
+    else
+      sedi -e "s/^pkgrel=.*/pkgrel=$((before_pkgrel + 1))/" "$recipe"
+    fi
+    sedi -e "s/^_commit=[0-9a-f]\{40\}$/_commit=$commit/" \
+      -e "s/^sha256sums=('[0-9a-f]\{64\}'$/sha256sums=('$archive_sha256'/" "$recipe"
+    after=$(pins) || fail "could not read $shown after pinning"
+    expected=$(printf '%s\n' "$commit" "$ARCHIVE_PREFIX/$commit.tar.gz" "$archive_sha256")
+    [[ $after == "$expected" ]] || fail "$shown did not take the pin exactly"
+    echo "Pinned $shown to $REPO $fork_branch $commit ($archive_sha256)"
+  fi
+  apply_edit "$FORK_REPO" "$FORK_BRANCH" "aurora/$fork_lane-${commit:0:8}" \
+    "Pin linux-aurora-$fork_lane to aurora-silicon/linux ${commit:0:8}" \
+    "Moves pkgbuilds/linux-aurora-$fork_lane to $REPO $commit."
+}
+
+# ── omacom lane ─────────────────────────────────────────────────────────────
+omacom_pin() {
+  local head_branch=${branch:-aurora-wip} kernel_ver old_commit
+  if [[ -z $recipe_dir ]]; then
+    clone_packages "$omacom_git" "$omacom_branch" pkgbuilds/linux-aurora
+    recipe_dir=$pkgs/pkgbuilds/linux-aurora
+    in_clone=1
+  fi
+  take_recipe "$recipe_dir"
+  resolve_head "$head_branch"
+  old_commit=$(pkgbuild_var "$recipe_dir" _commit)
+  if [[ $old_commit == "$commit" && ( -z $archive_sha256 || $archive_sha256 == "$(pkgbuild_first "$recipe_dir" sha256sums)" ) ]]; then
+    fail "nothing changed: $shown is already pinned to $head_branch $commit"
+  fi
+  if [[ -z $archive_sha256 ]]; then
+    archive_sha256=$(download_archive_sha256)
+  fi
+  kernel_ver=$(makefile_version)
+  pin_recipe "$recipe_dir" "$commit" "$archive_sha256" _auroraver "$kernel_ver"
+  echo "Pinned $shown to $REPO $head_branch $commit ($archive_sha256): $pin_old_version -> $pin_new_version"
+  apply_edit "$omacom_repo" "$omacom_branch" "mac-aurora/pin-${commit:0:12}" \
+    "Pin linux-aurora to aurora-silicon/linux ${commit:0:8}" \
+    "Moves pkgbuilds/linux-aurora from $REPO $old_commit to $head_branch $commit ($pin_old_version -> $pin_new_version). Merging publishes it to the channels bin/build-matrix gives linux-aurora; promotion beyond them is tools/release/mac-aurora-pin promote."
+}
+
+omacom_promote() {
+  local flags=()
+  (( ! dry_run )) || flags+=(--dry-run)
+  exec "$BASH" "$ROOT/mac-release" "${flags[@]}" --to "$target" --package linux-aurora --package m1n1-aurora "${passthrough[@]}"
+}
+
+case $lane in
+  fork)
+    (( ${#passthrough[@]} == 0 && ${#branch} == 0 )) || usage
+    fork_pin
+    ;;
+  omacom)
+    case $command in
+      pin) fork_lane=""; omacom_pin ;;
+      promote) omacom_promote ;;
+      *) usage ;;
+    esac
+    ;;
+esac
