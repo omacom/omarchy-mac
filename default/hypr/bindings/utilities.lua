@@ -43,7 +43,7 @@ o.bind("switch:off:Apple SMC power/lid events", nil, "omarchy-hyprland-monitor-c
 o.bind("PRINT", "Screenshot", "omarchy-capture-screenshot")
 o.bind("ALT + PRINT", "Screenrecording", "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord")
 -- Apple keyboards have no PRINT key. SUPER+F10–F12 and the same chords on the
--- top-row media keysyms cover capture without holding Fn once fnmode=1. Only
+-- top-row media keysyms cover capture without holding Fn in media-first mode. Only
 -- on Apple Silicon: everywhere else SUPER+F10–F12 stay unbound, as shipped, so
 -- these must not claim them.
 if o.shell_succeeds("omarchy-hw-apple-silicon") then

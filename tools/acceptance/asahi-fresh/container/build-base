@@ -1,0 +1,193 @@
+#!/bin/bash
+
+set -euo pipefail
+
+rootfs_url=${ARCHARM_ROOTFS_URL:-https://ca.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}
+# The dated Arch Linux ARM snapshot every package in the guest comes from; the
+# run passes it in. The rootfs above stays live because it is signed as a whole.
+mirror_url=${ARCHARM_MIRROR_URL:?ARCHARM_MIRROR_URL is not set}
+cache=/work/cache
+base=$cache/archarm-base.qcow2
+rootfs=$cache/ArchLinuxARM-aarch64-latest.tar.gz
+asahi_keyring=$cache/asahi-alarm-keyring-20241216-1-any.pkg.tar.xz
+raw=$cache/archarm-base.raw
+mount_dir=/mnt/archarm
+base_id_file=$cache/archarm-base.id
+base_id=$(
+  {
+    sha256sum "$0" /work/ssh/id_ed25519.pub
+    printf '%s\n' "$rootfs_url" "$mirror_url"
+  } | sha256sum | cut -d' ' -f1
+)
+
+if [[ -f $base && -f $base_id_file && $(<"$base_id_file") == "$base_id" ]]; then
+  exit 0
+fi
+rm -f "$base" "$base_id_file"
+
+mkdir -p "$cache" "$mount_dir"
+[[ -f $rootfs ]] || curl --fail --location --retry 3 --output "$rootfs" "$rootfs_url"
+[[ -f $rootfs.sig ]] || curl --fail --location --retry 3 --output "$rootfs.sig" "$rootfs_url.sig"
+
+export GNUPGHOME=$cache/gnupg
+install -d -m 0700 "$GNUPGHOME"
+gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys 68B3537F39A313B3E574D06777193F152BDBE6A6
+fingerprint=$(gpg --batch --with-colons --fingerprint 68B3537F39A313B3E574D06777193F152BDBE6A6 |
+  awk -F: '$1 == "fpr" { print $10; exit }')
+[[ $fingerprint == "68B3537F39A313B3E574D06777193F152BDBE6A6" ]]
+gpg --batch --verify "$rootfs.sig" "$rootfs"
+
+rm -f "$raw"
+truncate -s 96G "$raw"
+parted -s "$raw" \
+  mklabel gpt \
+  mkpart ESP fat32 1MiB 1025MiB \
+  set 1 esp on \
+  mkpart root ext4 1025MiB 100%
+
+# losetup --find allocates through /dev/loop-control, which creates the node on
+# the host's devtmpfs; the container's /dev does not gain it and losetup then
+# reports ENOENT for a backing file that plainly exists. Provide the nodes
+# ourselves so allocation never has to create one.
+for index in $(seq 0 7); do
+  [[ -e /dev/loop$index ]] || mknod "/dev/loop$index" b 7 "$index"
+done
+loop=$(losetup --find --show --partscan "$raw")
+cleanup() {
+  for process in /proc/[0-9]*; do
+    process_root=$(readlink "$process/root" 2>/dev/null || true)
+    process_cwd=$(readlink "$process/cwd" 2>/dev/null || true)
+    if [[ $process_root == ${mount_dir}* || $process_cwd == ${mount_dir}* ]]; then
+      kill -KILL "${process##*/}" 2>/dev/null || true
+    fi
+  done
+  umount --recursive --lazy "$mount_dir" 2>/dev/null || true
+  losetup -d "$loop" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+loop_name=${loop##*/}
+for partition in 1 2; do
+  sys_dev=/sys/class/block/$loop_name/${loop_name}p$partition/dev
+  attempt=0
+  while (( attempt++ < 20 )) && [[ ! -f $sys_dev ]]; do
+    sleep 0.1
+  done
+  [[ -f $sys_dev ]]
+  IFS=: read -r major minor <"$sys_dev"
+  [[ -b ${loop}p$partition ]] || mknod "${loop}p$partition" b "$major" "$minor"
+done
+
+mkfs.fat -F 32 -n EFI "${loop}p1"
+mkfs.ext4 -F -L archroot "${loop}p2"
+mount "${loop}p2" "$mount_dir"
+mkdir -p "$mount_dir/boot"
+mount "${loop}p1" "$mount_dir/boot"
+bsdtar -xpf "$rootfs" -C "$mount_dir"
+mkdir -p "$cache/pacman" "$mount_dir/var/cache/pacman/pkg"
+mount --bind "$cache/pacman" "$mount_dir/var/cache/pacman/pkg"
+
+root_uuid=$(blkid -s UUID -o value "${loop}p2")
+esp_uuid=$(blkid -s UUID -o value "${loop}p1")
+cat >"$mount_dir/etc/fstab" <<EOF
+UUID=$root_uuid / ext4 defaults 0 1
+UUID=$esp_uuid /boot vfat defaults 0 2
+EOF
+
+rm -f "$mount_dir/etc/resolv.conf"
+cp -L /etc/resolv.conf "$mount_dir/etc/resolv.conf"
+printf 'Server = %s\n' "$mirror_url" >"$mount_dir/etc/pacman.d/mirrorlist"
+
+for path in proc sys dev run; do
+  mount --rbind "/$path" "$mount_dir/$path"
+  mount --make-rslave "$mount_dir/$path"
+done
+
+chroot "$mount_dir" pacman-key --init
+chroot "$mount_dir" pacman-key --populate archlinuxarm
+[[ -f $asahi_keyring ]] || curl --fail --location --retry 3 \
+  --output "$asahi_keyring" \
+  https://github.com/asahi-alarm/asahi-alarm/releases/download/aarch64/asahi-alarm-keyring-20241216-1-any.pkg.tar.xz
+echo '798f4b283ad2819aee950d042f26566ae1a68f87c12247301ce449bea3b2d81e  '"$asahi_keyring" | sha256sum --check
+cp "$asahi_keyring" "$mount_dir/tmp/asahi-alarm-keyring.pkg.tar.xz"
+cat >"$mount_dir/tmp/pacman-bootstrap.conf" <<'EOF'
+[options]
+Architecture = auto
+SigLevel = Never
+LocalFileSigLevel = Never
+EOF
+chroot "$mount_dir" pacman -U --noconfirm --config /tmp/pacman-bootstrap.conf /tmp/asahi-alarm-keyring.pkg.tar.xz
+cat >>"$mount_dir/etc/pacman.conf" <<'EOF'
+
+[asahi-alarm]
+Include = /etc/pacman.d/mirrorlist.asahi-alarm
+EOF
+printf '%s\n' 'Server = https://github.com/asahi-alarm/asahi-alarm/releases/download/$arch' \
+  >"$mount_dir/etc/pacman.d/mirrorlist.asahi-alarm"
+chroot "$mount_dir" pacman -Syu --needed --noconfirm \
+  base-devel \
+  curl \
+  expect \
+  git \
+  gnupg \
+  grub \
+  iwd \
+  jq \
+  linux-aarch64 \
+  networkmanager \
+  openssh \
+  sudo
+
+generic_kernel=$mount_dir/tmp/vm-generic-kernel
+mkdir -p "$generic_kernel/boot" "$generic_kernel/usr/lib/modules"
+mapfile -t generic_module_dirs < <(find "$mount_dir/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d)
+((${#generic_module_dirs[@]} == 1))
+generic_kernel_version=${generic_module_dirs[0]##*/}
+sed 's/ autodetect / /' "$mount_dir/etc/mkinitcpio.conf" >"$mount_dir/tmp/mkinitcpio-vm.conf"
+chroot "$mount_dir" mkinitcpio \
+  -c /tmp/mkinitcpio-vm.conf \
+  -k "$generic_kernel_version" \
+  -g /boot/initramfs-linux-vm.img
+cp -a "$mount_dir/boot/Image" "$generic_kernel/boot/"
+cp -a "$mount_dir/boot/initramfs-linux-vm.img" "$generic_kernel/boot/"
+cp -a "${generic_module_dirs[0]}" "$generic_kernel/usr/lib/modules/"
+chroot "$mount_dir" pacman -Rdd --noconfirm linux-aarch64
+chroot "$mount_dir" pacman -S --needed --noconfirm linux-asahi linux-asahi-headers
+cp -a "$generic_kernel/boot/." "$mount_dir/boot/"
+cp -a "$generic_kernel/usr/lib/modules/." "$mount_dir/usr/lib/modules/"
+rm -rf "$generic_kernel"
+
+chroot "$mount_dir" grub-install \
+  --target=arm64-efi \
+  --efi-directory=/boot \
+  --boot-directory=/boot \
+  --removable \
+  --no-nvram
+cat >"$mount_dir/boot/grub/grub.cfg" <<EOF
+set timeout=0
+set default=0
+
+menuentry "Arch Linux ARM VM" {
+  linux /Image root=UUID=$root_uuid rw console=ttyAMA0
+  initrd /initramfs-linux-vm.img
+}
+EOF
+
+install -d -m 0700 "$mount_dir/root/.ssh"
+install -m 0600 /work/ssh/id_ed25519.pub "$mount_dir/root/.ssh/authorized_keys"
+cat >"$mount_dir/etc/ssh/sshd_config.d/10-omarchy-vm.conf" <<'EOF'
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+EOF
+ln -sfn /usr/lib/systemd/system/sshd.service "$mount_dir/etc/systemd/system/multi-user.target.wants/sshd.service"
+printf '%s\n' omarchy-asahi-vm >"$mount_dir/etc/hostname"
+: >"$mount_dir/etc/machine-id"
+
+sync
+cleanup
+[[ -z $(losetup -j "$raw") ]]
+trap - EXIT
+qemu-img convert -f raw -O qcow2 "$raw" "$base.tmp"
+mv "$base.tmp" "$base"
+printf '%s\n' "$base_id" >"$base_id_file"
+rm -f "$raw"

@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Runs every tools/hardware test file and keeps going past a failing one.
+
+set -uo pipefail
+
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+failed=()
+for test in *-test.sh; do
+  [[ $test == "base-test.sh" ]] && continue
+  bash "$test" || failed+=("$test")
+done
+if (( ${#failed[@]} )); then
+  echo "failed: ${failed[*]}" >&2
+  exit 1
+fi
