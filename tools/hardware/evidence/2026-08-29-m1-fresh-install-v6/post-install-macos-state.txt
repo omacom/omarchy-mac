@@ -1,0 +1,22 @@
+Observed: 2026-08-29, after successful Omarchy boot and return to macOS
+Host: MacBookPro18,3 / apple,j314s
+macOS: 26.0.1 (25A362)
+
+disk0 physical partition identities:
+  disk0s1 ISC
+  disk0s2 macOS  1EDFBFBF-3123-4142-BF27-A7215B874733 offset 524312576 size 857223630848
+  disk0s3 Stub   5F4319DA-BCDA-47D7-A325-E137434D9FC3 offset 857747943424 size 2499805184
+  disk0s4 EFI    BC4324EC-527B-4D7D-BDE4-02F08CA8A2A3 offset 860247748608 size 524288000
+  disk0s5 Boot   FF6C122F-C84A-4916-B302-DAA2E3C091F2 offset 860772036608 size 2147483648
+  disk0s6 Root   D3C95813-977C-4A15-8E27-F95BDE46E608 offset 862919520256 size 132267376640
+  disk0s7 Recovery E1BE34A1-D1B8-4F79-BD30-BB50603FD230 offset 995186896896 size 5368664064
+
+Omarchy APFS container UUID: 49F8D49E-269C-4D30-A691-D1394F869261
+Omarchy volume-group UUID: 48A51312-3828-43A3-952F-20DCBABD0CB9
+Omarchy system-volume UUID: 7BF31C0C-85AF-40BB-8D5E-42B3DAB39DE0
+Omarchy boot policy: security_mode=permissive properly_paired=true baa_certified=true
+
+macOS volume-group UUID: 3EE75828-1F54-4365-9BA7-E7217E81D869
+macOS boot policy: security_mode=full properly_paired=true baa_certified=true
+
+Prior Omarchy volume-group UUID EF0906B0-56C5-4FFC-8FB0-8690209333E4 was absent.

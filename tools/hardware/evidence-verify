@@ -1,0 +1,109 @@
+#!/bin/bash
+
+# Check the hardware evidence records: files kept in the repository stay small
+# and text-only, and every bulky artifact listed in evidence/artifacts.tsv is
+# pinned by size, SHA-256 and an https URL that cannot move: a GitHub raw or
+# blob URL at a full commit, a GitHub release asset, or an object whose path
+# carries the artifact's SHA-256.
+# --fetch also downloads each artifact and compares its bytes.
+
+set -euo pipefail
+
+fetch=0
+case ${1:-} in
+  --fetch) fetch=1 ;;
+  "") ;;
+  *)
+    echo "Usage: tools/hardware/evidence-verify [--fetch]" >&2
+    exit 2
+    ;;
+esac
+
+evidence=${OMARCHY_EVIDENCE_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/evidence}
+manifest="$evidence/artifacts.tsv"
+max_bytes=65536
+problems=0
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+problem() {
+  echo "evidence-verify: $*" >&2
+  problems=$((problems + 1))
+}
+
+sha256() {
+  if command -v sha256sum >/dev/null; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# Only the host and path count: a query or fragment could carry anything.
+url_pinned() {
+  local url=$1 sha=$2
+  [[ $url != *[?#]* ]] || return 1
+  [[ $url =~ ^https://raw\.githubusercontent\.com/[^/]+/[^/]+/[0-9a-f]{40}/ ]] && return 0
+  [[ $url =~ ^https://github\.com/[^/]+/[^/]+/(raw|blob)/[0-9a-f]{40}/ ]] && return 0
+  [[ $url =~ ^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/[^/]+$ ]] && return 0
+  [[ $sha =~ ^[0-9a-f]{64}$ && $url =~ ^https://[^/]+/.*$sha ]] && return 0
+  return 1
+}
+
+if [[ ! -f $manifest ]]; then
+  problem "artifacts.tsv is missing"
+  manifest=/dev/null
+fi
+
+records=0
+while IFS= read -r file; do
+  relative=${file#"$evidence/"}
+  size=$(wc -c <"$file" | tr -d ' ')
+  if (( size > max_bytes )); then
+    problem "$relative is $size bytes; publish it and list it in artifacts.tsv"
+  elif (( $(LC_ALL=C tr -cd '\000' <"$file" | wc -c) > 0 )); then
+    problem "$relative is binary; publish it and list it in artifacts.tsv"
+  fi
+  [[ $relative == */README.md ]] && records=$((records + 1))
+done < <(find "$evidence" -type f | sort)
+(( records > 0 )) || problem "no evidence record (a README.md per directory) found"
+
+artifacts=0
+line_number=0
+while IFS=$'\t' read -r path bytes sha url extra || [[ -n $path ]]; do
+  line_number=$((line_number + 1))
+  [[ -z $path || $path == \#* ]] && continue
+  where="artifacts.tsv:$line_number"
+  artifacts=$((artifacts + 1))
+  if [[ -n $extra || -z $url ]]; then
+    problem "$where needs exactly four tab-separated fields: path, bytes, sha256, url"
+    continue
+  fi
+  [[ $bytes =~ ^[0-9]+$ ]] || problem "$where: byte count '$bytes' is not a number"
+  [[ $sha =~ ^[0-9a-f]{64}$ ]] || problem "$where: '$sha' is not a lowercase SHA-256"
+  [[ -d $evidence/$(dirname "$path") ]] || problem "$where: $path belongs to no evidence record"
+  [[ ! -e $evidence/$path ]] || problem "$where: $path is also committed; keep only the reference"
+  url_pinned "$url" "$sha" ||
+    problem "$where: URL is not https at a full commit, a GitHub release asset or a path carrying the SHA-256: $url"
+  if (( fetch )); then
+    if curl -fsSL --retry 2 -o "$work/artifact" "$url"; then
+      actual_bytes=$(wc -c <"$work/artifact" | tr -d ' ')
+      actual_sha=$(sha256 "$work/artifact")
+      [[ $actual_bytes == "$bytes" ]] || problem "$where: $path is $actual_bytes bytes, expected $bytes"
+      [[ $actual_sha == "$sha" ]] || problem "$where: $path has SHA-256 $actual_sha, expected $sha"
+    else
+      problem "$where: cannot download $url"
+    fi
+    rm -f "$work/artifact"
+  fi
+done <"$manifest"
+
+if (( problems )); then
+  echo "evidence-verify: $problems problem(s)" >&2
+  exit 1
+fi
+if (( fetch )); then
+  echo "Evidence verified: $records records, $artifacts artifacts downloaded and matched"
+else
+  echo "Evidence verified: $records records, $artifacts pinned artifacts (not downloaded)"
+fi

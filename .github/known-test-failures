@@ -1,0 +1,6 @@
+# Runtime shell test files CI tolerates failing on quattro-upstream: a failure here is a warning, not an error.
+# Any other failing file fails the check. Remove a line in the change that fixes its test.
+# One path per line, relative to the repository root; text after # is the reason.
+
+test/shell.d/hermes-remove-test.sh # the SQLite-holder cases run the remover with PATH=<mocks>:/usr/bin:/bin, so omarchy-cmd-present only resolves where Omarchy is installed
+test/shell.d/system-sleep-ownership-migration-test.sh # flaky: the unsafe-symlink case takes the first keyboard-backlight.* quarantine entry from find, and earlier cases leave others, so directory order decides

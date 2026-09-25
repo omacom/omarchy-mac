@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Point every Arch Linux ARM repository this guest can reach at the dated
+# snapshot the run was given, wherever the mirror is written: the rootfs's
+# mirrorlist, and any inline Server line a later configuration carries. Run
+# before anything that installs packages, since the installer may have written
+# a fresh pacman.conf since the last time.
+
+set -euo pipefail
+
+mirror=${OMARCHY_VM_ALARM_MIRROR:?OMARCHY_VM_ALARM_MIRROR is not set}
+[[ $mirror == https://* && $mirror == *'$repo'* && $mirror == *'$arch'* ]] || {
+  echo "OMARCHY_VM_ALARM_MIRROR must be an https URL containing \$repo and \$arch" >&2
+  exit 1
+}
+
+live='^Server = https\{0,1\}://[a-z0-9.-]*mirror\.archlinuxarm\.org/$arch/$repo$'
+for file in /etc/pacman.d/mirrorlist /etc/pacman.conf; do
+  [[ -f $file ]] || continue
+  sed -i "s|$live|Server = $mirror|" "$file"
+done
+# Every Arch Linux ARM server left must be the chosen one, whichever host that is.
+! cat /etc/pacman.conf /etc/pacman.d/mirrorlist 2>/dev/null | grep -E '^Server = .*archlinuxarm\.org' | grep -vxF "Server = $mirror" | grep -q .
