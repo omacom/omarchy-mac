@@ -12,9 +12,9 @@
 #
 # While it exists, omarchy-apply-hardware queues each hardware leaf in
 # /var/lib/omarchy/image/deferred-steps instead of running it, and arms
-# omarchy-provision-hardware.service. On the machine's first boot that service
-# retires the manifest (to target.booted) and runs the queue on the real
-# hardware. Unknown manifest keys are ignored so the format can grow.
+# omarchy-provision-hardware.service. On the machine's first boot that service,
+# or the platform's own first boot, retires the manifest (to target.booted) and
+# runs the queue on the real hardware. Unknown manifest keys are ignored so the format can grow.
 #
 # Root always uses the fixed paths. Only a non-root test may move them under
 # OMARCHY_IMAGE_ROOT, so no environment variable can make a live system defer,

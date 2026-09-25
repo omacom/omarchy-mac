@@ -629,7 +629,8 @@ ln -s /etc/systemd/system/omarchy-provision-hardware.service \
   "$reset_root/etc/systemd/system/multi-user.target.wants/omarchy-provision-hardware.service"
 umount "$tmp/mnt-reset-queue"
 run_script || fail "a reset root with a restored hardware queue is a no-op"
-grep -Fq 'not a fresh image' "$case_dir/out" || fail "a restored hardware queue is not taken for a fresh image"
+grep -Fq 'no encrypt.state and no first-boot marker with deferred steps: not a fresh image' "$case_dir/out" ||
+  fail "a restored hardware queue is not taken for a fresh image"
 [[ $(blkid -c /dev/null -o value -s TYPE "$ROOT_PART") == btrfs ]] || fail "a reset root with a restored hardware queue is never encrypted"
 [[ ! -e $boot_mnt/omarchy/encrypt.state ]] || fail "a reset root with a restored hardware queue gets no encrypt.state"
 echo 'ok - a restored image hardware queue with a re-armed marker is not a fresh image'

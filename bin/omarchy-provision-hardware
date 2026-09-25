@@ -11,7 +11,7 @@
 # Steps run in order and each one that succeeds leaves the queue, so a failure
 # stops the run and the next run resumes at that step. Once the queue is empty
 # the initramfs is rebuilt if any step changed its configuration, and the
-# service disarms itself. With nothing deferred this does nothing.
+# service is disabled. With nothing deferred this does nothing.
 
 set -euo pipefail
 
