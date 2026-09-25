@@ -1,0 +1,268 @@
+#!/bin/bash
+
+# Read-only hardware checks for an Apple Silicon Mac running Omarchy, following
+# docs/apple-silicon-hardware-validation.md. Run it on the Mac as the user who
+# logged in at the greeter, or from a controller with tools/hardware/remote-check.
+# Root checks go through sudo -n and are skipped without passwordless sudo.
+# Exits 1 when a check fails, 2 when this is not an Apple Silicon Mac.
+
+set -uo pipefail
+
+root=${OMARCHY_HARDWARE_ROOT:-}
+passed=0 failed=0 warned=0 skipped=0
+
+report() {
+  local status=$1 id=$2 detail=$3
+  printf '%-4s  %-15s  %s\n' "$status" "$id" "$detail"
+  case $status in
+    PASS) passed=$((passed + 1)) ;;
+    FAIL) failed=$((failed + 1)) ;;
+    WARN) warned=$((warned + 1)) ;;
+    SKIP) skipped=$((skipped + 1)) ;;
+  esac
+}
+
+joined() {
+  local text
+  text=$(printf '%s, ' "$@")
+  echo "${text%, }"
+}
+
+compatible=$(tr '\0' ' ' <"$root/proc/device-tree/compatible" 2>/dev/null)
+if [[ $(uname -m) != "aarch64" || $compatible != *apple,* ]]; then
+  echo "mac-check: this is not an Apple Silicon Mac" >&2
+  exit 2
+fi
+model=$(tr -d '\0' <"$root/proc/device-tree/model" 2>/dev/null)
+report INFO platform "${model:-Apple Silicon Mac} (${compatible% })"
+
+have_sudo=0
+sudo -n true 2>/dev/null && have_sudo=1
+
+runtime="$root/run/user/$(id -u)"
+hypr_signature=""
+for dir in "$runtime"/hypr/*/; do
+  if [[ -e $dir.socket.sock ]]; then
+    hypr_signature=$(basename "$dir")
+    break
+  fi
+done
+
+# Identity
+
+kver=$(uname -r)
+kernel=$(cat "$root/usr/lib/modules/$kver/pkgbase" 2>/dev/null)
+owner=$(pacman -Qqo "$root/usr/lib/modules/$kver/vmlinuz" 2>/dev/null)
+if [[ -n $kernel && $owner == "$kernel" ]]; then
+  report PASS kernel "running $kver from $(pacman -Q "$kernel")"
+else
+  report FAIL kernel "running $kver does not belong to an installed kernel package; a reboot is pending or the kernel was removed"
+fi
+
+packages=()
+installed=$(pacman -Qq 2>/dev/null)
+for package in m1n1 m1n1-aurora uboot-asahi limine omarchy omarchy-dev omarchy-settings omarchy-settings-dev omarchy-mac omarchy-mac-boot; do
+  grep -qx -- "$package" <<<"$installed" && packages+=("$(pacman -Q "$package")")
+done
+(( ${#packages[@]} )) && report INFO packages "$(joined "${packages[@]}")"
+
+release_file="$root/var/lib/omarchy/asahi-quattro-release"
+lane_file="$root/var/lib/omarchy/apple-silicon-aurora-lane"
+if [[ -r $release_file ]]; then
+  release=$(sed -n 's/^tag=//p' "$release_file")
+  lane=$(sed -n 's/^lane=//p' "$lane_file" 2>/dev/null)
+  report INFO release "${release:-unknown}${lane:+, Aurora lane $lane}"
+fi
+
+repos=$(pacman-conf --repo-list 2>/dev/null)
+missing=()
+for repo in core extra alarm asahi-alarm; do
+  grep -qx -- "$repo" <<<"$repos" || missing+=("[$repo]")
+done
+if (( ${#missing[@]} )); then
+  report FAIL repos "missing from pacman.conf: $(joined "${missing[@]}")"
+else
+  report PASS repos "$(tr '\n' ' ' <<<"$repos" | sed 's/ $//')"
+fi
+
+if [[ -n $kernel ]]; then
+  kernel_repo=$(pacman -Si "$kernel" 2>/dev/null | sed -n 's/^Repository *: *//p' | head -n1)
+  if [[ -n $kernel_repo ]]; then
+    report PASS kernel-repo "$kernel updates from [$kernel_repo]"
+  else
+    report FAIL kernel-repo "no configured repository carries $kernel"
+  fi
+fi
+
+# Boot chain
+
+if ! command -v omarchy-apple-silicon-boot-check >/dev/null; then
+  report FAIL boot-check "omarchy-apple-silicon-boot-check is not installed"
+elif grep -Eq '^(switch|edge_pending|reboot_pending)=.' "$lane_file" 2>/dev/null; then
+  report SKIP boot-check "a kernel switch journal is open and the boot check would record it; run it by hand"
+elif (( ! have_sudo )); then
+  report SKIP boot-check "needs passwordless sudo"
+elif output=$(sudo -n omarchy-apple-silicon-boot-check 2>&1); then
+  report PASS boot-check "$(tail -n1 <<<"$output" | sed 's/^Apple Silicon boot check: //')"
+else
+  report FAIL boot-check "$(tail -n1 <<<"$output" | sed 's/^Apple Silicon boot check: //')"
+fi
+
+esp=""
+for dir in /boot/efi /efi /boot; do
+  if [[ $(findmnt -n -o FSTYPE -M "$root$dir" 2>/dev/null) == "vfat" ]]; then
+    esp="$root$dir"
+    break
+  fi
+done
+if command -v omarchy-mac-limine-active >/dev/null && omarchy-mac-limine-active >/dev/null 2>&1; then
+  loader=limine
+  report INFO boot-loader "Limine, ESP ${esp:-not mounted}"
+  boot_files=()
+  if [[ -z $esp ]]; then
+    report FAIL boot-file "no ESP is mounted at /boot/efi, /efi or /boot"
+  else
+    mapfile -t boot_files < <(sudo -n find "$esp/EFI/Linux" -maxdepth 1 -name '*.efi' 2>/dev/null | sort)
+    if (( have_sudo && ${#boot_files[@]} == 0 )); then
+      report FAIL boot-file "no unified kernel image under ${esp#"$root"}/EFI/Linux"
+    fi
+    boot_files+=("$esp/limine.conf")
+  fi
+else
+  loader=grub
+  report INFO boot-loader "GRUB, ESP ${esp:-not mounted}"
+  boot_files=("$root/boot/vmlinuz-$kernel" "$root/boot/grub/grub.cfg")
+fi
+[[ -n $esp ]] && boot_files+=("$esp/m1n1/boot.bin")
+if (( have_sudo )); then
+  for file in "${boot_files[@]}"; do
+    if hash=$(sudo -n sha256sum "$file" 2>/dev/null); then
+      report INFO boot-file "${hash%% *}  ${file#"$root"}"
+    else
+      report FAIL boot-file "${file#"$root"} is missing on a $loader Mac"
+    fi
+  done
+else
+  report SKIP boot-file "hashing the boot files needs passwordless sudo"
+fi
+
+# Services
+
+mapfile -t failed_units < <(systemctl --failed --no-legend --plain 2>/dev/null | awk '{ print $1 }')
+if [[ -e $runtime/bus ]]; then
+  mapfile -t failed_user_units < <(XDG_RUNTIME_DIR=$runtime systemctl --user --failed --no-legend --plain 2>/dev/null | awk '{ print "user:" $1 }')
+  failed_units+=("${failed_user_units[@]}")
+fi
+if (( ${#failed_units[@]} )); then
+  report FAIL units "failed: $(joined "${failed_units[@]}")"
+else
+  report PASS units "no failed system or user units"
+fi
+
+unit_property() {
+  systemctl show -p "$2" --value "$1" 2>/dev/null
+}
+firmware_state="$(unit_property omarchy-vendor-firmware.service ActiveState)/$(unit_property omarchy-vendor-firmware.service Result)"
+if [[ $(unit_property omarchy-vendor-firmware.service LoadState) != "loaded" ]]; then
+  report FAIL vendor-firmware "omarchy-vendor-firmware.service is not installed"
+elif [[ $firmware_state == "active/success" ]]; then
+  report PASS vendor-firmware "omarchy-vendor-firmware.service finished in this boot"
+else
+  report FAIL vendor-firmware "omarchy-vendor-firmware.service is $firmware_state"
+fi
+
+speaker_state=$(systemctl is-active speakersafetyd.service 2>/dev/null)
+if [[ $speaker_state == "active" ]]; then
+  report PASS speakersafetyd "speakersafetyd is active"
+else
+  report FAIL speakersafetyd "speakersafetyd is ${speaker_state:-unknown}"
+fi
+
+# Displays and audio, read from the logged-in user's session
+
+if [[ -z $hypr_signature ]]; then
+  report SKIP displays "no Hyprland session; log in at the greeter first"
+else
+  mapfile -t monitors < <(XDG_RUNTIME_DIR=$runtime HYPRLAND_INSTANCE_SIGNATURE=$hypr_signature hyprctl monitors -j 2>/dev/null |
+    jq -r '.[] | "\(.name) \(.width)x\(.height)@\(.refreshRate | round)"' 2>/dev/null)
+  if (( ${#monitors[@]} )); then
+    report PASS displays "${#monitors[@]} active: $(joined "${monitors[@]}")"
+  else
+    report FAIL displays "Hyprland reports no active display"
+  fi
+fi
+
+mapfile -t cards < <(sed -nE 's/^ *[0-9]+ \[([^] ]+) *\].*/\1/p' "$root/proc/asound/cards" 2>/dev/null)
+if (( ${#cards[@]} )); then
+  report PASS sound-cards "$(joined "${cards[@]}")"
+else
+  report FAIL sound-cards "the kernel sees no sound card"
+fi
+
+if [[ ! -e $runtime/pipewire-0 ]]; then
+  report SKIP default-sink "no PipeWire session; log in at the greeter first"
+elif sink=$(XDG_RUNTIME_DIR=$runtime wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null) && [[ -n $sink ]]; then
+  sink_name=$(sed -n 's/.*node\.name = "\(.*\)"/\1/p' <<<"$sink" | head -n1)
+  sink_description=$(sed -n 's/.*node\.description = "\(.*\)"/\1/p' <<<"$sink" | head -n1)
+  report PASS default-sink "${sink_description:-unnamed}${sink_name:+ ($sink_name)}"
+else
+  report FAIL default-sink "PipeWire has no default audio sink"
+fi
+
+# Networking
+
+wifi=$(nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null | awk -F: '$2 == "wifi" { print $1 ":" $3; exit }')
+if [[ -z $wifi ]]; then
+  report FAIL wifi "NetworkManager sees no Wi-Fi device"
+elif [[ ${wifi#*:} == "connected" ]]; then
+  report PASS wifi "${wifi%%:*} is connected"
+else
+  report FAIL wifi "${wifi%%:*} is ${wifi#*:}"
+fi
+
+network_config=$(NetworkManager --print-config 2>/dev/null)
+if grep -qx 'wifi.backend=iwd' <<<"$network_config"; then
+  report PASS wifi-backend "NetworkManager uses iwd"
+else
+  report FAIL wifi-backend "NetworkManager is not configured with wifi.backend=iwd"
+fi
+
+bluetooth=$(timeout 10 bluetoothctl show 2>/dev/null)
+if grep -q 'Powered: yes' <<<"$bluetooth"; then
+  report PASS bluetooth "controller powered"
+elif grep -q 'Controller' <<<"$bluetooth"; then
+  report FAIL bluetooth "controller present but not powered"
+else
+  report FAIL bluetooth "no Bluetooth controller"
+fi
+
+# Snapshots and migrations
+
+if (( ! have_sudo )); then
+  report SKIP snapshots "needs passwordless sudo"
+elif sudo -n btrfs subvolume show "$root/.snapshots" >/dev/null 2>&1; then
+  count=$(sudo -n snapper --csvout list --columns number 2>/dev/null | tail -n +2 | grep -cvx 0)
+  report PASS snapshots "/.snapshots is a btrfs subvolume holding $count snapshots"
+else
+  report FAIL snapshots "/.snapshots is not a btrfs subvolume"
+fi
+
+if ! command -v omarchy-migrate >/dev/null; then
+  report SKIP migrations "omarchy-migrate is not installed"
+elif pending=$(omarchy-migrate --pending 2>/dev/null); then
+  report WARN migrations "pending: $(tr '\n' ' ' <<<"$pending" | sed 's/ $//')"
+else
+  report PASS migrations "no pending migrations"
+fi
+
+boot_time=$(awk '/^btime/ { print $2 }' "$root/proc/stat" 2>/dev/null)
+mapfile -t crashes < <(coredumpctl list --no-pager --json=short --since "@${boot_time:-0}" 2>/dev/null |
+  jq -r '.[] | "\(.exe | split("/") | last) (uid \(.uid))"' 2>/dev/null)
+if (( ${#crashes[@]} )); then
+  report INFO coredumps "this boot: $(joined "${crashes[@]}"); compare with the previous boot before calling it a regression"
+else
+  report INFO coredumps "none this boot"
+fi
+
+echo "$passed passed, $failed failed, $warned warnings, $skipped skipped"
+(( failed == 0 ))
