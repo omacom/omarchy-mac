@@ -2,3 +2,5 @@
 # Consume alongside the shared base manifest, never on Intel/T2 or other ARM.
 omarchy-mac
 omarchy-mac-boot
+avd-fw
+libva-v4l2_request-avd
