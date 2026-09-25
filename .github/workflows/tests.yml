@@ -54,18 +54,45 @@ jobs:
             -v "$GITHUB_WORKSPACE:/work" -w /work/omarchy-mac \
             "$ARCH_IMAGE" sleep infinity
           docker exec arch pacman -Syu --noconfirm --needed \
-            git jq lua python python-yaml nodejs npm ripgrep shellcheck imagemagick ffmpeg \
+            git jq lua python python-yaml nodejs npm ripgrep shellcheck imagemagick ffmpeg kitty \
             gum plocate openssh unzip bc libarchive libxkbcommon desktop-file-utils glib2 sqlite
+          docker exec arch bash -c 'echo "en_US.UTF-8 UTF-8" >/etc/locale.gen && locale-gen'
           docker exec arch useradd --create-home --uid "$(id -u)" tester
 
+      # test/shell runs every file and lists the failed ones at the end. Only
+      # the files in .github/known-test-failures may fail, and each of them must.
       - name: Runtime suite (test/all)
         if: ${{ !cancelled() && steps.arch.outcome == 'success' }}
         run: |
+          log=$RUNNER_TEMP/runtime.log
+          status=0
           docker exec -u tester -e HOME=/home/tester \
             -e OMARCHY_PATH=/work/omarchy-mac \
             -e OMARCHY_PKGS_PATH=/work/omarchy-pkgs \
             -e OMARCHY_ISO_PATH=/work/omarchy-iso \
-            arch bash -c 'PATH="$OMARCHY_PATH/bin:$PATH" ./test/all'
+            arch bash -c 'PATH="$OMARCHY_PATH/bin:$PATH" ./test/all' 2>&1 | tee "$log" || status=$?
+
+          known=$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' omarchy-mac/.github/known-test-failures | sort -u)
+          failed=$(sed -n '/ test files failed:$/,/^$/s/^  //p' "$log" | sort -u)
+          failed_suites=$(sed -n '/ suites failed:$/,$s/^  //p' "$log" | sort -u)
+
+          if (( status != 0 )) && [[ -z $failed || $failed_suites != test/shell ]]; then
+            echo "::error::test/all failed beyond individual shell test files (exit $status; failed suites: ${failed_suites:-none})"
+            exit 1
+          fi
+
+          unexpected=$(comm -23 <(echo "$failed") <(echo "$known") | sed '/^$/d')
+          fixed=$(comm -13 <(echo "$failed") <(echo "$known") | sed '/^$/d')
+          for file in $(comm -12 <(echo "$failed") <(echo "$known") | sed '/^$/d'); do
+            echo "::warning::$file failed (known failure)"
+          done
+          for file in $unexpected; do
+            echo "::error::$file failed"
+          done
+          for file in $fixed; do
+            echo "::error::$file passed; remove it from .github/known-test-failures"
+          done
+          [[ -z $unexpected && -z $fixed ]]
 
       - name: omarchy-mac package suite
         if: ${{ !cancelled() && steps.arch.outcome == 'success' }}

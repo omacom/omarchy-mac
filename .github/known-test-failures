@@ -1,0 +1,5 @@
+# Runtime shell test files that fail in CI on quattro-upstream today.
+# CI tolerates exactly these and fails when one starts passing, so a fix removes its line.
+# One path per line, relative to the repository root; text after # is the reason.
+
+test/shell.d/hermes-remove-test.sh # the SQLite-holder cases run the remover with PATH=<mocks>:/usr/bin:/bin, so omarchy-cmd-present only resolves where Omarchy is installed
