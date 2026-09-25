@@ -7,7 +7,8 @@
 # Inverse of display auto-brightness: dark rooms need the keys lit, bright
 # rooms do not. Dedicated keyboard-brightness keys (or any other write to the
 # LED) pause auto until ambient light moves enough that the old choice no
-# longer fits.
+# longer fits. Keys left off by something other than those keys (lock
+# blanking, a restored 0, a 1% leftover) are not a choice: auto resumes.
 
 set -euo pipefail
 
@@ -17,6 +18,9 @@ BRIGHT_LUX=180
 DEADBAND_PERCENT=4
 OVERRIDE_LUX_DELTA=20
 OVERRIDE_LUX_RATIO=40
+# 2/255 is 1% and invisible, so that band counts as off.
+EFFECTIVELY_OFF_PERCENT=2
+MANUAL_LEVEL_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-keyboard-manual"
 
 once=0
 available_only=0
@@ -181,6 +185,16 @@ apply_percent() {
   last_set=$(brightnessctl -d "$device" get || echo "$target")
 }
 
+# Off by accident rather than by the keyboard-brightness keys, which record
+# every level they set.
+left_off() {
+  local current=$1 manual=""
+
+  (( current * 100 <= max * EFFECTIVELY_OFF_PERCENT )) || return 1
+  [[ -r $MANUAL_LEVEL_FILE ]] && manual=$(<"$MANUAL_LEVEL_FILE")
+  [[ $manual != "$current" ]]
+}
+
 tick() {
   local lux current delta threshold
 
@@ -193,10 +207,14 @@ tick() {
   current=$(brightnessctl -d "$device" get) || return 0
 
   if [[ -n $last_set && $current != "$last_set" ]]; then
-    paused=1
-    pause_lux=$lux
     last_set=$current
-    return 0
+    if left_off "$current"; then
+      paused=0
+    else
+      paused=1
+      pause_lux=$lux
+      return 0
+    fi
   fi
 
   if (( paused )); then
@@ -210,6 +228,8 @@ tick() {
       return 0
     fi
     paused=0
+    # Auto overrides the hand-set level, so it no longer marks a choice.
+    rm -f "$MANUAL_LEVEL_FILE"
   fi
 
   apply_percent "$(lux_to_percent "$lux")"

@@ -96,3 +96,104 @@ grep -F '/usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service' "$migra
 grep -e 'cp .*omarchy-brightness-keyboard-auto.service' "$migration" >/dev/null &&
   fail "migration copies the unit into ~/.config/systemd/user"
 pass "migration enables ambient keyboard backlight for existing installs"
+
+# Drive the real keyboard-brightness command and the loop's tick against a fake
+# sensor and LED, the way lock blanking, wake restore and the keys interleave.
+loop=$(mktemp -d)
+trap 'rm -rf "$fake" "$leds" "$loop"' EXIT
+mkdir -p "$loop/iio/iio:device1" "$loop/leds/kbd_backlight" "$loop/bin" "$loop/runtime"
+printf 'aop-sensors-als\n' >"$loop/iio/iio:device1/name"
+printf '26\n' >"$loop/iio/iio:device1/in_illuminance_input"
+printf '255\n' >"$loop/leds/kbd_backlight/max_brightness"
+printf '0\n' >"$loop/leds/kbd_backlight/brightness"
+
+cat >"$loop/bin/brightnessctl" <<'SH'
+#!/bin/bash
+save=0
+restore=0
+device=""
+while (( $# )); do
+  case $1 in
+    -sd) save=1; device=$2; shift 2 ;;
+    -rd) restore=1; device=$2; shift 2 ;;
+    -d) device=$2; shift 2 ;;
+    -m) shift ;;
+    *) break ;;
+  esac
+done
+led="$OMARCHY_LEDS_DIR/$device"
+if (( restore )); then
+  cp "$led/saved" "$led/brightness"
+  exit 0
+fi
+case ${1:-} in
+  get) cat "$led/brightness" ;;
+  max) cat "$led/max_brightness" ;;
+  set)
+    (( ! save )) || cp "$led/brightness" "$led/saved"
+    printf '%s\n' "$2" >"$led/brightness"
+    ;;
+esac
+SH
+cat >"$loop/bin/omarchy-hyprland-session-locked" <<'SH'
+#!/bin/bash
+[[ ${LOCKED:-0} == 1 ]]
+SH
+cat >"$loop/bin/omarchy-hw-laptop-closed" <<'SH'
+#!/bin/bash
+exit 1
+SH
+chmod +x "$loop/bin/"*
+
+export PATH="$loop/bin:$PATH" OMARCHY_LEDS_DIR="$loop/leds" XDG_RUNTIME_DIR="$loop/runtime"
+eval "$(grep -E '^(DARK_LUX|BRIGHT_LUX|DEADBAND_PERCENT|OVERRIDE_LUX_DELTA|OVERRIDE_LUX_RATIO|EFFECTIVELY_OFF_PERCENT|MANUAL_LEVEL_FILE)=' "$auto")"
+for fn in lux_to_percent read_lux session_locked lid_closed apply_percent left_off tick; do
+  eval "$(sed -n "/^$fn()/,/^}/p" "$auto")"
+done
+als_path="$loop/iio/iio:device1/in_illuminance_input"
+device=kbd_backlight
+max=255
+last_set=""
+paused=0
+pause_lux=0
+
+keys() { "$ROOT/bin/omarchy-brightness-keyboard" --no-osd "$1"; }
+led() { cat "$loop/leds/kbd_backlight/brightness"; }
+lux() { printf '%s\n' "$1" >"$als_path"; }
+
+tick
+[[ $(led) == 226 ]] || fail "a dark room lights the keys" "got $(led)"
+keys off
+LOCKED=1 tick
+[[ $(led) == 0 ]] || fail "a locked session keeps the keys blank" "got $(led)"
+tick
+[[ $(led) == 226 ]] || fail "keys left blank after unlock light up again" "got $(led)"
+printf '2\n' >"$loop/leds/kbd_backlight/brightness"
+tick
+[[ $(led) == 226 ]] || fail "a 1% leftover lights up again" "got $(led)"
+pass "keys left off by lock blanking or a leftover light up again with the room"
+
+until [[ $(led) == 0 ]]; do
+  keys down
+  tick
+done
+tick
+[[ $(led) == 0 ]] || fail "keys turned off with the brightness keys stay off" "got $(led)"
+keys off
+LOCKED=1 tick
+keys restore
+tick
+[[ $(led) == 0 ]] || fail "a deliberate off survives lock and wake" "got $(led)"
+lux 150
+tick
+[[ $(led) == 43 ]] || fail "a deliberate off resumes once the room changes enough" "got $(led)"
+keys off
+tick
+[[ $(led) == 43 ]] || fail "after auto resumes, a lock blank is a leftover again" "got $(led)"
+pass "keys turned off by hand stay off until the room changes enough"
+
+keys up
+tick
+tick
+[[ $(led) == 68 ]] || fail "a visible level set by hand still pauses auto" "got $(led)"
+pass "a visible level set by hand still pauses automatic control"
