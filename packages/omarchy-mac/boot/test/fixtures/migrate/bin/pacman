@@ -132,6 +132,8 @@ if [[ $flags == *w* ]]; then
 fi
 if (( ! dbonly )); then
   [[ ! -e $fixture/fail-transaction ]] || { echo "error: failed to commit transaction" >&2; exit 1; }
+  [[ ! -e $dbpath/db.lck ]] || { echo "error: failed to init transaction (unable to lock database)" >&2; exit 1; }
+  : >"$dbpath/db.lck"
   echo "transaction ${args[*]}" >>"$fixture/pacman.log"
   # A package scriptlet that arms first boot, as a fresh image's would.
   if [[ -e $fixture/scriptlet-arms-first-boot ]]; then
@@ -142,3 +144,12 @@ fi
 for name in "${!version[@]}"; do
   echo "$name ${version[$name]}"
 done | LC_ALL=C sort >"$dbpath/local/packages"
+if (( ! dbonly )); then
+  # Killed after its database write, before its hooks: the lock stays behind.
+  if [[ ${OMARCHY_MAC_MIGRATE_KILL_MID:-} == "transaction" && ! -e $fixture/killed-in-pacman ]]; then
+    : >"$fixture/killed-in-pacman"
+    kill -9 "$PPID" $$
+  fi
+  echo "hooks" >>"$fixture/pacman.log"
+  rm -f "$dbpath/db.lck"
+fi

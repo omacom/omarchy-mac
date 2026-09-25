@@ -100,6 +100,11 @@ if [[ -e $MIGRATE_FIXTURE/limine-activation-fail ]]; then
 fi
 echo "limine-boot activate OMARCHY_PATH=$OMARCHY_PATH" >>"$MIGRATE_FIXTURE/boot.log"
 printf 'KERNEL_CMDLINE[default]="root=UUID=x"\n' >"$OMARCHY_MAC_MIGRATE_ROOT/etc/default/limine"
+# Killed half way through the switch, before the UKI exists.
+if [[ ${OMARCHY_MAC_MIGRATE_KILL_MID:-} == "loader-leaf" && ! -e $MIGRATE_FIXTURE/killed-in-leaf ]]; then
+  : >"$MIGRATE_FIXTURE/killed-in-leaf"
+  kill -9 $$ $BASHPID
+fi
 limine-update
 cp "$OMARCHY_MAC_MIGRATE_ROOT/usr/share/limine/BOOTAA64.EFI" "$OMARCHY_MAC_MIGRATE_ROOT/boot/efi/EFI/BOOT/BOOTAA64.EFI"
 LEAF
@@ -231,10 +236,10 @@ outcome() {
   cat "$R/var/lib/pacman/local/packages"
   sed "s|$F|FIXTURE|g" "$R/etc/pacman.conf"
   sort "$R/etc/pacman.d/gnupg/keys"
-  cat "$R/boot/efi/EFI/BOOT/BOOTAA64.EFI"
+  cat "$R/boot/efi/EFI/BOOT/BOOTAA64.EFI" "$R/etc/default/limine"
   ls "$R/var/lib/omarchy"
   ls "$R/var/lib/pacman/sync"
-  grep -c '^transaction ' "$F/pacman.log"
+  [[ ! -e $R/var/lib/pacman/db.lck ]] && echo unlocked
   sed -n 's/^target=//p' "$state/complete"
   (cd "$state/backup" && find . -type f | LC_ALL=C sort && sed 's/^[0-9a-f]* //' SHA256SUMS)
   ls "$state"
@@ -360,7 +365,7 @@ pass "the migration is idempotent"
 # --- Interruption at every journal step ---------------------------------------
 
 interrupt() { # when step
-  local when=$1 step=$2 status=0 output
+  local when=$1 step=$2 status=0 output last transactions=1
   new_fixture "kill-$when-$step"
   output=$(env "OMARCHY_MAC_MIGRATE_KILL_${when^^}=$step" OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
     "$R/usr/bin/omarchy-mac-migrate" run 2>&1) || status=$?
@@ -370,15 +375,17 @@ interrupt() { # when step
       "$R/usr/bin/omarchy-mac-migrate" verify 2>&1) || status=$?
   fi
   (( status == 137 )) || fail "the run is killed $when $step" "status $status: $output"
-  local last
   last=$(tail -n 1 "$(state_dir)/journal" | cut -d' ' -f2-)
   if [[ $when == "after" ]]; then
-    [[ $last == "$step done"* ]] || fail "the journal ends with $step done" "$last"
+    [[ $last == "${step%-leaf} done"* ]] || fail "the journal ends with $step done" "$last"
   else
-    [[ $last == "$step begin"* ]] || fail "the journal ends with $step begun" "$last"
+    [[ $last == "${step%-leaf} begin"* ]] || fail "the journal ends with $step begun" "$last"
   fi
   finish
   [[ $(outcome) == "$baseline" ]] || fail "killed $when $step, the resumed migration ends where an uninterrupted one does" "$(diff <(echo "$baseline") <(outcome))"
+  [[ $when$step == "midtransaction" ]] && transactions=2
+  [[ $(grep -c '^transaction ' "$F/pacman.log") == "$transactions" ]] || fail "killed $when $step: $transactions package transaction(s)" "$(cat "$F/pacman.log")"
+  [[ $(tail -n 1 < <(grep '^transaction \|^hooks' "$F/pacman.log")) == "hooks" ]] || fail "killed $when $step: the last transaction's hooks ran"
 }
 
 for step in "${steps[@]}"; do
@@ -389,6 +396,10 @@ for step in "${steps[@]}"; do
   interrupt during "$step"
 done
 pass "a kill -9 after any step's work but before its record resumes to the same end, with one transaction"
+for step in backup keyring prefetch repositories transaction boot-chain loader loader-leaf reboot retire; do
+  interrupt mid "$step"
+done
+pass "a kill -9 in the middle of any step resumes to the same end; pacman killed before its hooks runs the transaction again"
 
 # --- Preflight refusals ---------------------------------------------------------
 
@@ -425,8 +436,13 @@ new_fixture refusals
 : >"$R/var/lib/pacman/db.lck"
 refused "a pacman lock" "pacman is busy"
 new_fixture refusals
-echo "running kernel is 6.18, not the installed linux-asahi 6.19.1" >"$F/boot-check-fail"
-refused "a pending reboot" "reboot or repair first"
+echo "/boot/initramfs-linux-asahi.img does not hold the 6.19.1 modules" >"$F/boot-check-fail"
+refused "incoherent boot files" "boot files are not coherent"
+grep -q "^boot-check pending $" "$F/boot.log" || fail "preflight checks the installed boot files, not the running kernel" "$(cat "$F/boot.log")"
+new_fixture refusals
+mkdir -p "$R/var/lib/omarchy/mac-first-boot"
+: >"$R/var/lib/omarchy/mac-first-boot/pending"
+refused "an unfinished first boot" "first boot has not finished"
 new_fixture refusals
 echo "linux-aurora 7.1.11-1" >>"$R/var/lib/pacman/local/packages"
 refused "two kernels" "expected one Apple kernel"
@@ -529,13 +545,78 @@ new_fixture first-boot
 : >"$F/scriptlet-arms-first-boot"
 finish
 [[ ! -e $R/var/lib/omarchy/mac-first-boot/pending ]] || fail "a first-boot marker armed by the transaction is removed"
-new_fixture first-boot-kept
-: >"$F/scriptlet-arms-first-boot"
-mkdir -p "$R/var/lib/omarchy/mac-first-boot"
-: >"$R/var/lib/omarchy/mac-first-boot/pending"
-finish
-[[ -e $R/var/lib/omarchy/mac-first-boot/pending ]] || fail "a first-boot marker the Mac already had stays"
 pass "fresh-image first boot is never armed on an existing Mac"
+
+# --- The system moving under a migration --------------------------------------
+
+kill_after() { # step
+  local output
+  output=$(env OMARCHY_MAC_MIGRATE_KILL_AFTER="$1" OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+    "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "the run is killed after $1" "$output"
+  return 0
+}
+
+# omarchy update runs pacman -Syu before the migration resumes.
+for step in prefetch repositories; do
+  new_fixture "moved-$step"
+  kill_after "$step"
+  printf 'hyprland 0.52-1\nlimine 12.9.0-1\n' >"$F/repos/extra/extra.db"
+  sed -i 's/^hyprland .*/hyprland 0.52-1/' "$R/var/lib/pacman/local/packages"
+  finish
+  grep -q "^hyprland 0.52-1$" "$R/var/lib/pacman/local/packages" || fail "after $step, the upgrade in between is kept"
+  grep -q " prefetch reset " "$(state_dir)/journal" || fail "after $step, the changed system is rehearsed again" "$(cat "$(state_dir)/journal")"
+  [[ $(grep -c '^transaction ' "$F/pacman.log") == 1 ]] || fail "after $step, one transaction"
+done
+pass "an update between the rehearsal and the transaction sends the migration back to rehearse, instead of sticking"
+
+new_fixture snapshot
+kill_after keyring
+echo "widget-conflict 1.0-1" >>"$R/var/lib/pacman/local/packages"
+echo "omarchy-mac-boot widget-conflict" >>"$F/conflicts"
+sed -i '/^widget-extra /d' "$R/var/lib/pacman/local/packages"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 1 )) && grep -q "would also remove widget-conflict; nothing was changed" <<<"$output" ||
+  fail "a package installed after preflight is still guarded against removal" "$output"
+! grep -q "remove widget-extra" <<<"$output" || fail "a package removed after preflight is not reported" "$output"
+pass "the removal guard compares against what the rehearsal started from"
+
+new_fixture held-lock
+kill_after repositories
+: >"$R/var/lib/pacman/db.lck"
+mkdir -p "$R/proc/4242/fd"
+ln -s "$R/var/lib/pacman/db.lck" "$R/proc/4242/fd/3"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 1 )) && grep -q "pacman is running (process 4242)" <<<"$output" && [[ -e $R/var/lib/pacman/db.lck ]] ||
+  fail "a lock another package manager holds is left alone" "$output"
+rm -rf "$R/proc/4242"
+finish
+pass "a held pacman lock stops the transaction; a stale one is cleared"
+
+new_fixture frozen-set
+kill_after preflight
+head -c 16 /dev/urandom >>"$F/set/$(jq -r '.packages[0].filename' "$F/set/manifest.json")"
+finish
+mv "$F/set" "$F/set.gone"
+output=$(migrate status) && [[ $output == *"State: complete"* ]] || fail "status needs no candidate set"
+new_fixture set-gone
+output=$(migrate run 2>&1) || fail "the migration reaches its reboot" "$output"
+rm -rf "$F/set"
+reboot_into_aurora
+output=$(migrate verify 2>&1) || fail "the post-reboot verification needs no candidate set" "$output"
+[[ -f $(state_dir)/complete && ! -e $(state_dir)/set ]] || fail "the verified copy is retired with the migration"
+pass "after preflight only the verified copy of the set is used, and the original may change or go"
+
+new_fixture enable
+: >"$F/systemctl-fail"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 1 )) && grep -q "cannot enable omarchy-mac-migrate-verify.service" <<<"$output" || fail "a post-reboot check that cannot be enabled fails the run" "$output"
+rm "$F/systemctl-fail"
+output=$(migrate run 2>&1) || fail "the retry reaches the reboot" "$output"
+[[ $(grep -c "^systemctl enable omarchy-mac-migrate-verify.service" "$F/boot.log") == 2 ]] || fail "each run enables the check again"
+pass "the post-reboot check is enabled on every run, and a failure to enable it is not ignored"
 
 # --- A tester already on Aurora and Limine ------------------------------------
 

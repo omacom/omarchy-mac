@@ -15,12 +15,17 @@
 
 migrate_steps=(preflight backup keyring prefetch repositories transaction boot-chain loader reboot retire)
 
+# pacman's download user reads the work, cache and candidate directories.
+umask 022
+
 state=$R/var/lib/omarchy-mac/migration
 journal=$state/journal
 plan=$state/plan
 cache=$state/cache
 backup=$state/backup
 expected=$state/expected
+start=$state/start
+set_copy=$state/set
 complete=$state/complete
 reboot_pending=$state/reboot-pending
 lock_file=$R/run/lock/omarchy-mac-migrate.lock
@@ -33,6 +38,7 @@ limine_gate=$R/var/lib/omarchy/limine.enabled
 limine_default=$R/etc/default/limine
 verify_unit=omarchy-mac-migrate-verify.service
 first_boot_marker=$R/var/lib/omarchy/mac-first-boot/pending
+legacy_first_boot_marker=$R/var/lib/omarchy/first-boot/pending
 candidate_repo=omarchy-mac-candidate
 
 # The Omarchy packaging key omarchy-keyring carries (as in omarchy-upgrade-to-quattro).
@@ -43,7 +49,10 @@ retired_repos=(omarchy-aarch64)
 retired_keys=(FBD6874D423C418DDB6D143EECE19CDDE306DBD2 C81AC3E2A99556F9B21D5FEA3DD49BC9F8360BDC)
 
 current_step=""
+restarted=0
+restarts=0
 work=""
+gpgdir=""
 
 say() {
   printf '%s\n' "$*"
@@ -89,11 +98,13 @@ next_step() {
   done
 }
 
-# Unprivileged tests kill the engine with SIGKILL once a step's work is done
-# (during) or once its end is recorded (after). Root never reads these.
+# Unprivileged tests kill the engine with SIGKILL part way through a step's
+# work (mid), once the work is done (during) or once its end is recorded
+# (after). Root never reads these.
 interrupt_for_test() {
   (( fixture )) || return 0
-  if [[ $1 == "during" && ${OMARCHY_MAC_MIGRATE_KILL_DURING:-} == "$2" ]] ||
+  if [[ $1 == "mid" && ${OMARCHY_MAC_MIGRATE_KILL_MID:-} == "$2" ]] ||
+    [[ $1 == "during" && ${OMARCHY_MAC_MIGRATE_KILL_DURING:-} == "$2" ]] ||
     [[ $1 == "after" && ${OMARCHY_MAC_MIGRATE_KILL_AFTER:-} == "$2" ]]; then
     kill -9 $$
   fi
@@ -102,8 +113,13 @@ interrupt_for_test() {
 run_step() {
   local step=$1
   current_step=$step
+  restarted=0
   journal_write "$step" "begin"
   "step_${step//-/_}"
+  if (( restarted )); then
+    current_step=""
+    return 0
+  fi
   interrupt_for_test during "$step"
   journal_write "$step" "done"
   interrupt_for_test after "$step"
@@ -135,7 +151,7 @@ trusted() {
 }
 
 pacman_run() {
-  env OMARCHY_UPDATE_PACMAN=1 LC_ALL=C pacman --gpgdir "$pacman_gpg" "$@"
+  env OMARCHY_UPDATE_PACMAN=1 LC_ALL=C pacman --gpgdir "${gpgdir:-$pacman_gpg}" "$@"
 }
 
 installed_packages() {
@@ -184,12 +200,12 @@ boot_check_pending() {
 
 key_trusted() {
   local validity
-  validity=$(gpg --homedir "$pacman_gpg" --batch --with-colons --list-keys "$1" 2>/dev/null | awk -F: '$1 == "pub" { print $2; exit }')
+  validity=$(gpg --homedir "$pacman_gpg" --batch --no-auto-check-trustdb --with-colons --list-keys "$1" 2>/dev/null | awk -F: '$1 == "pub" { print $2; exit }')
   [[ $validity == "f" || $validity == "u" ]]
 }
 
 key_present() {
-  gpg --homedir "$pacman_gpg" --batch --with-colons --list-keys "$1" >/dev/null 2>&1
+  gpg --homedir "$pacman_gpg" --batch --no-auto-check-trustdb --with-colons --list-keys "$1" >/dev/null 2>&1
 }
 
 sha256_of() {
@@ -253,7 +269,7 @@ default_packages="omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-au
 #   set=DIR                             candidate-set: the set's files, manifest.json and signing.json
 #   fingerprint=FINGERPRINT             candidate-set: the only key its signatures may carry
 load_target() {
-  local file=$1 line key value format=""
+  local file=$1 frozen=${2:-} line key value format=""
   target_type="" target_channel="" target_server="" target_keyring=$official_key
   target_set="" target_fingerprint="" target_packages=$default_packages target_repo=omarchy
   trusted "$file" || die "refusing the target $file: it must be a regular file owned by root and writable only by root"
@@ -284,17 +300,26 @@ load_target() {
       target_id="repository $target_server"
       ;;
     candidate-set)
-      [[ $target_set == /* ]] && trusted "$target_set" || die "the candidate set $target_set must be a root-owned directory writable only by root"
       [[ $target_fingerprint =~ ^[0-9A-F]{40}$ ]] || die "a candidate-set target needs its signer's 40-digit fingerprint"
-      [[ -f $target_set/manifest.json ]] || die "the candidate set has no manifest.json"
-      target_packages=$(jq -r '[.packages[].name] | join(" ")' "$target_set/manifest.json") || die "cannot read the candidate manifest"
-      target_id="candidate-set $(jq -r '.set' "$target_set/manifest.json") $(jq -r '.set_sha256' "$target_set/manifest.json")"
       target_repo=$candidate_repo
+      if [[ -n $frozen ]]; then
+        # After preflight only the verified copy counts; the original may be gone.
+        target_set=$set_copy
+      else
+        [[ $target_set == /* ]] && trusted "$target_set" || die "the candidate set $target_set must be a root-owned directory writable only by root"
+        [[ -f $target_set/manifest.json ]] || die "the candidate set has no manifest.json"
+        candidate_identity "$target_set" || die "cannot read the candidate manifest"
+      fi
       ;;
     *)
       die "the target $file has no type (repository or candidate-set)"
       ;;
   esac
+}
+
+candidate_identity() {
+  target_packages=$(jq -r '[.packages[].name] | join(" ")' "$1/manifest.json") &&
+    target_id="candidate-set $(jq -r '.set' "$1/manifest.json") $(jq -r '.set_sha256' "$1/manifest.json")"
 }
 
 find_target() {
@@ -348,9 +373,26 @@ verify_candidate_set() {
   done < <(jq -r '.packages[] | "\(.filename)\t\(.sha256)"' "$manifest")
 }
 
-# Verifies the set, then builds a local repository of copies whose digests are
-# checked again, so what pacman reads is what was verified. Signatures stay
-# out of it: pacman's keyring never trusts the candidate key.
+# Copies a set into a directory only root can write, so nothing can change it
+# between its verification and its use; everything later reads the copy.
+copy_candidate_set() {
+  local source=$1 destination=$2 name
+  rm -rf "$destination"
+  install -d -m 700 "$destination" || return 1
+  for name in manifest.json signing.json signing.json.sig candidate-signing-key.asc; do
+    [[ ! -f $source/$name ]] || cp "$source/$name" "$destination/$name" || return 1
+  done
+  [[ -f $destination/manifest.json ]] || { echo "the set has no manifest.json"; return 1; }
+  while read -r name; do
+    [[ $name =~ ^[A-Za-z0-9@._+:-]+$ && $name != .* ]] || { echo "unsafe filename $name"; return 1; }
+    [[ ! -f $source/$name ]] || cp "$source/$name" "$destination/$name" || return 1
+    [[ ! -f $source/$name.sig ]] || cp "$source/$name.sig" "$destination/$name.sig" || return 1
+  done < <(jq -r '.packages[].filename' "$destination/manifest.json") || { echo "cannot read its manifest"; return 1; }
+}
+
+# Verifies the frozen set again, then builds a local repository of copies whose
+# digests are checked again, so what pacman reads is what was verified.
+# Signatures stay out of it: pacman's keyring never trusts the candidate key.
 stage_candidate_repo() {
   local destination=$1 home=$2 reason name sha
   reason=$(verify_candidate_set "$target_set" "$home") || { echo "$reason" >&2; return 1; }
@@ -500,8 +542,13 @@ preflight() {
   elif [[ " $hooks " == *" encrypt "* ]]; then
     reasons+=("the root unlocks through busybox encrypt: its boot switch is the legacy adapter's (ticket 45)")
   fi
-  if ! check_output=$(omarchy-apple-silicon-boot-check 2>&1); then
-    reasons+=("the boot files do not match the running system; reboot or repair first: $(tail -n 1 <<<"$check_output")")
+  # Installed boot files, not the running kernel: an update that just replaced
+  # the kernel leaves a reboot pending, and the migration replaces it anyway.
+  if ! check_output=$(env OMARCHY_BOOT_CHECK_ALLOW_PENDING_REBOOT=1 omarchy-apple-silicon-boot-check 2>&1); then
+    reasons+=("the boot files are not coherent; repair them first: $(tail -n 1 <<<"$check_output")")
+  fi
+  if [[ -e $first_boot_marker || -e $legacy_first_boot_marker ]]; then
+    reasons+=("first boot has not finished on this Mac")
   fi
   # Limine and its UKI live on the ESP U-Boot boots, mounted at /boot/efi.
   [[ $(omarchy-mac-esp 2>/dev/null) == "$esp" ]] || reasons+=("the system ESP is not mounted at $esp")
@@ -527,15 +574,24 @@ preflight() {
 
   # The target, read in isolation: a copy of the local database and the future
   # configuration, never the live sync databases.
+  # Signed databases are checked against a copy of the keyring, so preflight
+  # never imports a key into the live one.
   future=$work/pacman.conf
   future_pacman_conf "$pacman_conf" >"$future" || die "cannot compute the new pacman configuration"
   mkdir -p "$work/db"
   cp -a "$pacman_db/local" "$work/db/local" || die "cannot copy the package database"
+  install -d -m 700 "$work/pacman-gnupg"
+  tar -C "$pacman_gpg" --exclude='S.*' -cf - . | tar -C "$work/pacman-gnupg" -xf - || die "cannot copy the pacman keyring"
+  gpgdir=$work/pacman-gnupg
   if [[ $target_type == "candidate-set" ]]; then
     install -d -m 755 "$work/candidate"
-    if ! problem=$(verify_candidate_set "$target_set" "$work/gnupg"); then
+    if ! problem=$(copy_candidate_set "$target_set" "$work/set") || ! problem=$(verify_candidate_set "$work/set" "$work/gnupg"); then
       refuse "the candidate set does not verify: $problem"
     fi
+    local loaded_id=$target_id
+    target_set=$work/set
+    candidate_identity "$target_set" || die "cannot read the candidate manifest"
+    [[ $target_id == "$loaded_id" ]] || refuse "the candidate set changed while it was read"
     index_candidate_repo "$work/candidate" link || die "cannot index the candidate set"
   fi
   transaction=$work/transaction.conf
@@ -559,6 +615,7 @@ preflight() {
     done <"$targets_file"
   fi
 
+  gpgdir=""
   if already_on_target "$installed" "$resolved" "$targets_file" "$future"; then
     say "This Mac already runs the target set ($target_id): nothing to migrate."
     exit 0
@@ -579,11 +636,17 @@ preflight() {
   cp "$work/kept" "$plan.new/kept" 2>/dev/null || : >"$plan.new/kept"
   cp "$target_file" "$plan.new/target"
   printf '%s\n' "$target_id" >"$plan.new/target-id"
+  printf '%s\n' "$target_packages" >"$plan.new/target-packages"
   printf '%s\n' "$cohort" >"$plan.new/cohort"
   printf '%s\n' "$boot_state" >"$plan.new/boot"
   printf '%s\n' "$luks" >"$plan.new/luks"
-  find "$first_boot_marker" "$R/var/lib/omarchy/first-boot/pending" -maxdepth 0 2>/dev/null >"$plan.new/first-boot" || true
   sync "$plan.new"/*
+  if [[ $target_type == "candidate-set" ]]; then
+    rm -rf "$set_copy"
+    mv "$work/set" "$set_copy" || die "cannot keep the verified candidate set"
+    sync "$set_copy"/*
+    target_set=$set_copy
+  fi
   rm -rf "$plan"
   mv "$plan.new" "$plan"
   sync "$state"
@@ -617,11 +680,14 @@ already_on_target() {
 
 # --- Steps -------------------------------------------------------------------
 
+# The frozen plan: the target as preflight read it, the candidate set as it
+# verified it. Nothing is read from the original set again.
 load_plan() {
   target_file=$plan/target
-  load_target "$target_file"
+  load_target "$target_file" frozen
+  target_id=$(<"$plan/target-id")
+  target_packages=$(<"$plan/target-packages")
   cohort=$(<"$plan/cohort")
-  [[ $(<"$plan/target-id") == "$target_id" ]] || die "the frozen target no longer matches its plan"
 }
 
 plan_targets() {
@@ -651,6 +717,7 @@ step_backup() {
     (( found )) || printf '%s %s\n' "$name" "$version" >>"$partial/packages.missing"
   done < <(plan_package_names)
   tar -C "$R/" --xattrs --acls -cpf "$partial/etc.tar" etc 2>"$partial/etc.log" || die "cannot back up /etc"
+  interrupt_for_test mid backup
   tar -C "$R/boot" --one-file-system -cpf "$partial/boot.tar" . || die "cannot back up /boot"
   tar -C "$R$esp" -cpf "$partial/esp.tar" . || die "cannot back up the ESP"
   luks=$(<"$plan/luks")
@@ -660,7 +727,7 @@ step_backup() {
   fi
   (cd "$partial" && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >SHA256SUMS) ||
     die "cannot record the backup's digests"
-  sync "$partial"/* "$partial/packages"
+  find "$partial" -type f -exec sync {} + || die "cannot sync the backup"
   rm -rf "$backup"
   mv "$partial" "$backup" || die "cannot finish the backup"
   sync "$state"
@@ -681,6 +748,7 @@ step_keyring() {
   if (( ${#keyrings[@]} )); then
     pacman-key --gpgdir "$pacman_gpg" --populate "${keyrings[@]}" >/dev/null || die "cannot populate the keyrings: ${keyrings[*]}"
   fi
+  interrupt_for_test mid keyring
   if ! key_trusted "$target_keyring"; then
     pacman-key --gpgdir "$pacman_gpg" --keyserver hkps://keys.openpgp.org --recv-keys "$target_keyring" >/dev/null &&
       pacman-key --gpgdir "$pacman_gpg" --lsign-key "$target_keyring" >/dev/null ||
@@ -698,6 +766,7 @@ step_prefetch() {
   rm -rf "$db" "$rehearsal" "$cache/candidate"
   mkdir -p "$db"
   cp -a "$pacman_db/local" "$db/local" || die "cannot copy the package database"
+  LC_ALL=C pacman --config "$pacman_conf" --dbpath "$db" -Q >"$cache/start" || die "cannot read the package database copy"
   if [[ $target_type == "candidate-set" ]]; then
     stage_candidate_repo "$cache/candidate" "$cache/gnupg" || die "the candidate set does not verify"
   fi
@@ -705,13 +774,14 @@ step_prefetch() {
   # shellcheck disable=SC2046
   pacman_run --config "$conf" --dbpath "$db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" --logfile "$cache/pacman.log" \
     -Syuw --noconfirm --ask 4 $(plan_targets) || die "cannot download and verify the target set"
+  interrupt_for_test mid prefetch
   cp -a "$db" "$rehearsal"
   # shellcheck disable=SC2046
   pacman_run --config "$conf" --dbpath "$rehearsal" --cachedir "$cache/pkg" --cachedir "$pacman_cache" --logfile "$cache/pacman.log" \
     --dbonly -Su --noconfirm --ask 4 $(plan_targets) >"$cache/rehearsal.log" 2>&1 ||
     die "the rehearsed transaction failed: $(tail -n 1 "$cache/rehearsal.log")"
   LC_ALL=C pacman --config "$conf" --dbpath "$rehearsal" -Q >"$cache/expected" || die "cannot read the rehearsed result"
-  removed=$(comm -23 <(awk '{ print $1 }' "$plan/installed" | LC_ALL=C sort) <(awk '{ print $1 }' "$cache/expected" | LC_ALL=C sort))
+  removed=$(comm -23 <(awk '{ print $1 }' "$cache/start" | LC_ALL=C sort) <(awk '{ print $1 }' "$cache/expected" | LC_ALL=C sort))
   for name in $removed; do
     grep -Fxq "$name" "$plan/allowed-removals" || bad+=("$name")
   done
@@ -723,16 +793,53 @@ step_prefetch() {
       [[ $(installed_version "${name#*/}" "$cache/expected") == "$version" ]] || die "${name#*/} would not end at the candidate's $version"
     done < <(plan_targets)
   fi
-  durable_write "$expected" <"$cache/expected" || die "cannot record the rehearsed result"
+  durable_write "$start" <"$cache/start" && durable_write "$expected" <"$cache/expected" ||
+    die "cannot record the rehearsed transaction"
+}
+
+# The installed packages no longer match what the rehearsal started from: an
+# omarchy update ran in between, or a transaction was cut short. The
+# transaction is rehearsed again from what is installed now.
+system_moved() {
+  installed_packages >"$state/installed.now" || die "cannot list the installed packages"
+  ! cmp -s "$state/installed.now" "$start"
+}
+
+restart_from_prefetch() {
+  local step
+  (( ++restarts <= 3 )) || die "the installed packages keep changing; run the migration again when nothing else updates"
+  say "The installed packages changed since the transaction was rehearsed ($1); rehearsing it again"
+  for step in prefetch repositories transaction; do
+    journal_write "$step" "reset" "$1"
+  done
+  restarted=1
+}
+
+# The process holding pacman's lock: libalpm keeps it open while it works.
+lock_holder() {
+  local fd
+  for fd in "$R"/proc/[0-9]*/fd/*; do
+    if [[ $(readlink "$fd" 2>/dev/null) == "$pacman_db/db.lck" ]]; then
+      fd=${fd#"$R/proc/"}
+      printf '%s\n' "${fd%%/*}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Official repository precedence and no legacy trust: the frozen configuration,
 # the sync databases the rehearsal used, no retired database or fork key.
 step_repositories() {
   local repo extension fpr
+  if system_moved; then
+    restart_from_prefetch "before the repository switch"
+    return 0
+  fi
   if ! cmp -s "$plan/pacman.conf" "$pacman_conf"; then
     durable_write "$pacman_conf" 644 <"$plan/pacman.conf" || die "cannot write $pacman_conf"
   fi
+  interrupt_for_test mid repositories
   for repo in $(repositories_in "$cache/transaction.conf"); do
     for extension in db db.sig; do
       [[ -f $cache/db/sync/$repo.$extension ]] || continue
@@ -752,29 +859,37 @@ step_repositories() {
 
 # One transaction from the prefetched cache and databases, without a new sync:
 # it installs exactly what was verified and rehearsed. Same-name packages are
-# named explicitly, so a higher installed version is replaced too.
+# named explicitly, so a higher installed version is replaced too. A lock left
+# by a transaction that was killed means its hooks may not have run, so the
+# transaction runs again even when the packages are all in place.
 step_transaction() {
-  local now=$cache/installed.now
-  installed_packages >"$now" || die "cannot list the installed packages"
-  if ! cmp -s "$now" "$expected"; then
-    if [[ -e $pacman_db/db.lck ]]; then
-      pgrep -x pacman >/dev/null && die "pacman is running; run the migration again when it has finished"
-      say "Removing the pacman lock an interrupted transaction left behind"
-      rm -f "$pacman_db/db.lck"
+  local holder interrupted=0
+  if [[ -e $pacman_db/db.lck ]]; then
+    if holder=$(lock_holder); then
+      die "pacman is running (process $holder); run the migration again when it has finished"
     fi
+    say "Removing the pacman lock an interrupted transaction left behind"
+    rm -f "$pacman_db/db.lck"
+    interrupted=1
+  fi
+  if system_moved && ! cmp -s "$state/installed.now" "$expected"; then
+    restart_from_prefetch "before the transaction"
+    return 0
+  fi
+  if (( interrupted )) || ! cmp -s "$state/installed.now" "$expected"; then
     # shellcheck disable=SC2046
     pacman_run --config "$cache/transaction.conf" --dbpath "$pacman_db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" \
       -Su --noconfirm --ask 4 $(plan_targets) || die "the package transaction failed"
-    installed_packages >"$now" || die "cannot list the installed packages"
-    cmp -s "$now" "$expected" ||
-      die "the installed packages differ from the rehearsed transaction: $(diff "$expected" "$now" | grep '^[<>]' | head -n 3 | xargs)"
+    installed_packages >"$state/installed.now" || die "cannot list the installed packages"
+    cmp -s "$state/installed.now" "$expected" ||
+      die "the installed packages differ from the rehearsed transaction: $(diff "$expected" "$state/installed.now" | grep '^[<>]' | head -n 3 | xargs)"
   fi
   rm -f "$pacman_db/sync/$candidate_repo".{db,db.sig}
-  # Fresh-image provisioning is never armed on an existing machine; a package
-  # may only carry over a marker the machine already had.
-  if [[ -e $first_boot_marker && ! -s $plan/first-boot ]]; then
+  # Fresh-image provisioning is never armed on an existing machine (preflight
+  # refuses one whose first boot is unfinished).
+  if [[ -e $first_boot_marker || -e $legacy_first_boot_marker ]]; then
     say "Disarming the first-boot setup the transaction left on this installed Mac"
-    rm -f "$first_boot_marker"
+    rm -f "$first_boot_marker" "$legacy_first_boot_marker"
   fi
 }
 
@@ -784,7 +899,8 @@ step_transaction() {
 step_boot_chain() {
   local output
   update-m1n1 >/dev/null || die "update-m1n1 could not rebuild m1n1, the device trees and U-Boot"
-  if limine_mac; then
+  interrupt_for_test mid boot-chain
+  if [[ $(<"$plan/boot") == "limine" ]]; then
     omarchy-mac-limine-cmdline && limine-update >/dev/null || die "cannot rebuild the Limine menu and UKI"
   else
     update-grub >/dev/null || die "cannot rebuild the GRUB menu"
@@ -792,17 +908,19 @@ step_boot_chain() {
   output=$(boot_check_pending linux-aurora 2>&1) || die "the rebuilt boot files do not check: $(tail -n 1 <<<"$output")"
 }
 
-# Limine is staged and verified before it takes U-Boot's EFI slot. A GRUB Mac
-# is switched by the package's own activation, which restores every file it
-# touched when anything fails, so a failed stage leaves GRUB booting.
+# Limine is staged and verified before it takes U-Boot's EFI slot. A GRUB Mac,
+# as preflight found it, is switched by the package's own activation, which
+# restores every file it touched when anything fails, so a failed stage leaves
+# GRUB booting. A switch cut short is run again from its start.
 step_loader() {
   local output uki=$R$esp/EFI/Linux/omarchy_linux-aurora.efi
-  if limine_mac; then
+  if [[ $(<"$plan/boot") == "limine" ]]; then
     [[ -s $uki ]] && grep -Fq "boot():/EFI/Linux/omarchy_linux-aurora.efi" "$R$esp/limine.conf" ||
       die "Limine has no linux-aurora UKI entry; the active loader was left alone"
     omarchy-mac-limine-deploy || die "cannot put Limine on the ESP"
   else
     install -D -m 644 /dev/null "$limine_gate" || die "cannot mark this Mac for Limine"
+    interrupt_for_test mid loader
     if ! (export OMARCHY_PATH=/usr/share/omarchy; source "$boot_lib/setup/limine-boot.sh"); then
       rm -f "$limine_gate"
       die "Limine could not be activated; GRUB is still the loader"
@@ -820,9 +938,9 @@ step_reboot() {
   current=$(boot_id)
   if [[ ! -s $reboot_pending ]]; then
     printf '%s\n' "$current" | durable_write "$reboot_pending" || die "cannot record the boot to wait for"
-    systemctl enable "$verify_unit" >/dev/null 2>&1 ||
-      say "Could not enable $verify_unit; run 'sudo omarchy-mac-migrate verify' after the reboot."
   fi
+  interrupt_for_test mid reboot
+  systemctl enable "$verify_unit" >/dev/null 2>&1 || die "cannot enable $verify_unit, which verifies the next boot"
   staged=$(<"$reboot_pending")
   if [[ $current == "$staged" ]]; then
     say "Reboot to finish the migration to $target_id. The next boot verifies the new boot chain."
@@ -837,12 +955,22 @@ step_reboot() {
   output=$(omarchy-apple-silicon-boot-check linux-aurora 2>&1) || die "the boot check failed after the reboot: $(tail -n 1 <<<"$output")"
 }
 
+# The completion record comes first: what is left after it is only cleanup,
+# which every later run repeats until it is done.
 step_retire() {
   "${cohort//-/_}_retire" || die "the $cohort adapter could not retire its compatibility state"
-  systemctl disable "$verify_unit" >/dev/null 2>&1 || true
-  rm -rf "$cache" "$reboot_pending"
   printf 'target=%s\ncompleted=%s\n' "$target_id" "$(date +%Y-%m-%dT%H:%M:%S%z)" | durable_write "$complete" ||
     die "cannot record the completed migration"
+  interrupt_for_test mid retire
+  tidy_completed
+}
+
+tidy_completed() {
+  if [[ -e $reboot_pending || -d $cache || -d $set_copy ]]; then
+    systemctl disable "$verify_unit" >/dev/null 2>&1 || say "Could not disable $verify_unit; it does nothing from now on."
+    rm -rf "$cache" "$set_copy" "$state/installed.now"
+    rm -f "$reboot_pending"
+  fi
 }
 
 # --- Commands ----------------------------------------------------------------
@@ -855,10 +983,10 @@ take_lock() {
 
 resume_steps() {
   local step event
-  for step in "${migrate_steps[@]:1}"; do
+  while step=$(next_step) && [[ -n $step ]]; do
+    [[ $step != "preflight" ]] || die "the migration has no finished preflight"
     event=$(step_state "$step")
-    [[ $event != "done" ]] || continue
-    [[ -z $event || $step == "reboot" ]] || say "Resuming the migration at $step"
+    [[ -z $event || $event == "reset" || $step == "reboot" ]] || say "Resuming the migration at $step"
     run_step "$step"
   done
   say "This Mac now runs $target_id. Backups stay in $backup."
@@ -882,6 +1010,7 @@ migrate_run() {
   trap on_exit EXIT
 
   if [[ -f $complete && -f $plan/target-id ]]; then
+    tidy_completed
     candidate=$(find_target "$target_arg")
     if [[ -z $candidate ]]; then
       say "Already migrated to $(<"$plan/target-id")."
@@ -921,7 +1050,7 @@ archive_state() {
   local destination
   destination=$state/history/$(date +%s)
   install -d -m 700 "$destination"
-  mv "$journal" "$plan" "$expected" "$complete" "$destination/" 2>/dev/null
+  mv "$journal" "$plan" "$start" "$expected" "$complete" "$destination/" 2>/dev/null
   [[ ! -d $backup ]] || mv "$backup" "$destination/"
 }
 
@@ -929,9 +1058,13 @@ archive_state() {
 # is waiting for, or past, its reboot, and does nothing otherwise.
 migrate_verify() {
   platform=$(hardware_platform) || die "cannot determine the hardware platform"
-  [[ $platform == "apple-silicon" && -f $journal && ! -f $complete && -n $(step_state reboot) ]] || return 0
+  [[ $platform == "apple-silicon" && -f $journal && -n $(step_state reboot) ]] || return 0
   take_lock
   trap on_exit EXIT
+  if [[ -f $complete ]]; then
+    tidy_completed
+    return 0
+  fi
   load_plan
   resume_steps
 }
