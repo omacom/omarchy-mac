@@ -594,6 +594,21 @@ rm -rf "$R/proc/4242"
 finish
 pass "a held pacman lock stops the transaction; a stale one is cleared"
 
+new_fixture resynced
+kill_after repositories
+printf 'hyprland 0.53-1\nlimine 12.9.0-1\n' >"$R/var/lib/pacman/sync/extra.db"
+finish
+grep -q "^hyprland 0.51-1$" "$R/var/lib/pacman/local/packages" || fail "a sync after the rehearsal does not change what the transaction installs"
+new_fixture interrupted-then-moved
+output=$(env OMARCHY_MAC_MIGRATE_KILL_MID=transaction OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+  "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "pacman is killed after its database write"
+echo "late-extra 1.0-1" >>"$R/var/lib/pacman/local/packages"
+finish
+grep -q " prefetch reset " "$(state_dir)/journal" || fail "the changed packages are rehearsed again"
+[[ $(grep -c '^transaction ' "$F/pacman.log") == 2 && $(grep '^transaction \|^hooks' "$F/pacman.log" | tail -n 1) == "hooks" ]] ||
+  fail "a transaction killed before its hooks runs again after a new rehearsal" "$(cat "$F/pacman.log")"
+pass "the transaction uses the rehearsed databases, and a killed one runs again even after a new rehearsal"
+
 new_fixture frozen-set
 kill_after preflight
 head -c 16 /dev/urandom >>"$F/set/$(jq -r '.packages[0].filename' "$F/set/manifest.json")"

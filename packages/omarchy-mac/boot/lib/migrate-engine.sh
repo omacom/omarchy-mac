@@ -25,6 +25,7 @@ cache=$state/cache
 backup=$state/backup
 expected=$state/expected
 start=$state/start
+interrupted_marker=$state/transaction-interrupted
 set_copy=$state/set
 complete=$state/complete
 reboot_pending=$state/reboot-pending
@@ -817,6 +818,19 @@ restart_from_prefetch() {
   restarted=1
 }
 
+# The sync databases the rehearsal resolved against, over any a later sync left.
+install_rehearsed_databases() {
+  local repo extension
+  for repo in $(repositories_in "$cache/transaction.conf"); do
+    for extension in db db.sig; do
+      [[ -f $cache/db/sync/$repo.$extension ]] || continue
+      cmp -s "$cache/db/sync/$repo.$extension" "$pacman_db/sync/$repo.$extension" && continue
+      durable_write "$pacman_db/sync/$repo.$extension" 644 <"$cache/db/sync/$repo.$extension" ||
+        die "cannot install the $repo database"
+    done
+  done
+}
+
 # The process holding pacman's lock: libalpm keeps it open while it works.
 lock_holder() {
   local fd
@@ -842,13 +856,7 @@ step_repositories() {
     durable_write "$pacman_conf" 644 <"$plan/pacman.conf" || die "cannot write $pacman_conf"
   fi
   interrupt_for_test mid repositories
-  for repo in $(repositories_in "$cache/transaction.conf"); do
-    for extension in db db.sig; do
-      [[ -f $cache/db/sync/$repo.$extension ]] || continue
-      durable_write "$pacman_db/sync/$repo.$extension" 644 <"$cache/db/sync/$repo.$extension" ||
-        die "cannot install the $repo database"
-    done
-  done
+  install_rehearsed_databases
   for repo in "${retired_repos[@]}"; do
     rm -f "$pacman_db/sync/$repo".{db,db.sig,files,files.sig}
   done
@@ -871,20 +879,24 @@ step_transaction() {
       die "pacman is running (process $holder); run the migration again when it has finished"
     fi
     say "Removing the pacman lock an interrupted transaction left behind"
+    : | durable_write "$interrupted_marker" || die "cannot record the interrupted transaction"
     rm -f "$pacman_db/db.lck"
-    interrupted=1
   fi
+  # Kept across a new rehearsal until a transaction has run to its end.
+  [[ ! -e $interrupted_marker ]] || interrupted=1
   if system_moved && ! cmp -s "$state/installed.now" "$expected"; then
     restart_from_prefetch "before the transaction"
     return 0
   fi
   if (( interrupted )) || ! cmp -s "$state/installed.now" "$expected"; then
+    install_rehearsed_databases
     # shellcheck disable=SC2046
     pacman_run --config "$cache/transaction.conf" --dbpath "$pacman_db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" \
       -Su --noconfirm --ask 4 $(plan_targets) || die "the package transaction failed"
     installed_packages >"$state/installed.now" || die "cannot list the installed packages"
     cmp -s "$state/installed.now" "$expected" ||
       die "the installed packages differ from the rehearsed transaction: $(diff "$expected" "$state/installed.now" | grep '^[<>]' | head -n 3 | xargs)"
+    rm -f "$interrupted_marker"
   fi
   rm -f "$pacman_db/sync/$candidate_repo".{db,db.sig}
   # Fresh-image provisioning is never armed on an existing machine (preflight
@@ -1027,10 +1039,8 @@ migrate_run() {
   fi
 
   if [[ -f $journal && $(step_state preflight) == "done" ]]; then
-    if [[ -n $target_arg ]]; then
-      load_target "$target_arg"
-      [[ $target_id == "$(<"$plan/target-id")" ]] ||
-        die "a migration to $(<"$plan/target-id") is in progress; finish it before choosing another target"
+    if [[ -n $target_arg ]] && ! cmp -s "$target_arg" "$plan/target"; then
+      die "a migration to $(<"$plan/target-id") is in progress; finish it before choosing another target"
     fi
     load_plan
     resume_steps
