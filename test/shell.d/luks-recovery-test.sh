@@ -39,6 +39,7 @@ cryptsetup() {
   done
   [[ $target == "$device" ]] || return 1
   if [[ $operation == "luksDump" ]]; then
+    [[ ! -e $test_tmp/dump-fail ]] || return 1
     echo "Keyslots:"
     awk '{printf "  %s: luks2\n", $1}' "$slots"
     return
@@ -164,6 +165,20 @@ prepare_luks_recovery "$device"
   fail "a missing acknowledged key is replaced until the owner acknowledges the replacement"
 grep -q 'acknowledged recovery slot 5 is missing' "$LOG_FILE" || fail "the log says why"
 pass "an acknowledged recovery slot missing from the header is replaced, and the owner told, until they acknowledge the new key"
+
+# A header that cannot be read never passes for a missing acknowledged key.
+fixture
+printf '2 acknowledged-key\n' >>"$slots"
+printf 'recovery_slot=2\nrecovery_shown=1\n' >"$REKEY_STATE"
+chmod 600 "$REKEY_STATE"
+touch "$test_tmp/dump-fail"
+if prepare_luks_recovery "$device"; then fail "an unreadable header fails the recovery step"; fi
+rm "$test_tmp/dump-fail"
+[[ $(rekey_state_get recovery_shown) == "1" && $(luks_slot_for acknowledged-key "$device") == "2" && $(shown_count) == "0" ]] ||
+  fail "an unreadable header leaves the acknowledged key and its journal alone"
+prepare_luks_recovery "$device"
+[[ $(shown_count) == "0" && $(luks_slot_for acknowledged-key "$device") == "2" ]] || fail "the next attempt keeps the acknowledged key"
+pass "a header that cannot be read fails the recovery step and keeps the acknowledged key"
 
 fixture
 printf 'nothing' >"$PROVISIONING_DIR/luks-key"

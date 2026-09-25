@@ -34,12 +34,6 @@ luks_recovery_passphrase() {
   [[ $1 =~ ^([A-Z2-7]{4}-){11}[A-Z2-7]{4}$ ]]
 }
 
-luks_slot_present() {
-  local device=$1 slot=$2 found
-  found=$(luks_dump_slots "$device" | awk -v s="$slot" '$1 == s { print; exit }')
-  [[ -n $found ]]
-}
-
 # Foreground only, before the re-key's worker runs. Reserve a free slot in the
 # journal, add a new key there with the staged install key, show it and record
 # the owner's acknowledgement, each step journaled so a retry resumes: an
@@ -48,15 +42,18 @@ luks_slot_present() {
 # owner's own slot is the re-key's, so a retry may still choose a new password.
 prepare_luks_recovery() {
   local -
-  set +x
+  set +x -o pipefail
   [[ -z ${OMARCHY_PROVISION_WORKER:-} ]] || return 1
   local device=$1 slot shown staged occupied candidate
   RECOVERY_REPLACED=0
   slot=$(rekey_state_get recovery_slot || true)
   shown=$(rekey_state_get recovery_shown || true)
+  # A header that cannot be read says nothing about the slots: fail, never
+  # take it for a missing key.
+  occupied=$(luks_dump_slots "$device") || return 1
 
   if [[ $shown == "1" ]]; then
-    luks_slot_present "$device" "$slot" && return 0
+    [[ -n $slot ]] && grep -Fxq "$slot" <<<"$occupied" && return 0
     log_step "the acknowledged recovery slot ${slot:-?} is missing from $device; replacing its key"
     # Until the owner acknowledges the replacement, a retry must not keep it.
     rekey_state_put recovery_shown 0 || return 1
@@ -72,11 +69,10 @@ prepare_luks_recovery() {
   fi
 
   if [[ $slot =~ ^([0-9]|[12][0-9]|3[01])$ && $slot != "$staged" && $slot != "$(rekey_state_get owner_slot || true)" ]]; then
-    if luks_slot_present "$device" "$slot"; then
+    if grep -Fxq "$slot" <<<"$occupied"; then
       cryptsetup luksKillSlot -q --key-file "$PROVISIONING_DIR/luks-key" "$device" "$slot" 2>>"$LOG_FILE" || return 1
     fi
   else
-    occupied=$(luks_dump_slots "$device") || return 1
     slot=""
     for (( candidate = 0; candidate < 32; candidate++ )); do
       if ! grep -Fxq "$candidate" <<<"$occupied"; then
