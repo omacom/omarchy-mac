@@ -312,6 +312,81 @@ first_boot "$root" >/dev/null || fail "the next boot finishes the deferred hardw
   fail "a step that changed the initramfs and then failed still gets it rebuilt" "$(cat "$REBUILDS" 2>/dev/null)"
 pass "a step that changed the initramfs and then failed still gets it rebuilt"
 
+# Images ship no sync databases, so a step that installs a package fails until
+# they are fetched. Offline the fetch fails too and the step stays queued; a
+# later boot with the network fetches them once and retries the step.
+if command -v pacman-conf >/dev/null; then
+  sync_bin="$test_tmp/sync-bin"
+  mkdir -p "$sync_bin"
+  cat >"$sync_bin/pacman" <<'SH'
+#!/bin/bash
+sync=$OMARCHY_IMAGE_ROOT/var/lib/pacman/sync
+case $1 in
+  -Sy)
+    echo "pacman -Sy" >>"$SYNCS"
+    [[ ! -e $OFFLINE ]] || exit 1
+    mkdir -p "$sync" && touch "$sync/core.db" "$sync/omarchy.db"
+    ;;
+  -S)
+    [[ -f $sync/core.db && -f $sync/omarchy.db ]] || { echo "error: target not found: ${*: -1}" >&2; exit 1; }
+    echo "installed ${*: -1}" >>"$RUNS"
+    ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$sync_bin/pacman"
+  echo 'pacman -S --noconfirm --needed vulkan-asahi' >"$fixture/install/hardware/pkg.sh"
+  export SYNCS="$test_tmp/syncs" OFFLINE="$test_tmp/offline"
+
+  sync_boot() {
+    OMARCHY_IMAGE_ROOT="$1" OMARCHY_PATH="$fixture" OMARCHY_PROC_ROOT="$test_tmp/hw/proc" \
+      PATH="$sync_bin:$base_path" "$ROOT/bin/omarchy-provision-hardware"
+  }
+
+  reset_logs
+  rm -f "$SYNCS"
+  root=$(new_root sync)
+  write_manifest "$root"
+  build "$root" >/dev/null || fail "the fixture image builds"
+  mkdir -p "$root/etc"
+  printf '[options]\nArchitecture = auto\n\n[core]\nServer = https://mirror.invalid/$arch/$repo\n\n[omarchy]\nServer = https://pkgs.invalid/$arch\n' \
+    >"$root/etc/pacman.conf"
+  printf '%s\n' install/hardware/c.sh >"$root/var/lib/omarchy/image/deferred-steps"
+  sync_boot "$root" >/dev/null || fail "a first boot whose steps need no package finishes offline"
+  [[ ! -e $SYNCS ]] || fail "a first boot whose steps succeed fetches no package databases"
+  pass "a first boot whose steps succeed fetches no package databases"
+
+  rm -f "$RUNS"
+  printf '%s\n' install/hardware/pkg.sh install/hardware/c.sh >"$root/var/lib/omarchy/image/deferred-steps"
+  touch "$OFFLINE"
+  status=0
+  output=$(sync_boot "$root" 2>&1) || status=$?
+  (( status == 75 )) || fail "an offline step that needs a package exits 75" "status $status: $output"
+  [[ $(cat "$SYNCS") == "pacman -Sy" && ! -e $RUNS ]] ||
+    fail "an offline first boot tries the package databases once and stops at the step" "$(cat "$SYNCS" "$RUNS" 2>/dev/null)"
+  [[ $(queue_of "$root") == $'install/hardware/pkg.sh\ninstall/hardware/c.sh' ]] ||
+    fail "the step that needs a package stays queued offline" "$(queue_of "$root")"
+  pass "offline, a step that needs a package stays queued"
+
+  rm -f "$OFFLINE"
+  output=$(sync_boot "$root") || fail "a later boot with the network finishes the deferred hardware setup" "$output"
+  [[ $(cat "$SYNCS") == $'pacman -Sy\npacman -Sy' && $(cat "$RUNS") == $'installed vulkan-asahi\nc' ]] ||
+    fail "a later boot fetches the package databases once and retries the step" "$(cat "$SYNCS" "$RUNS" 2>/dev/null)"
+  [[ $output == *"Fetching the package databases the image does not ship, then retrying install/hardware/pkg.sh"* ]] ||
+    fail "a later boot says why it fetches the package databases" "$output"
+  [[ ! -e $root/var/lib/omarchy/image/deferred-steps ]] || fail "a later boot with the network empties the queue"
+  pass "a later boot with the network fetches the package databases once and finishes"
+
+  rm -f "$RUNS"
+  touch "$FAIL_B"
+  printf '%s\n' install/hardware/apple/b.sh >"$root/var/lib/omarchy/image/deferred-steps"
+  sync_boot "$root" >/dev/null 2>&1 && fail "a failing step with the package databases present still fails"
+  [[ $(wc -l <"$SYNCS") == 2 ]] || fail "a step that fails with the package databases present fetches nothing" "$(cat "$SYNCS")"
+  pass "a step that fails with the package databases present fetches nothing"
+else
+  pass "no pacman-conf here; skipping the package database fetch"
+fi
+
 # A leaf a later Omarchy no longer ships is dropped; a queue entry outside the
 # hardware setup stops the run before anything runs.
 reset_logs
