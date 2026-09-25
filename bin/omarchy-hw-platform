@@ -1,0 +1,77 @@
+#!/bin/bash
+
+# omarchy:summary=Print the hardware platform: apple-silicon, qualcomm, generic-aarch64 or generic.
+
+# ARM laptops have no DMI, so the board identity is the root node of the device
+# tree the firmware hands the kernel: "apple,<model>" from Asahi's m1n1 on every
+# Apple Silicon Mac, "qcom,<soc>" on Snapdragon laptops. Each compatible string
+# is a NUL-separated list, and only a token's vendor prefix counts.
+#
+# Fixture roots let tests fake that identity, but a privileged caller must not
+# let its environment pick the platform, so root reads only the live tree and a
+# fixed PATH.
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+  sources=(/proc/device-tree/compatible /sys/firmware/devicetree/base/compatible)
+elif [[ -n ${OMARCHY_PROC_ROOT:-}${OMARCHY_SYS_ROOT:-} ]]; then
+  sources=()
+  [[ -z ${OMARCHY_PROC_ROOT:-} ]] || sources+=("$OMARCHY_PROC_ROOT/device-tree/compatible")
+  [[ -z ${OMARCHY_SYS_ROOT:-} ]] || sources+=("$OMARCHY_SYS_ROOT/firmware/devicetree/base/compatible")
+else
+  sources=(/proc/device-tree/compatible /sys/firmware/devicetree/base/compatible)
+fi
+
+contradiction() {
+  echo "Error: contradictory platform identity: $1" >&2
+  exit 1
+}
+
+vendor=""
+vendor_source=""
+for source in "${sources[@]}"; do
+  [[ -r $source ]] || continue
+
+  apple=0
+  qcom=0
+  mapfile -d '' -t tokens <"$source"
+  for token in "${tokens[@]}"; do
+    [[ $token == "apple,"* ]] && apple=1
+    [[ $token == "qcom,"* ]] && qcom=1
+  done
+
+  if (( apple && qcom )); then
+    contradiction "$source names both Apple and Qualcomm hardware"
+  elif (( apple )); then
+    found=apple
+  elif (( qcom )); then
+    found=qcom
+  else
+    found=none
+  fi
+
+  if [[ -n $vendor && $vendor != "$found" ]]; then
+    contradiction "$vendor_source says $vendor but $source says $found"
+  fi
+  vendor=$found
+  vendor_source=$source
+done
+
+machine=$(uname -m)
+
+case $vendor in
+  apple | qcom)
+    [[ $machine == "aarch64" ]] || contradiction "$vendor_source names $vendor hardware but the CPU is $machine"
+    if [[ $vendor == "apple" ]]; then
+      echo apple-silicon
+    else
+      echo qualcomm
+    fi
+    ;;
+  *)
+    if [[ $machine == "aarch64" ]]; then
+      echo generic-aarch64
+    else
+      echo generic
+    fi
+    ;;
+esac
