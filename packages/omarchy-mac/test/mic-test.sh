@@ -160,18 +160,34 @@ with tempfile.TemporaryDirectory() as temporary:
     audio = mapped(m.MONITOR)
     m.reconcile(audio, state())
     assert audio.default == m.MONITOR and audio.probes == [m.MONITOR], 'a live mapped default stays'
-    # A muted monitor is the user's microphone mute: never sampled, never
+    # A muted mapping is the user's microphone mute: never sampled, never
     # swapped for the unmuted DSP, and still selected after a default reset.
+    # The mute key mutes the sink side while the monitor is the default.
     for selected in (m.MONITOR, DSP):
-        audio = mapped(selected, signal=False, monitor_mute=True)
-        m.reconcile(audio, state())
-        assert audio.default == m.MONITOR and not audio.probes, selected
-        # Muting while the monitor is sampled silences it; that is still a mute.
-        audio = mapped(selected, signal=False)
-        sample = audio.signal
-        audio.signal = lambda source: (audio.monitor.update(mute=True), sample(source))[1]
-        m.reconcile(audio, state())
-        assert audio.default == m.MONITOR and audio.probes == [m.MONITOR], selected
+        for side in ('monitor', 'sink'):
+            audio = mapped(selected, signal=False)
+            getattr(audio, side)['mute'] = True
+            m.reconcile(audio, state())
+            assert audio.default == m.MONITOR and not audio.probes, (selected, side)
+            # Muting while the monitor is sampled silences it; that is still a mute.
+            audio = mapped(selected, signal=False)
+            sample = audio.signal
+            audio.signal = lambda source, side=side, audio=audio, sample=sample: (getattr(audio, side).update(mute=True), sample(source))[1]
+            m.reconcile(audio, state())
+            assert audio.default == m.MONITOR and audio.probes == [m.MONITOR], (selected, side)
+    # A sample that could not be taken changes nothing and is reported.
+    for selected in (DSP, m.MONITOR):
+        audio = mapped(selected, signal=None)
+        try: m.reconcile(audio, state())
+        except RuntimeError as error: assert 'Could not sample' in str(error), error
+        else: raise AssertionError('an unsampled mapping must be reported')
+        assert audio.default == selected
+    # The supervisor samples a default mapping once, not on every event.
+    checked = set(); audio = mapped(m.MONITOR)
+    m.reconcile(audio, state(), checked=checked); m.reconcile(audio, state(), checked=checked)
+    assert audio.probes == [m.MONITOR] and audio.default == m.MONITOR
+    audio = mapped(m.MONITOR); m.reconcile(audio, state()); m.reconcile(audio, state())
+    assert audio.probes == [m.MONITOR, m.MONITOR]
     # Other inputs are the user's; the microphone is not even opened for them.
     audio = Audio(default='usb-mic'); audio.carries_signal = False
     m.reconcile(audio, state())
@@ -182,6 +198,7 @@ with tempfile.TemporaryDirectory() as temporary:
             audio = mapped(selected, signal); audio.probe_choice = 'usb-mic'
             try: m.reconcile(audio, state())
             except RuntimeError: assert not signal
+            else: assert signal, 'a silent mapping must be reported'
             assert audio.default == 'usb-mic', (signal, selected)
     audio = Audio(default='usb-mic'); audio.no_dsp = True
     try: m.reconcile(audio, state())
@@ -314,22 +331,24 @@ with tempfile.TemporaryDirectory() as temporary:
     sub = feed('exit 0'); elapsed = timed(sub)
     assert elapsed < 0.5 and sub.process is None, 'a lost subscription must yield a repair and resubscribe later'
     assert timed(m.Subscription(command=['/nonexistent/pactl'], retry=0.05)) < 0.5, 'a missing subscriber must degrade to a paced retry'
-# The live probe reads the monitor through parec: any non-zero sample is
-# signal, digital silence or a missing recorder is not.
+# The live probe reads float samples from the monitor through parec: any
+# non-zero sample, however quiet, is signal; zeros (either sign) are digital
+# silence; a recorder that yields nothing is unknown.
 with tempfile.TemporaryDirectory() as temporary:
     fake = Path(temporary) / 'parec'
     def probe(script, timeout=1.0):
         fake.write_text('#!/bin/bash\n' + script + '\n'); fake.chmod(0o755)
         with mock.patch.dict(os.environ, {'PATH': temporary + os.pathsep + os.environ['PATH']}):
             start = time.monotonic(); result = m.Audio().signal(m.MONITOR, timeout); return result, time.monotonic() - start
-    result, elapsed = probe('[[ $1 == --device=omarchy_asahi_mic.monitor ]] || exit 1; head -c 8192 /dev/zero; printf "\\x01\\x00"; sleep 5')
-    assert result and elapsed < 0.9, ('first non-zero sample is signal', elapsed)
-    result, elapsed = probe('head -c 65536 /dev/zero; sleep 5')
-    assert not result and 0.9 <= elapsed < 2.5, ('digital silence is not signal', elapsed)
+    floats = 'python3 -c "import struct, sys; sys.stdout.buffer.write(struct.pack(\'<%df\' % {0}, *{1}))"; sleep 5'
+    result, elapsed = probe('[[ $1 == --device=omarchy_asahi_mic.monitor && $* == *--format=float32le* ]] || exit 1; ' + floats.format(2049, '[0.0] * 2048 + [1e-7]'))
+    assert result is True and elapsed < 0.9, ('a quiet non-zero sample is signal', elapsed)
+    result, elapsed = probe(floats.format(8192, '[0.0, -0.0] * 4096'))
+    assert result is False and 0.9 <= elapsed < 2.5, ('digital silence is not signal', elapsed)
     result, elapsed = probe('exit 1')
-    assert not result and elapsed < 0.9, 'a recorder that stops is not signal'
+    assert result is None and elapsed < 0.9, 'a recorder that yields nothing is unknown'
     with mock.patch.dict(os.environ, {'PATH': str(Path(temporary) / 'missing')}):
-        assert not m.Audio().signal(m.MONITOR, 1.0), 'a missing recorder is not signal'
+        assert m.Audio().signal(m.MONITOR, 1.0) is None, 'a missing recorder is unknown'
 with mock.patch.object(m.Audio, 'run', return_value='536870912\tmodule-null-sink\tsink_name=omarchy_asahi_mic omarchy.asahi-mic.owner=test\t1'):
     assert m.Audio().modules()[0]['index'] == '536870912'
 unit = (root / 'vendor/systemd/user/omarchy-asahi-mic.service').read_text()
