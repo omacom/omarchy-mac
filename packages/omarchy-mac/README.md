@@ -18,6 +18,12 @@ Run `omarchy-mac-setup-user` as each target user with their HOME/XDG directories
 
 Vendor defaults use NetworkManager's `/usr/lib/NetworkManager/conf.d`, systemd's `/usr/lib/systemd`, modprobe's `/usr/lib/modprobe.d`, and WirePlumber's `/usr/share/wireplumber/wireplumber.conf.d`. Same-name `/etc` or user fragments retain precedence. Setup reports effective live NetworkManager/module configuration and systemd fragments. Review those reports and any drop-ins when diagnosing overrides; custom policy is never normalized to the package default.
 
+## Battery charge limit
+
+`omarchy battery charge limit [80|100]` shows or sets the `macsmc-battery` charge thresholds and refuses unless `omarchy-hw-platform` reports `apple-silicon`. It writes only the end threshold through `sudo`, since the driver derives the start threshold (80 restarts charging at 75; 100 restores full charging), and checks the SMC's readback. Full charging stays the default.
+
+A set limit is saved as `CHARGE_CONTROL_END_THRESHOLD=` in `/etc/udev/macsmc-battery.conf`, the file asahi-scripts' own rule restores from, so both agree on one value. The package's udev rule runs `/usr/lib/omarchy-mac/battery-charge-limit-restore` when the SMC battery appears at boot; it reapplies a saved 80 or 100 on Apple Silicon and otherwise leaves the SMC alone. Nothing needs enabling.
+
 ## Candidate qualification
 
 The mocked behavioral tests cover Wi-Fi health, disabled radio, journal cursor/backstop recovery, unload/load failures and chipset gates; microphone gain/mute, device choices, missing endpoints, rollback and daemon loss; setup covers fresh/upgrade/repeated/interrupted operations, two users, first-session activation, masks and overrides. The desktop retains migration and audio restart integration coverage.
