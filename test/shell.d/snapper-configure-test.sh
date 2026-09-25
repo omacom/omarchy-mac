@@ -16,7 +16,12 @@ case "$*" in
   '--no-dbus --csvout list-configs --columns config,subvolume')
     [[ ${FAIL_AT:-} != probe ]] || exit 18
     printf 'config,subvolume\n'
-    cat "$FIXTURE/registry" ;;
+    cat "$FIXTURE/registry"
+    if [[ -n ${OMARCHY_SNAPPER_CONF_PATH:-} ]] && grep -qE '^SNAPPER_CONFIGS=.*\broot\b' "$OMARCHY_SNAPPER_CONF_PATH" 2>/dev/null; then
+      if ! grep -qF 'root,/' "$FIXTURE/registry" 2>/dev/null; then
+        echo 'root,/'
+      fi
+    fi ;;
   '--no-dbus -c root create-config --template omarchy /')
     [[ ${FAIL_AT:-} != create ]] || exit 19
     cp "$ROOT/default/snapper/root" "$FIXTURE/root" || exit
@@ -142,6 +147,28 @@ new_fixture missing-template
 if OMARCHY_SNAPPER_TEMPLATE="$FIXTURE/absent" run_leaf direct; then fail 'missing template fails'; fi
 ! grep -E 'create-config|systemctl' "$TEST_LOG" || fail 'template checked before mutations'
 pass 'missing template fails before changing services or backend'
+
+new_fixture conf-d-registration
+cp "$ROOT/default/snapper/root" "$FIXTURE/root"
+mkdir "$FIXTURE/snapshots"
+conf_d="$FIXTURE/conf.d.snapper"
+printf 'SNAPPER_CONFIGS=""\n' >"$conf_d"
+OMARCHY_SNAPPER_CONF_PATH="$conf_d" run_leaf direct
+[[ -f $FIXTURE/cleanup-active ]] || fail 'unregistered root activates cleanup'
+grep -qE '^SNAPPER_CONFIGS="root"' "$conf_d" || fail 'unregistered root registers in conf.d'
+pass 'unregistered complete root registers in conf.d and activates cleanup'
+
+new_fixture conf-d-unhandled
+cp "$ROOT/default/snapper/root" "$FIXTURE/root"
+mkdir "$FIXTURE/snapshots"
+conf_d="$FIXTURE/conf.d.snapper"
+printf "SNAPPER_CONFIGS='unhandled'\n" >"$conf_d"
+if OMARCHY_SNAPPER_CONF_PATH="$conf_d" run_leaf direct >"$FIXTURE/output" 2>&1; then
+  fail 'unhandled conf.d must not claim success'
+fi
+[[ ! -f $FIXTURE/cleanup-active ]] || fail 'unhandled conf.d must not activate cleanup'
+grep -q 'Partial or conflicting Snapper root configuration' "$FIXTURE/output" || fail 'unhandled conf.d falls through to partial state error'
+pass 'unhandled conf.d falls through to partial state error without activating cleanup'
 
 migration=$(rg -l '^echo "Repair missing Snapper root setup after the required dependency update"' "$ROOT/migrations")
 [[ -n $migration ]] || fail 'new repair migration exists'
