@@ -92,15 +92,14 @@ It decides exactly as before; its options, settings, hard stops and resume are t
 
 Where omacom has no interface yet, the lane stops and says so rather than working around it:
 
-- **Mac recipes.** omacom master has only `linux-aurora`. `omarchy-mac`, `omarchy-mac-boot`, `m1n1-aurora` and `uboot-asahi` arrive with tickets 07–09; until then the pin step reports them blocked.
-- **linux-aurora is fast-ring.** It carries `release_ring: fast` and `channels: [edge, rc]`, so every merge publishes a fresh build straight to rc and `bin/repo advance` never copies it. The lane blocks its promotion until ticket 06 makes it edge-only and drops the fast ring.
-- **The host's tree and R2.** `advance-channel` reads the build host's local tree, while `publish.yml` publishes to R2 directly and nothing copies those files back. Whether the host holds CI-built Mac packages is unproven; the host-side dry run stops the advance when it does not, and ticket 31's rehearsal settles it.
+- **Mac recipes.** All five are on omacom master, edge-only (tickets 06–09). A recipe that is missing or fast-ring is still reported as blocked.
+- **The host's tree and R2.** `advance-channel` reads the build host's local tree, but `publish.yml` publishes to R2 directly and nothing copies those files back, so the host holds none of the CI-built Mac packages. The fix is `bin/promote-artifact` and `promote.yml` in omacom/omarchy-pkgs#642, rehearsed in [aarch64-promotion-rehearsal.md](aarch64-promotion-rehearsal.md). Until it lands, the advance step here stops at the host's dry run.
 - **Advance by name.** `advance-channel` cannot be told which files to copy, only which packages, and its dry run names only the files it copies. A publication to the source channel between the host's dry run and the advance, or a host tree whose unchanged entries differ from what R2 serves, would be carried along; the check afterwards catches it, but only once it is public. Closing that needs an expected-manifest option in `advance-channel`.
 - **No scoped advance in `bin/omarchy-release`.** Its `host_advance` always passes `--arch all`, which would move x86_64 channels too, so the lane calls `bin/repo advance` directly with `--arch aarch64 --package`.
 - **No signed candidate descriptor.** The set digest over the channel database stands in for the fork's signed `CANDIDATE`. The lane does not verify package signatures itself: `bin/publish-artifact` signs, `advance-channel` refuses a package without its `.sig`, and pacman verifies on install.
 - **VM acceptance of an omacom set.** The relocated harness (tickets 27, 28) does not install from omacom channels yet, so the lane takes a record rather than running the VM.
 - **Mac updates.** `--update-macs` exists only on the fork lane; on omacom, hardware checks after a promotion belong to the hardware tooling (ticket 29).
-- **Rollback.** `advance-channel` only moves forward; undoing a promotion is ticket 31's rehearsal.
+- **Rollback.** `advance-channel` only moves forward. `promote-artifact --withdraw` and `--reinstate` undo a promotion; see [aarch64-promotion-rehearsal.md](aarch64-promotion-rehearsal.md).
 - **The fork's copies.** `bin/asahi-release` and `bin/mac-aurora-pin` still exist in maralcbr/omarchy-pkgs. The fork is frozen; replace them with a pointer here or leave them until the fork is archived.
 
 ## Tests
@@ -108,6 +107,7 @@ Where omacom has no interface yet, the lane stops and says so rather than workin
 ```bash
 tools/release/test/omacom-lane
 FORK_PKGS_DIR=<fork checkout> tools/release/test/fork-parity
+tools/release/test/aarch64-promotion-rehearsal <omarchy-pkgs checkout>
 ```
 
-`omacom-lane` runs a whole promotion against a fake omacom repository, fake channel databases and a fake `gh`: pin, gates, widening and a scoped advance. `fork-parity` runs the fork's own `test/asahi-release`, `test/asahi-runtime-release` and `test/aurora-mac-pin` against this directory's fork lane. It needs the fork CI's tools (Ubuntu with `libarchive-tools` and `pacman-package-manager`); the fork's Mac-update scenario does not run on macOS, even against the original.
+`omacom-lane` runs a whole promotion against a fake omacom repository, fake channel databases and a fake `gh`: pin, gates, widening and a scoped advance. `aarch64-promotion-rehearsal` plans the Mac set's edge → rc promotion against the live repository, then runs it and its rollback against a sandbox copy, in an Arch container (its header has the command). `fork-parity` runs the fork's own `test/asahi-release`, `test/asahi-runtime-release` and `test/aurora-mac-pin` against this directory's fork lane. It needs the fork CI's tools (Ubuntu with `libarchive-tools` and `pacman-package-manager`); the fork's Mac-update scenario does not run on macOS, even against the original.
