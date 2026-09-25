@@ -131,6 +131,10 @@ grep -Fxq 'After=omarchy-mac-encrypt.service' "$KEYDEV_DROPIN" &&
   grep -Fq 'run-systemd-cryptsetup-keydev\x2droot.mount.d/' "$INSTALL" &&
   grep -Fq 'omarchy-mac-encrypt-keydev.conf' "$INSTALL" ||
   fail "the sd-encrypt key-device mount of the Boot partition is ordered after the unit"
+grep -Fq 'dir=$mnt/var/lib/omarchy/mac-first-boot' "$SCRIPT" &&
+  grep -Fq '[[ -f $dir/pending && -f $dir/deferred-steps ]] || fresh=0' "$SCRIPT" &&
+  [[ $(grep -v '^[[:space:]]*#' "$SCRIPT") != *omarchy/image* ]] ||
+  fail "a fresh image is the first-boot marker with its conversion token, never the image hardware queue a reset restores"
 echo 'ok - script, unit and drop-in match INTERFACES §5 T4a v3'
 
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${OMARCHY_MAC_ENCRYPT_TEST_INNER:-0} != "1" ]]; then
@@ -606,6 +610,30 @@ run_script || fail "a migrated legacy marker without deferred steps is a no-op"
 [[ $(blkid -c /dev/null -o value -s TYPE "$ROOT_PART") == btrfs ]] || fail "a legacy Mac with only the marker is never encrypted"
 [[ ! -e $boot_mnt/omarchy/encrypt.state ]] || fail "a legacy Mac gets no encrypt.state"
 echo 'ok - a first-boot marker without the deferred steps file is not a fresh image'
+drop_root_disk
+
+# a factory reset re-arms the first-boot marker and @factory restores the
+# image's hardware queue and its armed service, but not the conversion token:
+# still not a fresh image
+make_root_disk "$tmp/reset-queue.img" 256
+mkdir -p "$tmp/mnt-reset-queue"
+mount "$ROOT_PART" "$tmp/mnt-reset-queue"
+populate_root "$tmp/mnt-reset-queue"
+reset_root=$tmp/mnt-reset-queue/@
+rm -f "$reset_root/var/lib/omarchy/mac-first-boot/deferred-steps"
+mkdir -p "$reset_root/var/lib/omarchy/image" "$reset_root/etc/systemd/system/multi-user.target.wants"
+printf 'format=1\nplatform=apple-silicon\n' >"$reset_root/var/lib/omarchy/image/target"
+printf 'install/hardware/apple/limine-boot.sh\n' >"$reset_root/var/lib/omarchy/image/deferred-steps"
+: >"$reset_root/etc/systemd/system/omarchy-provision-hardware.service"
+ln -s /etc/systemd/system/omarchy-provision-hardware.service \
+  "$reset_root/etc/systemd/system/multi-user.target.wants/omarchy-provision-hardware.service"
+umount "$tmp/mnt-reset-queue"
+run_script || fail "a reset root with a restored hardware queue is a no-op"
+grep -Fq 'no encrypt.state and no first-boot marker with deferred steps: not a fresh image' "$case_dir/out" ||
+  fail "a restored hardware queue is not taken for a fresh image"
+[[ $(blkid -c /dev/null -o value -s TYPE "$ROOT_PART") == btrfs ]] || fail "a reset root with a restored hardware queue is never encrypted"
+[[ ! -e $boot_mnt/omarchy/encrypt.state ]] || fail "a reset root with a restored hardware queue gets no encrypt.state"
+echo 'ok - a restored image hardware queue with a re-armed marker is not a fresh image'
 drop_root_disk
 
 # a root the probe cannot mount (no @ subvolume) is left alone, never halted

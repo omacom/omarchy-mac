@@ -1,0 +1,36 @@
+{
+  "artifact": {
+    "filename": "omarchy-2026.08.27-aarch64.iso",
+    "sha256": "9885cf7df10b251e51b74ac4621a131d966bb1ac7c69bb062b16dedf5042ebda",
+    "size": 3414587392
+  },
+  "boot": {
+    "blocker": "disposable-asahi-boot-evidence-absent",
+    "verified": false
+  },
+  "layout": {
+    "checks": {
+      "bootaa64_pe_architecture": "aarch64",
+      "generic_arm_kernel_absent": true,
+      "initramfs_asahi_hook": true,
+      "iso_tree_bootaa64_matches_esp": true,
+      "limine_boot_artifacts_absent": true,
+      "live_kernel": "linux-asahi"
+    },
+    "hashes": {
+      "bootaa64_sha256": "603176ee22e448b3748dbc9165df2b6db18c6f84476f05f28231cb1917b3b7fb",
+      "initramfs_sha256": "06f6c3de00981503937eaee9ea9906d166b6aed3406e7e47e1a066c186ae36c7",
+      "kernel_sha256": "ee36d989d62f2dd498b818e15c2044350c79d814a2017ffca61fdc2ad1aa95b6",
+      "platform_snapshot_sha256": "3eb9bdb1edc9d145d854efba7f521fd6c90f5189bb8a4b7ae80b368664092a7e"
+    },
+    "schema_version": 1,
+    "target": {
+      "architecture": "aarch64",
+      "artifact_kind": "iso",
+      "boot_backend": "asahi-grub",
+      "platform": "apple-silicon"
+    }
+  },
+  "schema_version": 1,
+  "verification_kind": "static-apple-media"
+}

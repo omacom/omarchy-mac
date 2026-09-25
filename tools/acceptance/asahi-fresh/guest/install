@@ -1,0 +1,406 @@
+#!/bin/bash
+
+set -euo pipefail
+
+fingerprint=5983B1CA32CB778F4D74D24ECFF35022CA5B5959
+work=/root/omarchy-fresh-vm
+
+# The VM is destroyed when the run ends, taking every scenario log with it, so
+# a failure here otherwise shows up on the host as a closed connection and
+# nothing else. Report where it failed and what the installer last said.
+report_failure() {
+  local status=$? line=$1
+  (( status == 0 )) && return 0
+  echo "=== guest/install failed at line $line with status $status" >&2
+  local log
+  for log in "$work"/*.log; do
+    [[ -f $log ]] || continue
+    echo "=== tail of ${log##*/}" >&2
+    tail -40 "$log" >&2
+  done
+  return "$status"
+}
+trap 'report_failure $LINENO' ERR
+
+[[ ${OMARCHY_VM_STABLE_VERSION:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+-mac\.[0-9]+$ ]]
+[[ -n ${OMARCHY_VM_ALARM_MIRROR:-} ]]
+[[ ${OMARCHY_VM_ASAHI_PACKAGES_CHANNEL_URL:-} =~ ^https://github\.com/maralcbr/omarchy-pkgs/releases/download/asahi-packages-channel-[1-9][0-9]*/asahi-packages-channel$ ]]
+
+# Compare raw bytes with the canonical body so newline stripping cannot hide trailing junk, CRs or NULs.
+read_pointer_tag() {
+  local file="$1" body="" size sequence canonical
+  local pattern=$'^format=1\nsequence=([1-9][0-9]{0,8})\n'
+  [[ -f $file ]] && size=$(wc -c <"$file") || return 1
+  (( size <= 256 )) || return 1
+  IFS= read -r -d '' body <"$file" || true
+  [[ $body =~ $pattern ]] || return 1
+  sequence=${BASH_REMATCH[1]}
+  printf -v canonical 'format=1\nsequence=%s\ntag=asahi-quattro-channel-%s\n' "$sequence" "$sequence"
+  [[ $body == "$canonical" ]] && (( size == ${#canonical} )) || return 1
+  printf 'asahi-quattro-channel-%s\n' "$sequence"
+}
+
+rm -rf "$work"
+mkdir -p "$work"
+cd "$work"
+
+sed -i 's/^omarchy-hw-apple-silicon || exit 1$/true # VM-only hardware boundary/' \
+  /root/omarchy-update-asahi-bundle.candidate
+mkdir -p "$work/apple-root/proc/device-tree"
+printf 'apple,j314s\0apple,arm-platform\0' >"$work/apple-root/proc/device-tree/compatible"
+# This guest is a legacy Asahi-kernel image (linux-asahi installed, kept as the
+# VM's kernel). The image's kernel marker names it, as the old payloads'
+# finalizer wrote it; the installer reads the marker before the installed kernel.
+install -Dm644 /dev/stdin /usr/share/omarchy/apple-silicon-kernel <<<linux-asahi
+# The fresh installer runs the runtime's own repository updater before its
+# first transaction, whose Apple Silicon check reads this fixture. It resolves
+# the package channel the host resolved and guest/verify expects.
+bootstrap_env="OMARCHY_PROC_ROOT=$work/apple-root/proc OMARCHY_ASAHI_PACKAGES_CHANNEL_URL=$OMARCHY_VM_ASAHI_PACKAGES_CHANNEL_URL"
+
+if [[ -n ${OMARCHY_VM_RUNTIME_MANIFEST_SHA256:-} ]]; then
+  source /root/omarchy-vm-candidate-runtime
+else
+  stable=https://github.com/maralcbr/omarchy-mx-mac/releases/latest/download
+  # The published bootstrap reads the R2 pointer first and only falls back to
+  # the GitHub release listing, so a quota-exhausted API must not fail a run.
+  pointer_url=${OMARCHY_VM_ASAHI_CHANNEL_POINTER_URL:-https://downloads.aicodelabs.com.au/pointers/asahi-quattro-channel}
+  channel_tag=""
+  pointer_status=0
+  curl --proto '=https' --tlsv1.2 --fail --location --silent --connect-timeout 15 --max-time 20 \
+    --max-filesize 256 "$pointer_url" --output "$work/channel-pointer" || pointer_status=$?
+  if (( pointer_status == 0 )); then
+    channel_tag=$(read_pointer_tag "$work/channel-pointer") || channel_tag=""
+  fi
+  if [[ -z $channel_tag ]]; then
+    echo "Release channel pointer unusable; falling back to the GitHub release listing" >&2
+    channel_tag=$(curl --fail --location --connect-timeout 15 --max-time 60 --retry 3 --retry-all-errors \
+      "https://api.github.com/repos/maralcbr/omarchy-pkgs/releases?per_page=100" |
+      grep -oE '"tag_name": *"asahi-quattro-channel-[1-9][0-9]*"' |
+      grep -oE 'asahi-quattro-channel-[0-9]+' | sort -u -t- -k4,4n | tail -1)
+  fi
+  [[ $channel_tag =~ ^asahi-quattro-channel-[1-9][0-9]*$ ]]
+  channel=https://github.com/maralcbr/omarchy-pkgs/releases/download/$channel_tag
+  curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors -O "$stable/install-omarchy-mx-mac"
+  curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors -O "$stable/install-omarchy-mx-mac.sig"
+  curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors -O "$stable/omarchy-release.gpg"
+  curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors -O "$stable/omarchy-mx-mac-release"
+  curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors -O "$stable/omarchy-mx-mac-release.sig"
+  [[ $(gpg --show-keys --with-colons omarchy-release.gpg | awk -F: '$1 == "fpr" { print $10; exit }') == "$fingerprint" ]]
+  gpgv --keyring ./omarchy-release.gpg install-omarchy-mx-mac.sig install-omarchy-mx-mac
+  gpgv --keyring ./omarchy-release.gpg omarchy-mx-mac-release.sig omarchy-mx-mac-release
+  grep -Fxq "version=$OMARCHY_VM_STABLE_VERSION" omarchy-mx-mac-release
+
+  curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors -o install-asahi-quattro "$channel/install-asahi-quattro"
+  curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors -o install-asahi-quattro.sig "$channel/install-asahi-quattro.sig"
+  gpgv --keyring ./omarchy-release.gpg install-asahi-quattro.sig install-asahi-quattro
+
+  cp install-asahi-quattro install-asahi-quattro.vm
+  sed -i \
+    -e '/^[[:space:]]*\[\[ -r \/proc\/device-tree\/compatible \]\] || fail /c\true # VM-only hardware boundary' \
+    -e "/^[[:space:]]*grep -aq 'apple,' \/proc\/device-tree\/compatible || fail /c\\true # VM-only hardware boundary" \
+    -e "s#^trap 'rm -rf \"\$work_dir\"' EXIT#trap ':' EXIT#" \
+    install-asahi-quattro.vm
+  # The lines above are the VM's only hardware boundary: a check the patch
+  # missed would fail every run with "device-tree information is unavailable".
+  if grep -q '/proc/device-tree/compatible' install-asahi-quattro.vm; then
+    echo "the channel installer's device-tree check was not patched out for the VM" >&2
+    exit 1
+  fi
+  mkdir verified
+  # The installer is given the channel the pointer named rather than letting it
+  # rediscover one; an asset that predates the variable ignores it.
+  TMPDIR="$work/verified" ASAHI_QUATTRO_CHANNEL_TAG="$channel_tag" \
+    bash install-asahi-quattro.vm --fresh --user omarchy --verify-only
+  verified_dir=$(find "$work/verified" -mindepth 1 -maxdepth 1 -type d -name 'asahi-quattro.*' -print -quit)
+  [[ -n $verified_dir ]]
+fi
+
+signed_fresh_installer="$verified_dir/omarchy-install-asahi-fresh"
+fresh_installer="$verified_dir/omarchy-install-asahi-fresh.vm"
+cp /root/omarchy-install-asahi-fresh.candidate "$fresh_installer"
+sed -i \
+  -e '/^[[:space:]]*\[\[ -r \/proc\/device-tree\/compatible \]\] || fail /c\true # VM-only hardware boundary' \
+  -e "/^[[:space:]]*grep -aq 'apple,' \/proc\/device-tree\/compatible || fail /c\\true # VM-only hardware boundary" \
+  "$fresh_installer"
+# Only a check that fails without a device tree is a hardware boundary; a read
+# guarded by -r (the M3 kernel choice) passes in the VM as it is.
+if grep -Eq "(/proc/device-tree/compatible|'apple,' /proc/device-tree).*\|\| *fail" "$fresh_installer"; then
+  echo "the candidate installer's device-tree check was not patched out for the VM" >&2
+  exit 1
+fi
+release_sequence=$(sed -n 's/^sequence=//p' "$verified_dir/asahi-quattro-release")
+release_tag=$(sed -n 's/^release_tag=//p' "$verified_dir/asahi-quattro-release")
+source_commit=$(sed -n 's/^source_commit=//p' "$verified_dir/asahi-quattro-release")
+package_source_commit=$(sed -n 's/^package_source_commit=//p' "$verified_dir/asahi-quattro-release")
+install -Dm644 "$verified_dir/asahi-quattro-release" /var/lib/omarchy/vm-expected-release
+install -Dm644 omarchy-mx-mac-release /var/lib/omarchy/vm-expected-stable-release
+{
+  if [[ -f install-asahi-quattro ]]; then
+    sha256sum install-asahi-quattro install-asahi-quattro.vm
+  fi
+  sha256sum "$signed_fresh_installer" /root/omarchy-install-asahi-fresh.candidate "$fresh_installer"
+} >>vm-adapter.log
+
+cp /boot/Image vm-kernel.before
+cp /boot/vmlinuz-linux-asahi asahi-kernel.before
+cp /boot/grub/grub.cfg vm-grub.before
+pacman -Q linux-asahi linux-asahi-headers m1n1 >protected-packages.before
+(
+  flock 9
+  touch /var/tmp/omarchy-vm-install-lock-held
+  sleep 60
+) 9>/run/lock/omarchy-asahi-fresh.lock &
+lock_pid=$!
+while [[ ! -f /var/tmp/omarchy-vm-install-lock-held ]]; do
+  sleep 0.1
+done
+expect <<EOF
+set timeout -1
+log_file $work/lock-collision.log
+spawn env OMARCHY_ASAHI_RELEASE_SEQUENCE=$release_sequence OMARCHY_ASAHI_RELEASE_TAG=$release_tag OMARCHY_ASAHI_RELEASE_SOURCE=$source_commit OMARCHY_ASAHI_PACKAGE_SOURCE=$package_source_commit $bootstrap_env bash $fresh_installer --asahi-packages $verified_dir/bundle --user omarchy
+expect {
+  "New password:" {
+    send "omarchy\r"
+    expect "Retype new password:"
+    send "omarchy\r"
+    exp_continue
+  }
+  -re {\[Y/n\]:? ?$} {
+    send "\r"
+    exp_continue
+  }
+  eof
+}
+catch wait result
+set status [lindex \$result 3]
+if {\$status == 0} { exit 1 }
+exit 0
+EOF
+grep -Fq 'Another fresh installation is already running' "$work/lock-collision.log"
+[[ ! -e /var/lib/omarchy/fresh-install ]]
+kill "$lock_pid"
+wait "$lock_pid" 2>/dev/null || true
+
+# The upstream firewall defaults are applied during user setup. Preserve the
+# VM transport before that happens; rerun removes this test-only rule.
+pacman -S --needed --noconfirm ufw
+ufw allow 22/tcp
+
+# Interrupt at the password prompt: the packages are installed and the target
+# user and its checkpoint exist by then, while omarchy-apply-system has not run
+# yet. That last part matters, because apply-system only succeeds once the
+# Apple Silicon helper below is stubbed, which happens after this scenario.
+cat >/usr/local/bin/passwd <<'EOF'
+#!/bin/bash
+touch /var/tmp/omarchy-vm-transaction-active
+exec /usr/bin/passwd "$@"
+EOF
+chmod +x /usr/local/bin/passwd
+interrupted=0
+for attempt in {1..3}; do
+  rm -f /var/tmp/omarchy-vm-installer.pid /var/tmp/omarchy-vm-transaction-active
+  (
+    while [[ ! -f /var/tmp/omarchy-vm-transaction-active ]]; do
+      if [[ -f /var/tmp/omarchy-vm-installer.pid ]]; then
+        installer_pid=$(</var/tmp/omarchy-vm-installer.pid)
+        kill -0 "$installer_pid" 2>/dev/null || exit 0
+      fi
+      sleep 0.1
+    done
+    installer_pid=$(</var/tmp/omarchy-vm-installer.pid)
+    kill_tree() {
+      local child
+      while read -r child; do
+        kill_tree "$child"
+      done < <(pgrep -P "$1" || true)
+      kill -KILL "$1" 2>/dev/null || true
+    }
+    kill_tree "$installer_pid"
+  ) &
+  killer_pid=$!
+  expect <<EOF
+set timeout -1
+log_file $work/failed-install.log
+spawn env OMARCHY_ASAHI_RELEASE_SEQUENCE=$release_sequence OMARCHY_ASAHI_RELEASE_TAG=$release_tag OMARCHY_ASAHI_RELEASE_SOURCE=$source_commit OMARCHY_ASAHI_PACKAGE_SOURCE=$package_source_commit $bootstrap_env bash $fresh_installer --asahi-packages $verified_dir/bundle --user omarchy
+set installer_pid [exp_pid]
+exec sh -c "printf '%s\\n' \$installer_pid > /var/tmp/omarchy-vm-installer.pid"
+expect {
+  "New password:" {
+    send "omarchy\r"
+    expect "Retype new password:"
+    send "omarchy\r"
+    exp_continue
+  }
+  -re {\[Y/n\]:? ?$} {
+    send "\r"
+    exp_continue
+  }
+  eof
+}
+catch wait result
+exit 0
+EOF
+  wait "$killer_pid"
+  if [[ -f /var/tmp/omarchy-vm-transaction-active ]]; then
+    interrupted=1
+    break
+  fi
+  sleep 5
+done
+(( interrupted == 1 ))
+[[ -f /var/lib/omarchy/fresh-install/release ]]
+[[ -f /var/lib/omarchy/fresh-install/asahi-kernel.sha256 ]]
+[[ -f /var/lib/omarchy/fresh-install/grub.sha256 ]]
+[[ -f /var/lib/omarchy/fresh-install/owner-token ]]
+[[ -f /var/lib/omarchy/fresh-install/target-user ]]
+[[ -f /home/omarchy/.omarchy-fresh-install-owner ]]
+[[ ! -e /var/lib/omarchy/fresh-install/completing ]]
+[[ " $(id -nG alarm) " == *" wheel "* ]]
+rm -f /usr/local/bin/passwd
+
+# Restore the candidate repository before each installer run rather than
+# once, so every run starts from the section this run exists to test. The fresh
+# installer's repository bootstrap keeps its Server and only repairs the section
+# around it, and system setup keeps what the bootstrap kept.
+use_candidate_repository() {
+  # Whatever wrote pacman.conf since the last run may have written the live
+  # Arch Linux ARM mirrors.
+  bash /root/omarchy-vm-alarm-snapshot
+  # A GitHub release serves every tag's database under one name (omarchy.db) and
+  # their upload times are not ordered by tag, so pacman's If-Modified-Since
+  # cache keeps whichever database it fetched last whenever the newly pinned
+  # tag's asset is older. Drop the cached database before syncing the candidate.
+  local sync_dir=/var/lib/pacman/sync
+  rm -f "$sync_dir/omarchy.db" "$sync_dir/omarchy.db.sig"
+  [[ -r /root/omarchy-arm-repository.asc && -f /var/lib/omarchy/vm-package-candidate ]] || return 0
+  local candidate_tag candidate_primary
+  candidate_tag=$(sed -n 's/^release_tag=//p' /var/lib/omarchy/vm-package-candidate)
+  [[ $candidate_tag =~ ^asahi-packages-candidate-[0-9a-f]{40}$ ]]
+  candidate_primary=$(gpg --batch --show-keys --with-colons /root/omarchy-arm-repository.asc |
+    awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10; exit }')
+  [[ $candidate_primary =~ ^[A-F0-9]{40}$ ]]
+  pacman-key --add /root/omarchy-arm-repository.asc
+  pacman-key --lsign-key "$candidate_primary"
+  awk '
+    /^\[omarchy\]$/ { skip = 1; next }
+    skip && /^\[[^]]+\]$/ { skip = 0 }
+    !skip { print }
+  ' /etc/pacman.conf >/tmp/pacman.conf.without-omarchy
+  {
+    printf '%s\n' '[omarchy]'
+    printf '%s\n' 'SigLevel = Required DatabaseOptional'
+    printf 'Server = https://github.com/maralcbr/omarchy-pkgs/releases/download/%s\n\n' "$candidate_tag"
+    cat /tmp/pacman.conf.without-omarchy
+  } >/tmp/pacman.conf.candidate
+  install -m 0644 /tmp/pacman.conf.candidate /etc/pacman.conf
+  pacman -Sy
+}
+
+use_candidate_repository
+usermod --home /home/omarchy-replaced omarchy
+expect <<EOF
+set timeout -1
+log_file $work/target-replacement.log
+spawn env OMARCHY_ASAHI_RELEASE_SEQUENCE=$release_sequence OMARCHY_ASAHI_RELEASE_TAG=$release_tag OMARCHY_ASAHI_RELEASE_SOURCE=$source_commit OMARCHY_ASAHI_PACKAGE_SOURCE=$package_source_commit $bootstrap_env bash $fresh_installer --asahi-packages $verified_dir/bundle --user omarchy
+expect {
+  "New password:" {
+    send "omarchy\r"
+    expect "Retype new password:"
+    send "omarchy\r"
+    exp_continue
+  }
+  -re {\[Y/n\]:? ?$} {
+    send "\r"
+    exp_continue
+  }
+  eof
+}
+catch wait result
+set status [lindex \$result 3]
+if {\$status == 0} { exit 1 }
+exit 0
+EOF
+grep -Fq 'The target user is not owned by this installation' "$work/target-replacement.log"
+usermod --home /home/omarchy omarchy
+
+helper=/usr/share/omarchy/bin/omarchy-hw-apple-silicon
+cp --preserve=all --dereference "$helper" omarchy-hw-apple-silicon.original
+cat >"$helper" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$helper"
+cat >/usr/local/bin/usermod <<'EOF'
+#!/bin/bash
+if [[ $1 == "--comment" && $2 == "" && $3 == "omarchy" && -f /var/lib/omarchy/fresh-install/completing &&
+  ! -e /var/tmp/omarchy-vm-completion-killed ]]; then
+  touch /var/tmp/omarchy-vm-completion-killed
+  kill -KILL "$PPID"
+  exit 0
+fi
+exec /usr/bin/usermod "$@"
+EOF
+chmod +x /usr/local/bin/usermod
+
+installed=0
+for attempt in {1..3}; do
+  use_candidate_repository
+  if expect <<EOF
+set timeout -1
+log_file $work/resumed-install.log
+spawn env OMARCHY_ASAHI_RELEASE_SEQUENCE=$release_sequence OMARCHY_ASAHI_RELEASE_TAG=$release_tag OMARCHY_ASAHI_RELEASE_SOURCE=$source_commit OMARCHY_ASAHI_PACKAGE_SOURCE=$package_source_commit $bootstrap_env bash $fresh_installer --asahi-packages $verified_dir/bundle --user omarchy
+expect {
+  "New password:" {
+    send "omarchy\r"
+    expect "Retype new password:"
+    send "omarchy\r"
+    exp_continue
+  }
+  -re {\[Y/n\]:? ?$} {
+    send "\r"
+    exp_continue
+  }
+  eof
+}
+catch wait result
+exit [lindex \$result 3]
+EOF
+  then
+    if [[ -e /var/lib/omarchy/fresh-install ]]; then
+      sleep 1
+      continue
+    fi
+    installed=1
+    break
+  fi
+  sleep 5
+done
+(( installed == 1 ))
+[[ -f /var/tmp/omarchy-vm-completion-killed ]]
+rm -f /usr/local/bin/usermod
+[[ ! -e /var/lib/omarchy/fresh-install ]]
+[[ ! -e /home/omarchy/.omarchy-fresh-install-owner ]]
+[[ -z $(getent passwd omarchy | cut -d: -f5) ]]
+[[ " $(id -nG alarm) " != *" wheel "* ]]
+[[ $(passwd -S alarm | awk '{ print $2 }') == "L" ]]
+
+# A bare `! cmd` never trips set -e, so this check has to exit on its own.
+if grep -Fq 'Install anyway?' "$work/resumed-install.log"; then
+  echo "the resumed install asked 'Install anyway?'" >&2
+  exit 1
+fi
+pacman -Q linux-asahi linux-asahi-headers m1n1 >protected-packages.after
+cmp protected-packages.before protected-packages.after
+cp --preserve=all omarchy-hw-apple-silicon.original /usr/share/omarchy/bin/omarchy-hw-apple-silicon
+cmp vm-kernel.before /boot/Image
+cmp asahi-kernel.before /boot/vmlinuz-linux-asahi
+# Omarchy's GRUB console leaf regenerates grub.cfg during the install: it must
+# boot the Asahi kernel the VM keeps. The VM itself boots its own kernel
+# (/Image) through the configuration this harness wrote, so that one goes back
+# before the reboot, the way the Asahi kernel image is kept untouched above.
+grep -Eq '^[[:space:]]*linux(16|efi)?[[:space:]]+[^[:space:]]*vmlinuz-linux-asahi([[:space:]]|$)' /boot/grub/grub.cfg
+grep -Eq '^[[:space:]]*initrd(16|efi)?[[:space:]]+[^[:space:]]*initramfs-linux-asahi\.img([[:space:]]|$)' /boot/grub/grub.cfg
+install -Dm644 /boot/grub/grub.cfg /var/lib/omarchy/vm-omarchy-grub.cfg
+cp --preserve=all vm-grub.before /boot/grub/grub.cfg
+install -Dm644 vm-adapter.log /var/lib/omarchy/vm-adapter.log
+ufw allow 22/tcp || ufw show added | grep -Fxq 'ufw allow 22/tcp'

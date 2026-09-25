@@ -288,10 +288,12 @@ omarchy_mac_encrypt_check_root_device() {
 }
 
 # Only a fresh image is encrypted: the image arms the first-boot marker and
-# ships its deferred hardware steps; an installed Mac that gains this unit
-# through a package update has neither (a migrated legacy first-boot marker
-# comes without the steps file). A root that cannot be probed is not fresh.
-# rescue=nologreplay keeps the probe from replaying the btrfs log.
+# ships the mac-first-boot/deferred-steps token; an installed Mac that gains
+# this unit through a package update has neither (a migrated legacy first-boot
+# marker comes without the token). The image's hardware queue in
+# /var/lib/omarchy/image is not the token: @factory keeps it, so a factory
+# reset restores it along with a re-armed marker. A root that cannot be probed
+# is not fresh. rescue=nologreplay keeps the probe from replaying the btrfs log.
 omarchy_mac_encrypt_fresh_image() {
     local mnt=/run/omarchy-mac-encrypt/probe fresh=1 dir
     mkdir -p "$mnt"

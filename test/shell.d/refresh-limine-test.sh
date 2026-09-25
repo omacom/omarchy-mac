@@ -33,9 +33,18 @@ for arg in "$@"; do
 done
 exec "$command" "${args[@]}"
 SH
+# The machine identity is a fixture too; a container may have none.
+machine_id=0123456789abcdef0123456789abcdef
+printf '%s\n' "$machine_id" >"$test_tmp/machine-id"
+cat >"$test_tmp/bin/cat" <<SH
+#!/bin/bash
+if [[ \$# == 1 && \$1 == /etc/machine-id ]]; then
+  exec $(command -v cat) "$test_tmp/machine-id"
+fi
+exec $(command -v cat) "\$@"
+SH
 chmod +x "$test_tmp/bin/"*
 export PATH="$test_tmp/bin:$PATH"
-machine_id=$(cat /etc/machine-id)
 
 prepare() {
   rm -rf "$TEST_FS"

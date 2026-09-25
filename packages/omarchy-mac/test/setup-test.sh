@@ -4,9 +4,14 @@ source "$(dirname "$0")/base-test.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin"
+cat >"$work/bin/omarchy-hw-platform" <<'STUB'
+#!/bin/bash
+[[ -z ${PLATFORM_ERROR:-} ]] || { echo "Error: $PLATFORM_ERROR" >&2; exit 1; }
+echo "${PLATFORM:-apple-silicon}"
+STUB
 cat >"$work/bin/omarchy-hw-apple-silicon" <<'STUB'
 #!/bin/bash
-[[ ${APPLE:-1} == 1 ]]
+[[ $(omarchy-hw-platform) == "apple-silicon" ]]
 STUB
 cat >"$work/bin/lspci" <<'STUB'
 #!/bin/bash
@@ -44,15 +49,42 @@ ln -s /dev/null "$unit"
 "$setup" "$stage"
 [[ $(readlink "$unit") == /dev/null && ! -s $CALLS ]] || fail 'mask survives setup'
 rm "$unit"
-for spec in '0 4433' '1 4434' '1 0000'; do
-  read -r apple wifi <<<"$spec"
-  APPLE=$apple WIFI_ID=$wifi "$setup" "$stage"
+for spec in 'generic 4433' 'qualcomm 4434' 'apple-silicon 0000'; do
+  read -r platform wifi <<<"$spec"
+  PLATFORM=$platform WIFI_ID=$wifi "$setup" "$stage"
   [[ ! -s $CALLS ]] || fail 'non-Apple and excluded hardware are untouched'
 done
 rm "$stage/var/lib/omarchy-mac/wifi-configured"
 if SYSTEMCTL_STATUS=42 "$setup" "$stage"; then fail 'enable failure must be retryable'; fi
 "$setup" "$stage"
 pass 'fresh, upgrade, repeated, interrupted, overrides, masks and hardware gates'
+# Each fresh root: recovery is enabled for BCM4378, BCM4387 and BCM4388 on Apple Silicon only.
+for spec in 'apple-silicon 4425 1' 'apple-silicon 4433 1' 'apple-silicon 4434 1' 'apple-silicon 4488 0' \
+  'generic 4433 0' 'generic-aarch64 4434 0' 'qualcomm 4434 0'; do
+  read -r platform wifi enabled <<<"$spec"
+  fresh="$work/fresh-$platform-$wifi"
+  "$ROOT/install" "$fresh"
+  : >"$CALLS"
+  PLATFORM=$platform WIFI_ID=$wifi "$fresh/usr/bin/omarchy-mac-setup-system" "$fresh"
+  if (( enabled )); then
+    grep -q 'enable omarchy-wifi-resume-fix.service' "$CALLS" || fail "recovery enabled on $platform $wifi"
+    [[ -f $fresh/var/lib/omarchy-mac/wifi-configured ]] || fail "recovery setup recorded on $platform $wifi"
+  else
+    [[ ! -s $CALLS && ! -e $fresh/var/lib/omarchy-mac ]] || fail "recovery left off on $platform $wifi"
+  fi
+done
+# A detector that cannot decide stops setup before it changes anything.
+fresh="$work/fresh-contradiction"
+"$ROOT/install" "$fresh"
+mkdir -p "$fresh/etc/NetworkManager/conf.d"
+cp "$ROOT/legacy/wifi_backend.conf" "$fresh/etc/NetworkManager/conf.d/"
+: >"$CALLS"
+if PLATFORM_ERROR='contradictory platform identity' "$fresh/usr/bin/omarchy-mac-setup-system" "$fresh" 2>"$work/err"; then
+  fail 'a detector failure fails setup'
+fi
+grep -q 'contradictory platform identity' "$work/err" || fail 'setup reports the detector failure'
+[[ -f $fresh/etc/NetworkManager/conf.d/wifi_backend.conf && ! -s $CALLS ]] || fail 'a detector failure changes nothing'
+pass 'BCM4378, BCM4387 and BCM4388 on Apple Silicon only, and a detector failure stops setup'
 for relative in etc/modprobe.d/asahi-notch.conf etc/NetworkManager/conf.d/wifi_backend.conf; do
   file="$stage/$relative"
   mkdir -p "${file%/*}"
@@ -63,6 +95,38 @@ for relative in etc/modprobe.d/asahi-notch.conf etc/NetworkManager/conf.d/wifi_b
   "$setup" "$stage"
   [[ $(cat "$file") == 'administrator override' ]] || fail 'modified config survives'
 done
+# Earlier Apple installs wrote the backend file with a heredoc or printf; both give these bytes.
+backend="$stage/etc/NetworkManager/conf.d/wifi_backend.conf"
+rm -f "$backend" "$backend.omarchy-mac-retired"
+printf '%s\n' '[device]' 'wifi.backend=iwd' >"$backend"
+"$setup" "$stage"
+[[ ! -e $backend ]] && cmp -s "$backend.omarchy-mac-retired" "$ROOT/legacy/wifi_backend.conf" ||
+  fail 'the generated backend file retires with a backup'
+cmp -s "$stage/usr/lib/NetworkManager/conf.d/20-omarchy-mac-wifi.conf" "$ROOT/legacy/wifi_backend.conf" ||
+  fail 'the vendor default keeps the retired setting'
+# Any edit, even one that keeps iwd, is the administrator's file now.
+for variant in '[device]\nwifi.backend=wpa_supplicant\n' '[device]\nwifi.backend=iwd\nwifi.scan-rand-mac-address=no\n' \
+  '# keep iwd\n[device]\nwifi.backend=iwd\n' '[device]\nwifi.backend=iwd'; do
+  rm -f "$backend"
+  printf '%b' "$variant" >"$backend"
+  cp "$backend" "$work/expected"
+  "$setup" "$stage"
+  cmp -s "$backend" "$work/expected" || fail 'an edited backend file survives setup' "$variant"
+done
+rm "$backend"
+ln -s "$stage/usr/share/omarchy-mac/legacy/wifi_backend.conf" "$backend"
+"$setup" "$stage"
+[[ -L $backend ]] || fail 'a linked backend file survives setup'
+rm "$backend"
+# A backup the administrator changed is never overwritten; setup stops and says why.
+printf 'administrator backup\n' >"$backend.omarchy-mac-retired"
+cp "$ROOT/legacy/wifi_backend.conf" "$backend"
+if "$setup" "$stage" 2>"$work/err"; then fail 'a changed backup blocks retirement'; fi
+grep -q 'wifi_backend.conf.omarchy-mac-retired' "$work/err" || fail 'a blocked retirement names the backup'
+[[ $(cat "$backend.omarchy-mac-retired") == 'administrator backup' ]] && cmp -s "$backend" "$ROOT/legacy/wifi_backend.conf" ||
+  fail 'a blocked retirement keeps both files'
+rm "$backend" "$backend.omarchy-mac-retired"
+pass 'the legacy backend file retires only unmodified and never loses an administrator edit'
 user_setup="$stage/usr/bin/omarchy-mac-setup-user"
 export XDG_RUNTIME_DIR="$work/no-session"
 unset XDG_CONFIG_HOME XDG_STATE_HOME
@@ -132,3 +196,72 @@ rm "$wants"
 "$setup" "$stage"
 [[ ! -s $CALLS ]] || fail 'repeat setup does not reenable disabled Wi-Fi recovery'
 pass 'explicit disables survive repeated setup'
+
+# mx-mac copied either revision of its speaker no-suspend policy into each
+# user's configuration. The vendor policy replaces exact copies only.
+for original in asahi-audio-no-suspend.conf asahi-audio-no-suspend-overlay.conf; do
+  export HOME="$work/mx-${original%.conf}"
+  speaker="$HOME/.config/wireplumber/wireplumber.conf.d/asahi-audio-no-suspend.conf"
+  mkdir -p "${speaker%/*}"
+  cp "$ROOT/legacy/$original" "$speaker"
+  "$user_setup" "$stage"
+  [[ ! -e $speaker && -f $speaker.omarchy-mac-retired ]] || fail "generated $original retires"
+  printf 'custom speaker policy\n' >"$speaker"
+  "$user_setup" "$stage"
+  [[ $(cat "$speaker") == 'custom speaker policy' ]] || fail 'custom speaker policy survives'
+done
+[[ -f $stage/usr/share/wireplumber/wireplumber.conf.d/asahi-audio-no-suspend.conf ]] || fail 'the vendor speaker policy ships'
+pass 'the vendor speaker no-suspend policy replaces exact mx-mac user copies'
+
+# sudo -i clears XDG_RUNTIME_DIR while the owner's session bus still exists at
+# /run/user/UID. systemctl --user cannot reach it then, so setup must not try.
+python3 - "$user_setup" "$stage" "$work" <<'PY'
+import os, socket, subprocess, sys
+from pathlib import Path
+setup, stage, work = sys.argv[1:]
+runtime = Path(work)/'run-user'
+runtime.mkdir()
+script = Path(work)/'resume-setup'
+text = Path(setup).read_text().replace('$root/usr/', stage+'/usr/').replace('$root/etc/', stage+'/etc/').replace('$root/run/', stage+'/run/')
+script.write_text(text.replace('/run/user/$UID', str(runtime)))
+script.chmod(0o755)
+env = {k: v for k, v in os.environ.items() if k != 'XDG_RUNTIME_DIR'}
+env['HOME'] = work+'/resume'
+Path(env['CALLS']).write_text('')
+with socket.socket(socket.AF_UNIX) as bus:
+    bus.bind(str(runtime/'bus'))
+    subprocess.run([str(script)], env=env, check=True)
+    assert '--user' not in Path(env['CALLS']).read_text(), 'no user-bus call without XDG_RUNTIME_DIR'
+    assert (Path(env['HOME'])/'.config/systemd/user/graphical-session.target.wants/omarchy-asahi-mic.service').is_symlink()
+PY
+pass 'user setup skips the user bus when sudo cleared XDG_RUNTIME_DIR'
+
+# Live setup restarts a speakersafetyd left dead by a start-limit, and leaves a
+# running or disabled one alone.
+mkdir -p "$work/live" "$work/live-bin" "$stage/usr/lib/systemd/system"
+touch "$stage/usr/lib/systemd/system/speakersafetyd.service"
+sed -e "s|\$root/|$stage/|g" -e "s|-d /run/systemd/system|-d $work/live|" "$setup" >"$work/live-setup"
+chmod +x "$work/live-setup"
+cat >"$work/live-bin/systemctl" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >>"$CALLS"
+case "$*" in
+  "is-enabled --quiet speakersafetyd.service") exit "${SAFETY_ENABLED:-0}" ;;
+  "is-active --quiet speakersafetyd.service") exit "${SAFETY_ACTIVE:-0}" ;;
+  "start speakersafetyd.service") exit "${SAFETY_START:-0}" ;;
+esac
+STUB
+printf '#!/bin/bash\n' >"$work/live-bin/NetworkManager"
+printf '#!/bin/bash\n' >"$work/live-bin/modprobe"
+chmod +x "$work/live-bin/"*
+live() { : >"$CALLS"; PATH="$work/live-bin:$PATH" "$work/live-setup" 2>"$work/live-errors"; }
+SAFETY_ACTIVE=3 live
+grep -Fxq 'reset-failed speakersafetyd.service' "$CALLS" && grep -Fxq 'start speakersafetyd.service' "$CALLS" ||
+  fail 'a dead speakersafetyd is reset and started' "$(cat "$CALLS")"
+live
+! grep -Eq '^(reset-failed|start) speakersafetyd' "$CALLS" || fail 'a running speakersafetyd is left alone'
+SAFETY_ENABLED=1 SAFETY_ACTIVE=3 live
+! grep -Eq '^(reset-failed|start) speakersafetyd' "$CALLS" || fail 'a disabled speakersafetyd is not started'
+SAFETY_ACTIVE=3 SAFETY_START=1 live || fail 'a failed start does not fail setup'
+grep -Fq 'speakers stay muted' "$work/live-errors" || fail 'a failed start is reported'
+pass 'live setup recovers speakersafetyd from a start-limit'

@@ -1,0 +1,61 @@
+name: Package resolution
+
+# Resolves the aarch64 platform package sets against the live Arch Linux ARM,
+# asahi-alarm and pkgs.omarchy.org databases. Nothing is installed: the check
+# only reads databases inside a disposable pacman root, so an x86 Arch Linux
+# container with Architecture = aarch64 answers the same as an aarch64 host.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 19 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  lint:
+    name: Shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: shellcheck --shell=bash -S warning tools/package-resolution/check tools/package-resolution/test/check-test.sh
+
+  resolve:
+    name: Resolve aarch64 package sets
+    runs-on: ubuntu-24.04
+    container: archlinux:base
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Self-test against synthetic repositories
+        run: tools/package-resolution/test/check-test.sh
+
+      - name: Resolve against the live databases
+        run: tools/package-resolution/check --work "$RUNNER_TEMP/package-resolution"
+
+      - name: Keep the closures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-resolution-closures
+          path: ${{ runner.temp }}/package-resolution/*/closure
+          if-no-files-found: ignore

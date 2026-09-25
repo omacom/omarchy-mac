@@ -1,0 +1,54 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# The runner names a directory per run so a retained run is never reused.
+run=${OMARCHY_VM_RUN_DIR:-/work/run}
+base=/work/cache/archarm-base.qcow2
+code=/usr/share/AAVMF/AAVMF_CODE.fd
+vars_template=/usr/share/AAVMF/AAVMF_VARS.fd
+memory_mb=${OMARCHY_VM_MEMORY_MB:-6144}
+cpus=${OMARCHY_VM_CPUS:-8}
+
+[[ $run == /work/* && $run != *..* ]] || {
+  echo "OMARCHY_VM_RUN_DIR must be a directory under /work" >&2
+  exit 1
+}
+[[ $cpus =~ ^[1-9][0-9]*$ ]] || {
+  echo "OMARCHY_VM_CPUS must be a positive integer" >&2
+  exit 1
+}
+
+rm -rf "$run"
+mkdir -p "$run"
+# The disk is an overlay, so it is only as durable as the base under it. Back
+# it with the run's own link to the base it starts from, named relative to the
+# disk: --rebuild-base and a changed base identity replace the cached base with
+# a new file, and a failed run kept for debugging still has the base its disk
+# was written against. The link costs nothing until the cached base moves on.
+ln "$base" "$run/base.qcow2" 2>/dev/null || cp --sparse=always "$base" "$run/base.qcow2"
+qemu-img create -f qcow2 -F qcow2 -b base.qcow2 "$run/disk.qcow2"
+cp "$vars_template" "$run/AAVMF_VARS.fd"
+
+qemu-system-aarch64 \
+  -nodefaults \
+  -machine virt,accel=kvm,gic-version=host \
+  -cpu host \
+  -smp "$cpus" \
+  -m "$memory_mb" \
+  -drive if=pflash,format=raw,readonly=on,file="$code" \
+  -drive if=pflash,format=raw,file="$run/AAVMF_VARS.fd" \
+  -drive file="$run/disk.qcow2",format=qcow2,if=none,id=drive0,discard=unmap \
+  -device virtio-blk-pci,drive=drive0,bootindex=1,romfile= \
+  -netdev user,id=net0,hostfwd=tcp:0.0.0.0:22-:22 \
+  -device virtio-net-pci,netdev=net0,romfile= \
+  -device virtio-gpu-pci,romfile= \
+  -device qemu-xhci \
+  -device usb-kbd \
+  -device usb-tablet \
+  -vnc 0.0.0.0:0 \
+  -qmp unix:"$run/qmp.sock",server=on,wait=off \
+  -monitor unix:"$run/monitor.sock",server=on,wait=off \
+  -serial file:"$run/serial.log" \
+  -daemonize \
+  -pidfile "$run/qemu.pid"
