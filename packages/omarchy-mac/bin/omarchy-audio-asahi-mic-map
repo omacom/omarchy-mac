@@ -226,6 +226,10 @@ def reconcile(audio, state, save_only=False, checked=None):
                                'sink_properties=device.description=AsahiMicrophone node.virtual=true priority.session=1 ' + OWNER + '=' + owner)
             if not module.isdecimal():
                 raise RuntimeError('PulseAudio did not return a module identity')
+            # A new mapping may reuse the port IDs of one sampled before an
+            # audio restart; it has not been sampled yet.
+            if checked is not None:
+                checked.clear()
             # Some policy managers auto-select a newly created monitor. Undo
             # only that owned temporary choice before waiting for its links.
             restore_input()

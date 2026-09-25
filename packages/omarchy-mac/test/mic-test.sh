@@ -188,6 +188,13 @@ with tempfile.TemporaryDirectory() as temporary:
     assert audio.probes == [m.MONITOR] and audio.default == m.MONITOR
     audio = mapped(m.MONITOR); m.reconcile(audio, state()); m.reconcile(audio, state())
     assert audio.probes == [m.MONITOR, m.MONITOR]
+    # After an audio restart the mapping is rebuilt, possibly on recycled port
+    # IDs, while the configured default still names its monitor.
+    audio = Audio(default=m.MONITOR); audio.carries_signal = False
+    try: m.reconcile(audio, state(), checked=checked)
+    except RuntimeError as error: assert 'no signal' in str(error), error
+    else: raise AssertionError('a rebuilt silent mapping must be sampled')
+    assert audio.probes == [m.MONITOR] and audio.default == DSP
     # Other inputs are the user's; the microphone is not even opened for them.
     audio = Audio(default='usb-mic'); audio.carries_signal = False
     m.reconcile(audio, state())
