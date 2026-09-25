@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# omarchy-lifecycle-dispatch update-verify. omarchy update runs this after its
+# package transaction, migrations and hooks, and neither finishes nor offers a
+# reboot until it passes. The boot check proves the boot chain boots what they
+# installed: the kernel and initramfs in /boot, m1n1 stage 2 with that kernel's
+# device trees and U-Boot on the system ESP, and on a Limine Mac the loader,
+# menu and UKI on that same ESP. The installed kernel may be newer than the
+# running one until that reboot. Nothing here rebuilds a boot file.
+
+set -uo pipefail
+
+echo -e "\e[32m\nVerify the Apple Silicon boot files\e[0m"
+if ! OMARCHY_BOOT_CHECK_ALLOW_PENDING_REBOOT=1 omarchy-apple-silicon-boot-check; then
+  cat >&2 <<'MESSAGE'
+
+This Mac might not boot what the update installed, so do not reboot yet.
+Fix what the boot check reported above. To rebuild the initramfs, m1n1 and the boot menu:
+  sudo mkinitcpio -P && sudo update-m1n1 && sudo omarchy-mac-boot-update
+Then run omarchy update again: it checks the boot files before it offers the reboot.
+MESSAGE
+  exit 1
+fi
