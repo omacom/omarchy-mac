@@ -447,7 +447,7 @@ new_fixture refusals
 refused "no space" "needs .* MiB free"
 new_fixture refusals
 : >"$F/mounts"
-refused "no ESP" "ESP is not mounted"
+refused "no system ESP" "system ESP is not mounted at /boot/efi"
 new_fixture refusals
 head -c 16 /dev/urandom >>"$F/set/$(jq -r '.packages[2].filename' "$F/set/manifest.json")"
 refused "a tampered candidate package" "does not verify: omarchy-mac-.* is missing or changed"

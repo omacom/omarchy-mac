@@ -503,7 +503,8 @@ preflight() {
   if ! check_output=$(omarchy-apple-silicon-boot-check 2>&1); then
     reasons+=("the boot files do not match the running system; reboot or repair first: $(tail -n 1 <<<"$check_output")")
   fi
-  findmnt -rno TARGET --mountpoint "$R$esp" >/dev/null 2>&1 || reasons+=("the ESP is not mounted at $esp")
+  # Limine and its UKI live on the ESP U-Boot boots, mounted at /boot/efi.
+  [[ $(omarchy-mac-esp 2>/dev/null) == "$esp" ]] || reasons+=("the system ESP is not mounted at $esp")
   if ! luks=$(root_luks_device); then
     reasons+=("cannot tell whether the root filesystem is encrypted")
   fi

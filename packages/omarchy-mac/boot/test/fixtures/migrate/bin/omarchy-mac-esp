@@ -1,0 +1,3 @@
+#!/bin/bash
+# The system ESP is the fixture's /boot/efi when it is listed as mounted.
+grep -Fxq "${OMARCHY_MAC_MIGRATE_ROOT:?}/boot/efi" "${MIGRATE_FIXTURE:?}/mounts" && echo /boot/efi
