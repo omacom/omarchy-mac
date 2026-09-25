@@ -44,6 +44,7 @@ uefi_sha256=${OMARCHY_VM_UEFI_SHA256:-07651fafa99d4569ce59a1c1653eb83a4bb02112ab
 vm_memory_mb=${OMARCHY_VM_MEMORY_MB:-8192}
 vm_cpus=${OMARCHY_VM_CPUS:-8}
 boot_timeout=${OMARCHY_VM_IMAGE_BOOT_TIMEOUT:-900}
+update_timeout=${OMARCHY_VM_IMAGE_UPDATE_TIMEOUT:-3600}
 disk_gib=${OMARCHY_VM_IMAGE_DISK_GIB:-35}
 ESP_UUID=4F4D-5801
 BOOT_UUID=4f4d5801-424f-4f54-8000-000000000001
@@ -58,7 +59,7 @@ declare -A about=(
   [conversion]="encrypted install: LUKS2 conversion in the initrd, first boot, owner setup re-keys to the owner password and a recovery key"
   [second-boot]="the re-keyed disk boots Limine's command line: a wrong password is refused, the owner's unlocks"
   [password-change]="omarchy-drive-password moves the disk, login and root to a new password; the next boot unlocks with it"
-  [update]="update with post-update boot verification (needs update-verify, omacom/omarchy-mac#543)"
+  [update]="omarchy update -y on the re-keyed disk: packages upgrade, boot files verify, the updated disk boots (needs update-verify, omacom/omarchy-mac#543)"
   [snapshot-restore]="snapshot boot and restore (needs the snapshot boot check, ticket 36)"
   [factory-reset]="factory reset through lifecycle dispatch (needs reset-prepare, ticket 34)"
 )
@@ -96,8 +97,9 @@ done
 [[ -z $image_dir || -z $payload ]] || { echo "--image and --payload are exclusive" >&2; exit 1; }
 [[ -z $image_dir || -z $lane ]] || { echo "--lane is read from IMAGE with --image" >&2; exit 1; }
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || { echo "OMARCHY_VM_RUN_ID must be 1-64 letters, digits, dots, dashes or underscores" >&2; exit 1; }
-[[ $vm_cpus =~ ^[1-9][0-9]*$ && $vm_memory_mb =~ ^[1-9][0-9]*$ && $boot_timeout =~ ^[1-9][0-9]*$ && $disk_gib =~ ^[1-9][0-9]*$ ]] || {
-  echo "OMARCHY_VM_CPUS, OMARCHY_VM_MEMORY_MB, OMARCHY_VM_IMAGE_BOOT_TIMEOUT and OMARCHY_VM_IMAGE_DISK_GIB must be positive integers" >&2
+[[ $vm_cpus =~ ^[1-9][0-9]*$ && $vm_memory_mb =~ ^[1-9][0-9]*$ && $boot_timeout =~ ^[1-9][0-9]*$ && $disk_gib =~ ^[1-9][0-9]*$ &&
+  $update_timeout =~ ^[1-9][0-9]*$ ]] || {
+  echo "OMARCHY_VM_CPUS, OMARCHY_VM_MEMORY_MB, OMARCHY_VM_IMAGE_BOOT_TIMEOUT, OMARCHY_VM_IMAGE_UPDATE_TIMEOUT and OMARCHY_VM_IMAGE_DISK_GIB must be positive integers" >&2
   exit 1
 }
 [[ $uefi_url == https://* && $uefi_sha256 =~ ^[0-9a-f]{64}$ ]] || { echo "OMARCHY_VM_UEFI_URL must be https and OMARCHY_VM_UEFI_SHA256 a sha256" >&2; exit 1; }
@@ -560,12 +562,15 @@ serial_type() {
 }
 
 # Units fsync what they record, but ext4, vfat and btrfs keep the rest in the
-# page cache until writeback: give it the writeback interval before the guest
-# is stopped. Stopping leaves journals to replay, so disks are attached
+# page cache until writeback: give it time before the guest is stopped. On
+# btrfs a line appended to a log reaches the disk only after the dirty page
+# expires (30 s), is written back, and the next transaction commit (every 30 s)
+# records it, so 40 s lost the last lines of owner setup's log on image 2's
+# conversion. Stopping leaves journals to replay, so disks are attached
 # read-write and mounted read-only, which lets the kernel replay them.
 settle_guest() {
   local waited=0
-  while ((waited < 40)); do
+  while ((waited < 75)); do
     kill -0 "$qemu_pid" 2>/dev/null || fail "the guest exited while settling"
     sleep 5; waited=$((waited + 5))
   done
@@ -633,9 +638,10 @@ console_login() {
 
 # Runs a command in the console shell, answering prompts from a table of
 # "extended-regex=reply" pairs until it exits; sets guest_status, and
-# guest_output to what the console showed meanwhile.
+# guest_output to what the console showed meanwhile. Each wait lasts up to
+# guest_wait seconds (600 unless the caller sets it).
 guest_run() {
-  local what=$1 command=$2 pattern='__exit_[0-9]+__' pair last="" start=$serial_pos
+  local what=$1 command=$2 pattern='__exit_[0-9]+__' pair last="" start=$serial_pos wait=${guest_wait:-600}
   shift 2
   declare -A replies=()
   for pair in "$@"; do
@@ -644,14 +650,15 @@ guest_run() {
   done
   serial_type "$command; echo __exit_\$?__"
   while true; do
-    serial_expect "$pattern" "$what" 600
+    serial_expect "$pattern" "$what" "$wait"
     if [[ $serial_match =~ ^__exit_([0-9]+)__$ ]]; then
       guest_status=${BASH_REMATCH[1]}
       guest_output=$(tail -c +$((start + 1)) "$serial_log" | head -c $((serial_pos - start)) | tr -d '\0') || true
       return 0
     fi
-    # A prompt redrawn after its answer is not asked again.
-    [[ $serial_match != "$last" ]] || continue
+    # A prompt redrawn after its answer is not asked again. sudo never redraws
+    # its prompt: each one is a new question.
+    [[ $serial_match != "$last" || $serial_match == "[sudo]"* ]] || continue
     last=$serial_match
     for pair in "${!replies[@]}"; do
       if [[ $serial_match =~ ^($pair)$ ]]; then
@@ -943,8 +950,80 @@ entrypoint_case() {
   fi
 }
 
+# The runtime packages pacman -Q printed on the console, as "name version"
+# lines: line ends and the console's escape sequences removed, both CSI (a
+# hidden cursor) and OSC (the shell's systemd context markers).
+runtime_versions() {
+  tr -d '\r' | sed -E -e $'s/\x1b\\][^\x07\x1b]*(\x07|\x1b\\\\)//g' -e $'s/\x1b\\[[0-9;?]*[[:alpha:]]//g' |
+    grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' | sort
+}
+
+# The owner updates from the console as omarchy update -y runs on a Mac: the
+# guest's network reaches the image's own repositories. The update must finish
+# with its boot files verified (update-verify), and the updated disk must boot
+# Limine's command line again. The guest's initramfs is still the one built
+# from the image before the update: the image's own rebuilt boot files are
+# what update-verify checks, and a real Mac boots them.
 scenario_update() {
-  entrypoint_case update "the image has no /usr/lib/omarchy/mac-boot/update-verify (post-update boot verification, omacom/omarchy-mac#543)"
+  if [[ -z ${image_ships[update]:-} ]]; then
+    skip "update: the image has no /usr/lib/omarchy/mac-boot/update-verify (post-update boot verification, omacom/omarchy-mac#543)"
+    return 0
+  fi
+  need_conversion update
+  local disk=$work/update.img log=$evidence_dir/update-serial.log replies before after name version upgraded
+  copy_disk "$conversion_disk" "$disk"
+  disk_cmdline "$disk"
+  say "update: omarchy update -y from the owner's console"
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt update
+  serial_type "$owner_password"
+  console_login update "$owner_password" || fail "update: $owner_user could not log in with the password setup gave"
+  guest_run "update: installed runtime" "pacman -Q --color never omarchy omarchy-settings omarchy-mac omarchy-mac-boot"
+  before=$(runtime_versions <<<"$guest_output") || true
+  [[ -n $before ]] || fail "update: pacman -Q lists no runtime package before the update (see ${log##*/})"
+  # The reboot the update offers is declined, and so is removing orphans (an
+  # owner's choice that -y does not make): the guest is stopped and booted again below.
+  replies=("\[sudo\] password for [a-z]+:=$owner_password" "Reboot\?=n" "Ready\?=n"
+    "Remove [0-9]+ orphaned package\(s\)\?=n")
+  guest_wait=$update_timeout guest_run "update: omarchy update -y" "omarchy update -y" "${replies[@]}"
+  ((guest_status == 0)) || fail "update: omarchy update -y exited $guest_status (see ${log##*/})"
+  [[ $guest_output == *"boot files match"* ]] ||
+    fail "update: omarchy update finished without the boot files verified (see ${log##*/})"
+  if [[ $guest_output == *"Continuing the update without a snapshot"* ]]; then
+    not_ok "update: omarchy update took no snapshot before the upgrade (see ${log##*/})"
+  fi
+  upgraded=$(grep -acE 'upgrading [^ ]+\.\.\.|\( *[0-9]+/[0-9]+\) upgrading ' "$log") || true
+  ok "update: omarchy update -y finished with the boot files verified ($upgraded packages upgraded)"
+  guest_run "update: installed runtime" "pacman -Q --color never omarchy omarchy-settings omarchy-mac omarchy-mac-boot"
+  after=$(runtime_versions <<<"$guest_output") || true
+  [[ -n $after ]] || fail "update: pacman -Q lists no runtime package after the update (see ${log##*/})"
+  echo "runtime_before_update=$(paste -sd, - <<<"$before")" >>"$evidence_dir/run.txt"
+  echo "runtime_after_update=$(paste -sd, - <<<"$after")" >>"$evidence_dir/run.txt"
+  # A test image keeps the set's runtime through the upgrade (image-builder's test_image_pin).
+  local pinned kept=1
+  pinned=$([[ -z $image_file ]] || field test_image_pin "$image_file")
+  if [[ -n $pinned ]]; then
+    for name in $pinned; do
+      version=$(field candidate "$image_dir/PROVENANCE" | awk -F'|' -v name="$name" '$1 == name { print $2 }')
+      if ! grep -Fxq "$name $version" <<<"$after"; then
+        not_ok "update: $name is not the set's $version after the update: $(grep -E "^$name " <<<"$after" || echo missing)"
+        kept=0
+      fi
+    done
+    ((kept == 0)) || ok "update: the test image kept the set's $pinned through the upgrade"
+  fi
+  settle_guest
+  stop_guest
+  disk_cmdline "$disk"
+  log=$evidence_dir/update-reboot-serial.log
+  say "update: the updated disk boots Limine's command line"
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt update
+  serial_type "$owner_password"
+  serial_expect 'login: ' "update: login prompt after the update"
+  no_emergency update
+  stop_guest
+  ok "update: the updated disk unlocks with the owner's password and reaches the login prompt"
 }
 
 scenario_snapshot_restore() {
