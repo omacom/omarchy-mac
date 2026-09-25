@@ -98,7 +98,7 @@ A dispatch point takes one of two shapes:
 
 ## Snapshots
 
-Snapshot restore is not a dispatch operation. A Limine Mac restores through `limine-snapper-restore`, as x86 does, and a restored snapshot needs no boot file rebuilt: the restore only goes ahead when the boot files already match it. `omarchy-mac-boot` refuses a snapshot they do not match from limine-snapper-sync's own pre hook interface (`/etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check`), the interface its Limine activation gate already uses. `omarchy-snapshot restore` sends a Mac that still boots GRUB to `omarchy-system-snapshot-restore`, which refuses a Limine Mac and asks `omarchy-mac-snapshot-check` about the chosen snapshot on a GRUB one.
+Snapshot restore is not a dispatch operation. A Limine Mac restores through `limine-snapper-restore`, as x86 does, and a restored snapshot needs no boot file rebuilt: the restore only goes ahead when the boot files already match it. `omarchy-mac-boot` refuses a snapshot they do not match from limine-snapper-sync's own pre hook interface (`/etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check`), the interface its Limine activation gate already uses. The hook runs the boot check `update-verify` runs (`--boot-chain`) on the booted snapshot, with no reboot pending. `omarchy-snapshot restore` sends a Mac that still boots GRUB to `omarchy-system-snapshot-restore`, which refuses a Limine Mac and asks `omarchy-mac-snapshot-check` about the chosen snapshot on a GRUB one.
 
 ## Qualcomm
 

@@ -108,6 +108,19 @@ expect_allowed "a snapshot taken with the installed kernel and boot firmware"
 grep -Fq "Snapshot 7 matches this Mac's boot files" "$tmp/out" || fail "the check says the snapshot matches"
 pass "a snapshot that matches the boot files is restored"
 
+# Only what the next boot reads, as update-verify checks it: LUKS keyslots are
+# outside every snapshot and a drifted module is the snapshot's own, so neither
+# stops a restore, though the full boot check refuses both.
+limine_mac
+limine_mac_luks 1
+run_check "--restore --no-mutex" "$snapshot_cmdline"
+expect_allowed "a snapshot on an encrypted Mac with a third LUKS keyslot"
+limine_mac
+printf '/usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\n' "$mac_kver" >"$mac_state/drift-linux-aurora"
+run_check "--restore --no-mutex" "$snapshot_cmdline"
+expect_allowed "a snapshot with a kernel module that drifted from its mtree"
+pass "the restore checks the boot chain, not what the next boot does not read"
+
 # The kernel Limine saved with the snapshot is what the restore boots next: it
 # must be the snapshot's own.
 TEST_UNAME=6.16.0-aurora9-ARCH run_check "--restore --no-mutex" "$snapshot_cmdline"

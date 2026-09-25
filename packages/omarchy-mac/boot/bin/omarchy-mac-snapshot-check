@@ -18,10 +18,10 @@
 # /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check and acts only on a
 # restore, which HOOK_CMDLINE names. A Limine Mac restores the snapshot it
 # booted from the Limine menu; that running root, and the kernel Limine saved
-# with it, must pass omarchy-apple-silicon-boot-check against the live boot
-# files. Status 100
-# makes the hook runner stop the restore before it changes anything. It runs
-# before 05-omarchy-mac-limine-gate so a GRUB Mac is told why.
+# with it, must pass omarchy-apple-silicon-boot-check --boot-chain against the
+# live boot files. Status 100 makes the hook runner stop the restore before it
+# changes anything. It runs before 05-omarchy-mac-limine-gate so a GRUB Mac is
+# told why.
 
 set -uo pipefail
 
@@ -175,14 +175,15 @@ MESSAGE
     refuse
   fi
 
-  # The running kernel is the one Limine saved with the snapshot, which the
-  # restore puts back: it must be the snapshot's installed kernel too, so no
-  # pending reboot is allowed.
+  # Only what the next boot reads, as update-verify checks it: LUKS keyslots
+  # and package file drift are not boot coherence. The running kernel is the
+  # one Limine saved with the snapshot, which the restore puts back: it must be
+  # the snapshot's installed kernel too, so no pending reboot is allowed.
   echo "Checking snapshot $number against this Mac's boot files"
-  if ! reason=$(omarchy-apple-silicon-boot-check 2>&1 >/dev/null); then
+  if ! reason=$(omarchy-apple-silicon-boot-check --boot-chain 2>&1 >/dev/null); then
     {
       echo "Snapshot $number does not match this Mac's boot files, so it is not restored:"
-      printf '  %s\n' "${reason:-omarchy-apple-silicon-boot-check failed}"
+      sed 's/^/  /' <<<"${reason:-omarchy-apple-silicon-boot-check failed}"
     } >&2
     why_outside
     packages=$(boot_packages)
