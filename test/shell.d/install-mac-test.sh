@@ -11,6 +11,43 @@ build_script="$ROOT/build-packages.sh"
 [[ -x $build_script ]] || fail "the Apple Silicon package build script ships and is executable"
 pass "the Apple Silicon install scripts ship and are executable"
 
+install_main=$(sed -n '/^main() {/,/^}/p' "$install_script")
+bootstrap_main=$(sed -n '/^main() {/,/^}/p' "$ROOT/bootstrap.sh")
+[[ $install_main == *'check_preconditions'*'prompt_install_keyboard'*'apply-keyboard-layout.sh'*'omarchy_arm_channel_stage_new'* ]] ||
+  fail "direct installation asks for a keyboard layout before package setup"
+[[ $bootstrap_main == *$'    require_root\n    prompt_keyboard\n\n    local username'* ]] ||
+  fail "bootstrap asks for a keyboard layout before the username"
+grep -qF 'OMARCHY_KEYBOARD_CONFIRMED=1 bash install.sh' "$ROOT/bootstrap.sh" ||
+  fail "bootstrap passes its selected layout to the package installer"
+pass "installation starts with keyboard selection on both entry points"
+
+# The desktop reads XKBLAYOUT from vconsole.conf. Converting the console map
+# through localectl alone can put XKB only in X11's config directory.
+keyboard_dir=$(mktemp -d)
+mkdir -p "$keyboard_dir/bin"
+cat >"$keyboard_dir/bin/localectl" <<'STUB'
+#!/bin/bash
+exit 0
+STUB
+chmod +x "$keyboard_dir/bin/localectl"
+(
+  PATH="$keyboard_dir/bin:$PATH"
+  OMARCHY_VCONSOLE_CONF="$keyboard_dir/vconsole.conf"
+  source "$ROOT/install/helpers/apply-keyboard-layout.sh"
+  apply_keyboard_layout uk
+  grep -qxF 'KEYMAP=uk' "$OMARCHY_VCONSOLE_CONF"
+  grep -qxF 'XKBLAYOUT=gb' "$OMARCHY_VCONSOLE_CONF"
+  apply_keyboard_layout dvorak
+  grep -qxF 'KEYMAP=dvorak' "$OMARCHY_VCONSOLE_CONF"
+  grep -qxF 'XKBLAYOUT=us' "$OMARCHY_VCONSOLE_CONF"
+  grep -qxF 'XKBVARIANT=dvorak' "$OMARCHY_VCONSOLE_CONF"
+  apply_keyboard_layout uk
+  ! grep -q '^XKBVARIANT=' "$OMARCHY_VCONSOLE_CONF"
+  ! apply_keyboard_layout '../bad' >/dev/null 2>&1
+) || fail "keyboard layout persists its console and desktop equivalents"
+rm -rf "$keyboard_dir"
+pass "keyboard layout persists its console and desktop equivalents"
+
 # Quattro renamed the setup entry points once already, and set -e turns a call
 # to a command that no longer ships into a half-finished install.
 while read -r command_name; do

@@ -134,14 +134,41 @@ current_keymap() {
 # a bad keymap, so an empty list means "cannot check" rather than "wrong" --
 # refusing to proceed there would block an install over a lookup table.
 keymaps_listable() {
-  localectl --no-pager list-keymaps 2>/dev/null | grep -q .
+  local listed
+  listed=$(localectl --no-pager list-keymaps 2>/dev/null) || return 1
+  [[ -n $listed ]]
 }
 
 valid_keymap() {
   local keymap="$1"
   [[ -n $keymap ]] || return 1
   keymaps_listable || return 0
-  localectl --no-pager list-keymaps 2>/dev/null | grep -qix "$keymap"
+  local listed
+  listed=$(localectl --no-pager list-keymaps 2>/dev/null) || return 1
+  grep -qixF "$keymap" <<<"$listed"
+}
+
+# Ask before the encryption and account questions: those answers must be typed
+# using the layout the owner actually has. The minimal Asahi image does not
+# ship gum, so keep this prompt usable before any packages are installed.
+prompt_keymap() {
+  local answer default
+  default=$(current_keymap)
+  while true; do
+    read -rp "Keyboard layout [$default] (? to list): " answer || fail "keyboard selection requires a terminal"
+    if [[ $answer == "?" ]]; then
+      localectl --no-pager list-keymaps || true
+      continue
+    fi
+    keymap=${answer:-$default}
+    if valid_keymap "$keymap"; then
+      if keymaps_listable; then
+        keymap=$(localectl --no-pager list-keymaps 2>/dev/null | grep -ixF "$keymap" | head -1)
+      fi
+      break
+    fi
+    warn "Unknown keyboard layout: $keymap. Type ? to see available layouts."
+  done
 }
 
 # The keymap the console uses is the keymap the LUKS passphrase prompt uses:
@@ -154,19 +181,7 @@ apply_keymap() {
   [[ -n $keymap ]] || return 0
 
   log "Setting the console keymap to $keymap"
-  loadkeys "$keymap" 2>/dev/null || true
-  systemd-firstboot --keymap="$keymap" --force >/dev/null 2>&1 ||
-    localectl set-keymap "$keymap" >/dev/null 2>&1 ||
-    warn "could not persist the keymap; the unlock prompt keeps the current one"
-
-  # localectl writes vconsole.conf itself, but not on every path, and the
-  # initramfs reads that file rather than asking localectl.
-  touch /etc/vconsole.conf
-  if grep -q '^KEYMAP=' /etc/vconsole.conf; then
-    sed -i "s|^KEYMAP=.*|KEYMAP=$keymap|" /etc/vconsole.conf
-  else
-    printf 'KEYMAP=%s\n' "$keymap" >>/etc/vconsole.conf
-  fi
+  "$SRC/install/helpers/apply-keyboard-layout.sh" "$keymap"
 }
 current_hostname() {
   local name
@@ -681,6 +696,10 @@ tools_present() {
       return 1
     fi
   done
+  if [[ ! -x $dir/install/helpers/apply-keyboard-layout.sh ]]; then
+    warn "$dir has no install/helpers/apply-keyboard-layout.sh -- wrong branch? Pass --repo/--ref."
+    return 1
+  fi
   return 0
 }
 
@@ -1044,7 +1063,7 @@ step_omarchy() {
   # status is captured rather than left to set -e: a failed install must still
   # give the NOPASSWD rule back before anything else happens.
   local status=0
-  sudo -u "$username" -i bash -lc 'cd ~/.local/share/omarchy && bash install.sh' || status=$?
+  sudo -u "$username" -i bash -lc 'cd ~/.local/share/omarchy && OMARCHY_KEYBOARD_CONFIRMED=1 bash install.sh' || status=$?
   revoke_passwordless_sudo
   (( status == 0 )) || fail "install.sh exited $status -- fix it and run '$SELF --resume'"
 
@@ -1147,12 +1166,33 @@ print_status() {
 }
 
 ask_questions() {
-  local answer
+  local answer terminal
 
   banner "Omarchy Mac setup"
   echo "This installs Omarchy on this machine, rebooting a few times on the way."
   echo "It asks everything now, then runs on its own."
   echo
+
+  if [[ -z $keymap ]]; then
+    prompt_keymap
+  else
+    if keymaps_listable; then
+      keymap=$(localectl --no-pager list-keymaps 2>/dev/null | grep -ixF "$keymap" | head -1) ||
+        fail "unknown keymap: $keymap (see localectl list-keymaps)"
+    fi
+  fi
+
+  terminal=$(ps -o tty= -p "$$" | tr -d '[:space:]') || terminal=""
+  if [[ $terminal =~ ^tty[0-9]+$ ]]; then
+    loadkeys "$keymap" || fail "could not activate keyboard layout $keymap"
+  else
+    if [[ -n ${SSH_CONNECTION:-} || -n ${SSH_TTY:-} ]]; then
+      warn "This is an SSH session. Set your client's keyboard to match console layout $keymap before answering the next prompts."
+    else
+      warn "Set this desktop's keyboard to match console layout $keymap before answering the next prompts."
+    fi
+    read -rp "Press Enter when your keyboard layout is ready: " answer || fail "keyboard confirmation requires a terminal"
+  fi
 
   if [[ -n $encrypt_flag ]]; then
     : # already answered on the command line
@@ -1186,12 +1226,6 @@ ask_questions() {
     }
   done
 
-  # Not asked: an Apple keyboard on a fresh Asahi install is already on the
-  # layout it shipped with, and asking everyone to retype "us" is a question
-  # that earns nothing. It is still applied explicitly, and still printed --
-  # because it is the layout the disk passphrase gets typed under, and someone
-  # on a non-US keyboard needs to see that before choosing one.
-  [[ -n $keymap ]] || keymap=$(current_keymap)
   valid_keymap "$keymap" || warn "keymap '$keymap' is not in localectl's list; using it anyway"
 
   echo
@@ -1239,6 +1273,9 @@ main() {
       --keymap)
         keymap=${2:?--keymap needs a name}
         valid_keymap "$keymap" || fail "unknown keymap: $keymap (see localectl list-keymaps)"
+        if keymaps_listable; then
+          keymap=$(localectl --no-pager list-keymaps 2>/dev/null | grep -ixF "$keymap" | head -1)
+        fi
         shift
         ;;
       --repo) repo=${2:?--repo needs owner/repo}; shift ;;

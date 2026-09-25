@@ -118,7 +118,12 @@ check "half the tools is still refused" \
   refuses_checkout "$work"
 
 touch "$work/bin/omarchy-system-btrfs-migrate"
-check "a checkout with both tools passes" \
+check "checkout without keyboard persistence is refused" \
+  refuses_checkout "$work"
+mkdir -p "$work/install/helpers"
+touch "$work/install/helpers/apply-keyboard-layout.sh"
+chmod +x "$work/install/helpers/apply-keyboard-layout.sh"
+check "a checkout with all setup tools passes" \
   accepts_checkout "$work"
 
 
@@ -146,10 +151,10 @@ answers() {
   local input="$1"
   (
     set -e
-    encrypt_flag=1 want_encrypt=1 username=scott hostname=pancake keymap=""
+    encrypt_flag=1 want_encrypt=1 username=scott hostname=pancake keymap=us
     repo=example/repo ref=some-branch
     PATH="$km_stub:$PATH"
-    printf '%s' "$input" | ask_questions >/dev/null 2>&1
+    printf '\n%s' "$input" | ask_questions >/dev/null 2>&1
   )
 }
 
@@ -168,11 +173,31 @@ check "answering y starts the run" answers 'y
 check "pressing enter starts the run" answers '
 '
 
-# With no keymap set and a stub that would answer one, the run still starts:
-# if a keymap question were asked, it would swallow the "Y" and the run would
-# never reach the confirmation.
-check "no keymap question swallows the answer" answers 'Y
-'
+prompt_keymap_is() {
+  local input="$1" expected="$2"
+  (
+    keymap=""
+    PATH="$km_stub:$PATH" OMARCHY_VCONSOLE_CONF="$work/none"
+    prompt_keymap < <(printf '%b' "$input") >/dev/null 2>&1
+    [[ $keymap == "$expected" ]]
+  )
+}
+check "keyboard prompt accepts a non-US layout" prompt_keymap_is 'uk\n' uk
+check "keyboard prompt defaults to the current layout" prompt_keymap_is '\n' de
+check "keyboard prompt retries an unknown layout" prompt_keymap_is 'unknown\nuk\n' uk
+keyboard_is_first() {
+  local output
+  output=$(
+    keymap="" username=scott hostname=pancake encrypt_flag="" want_encrypt=1
+    prompt_keymap() { echo KEYBOARD; keymap=uk; }
+    root_is_encrypted() { echo ENCRYPTION; return 0; }
+    boot_is_separate() { return 0; }
+    valid_keymap() { return 0; }
+    printf '\n\n' | ask_questions
+  )
+  [[ $output == *$'KEYBOARD\nENCRYPTION'* ]]
+}
+check "keyboard selection precedes the encryption question" keyboard_is_first
 check "answering n stops the run" refuses_to_start 'n
 '
 check "answering no stops the run" refuses_to_start 'no
@@ -359,8 +384,10 @@ make_checkout() {
   git -C "$dir" remote add origin "$url"
   git -C "$dir" checkout -q -b "$branch"
   if [[ $with_tools == "tools" ]]; then
-    mkdir -p "$dir/bin"
+    mkdir -p "$dir/bin" "$dir/install/helpers"
     touch "$dir/bin/omarchy-system-boot-to-esp" "$dir/bin/omarchy-system-btrfs-migrate"
+    touch "$dir/install/helpers/apply-keyboard-layout.sh"
+    chmod +x "$dir/install/helpers/apply-keyboard-layout.sh"
   fi
   git -C "$dir" add -A >/dev/null 2>&1
   git -C "$dir" -c user.email=t@t -c user.name=t commit -qm x --allow-empty
@@ -822,7 +849,7 @@ ask_with() {
       root_is_encrypted() { return 1; }
       boot_is_separate() { return 1; }
     fi
-    printf '%s' "$input" | ask_questions 2>/dev/null
+    printf '\n%s' "$input" | ask_questions 2>/dev/null
     echo "WANT_ENCRYPT=$want_encrypt"
   )
 }

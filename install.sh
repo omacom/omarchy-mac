@@ -68,6 +68,110 @@ check_preconditions() {
     warn "This does not look like Apple hardware; continuing anyway."
 }
 
+prompt_install_keyboard() {
+  local keymap answer listed terminal
+  terminal=$(ps -o tty= -p "$$" | tr -d '[:space:]') || fail "keyboard selection requires a terminal"
+  [[ -n $terminal && $terminal != "?" ]] || fail "keyboard selection requires a terminal"
+
+  # Authenticate while the current layout is still in effect. No password
+  # prompt may appear between choosing a layout and activating it.
+  sudo -v || fail "sudo authentication is required before selecting a keyboard layout"
+
+  keymap=$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"' | head -1) || keymap=""
+  keymap=${keymap:-us}
+
+  while true; do
+    read -r -p "Keyboard layout [$keymap] (? to list): " answer </dev/tty || fail "keyboard selection requires a terminal"
+    if [[ $answer == "?" ]]; then
+      localectl --no-pager list-keymaps || true
+      continue
+    fi
+    answer=${answer:-$keymap}
+    listed=$(localectl --no-pager list-keymaps 2>/dev/null || true)
+    if [[ -z $listed ]] || grep -qixF "$answer" <<<"$listed"; then
+      if [[ -n $listed ]]; then
+        keymap=$(grep -ixF "$answer" <<<"$listed" | head -1)
+      else
+        keymap=$answer
+      fi
+      break
+    fi
+    warn "Unknown keyboard layout: $answer. Type ? to see available layouts."
+  done
+
+  activate_install_keyboard "$keymap" "$terminal"
+  install_keymap=$keymap
+}
+
+activate_install_keyboard() {
+  local keymap=$1 terminal=$2 row xkb_layout xkb_variant desktop_layout desktop_variant
+  local kb_options="compose:caps,shift:both_capslock_cancel" non_latin=0
+  # Keep this list in sync with default/hypr/input.lua, which applies the same
+  # US-first rule at login so Latin keybindings remain available.
+  local non_latin_layouts=" af am ara bd bg by et ge gr il in iq ir kg kh kz la lk mk mm mn mv np rs ru sy th tj ua "
+
+  if [[ $terminal =~ ^tty[0-9]+$ ]]; then
+    sudo -n loadkeys "$keymap" || fail "could not activate keyboard layout $keymap; reauthenticate and rerun bash install.sh"
+    return 0
+  fi
+
+  if [[ -n ${SSH_CONNECTION:-} || -n ${SSH_TTY:-} ]]; then
+    warn "This is an SSH session. Your client's keyboard controls typing here; $keymap will be the Mac's console layout after installation."
+    confirm_install_keyboard "Press Enter when ready to continue with your client's current layout: "
+    return 0
+  fi
+
+  source "$checkout/install/provisioning/setup-form.sh"
+  row=$(awk -F'|' -v keymap="$keymap" 'tolower($2) == tolower(keymap) { print; exit }' <<<"$OMARCHY_KEYBOARD_LAYOUTS")
+  if [[ -n $row ]]; then
+    IFS='|' read -r _ _ xkb_layout xkb_variant <<<"$row"
+  else
+    xkb_layout=""
+    xkb_variant=""
+  fi
+  desktop_layout=$xkb_layout
+  desktop_variant=$xkb_variant
+  if [[ $non_latin_layouts == *" $desktop_layout "* ]]; then
+    non_latin=1
+  fi
+
+  if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} && -n $xkb_layout ]] && command -v hyprctl >/dev/null 2>&1; then
+    if (( non_latin )); then
+      xkb_layout="us,$xkb_layout"
+      xkb_variant=",$xkb_variant"
+      kb_options+=",grp:alts_toggle"
+    fi
+    # These values come from the shared layout table, but still restrict them
+    # before embedding them in Lua sent to the running compositor.
+    if [[ $xkb_layout =~ ^[A-Za-z0-9_,+-]+$ && $xkb_variant =~ ^[A-Za-z0-9_,+-]*$ ]] &&
+      hyprctl eval "hl.config({ input = { kb_layout = \"$xkb_layout\", kb_variant = \"$xkb_variant\", kb_options = \"$kb_options\" } })" >/dev/null &&
+      [[ $(hyprctl getoption input:kb_layout | sed -n 's/^str:[[:space:]]*//p') == "$xkb_layout" ]] &&
+      [[ $(hyprctl getoption input:kb_variant | sed -n 's/^str:[[:space:]]*//p') == "$xkb_variant" ]] &&
+      [[ $(hyprctl getoption input:kb_options | sed -n 's/^str:[[:space:]]*//p') == "$kb_options" ]]; then
+      log "Activated desktop keyboard layout $keymap"
+      if (( non_latin )); then
+        log "US is active first; press Left Alt + Right Alt to switch to $keymap."
+      fi
+      return 0
+    fi
+    warn "Could not activate keyboard layout $keymap in Hyprland."
+  fi
+
+  if (( non_latin )); then
+    warn "Enable both US and $desktop_layout${desktop_variant:+ ($desktop_variant)} on this desktop, with a way to switch between them, before answering the next prompts."
+  elif [[ -n $desktop_layout ]]; then
+    warn "Change this desktop's keyboard layout to $desktop_layout${desktop_variant:+ ($desktop_variant)} before answering the next prompts."
+  else
+    warn "Choose this desktop's equivalent of console layout $keymap before answering the next prompts."
+  fi
+  confirm_install_keyboard "Press Enter after changing the desktop layout: "
+}
+
+confirm_install_keyboard() {
+  local answer
+  read -r -p "$1" answer </dev/tty || fail "keyboard confirmation requires a terminal"
+}
+
 ensure_aur_helper() {
   command -v yay >/dev/null && return 0
 
@@ -337,6 +441,12 @@ parse_install_options() {
         install_channel="$2"
         shift 2
         ;;
+      --keymap)
+        (( $# >= 2 )) || fail "--keymap needs a console layout, such as us"
+        [[ $2 =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]] || fail "Invalid console keymap: $2"
+        requested_keymap=$2
+        shift 2
+        ;;
       *) fail "Unknown installer argument: $1" ;;
     esac
   done
@@ -379,11 +489,31 @@ cleanup_channel_install() {
 main() {
   parse_install_options "$@"
   check_preconditions
+  install_keymap=${requested_keymap:-}
+  if [[ -z $install_keymap ]]; then
+    install_keymap=$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"' | head -1) || install_keymap=""
+    install_keymap=${install_keymap:-us}
+  fi
+  if [[ ${OMARCHY_KEYBOARD_CONFIRMED:-0} != "1" ]]; then
+    if [[ -z ${requested_keymap:-} ]]; then
+      prompt_install_keyboard
+    else
+      # An explicit keymap also serves unattended VM runs, which have no
+      # controlling terminal. With a terminal, activate it before any prompts.
+      local terminal
+      terminal=$(ps -o tty= -p "$$" | tr -d '[:space:]') || terminal=""
+      if [[ -n $terminal && $terminal != "?" ]]; then
+        sudo -v || fail "sudo authentication is required before activating a keyboard layout"
+        activate_install_keyboard "$install_keymap" "$terminal"
+      fi
+    fi
+  fi
+  sudo "$checkout/install/helpers/apply-keyboard-layout.sh" "$install_keymap"
   if [[ -n $install_channel ]]; then
     channel_stage=$(omarchy_arm_channel_stage_new)
     trap cleanup_channel_install EXIT
     export OMARCHY_SIGNING_SOURCE="$checkout"
-    # Availability, resolution and signature checks precede locale or system
+    # Availability, resolution and signature checks precede locale and package
     # changes. Apply exactly the captured published pair and dependencies.
     omarchy_arm_channel_prepare "$channel_stage" "$install_channel" fresh
     ensure_utf8_locale

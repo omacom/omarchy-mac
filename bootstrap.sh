@@ -68,6 +68,42 @@ require_root() {
     fi
 }
 
+prompt_keyboard() {
+    local keymap answer listed terminal
+    keymap=$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"' | head -1) || keymap=""
+    keymap=${keymap:-us}
+
+    while true; do
+        if ! read -r -p "Keyboard layout [$keymap] (? to list): " answer <"${TTY_IN:-/dev/null}"; then
+            print_error "Keyboard selection requires a terminal."
+            exit 1
+        fi
+        if [[ $answer == "?" ]]; then
+            localectl --no-pager list-keymaps || true
+            continue
+        fi
+        answer=${answer:-$keymap}
+        listed=$(localectl --no-pager list-keymaps 2>/dev/null || true)
+        if [[ -z $listed ]] || grep -qixF "$answer" <<<"$listed"; then
+            if [[ -n $listed ]]; then
+                keymap=$(grep -ixF "$answer" <<<"$listed" | head -1)
+            else
+                keymap=$answer
+            fi
+            break
+        fi
+        print_warning "Unknown keyboard layout: $answer. Type ? to see available layouts."
+    done
+
+    terminal=$(ps -o tty= -p "$$" | tr -d '[:space:]') || terminal=""
+    if [[ $terminal =~ ^tty[0-9]+$ ]]; then
+        loadkeys "$keymap" || { print_error "Could not activate keyboard layout $keymap"; exit 1; }
+    elif [[ -n ${SSH_CONNECTION:-} || -n ${SSH_TTY:-} ]]; then
+        print_warning "This is an SSH session. Your client's keyboard controls typing here."
+    fi
+    localectl set-keymap "$keymap" || { print_error "Could not save keyboard layout $keymap"; exit 1; }
+}
+
 valid_username() {
     [[ "$1" =~ ^[a-z_][a-z0-9_-]*$ ]]
 }
@@ -179,12 +215,13 @@ run_installer() {
     local username="$1"
     print_step "Running Omarchy installer as $username"
     print_info "You may be prompted for the user's sudo password during installation."
-    su - "$username" -c "bash -lc 'cd ~/.local/share/omarchy && bash install.sh'"
+    su - "$username" -c "bash -lc 'cd ~/.local/share/omarchy && OMARCHY_KEYBOARD_CONFIRMED=1 bash install.sh'"
 }
 
 main() {
     print_banner
     require_root
+    prompt_keyboard
 
     local username
     username="$(prompt_username)"
