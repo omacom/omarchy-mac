@@ -26,6 +26,7 @@ done
 pass "Apple lifecycles load the separately staged package"
 [[ ! -e $work/stage/boot ]] || fail "staging does not change boot files"
 while IFS= read -r -d '' file; do
-  [[ -e $ROOT/packages/omarchy-mac/boot/files/${file#"$work/stage/"} ]] || fail "staged ${file#"$work/stage"} is a shipped package file"
+  shipped=$ROOT/packages/omarchy-mac/boot/files/${file#"$work/stage/"}
+  [[ -e $shipped || -L $shipped ]] || fail "staged ${file#"$work/stage"} is a shipped package file"
 done < <(find "$work/stage/etc" \( -type f -o -type l \) -print0)
 pass "boot package staging writes only its shipped configuration outside vendor paths"
