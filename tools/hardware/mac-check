@@ -7,6 +7,14 @@
 # Exits 1 when a check fails, 2 when this is not an Apple Silicon Mac.
 
 set -uo pipefail
+
+# Parse in the C locale, but hand the boot check the caller's locale: the m1n1
+# image it rebuilds orders device trees by the locale update-m1n1 ran under.
+if [[ -v LC_ALL ]]; then
+  caller_locale=("LC_ALL=$LC_ALL")
+else
+  caller_locale=(-u LC_ALL)
+fi
 export LC_ALL=C
 
 root=${OMARCHY_HARDWARE_ROOT:-}
@@ -103,7 +111,7 @@ elif grep -Eq '^(switch|edge_pending|reboot_pending)=.' "$lane_file" 2>/dev/null
   report SKIP boot-check "a kernel switch journal is open and the boot check would record it; run it by hand"
 elif (( ! have_sudo )); then
   report SKIP boot-check "needs passwordless sudo"
-elif output=$(sudo -n omarchy-apple-silicon-boot-check 2>&1); then
+elif output=$(env "${caller_locale[@]}" sudo -n omarchy-apple-silicon-boot-check 2>&1); then
   report PASS boot-check "$(tail -n1 <<<"$output" | sed 's/^Apple Silicon boot check: //')"
 else
   report FAIL boot-check "$(tail -n1 <<<"$output" | sed 's/^Apple Silicon boot check: //')"

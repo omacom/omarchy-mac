@@ -82,6 +82,7 @@ SH
 stub omarchy-apple-silicon-boot-check <<'SH'
 #!/bin/bash
 echo boot-check >>"$TEST_LOG"
+echo "boot-check locale: LC_ALL=${LC_ALL-unset} LANG=${LANG-unset}" >>"$TEST_LOG"
 if (( ${TEST_BOOT_CHECK_STATUS:-0} )); then
   echo "Apple Silicon boot check: m1n1/boot.bin on the system ESP is not m1n1 as installed" >&2
   exit 1
@@ -258,6 +259,18 @@ grep -Fxq "SKIP  displays         no Hyprland session; log in at the greeter fir
 grep -Fxq "SKIP  default-sink     no PipeWire session; log in at the greeter first" "$test_tmp/out" || fail "no session skips the default sink"
 pass "session checks are skipped until someone logs in"
 make_fixture
+
+# update-m1n1 globs device trees in the locale of the transaction, so the
+# boot check must see the caller's locale, not the C locale mac-check parses in.
+: >"$test_tmp/calls.log"
+(unset LC_ALL; LANG=en_US.UTF-8 run_check) || fail "the boot check runs under the caller's LANG" "$(cat "$test_tmp/out")"
+grep -Fxq "boot-check locale: LC_ALL=unset LANG=en_US.UTF-8" "$test_tmp/calls.log" ||
+  fail "the boot check sees the caller's LANG without a forced LC_ALL" "$(cat "$test_tmp/calls.log")"
+: >"$test_tmp/calls.log"
+LC_ALL=de_DE.UTF-8 run_check || fail "the boot check runs under the caller's LC_ALL" "$(cat "$test_tmp/out")"
+grep -Fq "boot-check locale: LC_ALL=de_DE.UTF-8 " "$test_tmp/calls.log" ||
+  fail "the boot check sees the caller's LC_ALL" "$(cat "$test_tmp/calls.log")"
+pass "the boot check runs in the caller's locale, not the C locale"
 
 TEST_COREDUMPS=1 run_check || fail "coredumps are not a failure" "$(cat "$test_tmp/out")"
 grep -Fq "INFO  coredumps        this boot: Hyprland (uid 958)" "$test_tmp/out" || fail "coredumps are listed" "$(cat "$test_tmp/out")"
