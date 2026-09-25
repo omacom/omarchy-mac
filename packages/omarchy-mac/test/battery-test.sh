@@ -45,7 +45,7 @@ cat >"$work/bin/sudo" <<'STUB'
 (( $# == 2 )) && [[ $1 == "/usr/bin/tee" ]] || exit 1
 printf '%s\n' "$2" >>"$SUDO_LOG"
 value=$(cat)
-if [[ $2 == "$BATTERY/charge_control_end_threshold" ]]; then
+if [[ $2 == $BATTERY/charge_control_end_threshold ]]; then
   [[ ${SUDO_FAIL:-} != 1 ]] || exit 1
   [[ ${SUDO_IGNORE:-} != 1 ]] || exit 0
   printf '%s\n' "$value" >"$2"
@@ -54,7 +54,7 @@ if [[ $2 == "$BATTERY/charge_control_end_threshold" ]]; then
   else
     printf '100\n' >"$BATTERY/charge_control_start_threshold"
   fi
-elif [[ $2 == "$SAVED" ]]; then
+elif [[ $2 == $SAVED ]]; then
   [[ ${SAVE_FAIL:-} != 1 ]] || exit 1
   printf '%s\n' "$value" >"$2"
 else
@@ -69,7 +69,7 @@ smc() {
   printf '%s\n' "$2" >"$battery/charge_control_end_threshold"
 }
 reads() {
-  [[ $(<"$battery/charge_control_start_threshold") == "$1" && $(<"$battery/charge_control_end_threshold") == "$2" ]]
+  [[ $(<"$battery/charge_control_start_threshold") == $1 && $(<"$battery/charge_control_end_threshold") == $2 ]]
 }
 smc 100 100
 
@@ -83,7 +83,7 @@ reads 75 80 || fail 'sets the 80% cap and five point hysteresis'
 "$command" 100 >/dev/null
 reads 100 100 || fail 'restores full charging'
 [[ $(<"$saved") == "CHARGE_CONTROL_END_THRESHOLD=100" ]] || fail 'saves full charging for the next boot'
-[[ $(grep -c charge_control_end_threshold "$SUDO_LOG") == 2 && $(grep -c -v charge_control_end_threshold "$SUDO_LOG") == 2 ]] || fail 'writes only the end threshold and the saved limit once per change'
+(( $(grep -c charge_control_end_threshold "$SUDO_LOG") == 2 && $(grep -c -v charge_control_end_threshold "$SUDO_LOG") == 2 )) || fail 'writes only the end threshold and the saved limit once per change'
 pass 'sets and clears the limit and saves it for the next boot'
 
 if SUDO_FAIL=1 "$command" 80 >/dev/null 2>&1; then fail 'reports a failed threshold update'; fi
@@ -94,6 +94,16 @@ if SAVE_FAIL=1 "$command" 80 >/dev/null 2>"$work/err"; then fail 'reports a limi
 grep -Fq 'could not be saved' "$work/err" || fail 'says the limit was not saved'
 "$command" 100 >/dev/null
 pass 'checks the driver readback and reports failed writes and saves'
+
+# As root the command writes both files itself, without sudo.
+sed 's/(( 1 == 0 ))/(( 0 == 0 ))/' "$command" >"$work/root-command"
+chmod +x "$work/root-command"
+: >"$SUDO_LOG"
+smc 75 100
+"$work/root-command" 80 >/dev/null || fail 'root sets the limit'
+reads 75 80 && [[ $(<"$saved") == "CHARGE_CONTROL_END_THRESHOLD=80" && ! -s $SUDO_LOG ]] || fail 'root writes the threshold and saved limit without sudo'
+"$command" 100 >/dev/null
+pass 'root sets and saves the limit without sudo'
 
 : >"$SUDO_LOG"
 for args in 85 0 '80 100'; do

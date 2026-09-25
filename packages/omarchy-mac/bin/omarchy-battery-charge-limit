@@ -58,7 +58,7 @@ else
 
   actual_start=$(<"$start_file")
   actual_end=$(<"$end_file")
-  if [[ $actual_start != "$expected_start" || $actual_end != "$limit" ]]; then
+  if [[ $actual_start != $expected_start || $actual_end != $limit ]]; then
     echo "Charge threshold update did not stick; the SMC reports ${actual_start}%/${actual_end}%." >&2
     exit 1
   fi
