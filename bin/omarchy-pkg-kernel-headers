@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# omarchy:summary=Print the headers package that DKMS modules need for the running kernel
+
+# Every Arch kernel package writes its pkgbase beside its modules, and its
+# headers package is named after it: linux-headers, linux-asahi-headers,
+# linux-aurora-headers. Reading it answers for any kernel on any platform,
+# where provides would not: linux-aurora provides linux-asahi. The running
+# kernel's directory is gone after an upgrade until the next boot, and absent
+# in an install chroot; then the installed kernels answer if they agree.
+#
+# Fixture roots let tests fake the modules tree, but a privileged caller must
+# not let its environment pick what gets installed, so root reads only the live
+# tree and a fixed PATH.
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+  modules=/usr/lib/modules
+else
+  modules=${OMARCHY_MODULES_ROOT:-/usr/lib/modules}
+fi
+
+pkgbase_in() {
+  local pkgbase=""
+
+  [[ -f $1/pkgbase ]] || return 1
+  read -r pkgbase <"$1/pkgbase" || true
+  [[ $pkgbase =~ ^[a-z0-9@_+][a-z0-9@._+-]*$ ]] || return 1
+  printf '%s\n' "$pkgbase"
+}
+
+release=$(uname -r) || release=""
+if [[ -z $release || $release == */* ]]; then
+  echo "Error: cannot read the running kernel release" >&2
+  exit 1
+fi
+
+if ! pkgbase=$(pkgbase_in "$modules/$release"); then
+  declare -A installed=()
+  for dir in "$modules"/*/; do
+    if kernel=$(pkgbase_in "$dir"); then
+      installed[$kernel]=1
+    fi
+  done
+
+  if (( ${#installed[@]} == 0 )); then
+    echo "Error: no installed kernel records its pkgbase in $modules" >&2
+    exit 1
+  elif (( ${#installed[@]} > 1 )); then
+    echo "Error: the running kernel $release records no pkgbase, and several installed kernels do (${!installed[*]}): reboot into one of them first" >&2
+    exit 1
+  fi
+  pkgbase=${!installed[*]}
+fi
+
+printf '%s-headers\n' "$pkgbase"

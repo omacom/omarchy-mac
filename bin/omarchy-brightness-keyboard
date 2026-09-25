@@ -13,7 +13,7 @@ direction="${1:-up}"
 
 # Find keyboard backlight device (look for *kbd_backlight* pattern in leds class).
 device=""
-for candidate in /sys/class/leds/*kbd_backlight*; do
+for candidate in "${OMARCHY_LEDS_DIR:-/sys/class/leds}"/*kbd_backlight*; do
   if [[ -e $candidate ]]; then
     device="$(basename "$candidate")"
     break
@@ -52,6 +52,10 @@ else
   new_brightness=$(( current_brightness - step ))
   (( new_brightness < 0 )) && new_brightness=0
 fi
+
+# Record the level chosen by hand before setting it, so the ambient light loop
+# can tell keys turned off on purpose from lock blanking or a leftover.
+{ printf '%s\n' "$new_brightness" >"${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-keyboard-manual"; } 2>/dev/null || true
 
 # Set the new brightness.
 brightnessctl -d "$device" set "$new_brightness" >/dev/null
