@@ -13,6 +13,7 @@ omarchy-refresh-pacman
 # Downgrade any packages to the stable setup
 omarchy-update-pacman -Suu --noconfirm
 
-# Ensure all packages are installed
-mapfile -t packages < <(grep -v '^#' "$OMARCHY_PATH/install/omarchy-base.packages" | grep -v '^$')
+# Ensure this platform's default packages are installed
+default_packages=$(omarchy-pkg-defaults)
+mapfile -t packages <<<"$default_packages"
 omarchy-update-pacman -Syu --noconfirm --needed "${packages[@]}"

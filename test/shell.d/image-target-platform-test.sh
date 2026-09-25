@@ -404,6 +404,17 @@ if in_world on-a-mac "$ROOT/bin/omarchy-hw-apple-silicon"; then
 fi
 pass "the Apple predicate follows the image target"
 
+packages=$(in_world x86-host env OMARCHY_PATH="$ROOT" "$ROOT/bin/omarchy-pkg-defaults") || fail "an Apple image build composes its packages"
+[[ $packages == "$(OMARCHY_PATH="$ROOT" "$ROOT/bin/omarchy-pkg-defaults" apple-silicon)" ]] ||
+  fail "an Apple image build installs the Apple Silicon package set"
+packages=$(in_world on-a-mac env OMARCHY_PATH="$ROOT" "$ROOT/bin/omarchy-pkg-defaults") || fail "a generic image build composes its packages"
+[[ $packages == "$(OMARCHY_PATH="$ROOT" "$ROOT/bin/omarchy-pkg-defaults" generic-aarch64)" ]] ||
+  fail "a generic image built on a Mac installs the generic aarch64 package set"
+packages=$(in_world odd-host env OMARCHY_PATH="$ROOT" "$ROOT/bin/omarchy-pkg-defaults") || fail "a Qualcomm image build composes its packages"
+[[ $packages == "$(OMARCHY_PATH="$ROOT" "$ROOT/bin/omarchy-pkg-defaults" qualcomm)" ]] ||
+  fail "a Qualcomm image built on another host installs the Qualcomm package set"
+pass "the default package set follows the image target"
+
 # A caller in a private PID namespace looks like a build, so no unit may use one.
 units=$(grep -rlE '^[[:space:]]*PrivatePIDs=' "$ROOT" --include='*.service' --include='*.conf' --exclude-dir=.git || true)
 [[ -z $units ]] || fail "no unit runs in a private PID namespace" "$units"
