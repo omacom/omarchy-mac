@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="canonical" href="{{canonical}}">
+<link rel="icon" href="{{root}}assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=JetBrains+Mono:wght@400..700&display=swap">
+<link rel="stylesheet" href="{{root}}assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="{{root}}" aria-label="Omarchy MX Mac home">
+      <svg class="brand-mark" viewBox="0 0 1215 285" aria-hidden="true"><use href="{{root}}assets/logo.svg#wordmark"/></svg>
+      <span class="brand-tag">MX Mac</span>
+    </a>
+    <nav class="topnav" aria-label="Main">
+      <a href="{{root}}">Manual</a>
+      <a href="https://omarchy.org/manual/">Omarchy manual</a>
+      <a href="{{repo_url}}">GitHub</a>
+    </nav>
+    <div class="topbar-actions">
+      <a class="btn-primary" href="{{download_url}}">Download</a>
+    </div>
+    <button class="menu-btn" id="menu-btn" type="button" aria-expanded="false" aria-controls="rail">Chapters</button>
+  </div>
+</header>
+
+<main class="manual">
+  <nav class="rail" id="rail" aria-label="Chapters">
+    <ol>
+{{nav}}
+    </ol>
+  </nav>
+
+  <div class="column">
+    <article class="chapter">
+      <header class="page-heading">
+        <svg class="page-wordmark" viewBox="0 0 1215 285" role="img" aria-label="Omarchy"><use href="{{root}}assets/logo.svg#wordmark"/></svg>
+        <p class="page-subtitle">MX Mac Manual</p>
+      </header>
+      <h1>{{page_title}}</h1>
+      <div class="prose">
+{{content}}
+      </div>
+    </article>
+    <nav class="pager" aria-label="Chapter pagination">
+{{pager}}
+    </nav>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <p>Omarchy MX Mac is a community fork of <a href="https://omarchy.org">Omarchy</a> for Apple Silicon Macs. It is not affiliated with Apple, the Asahi Linux project or the Omarchy Foundation.</p>
+    <p><a href="{{repo_url}}">Source on GitHub</a> · <a href="{{repo_url}}/issues">Issues</a> · <a href="{{repo_url}}/blob/main/CHANGELOG.md">Changelog</a></p>
+  </div>
+</footer>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-label="Enlarged diagram" hidden></div>
+<script src="{{root}}assets/site.js" defer></script>
+</body>
+</html>
