@@ -950,6 +950,13 @@ entrypoint_case() {
   fi
 }
 
+# The runtime packages pacman -Q printed on the console, as "name version"
+# lines: the console's escape sequences (a hidden cursor) and line ends removed.
+runtime_versions() {
+  tr -d '\r' | sed -E $'s/\x1b\\[[0-9;?]*[[:alpha:]]//g' |
+    grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' | sort
+}
+
 # The owner updates from the console as omarchy update -y runs on a Mac: the
 # guest's network reaches the image's own repositories. The update must finish
 # with its boot files verified (update-verify), and the updated disk must boot
@@ -971,7 +978,7 @@ scenario_update() {
   serial_type "$owner_password"
   console_login update "$owner_password" || fail "update: $owner_user could not log in with the password setup gave"
   guest_run "update: installed runtime" "pacman -Q --color never omarchy omarchy-settings omarchy-mac omarchy-mac-boot"
-  before=$(grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' <<<"$guest_output" | sort) || true
+  before=$(runtime_versions <<<"$guest_output") || true
   [[ -n $before ]] || fail "update: pacman -Q lists no runtime package before the update (see ${log##*/})"
   # The reboot the update offers is declined, and so is removing orphans (an
   # owner's choice that -y does not make): the guest is stopped and booted again below.
@@ -985,9 +992,9 @@ scenario_update() {
     not_ok "update: omarchy update took no snapshot before the upgrade (see ${log##*/})"
   fi
   upgraded=$(grep -acE 'upgrading [^ ]+\.\.\.|\( *[0-9]+/[0-9]+\) upgrading ' "$log") || true
-  ok "update: omarchy update -y upgraded the packages ($upgraded upgrade steps), verified the boot files and finished"
+  ok "update: omarchy update -y finished with the boot files verified ($upgraded packages upgraded)"
   guest_run "update: installed runtime" "pacman -Q --color never omarchy omarchy-settings omarchy-mac omarchy-mac-boot"
-  after=$(grep -aoE '^omarchy(-settings|-mac|-mac-boot)? [^[:space:]]+' <<<"$guest_output" | sort) || true
+  after=$(runtime_versions <<<"$guest_output") || true
   [[ -n $after ]] || fail "update: pacman -Q lists no runtime package after the update (see ${log##*/})"
   echo "runtime_before_update=$(paste -sd, - <<<"$before")" >>"$evidence_dir/run.txt"
   echo "runtime_after_update=$(paste -sd, - <<<"$after")" >>"$evidence_dir/run.txt"
