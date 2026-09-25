@@ -56,6 +56,9 @@ SH
 mac_boot_entrypoint provision-verify <<'SH'
 [[ ! -e $TMP/boot/omarchy/luks-key ]] && ! grep -q 'rd\.luks\.key=' "$TMP/etc/default/grub"
 SH
+mac_boot_entrypoint boot-rebuild <<'SH'
+echo rebuild >>"$TMP/rebuilds"
+SH
 chmod 755 "$mac_boot"/*
 chmod -R go-w "$tmp/lifecycle"
 
@@ -63,12 +66,13 @@ staged_key=staged-install-key
 seller_key=previous-owner-key
 owner_password=owner-password
 
-sed -n '/^PROVISIONING_UNLOCK_FILES=(/,/^)/p; /^limine_auto_unlock_present() {/,/^}/p; /^limine_auto_unlock_drop() {/,/^}/p
+sed -n '/^PROVISIONING_UNLOCK_FILES=(/,/^)/p; /^UNLOCK_OWNER=/p; /^limine_auto_unlock_present() {/,/^}/p; /^limine_auto_unlock_drop() {/,/^}/p
   /^unlock_owner() {/,/^}/p; /^luks_auto_unlock_present() {/,/^}/p; /^luks_auto_unlock_drop() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/unlock.sh"
 grep -q '^luks_auto_unlock_drop() {' "$tmp/unlock.sh" && grep -q '^limine_auto_unlock_drop() {' "$tmp/unlock.sh" ||
   fail "omarchy-provision-owner defines the dispatched and Limine auto-unlock callbacks"
-sed -n '/^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p; /^platform_ready() {/,/^}/p; /^run_setup() {/,/^}/p' \
+sed -n '/^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p; /^platform_ready() {/,/^}/p; /^run_setup() {/,/^}/p
+  /^refresh_boot_entries() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/provision.sh"
 grep -q '^run_provisioning() {' "$tmp/provision.sh" && grep -q '^run_setup() {' "$tmp/provision.sh" ||
   fail "omarchy-provision-owner defines its setup and provisioning worker"
@@ -110,6 +114,7 @@ reset_limine_config() {
 }
 
 limine-update() {
+  echo update >>"$TMP/limine-ran"
   echo rebuild >>"$TMP/rebuilds"
   [[ ! -e $TMP/rebuild-fail ]] || return 1
   crash_point "boot rebuilt"
@@ -196,7 +201,7 @@ provision() {
   finalize_user() { :; }
   limine_entries_stale() {
     crash_point "re-key returned"
-    return 1
+    [[ -e $TMP/stale ]]
   }
   luks_device() { echo "$DEVICE"; }
   systemctl() { :; }
@@ -256,7 +261,7 @@ slot_count() {
 fixture() {
   local format=${1:-luks2}
   rm -rf "$tmp/provisioning" "$tmp/etc" "$tmp/boot" "$tmp/log" "$tmp/output" "$tmp/trace" "$tmp/rebuilds" "$tmp/adds" "$tmp/rebuild-fail" "$tmp/kill-noop" \
-    "$tmp/prepare-fail" "$tmp/screen"
+    "$tmp/prepare-fail" "$tmp/screen" "$tmp/stale"
   mkdir -p "$tmp/provisioning"
   chmod 755 "$tmp/provisioning"
   touch "$tmp/provisioning/pending"
@@ -511,6 +516,34 @@ rm "$tmp/rebuild-fail"
 run rekey "$owner_password" || fail "apple: the retry after a failed commit completes" "$(cat "$tmp/log")"
 assert_finished "apple: retry after a failed commit" "$owner_password"
 pass "apple: a failed boot-package commit keeps the unattended unlock and every slot for the retry"
+
+# Apple: an inherited decision never replaces resolving who owns the unlock.
+fixture
+rm -f "$tmp/limine-ran"
+export UNLOCK_OWNER=limine
+run provision "$owner_password" || fail "apple: setup completes with UNLOCK_OWNER in its environment" "$(cat "$tmp/log")"
+unset UNLOCK_OWNER
+assert_provisioned "apple: UNLOCK_OWNER inherited" "$owner_password"
+[[ ! -e $tmp/limine-ran ]] || fail "apple: an inherited UNLOCK_OWNER does not select the Limine path"
+pass "apple: an inherited UNLOCK_OWNER is ignored"
+
+# After a factory reset left entries for another machine identity, the menu
+# starts over on both; the boot package rebuilds on Apple, limine-update on x86.
+for platform in x86 apple; do
+  fixture
+  rm -rf "$tmp/provisioning/luks-key" "$tmp/etc" "$tmp/boot" "$tmp/limine-ran" "$tmp/mac-boot-ran"
+  touch "$tmp/stale"
+  run provision "$owner_password" || fail "$platform: stale boot entries are refreshed" "$(cat "$tmp/log" "$tmp/output")"
+  [[ ! -e $tmp/provisioning/pending && $(wc -l <"$tmp/rebuilds") == "1" ]] || fail "$platform: setup finishes after one boot rebuild"
+  if [[ $platform == "x86" ]]; then
+    [[ $(cat "$tmp/limine-ran") == $'reset\nupdate' && ! -e $tmp/mac-boot-ran ]] ||
+      fail "x86: the Limine menu is reset and limine-update rebuilds" "$(cat "$tmp/limine-ran")"
+  else
+    [[ $(cat "$tmp/limine-ran") == "reset" ]] && grep -qx boot-rebuild "$tmp/mac-boot-ran" ||
+      fail "apple: the Limine menu is reset and the boot package rebuilds" "$(cat "$tmp/limine-ran")"
+  fi
+done
+pass "stale boot entries are rebuilt by limine-update on x86 and by the boot package on Apple"
 
 # Before the owner form: a no-op on x86 even with Mac entrypoints on disk, the
 # boot package's own answer on Apple.

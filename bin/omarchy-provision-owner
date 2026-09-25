@@ -892,6 +892,8 @@ limine_auto_unlock_drop() {
 # stages the unlock in its own boot chain and owns it; everywhere else it rides
 # in the Limine UKI above. Deciding fails closed: the unlock then counts as
 # present and cannot be dropped.
+UNLOCK_OWNER=""
+
 unlock_owner() {
   [[ -z ${UNLOCK_OWNER:-} ]] || return 0
 
@@ -1015,6 +1017,20 @@ reset_limine_config() {
   done
 }
 
+# The menu starts over from the template; a platform whose boot package
+# implements boot-rebuild rebuilds its own boot files, elsewhere limine-update
+# rebuilds the UKI and entries.
+refresh_boot_entries() {
+  local rebuild
+  rebuild=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" --resolve boot-rebuild) || return 1
+  reset_limine_config
+  if [[ -n $rebuild ]]; then
+    "$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" boot-rebuild
+  else
+    limine-update
+  fi
+}
+
 cleanup_oem_state() {
   # Keep groups + packages: omarchy-system-factory-reset stages the bundled Node
   # tarball from these live copies when the factory snapshot predates it.
@@ -1058,8 +1074,7 @@ run_provisioning() {
   if limine_entries_stale; then
     log_step "refreshing boot entries for the new machine identity"
     echo boot >"$STATE_FILE"
-    reset_limine_config
-    limine-update
+    refresh_boot_entries
   fi
 
   if luks_staged_unlock_remains; then

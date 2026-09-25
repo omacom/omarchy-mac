@@ -23,7 +23,7 @@ The first form runs the operation. `--resolve` prints the entrypoint the operati
 
 ## Operations
 
-The set is fixed in the dispatcher; adding one is an upstream change. Provisioning operations take no arguments and work on fixed paths: `/var/lib/omarchy/provisioning` holds the staged install key (`luks-key`) and the re-key journal (`luks-rekey.state`). The operations not yet called define their arguments when their caller is wired.
+The set is fixed in the dispatcher; adding one is an upstream change. The operations provisioning calls take no arguments and work on fixed paths: `/var/lib/omarchy/provisioning` holds the staged install key (`luks-key`) and the re-key journal (`luks-rekey.state`). The other operations define their arguments when their caller is wired.
 
 | Operation | Called | Contract | Apple | Caller |
 | --- | --- | --- | --- | --- |
@@ -35,7 +35,7 @@ The set is fixed in the dispatcher; adding one is an upstream change. Provisioni
 | `reset-rollback` | Factory reset, when anything fails after `reset-prepare` | Restores the previous boot state | required | ticket 34 |
 | `update-preflight` | Update, before the package transaction | Refuses an update the platform can't boot afterwards | optional | ticket 35 |
 | `update-verify` | Update, after the package transaction | Verifies the boot chain boots the updated system. A failure blocks completion. | required | ticket 35 |
-| `boot-rebuild` | Whenever upstream rebuilds boot files (kernel and initramfs hooks, snapshots, command-line changes) | Rebuilds the platform's boot files | required | tickets 35, 36 |
+| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | required | `omarchy-provision-owner`; tickets 35, 36 |
 
 ## Platform registration
 
@@ -50,7 +50,7 @@ The entrypoint for an operation is `<implementation directory>/<operation>`. A r
 
 ## Trust rules
 
-- As root, the dispatcher uses a fixed `PATH`, asks the detector installed beside it (which reads only the live device tree as root), and resolves only the fixed implementation directory.
+- The dispatcher runs as `bash -p`, so a root caller's `BASH_ENV` and exported functions run nothing in it. As root it uses a fixed `PATH`, runs the detector installed beside it with an empty environment (the detector reads only the live device tree as root), and resolves only the fixed implementation directory.
 - An entrypoint runs only if it is a regular executable file, not a symlink. The file and every directory up to `/` must be owned by root and not writable by group or others. An entrypoint that fails these rules is refused, even for an optional operation.
 - The entrypoint runs with an empty environment apart from `PATH=/usr/local/sbin:/usr/local/bin:/usr/bin`. It gets the caller's arguments, standard streams and working directory. Entrypoints use fixed paths, never environment variables. Anything that can also run them directly re-checks the platform itself.
 - For unprivileged tests, `OMARCHY_LIFECYCLE_ROOT` (absolute) prefixes the implementation directory, and the detector's fixture roots apply. Files the caller owns count as root's. Root ignores both.
@@ -66,6 +66,7 @@ A dispatch point takes one of two shapes:
 
 - `platform_ready` runs `provision-prepare` at the start of each setup attempt, before the keyboard and account forms. Without `omarchy-mac-boot` on a Mac, the owner sees the dispatcher's error naming the package, the log records it, and the attempt ends in the retry or root-shell screen.
 - The shared re-key (`install/provisioning/luks-rekey.sh`) asks the caller for two callbacks: `luks_auto_unlock_present` and `luks_auto_unlock_drop`. `unlock_owner` resolves `provision-commit` and `provision-verify` once per process. If both resolve, the platform owns the unlock: drop is `provision-commit`, and present is `provision-verify` failing. If neither resolves, the Limine UKI callbacks run unchanged (x86, Snapdragon, generic aarch64). If only one resolves, or resolution fails, the unlock counts as present and can't be dropped, so setup never finishes.
+- After a factory reset left Limine entries for another machine identity, `refresh_boot_entries` starts the menu over from the template (core), then runs `boot-rebuild` if the platform implements it, and `limine-update` otherwise.
 - Everything else stays upstream: the wizard, account and login, the journal, slot retirement, the proof that the staged key opens nothing, and cleanup.
 
 ## Apple implementation
@@ -80,7 +81,7 @@ A dispatch point takes one of two shapes:
 | `stage_luks_rekey_apple` in `lib/factory-reset.sh` | `reset-prepare` | Ticket 34 |
 | `rebuild_next_boot_apple` (factory-kernel coherence refusal, rebuild in the factory root, `verify_limine_hashes`) | `reset-prepare`, `reset-verify` | Ticket 34 |
 | mx-mac's reset rollback, not yet in #503 | `reset-rollback` | Ticket 34 |
-| `omarchy-mac-boot-update` | `boot-rebuild` | Ticket 35 |
+| `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning uses it now. Ticket 35 wires the update path. |
 | `omarchy-apple-silicon-boot-check` | `update-verify` | Ticket 35 |
 
 - **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #503 put them and are sourced by absolute path.
@@ -104,8 +105,9 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
   - arguments, exit status and the cleared environment
   - untrusted entrypoints
   - usage errors, and an undetermined platform
-  - root ignoring fixture roots
+  - root ignoring fixture roots, `BASH_ENV` and exported functions
 - `test/shell.d/luks-rekey-journal-test.sh` runs owner provisioning through the real dispatcher:
   - the crash-and-resume matrix on x86 (Limine UKI path unchanged, no Mac entrypoint runs) and on Apple with a fake boot package
   - setup stopping before the owner form when the boot package is missing or not ready
+  - the stale-entry refresh rebuilding through `limine-update` on x86 and the boot package on Apple
   - the worker failing closed without it
