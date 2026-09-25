@@ -15,7 +15,8 @@ The first form runs the operation. `--resolve` prints the entrypoint the operati
 | --- | --- | --- |
 | The platform registers no boot package (`generic`, `generic-aarch64`, and `qualcomm` today) | no-op, exit 0 | prints nothing, exit 0 |
 | The entrypoint exists and passes the trust rules | execs it; its exit status is the result | prints its path |
-| A required operation has no entrypoint | exit 1: `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
+| A required operation has no entrypoint, and the package is not installed | exit 3 (an entrypoint's own status could also be 3; with `--resolve` it is only this): `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
+| A required operation has no entrypoint, but the package is installed (its pacman record says so) | exit 1: `Error: <operation> on <platform> needs <path>, which <package> <version> does not provide; update <package>` | same error |
 | An optional operation has no entrypoint | no-op, exit 0 | prints nothing, exit 0 |
 | The entrypoint fails the trust rules | exit 1: `Error: refusing <path>: ...` (optional operations too) | same error |
 | `omarchy-hw-platform` can't settle the platform | exit 1 | exit 1 |
@@ -33,9 +34,9 @@ The set is fixed in the dispatcher; adding one is an upstream change. The `provi
 | `reset-prepare` | Factory reset, before switching to the factory root | Stages the platform's boot state (unlock, command line, rebuilt boot files) for the factory root | required | ticket 34 |
 | `reset-verify` | Factory reset, before committing the switch | Proves the factory root boots on this boot chain (kernel, firmware and DTB coherence, loader hashes) | required | ticket 34 |
 | `reset-rollback` | Factory reset, when anything fails after `reset-prepare` | Restores the previous boot state | required | ticket 34 |
-| `update-preflight` | Update, before the package transaction | Refuses an update the platform can't boot afterwards | optional | ticket 35 |
-| `update-verify` | Update, after the package transaction | Verifies the boot chain boots the updated system. A failure blocks completion. | required | ticket 35 |
-| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | optional until tickets 35 and 36, then required | `omarchy-provision-owner`; tickets 35, 36 |
+| `update-preflight` | Update, before the keyring and package transaction | Refuses an update the platform can't boot afterwards. A failure stops the update. | optional | `omarchy-update-boot preflight` (`omarchy update`) |
+| `update-verify` | Update, after the last package step: the transaction, migrations, the post-update hook, AUR, mise and orphans | Read-only. Verifies the boot chain boots the updated system, whose new kernel may still wait for its reboot. A failure leaves the update unfinished: it exits non-zero and offers no reboot. | required | `omarchy-update-boot verify` (`omarchy update`) |
+| `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | optional until ticket 36, then required | `omarchy-provision-owner`; ticket 36 |
 | `luks-slots` | Owner provisioning, once the re-key keeps only the owner's slot and the acknowledged recovery slot, before it destroys the staged key; the disk password change, once the owner's new key is confirmed | `luks-slots owner=<slot> [recovery=<slot>]` records the root volume's kept slots wherever the platform's boot checks look for them. Without `recovery=` the recorded recovery slot stays; an empty one records none. Idempotent. It fails when a slot is not in the LUKS header, and the caller then retries. A platform that implements it also has owner provisioning create a recovery passphrase (see [Recovery passphrase](#recovery-passphrase)). | required | `omarchy-provision-owner`, `omarchy-drive-password` |
 
 ## Platform registration
@@ -49,7 +50,7 @@ Registration is code in `bin/omarchy-lifecycle-dispatch`, not configuration. No 
 
 The entrypoint for an operation is `<implementation directory>/<operation>`. A registered platform's required operations must be shipped. Its optional operations may be left out, and then they are no-ops.
 
-`omarchy-mac-boot` ships the provisioning entrypoints from 20260925-2 (ticket 32), and owner provisioning has no other Apple path, so they are required: a Mac whose `omarchy-mac-boot` is older stops before the owner form with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key and `rd.luks.key=` behind. `luks-slots` (ticket 33) is required for the same reason: the boot check proves the owner's and the recovery slot, so a Mac whose package cannot record them stops before the owner form too, and `omarchy-drive-password` stops before it removes its journal. `boot-rebuild` stays optional until tickets 35 and 36 ship it. The reset and update operations are required now because nothing calls them yet.
+`omarchy-mac-boot` ships the provisioning entrypoints from 20260925-2 (ticket 32), and owner provisioning has no other Apple path, so they are required: a Mac whose `omarchy-mac-boot` is older stops before the owner form with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key and `rd.luks.key=` behind. `luks-slots` (ticket 33) is required for the same reason: the boot check proves the owner's and the recovery slot, so a Mac whose package cannot record them stops before the owner form too, and `omarchy-drive-password` refuses to change the system disk. `boot-rebuild` stays optional until ticket 36 ships it. The reset operations are required now because nothing calls them yet; `update-verify` is required, and `omarchy update` calls it (ticket 35).
 
 ## Trust rules
 
@@ -74,6 +75,13 @@ A dispatch point takes one of two shapes:
 - Where `luks-slots` resolves, `run_setup` creates the recovery passphrase before the worker starts (see [Recovery passphrase](#recovery-passphrase)). The shared re-key calls the caller's `luks_record_slots` once it has verified the kept slots and before it destroys the staged key; `omarchy-provision-owner` runs `luks-slots owner=<slot> recovery=<slot or empty>` there, a no-op where nothing records them.
 - Everything else stays upstream: the wizard, account and login, the journal, slot retirement, the proof that the staged key opens nothing, and cleanup.
 
+### Update (`bin/omarchy-update`)
+
+- `omarchy-update-boot preflight` runs after the dev checkout update and before the keyring and system packages change. A refusal stops the update like any failed step.
+- `omarchy-update-boot verify` runs after the last package step. When it fails, the update still checks its log, refreshes the update indicator and releases Stay Awake, then says the update is not finished and exits 1 without `omarchy-update-restart`, so no reboot is offered.
+- `omarchy-update-boot` resolves the operation as the user first and runs it with `sudo` only when it resolves to an entrypoint, so an update with nothing to run never asks for root. A failed resolution fails the step with the dispatcher's message, except one: `update-verify` on a machine without its platform's boot package at all (exit 3) warns that the boot files were not verified and lets the update finish. Such a machine predates the package and boots a chain it does not manage; its migration installs the package, and from then on a failed verification blocks. A package too old to ship `update-verify` blocks, since the fix is one package update away.
+- The update path rebuilds no boot file itself: package hooks do, and `update-verify` catches what they missed.
+
 ### Disk password change (`bin/omarchy-drive-password`)
 
 - After the system disk's key changed and the login and root passwords follow it, `record_owner_slot` resolves `luks-slots` as the user and, when it resolves, runs `sudo omarchy-lifecycle-dispatch luks-slots owner=<slot>`, so no other platform sees an extra `sudo`. Until that succeeds the journal stays, and the next run finishes the change and records the slot. The new key can land in another slot (cryptsetup 2.8's `luksChangeKey` moves a LUKS1 key to the first free slot, and keeps a LUKS2 one in place), and the boot check would then find a slot `encrypt.state` does not name.
@@ -91,8 +99,8 @@ A dispatch point takes one of two shapes:
 | `stage_luks_rekey_apple` in `lib/factory-reset.sh` | `reset-prepare` | Ticket 34 |
 | `rebuild_next_boot_apple` (factory-kernel coherence refusal, rebuild in the factory root, `verify_limine_hashes`) | `reset-prepare`, `reset-verify` | Ticket 34 |
 | mx-mac's reset rollback, not yet in #527 | `reset-rollback` | Ticket 34 |
-| `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning calls it once shipped; until tickets 35 and 36 ship it, Apple refreshes stale entries with `limine-update`, as #527 did. |
-| `omarchy-apple-silicon-boot-check` | `update-verify` | Ticket 35 |
+| `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning calls it once shipped; until ticket 36 ships it, Apple refreshes stale entries with `limine-update`, as #527 did. The update path does not call it. |
+| `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` (ticket 35) runs the check limited to the boot chain (`--boot-chain`), with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. It holds only the kernel image, device trees and m1n1 against their packages, checks the kernel the boot menu starts first when both kernels are installed, and leaves out LUKS keyslots, provisioning leftovers and an m1n1 image its owner took over with `M1N1_UPDATE_DISABLED`. On failure it says not to reboot and how to rebuild the boot files. |
 | The owner and recovery slots `mark_encrypt_finished` wrote into `encrypt.state` once | `luks-slots` | New entrypoint (ticket 33): records `owner_slot` and `recovery_slot` after checking the root's LUKS header (named by `/etc/crypttab`) holds both, keeping `partition=`, `luks_uuid=` and the phase. A Mac whose image was not encrypted (no `encrypt.state`, or `declined`) records nothing. |
 
 - **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #527 put them and are sourced by absolute path.
@@ -125,6 +133,7 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
   - untrusted entrypoints
   - usage errors, and an undetermined platform
   - root ignoring fixture roots, `BASH_ENV` and exported functions
+- `test/shell.d/update-boot-verify-test.sh` runs `omarchy update` through the real dispatcher: no-ops and no root on x86, generic aarch64 and Qualcomm; on Apple, preflight before the packages, and `omarchy-mac-boot`'s real `update-verify` and boot check on a fixture Mac, where a wrong device tree, a stale m1n1 or a missing UKI fails the update without offering the reboot.
 - `test/shell.d/luks-rekey-journal-test.sh` runs owner provisioning through the real dispatcher:
   - the crash-and-resume matrix on x86 (Limine UKI path unchanged, no Mac entrypoint runs) and on Apple with a fake boot package
   - setup stopping before the owner form when the boot package is not ready, missing, or too old to ship the provisioning entrypoints

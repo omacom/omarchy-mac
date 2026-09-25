@@ -47,14 +47,33 @@ cat >"$stub_bin/cryptsetup" <<SH
 printf 'cryptsetup %s\n' "\$*" >>"$calls"
 slots_file="$tmp/slots"
 case "\$1" in
-  open) exit 0 ;;
+  open)
+    key_file="" token_type=""
+    while ((\$#)); do
+      case "\$1" in
+        --key-file) key_file=\$2; shift ;;
+        --token-type) token_type=\$2; shift ;;
+      esac
+      shift
+    done
+    # An enrolled token unlocks its slot whatever key is given, unless the
+    # allowed token types exclude it, as with cryptsetup.
+    [[ -n \$token_type || ! -s "$tmp/token-slot" ]] || exit 0
+    material=\$(cat "\$key_file") || exit 1
+    awk -v m="\$material" '\$2 == m { found = 1 } END { exit !found }' "\$slots_file" || exit 2
+    exit 0
+    ;;
   luksAddKey)
     next=\$(awk '{s=\$1} END {print s+1}' "\$slots_file")
     printf '%s throwaway\n' "\$next" >>"\$slots_file"
     exit 0
     ;;
   luksDump)
+    echo "Keyslots:"
     awk '{ printf "  %s: luks2\\n", \$1 }' "\$slots_file"
+    if [[ -s "$tmp/token-slot" ]]; then
+      printf 'Tokens:\\n  %s: luks2-keyring\\n\\tKeyslot:    %s\\n' "\$(cat "$tmp/token-slot")" "\$(cat "$tmp/token-slot")"
+    fi
     exit 0
     ;;
   luksKillSlot)
@@ -516,3 +535,32 @@ if BOOT_LUKS_KEY="$tmp/not-a-dir/luks-key" install_reset_boot_key throwaway; the
 fi
 ! compgen -G "$tmp/not-a-dir/luks-key.*" >/dev/null || test_fail "a failed key write leaves no staged key"
 pass "a failed post-activation key write is reported without leftovers"
+
+# A token enrolled on the disk (TPM2, FIDO2, keyring) answers a bare cryptsetup
+# open for any passphrase: the reset asks again until the typed one opens a
+# slot itself, and the throwaway slot is still told apart from the token.
+cp "$stub_bin/cryptsetup.real" "$stub_bin/cryptsetup"
+printf '0 current-pass\n' >"$tmp/slots"
+echo 1 >"$tmp/token-slot"
+printf 'wrong-pass\ncurrent-pass\n' >"$tmp/gum-inputs"
+cat >"$stub_bin/gum" <<SH
+#!/bin/bash
+printf 'gum %s\n' "\$*" >>"$calls"
+if [[ "\$1" == "input" ]]; then
+  head -n 1 "$tmp/gum-inputs"
+  sed -i '1d' "$tmp/gum-inputs"
+fi
+exit 0
+SH
+printf 'format=1\nphase=finished\nowner_slot=0\n' >"$OMARCHY_ENCRYPT_STATE"
+RESET_LUKS_SLOT=""
+: >"$calls"
+stage_luks_rekey "$next" >/dev/null
+(( $(grep -c '^gum input' "$calls") == 2 )) && grep -Fq 'does not unlock' "$calls" ||
+  test_fail "a passphrase only a token would accept is asked again" "$(cat "$calls")"
+[[ $RESET_LUKS_AUTH == "current-pass" ]] || test_fail "the reset authorises with the passphrase that opens a slot"
+stage_luks_rekey_apple_commit "$RESET_LUKS_DEVICE" "$RESET_THROWAY"
+[[ $RESET_LUKS_SLOT == "1" && $(awk '$1 == 1 { print $2 }' "$tmp/slots") == "throwaway" ]] ||
+  test_fail "the throwaway slot is found beside the token" "$RESET_LUKS_SLOT: $(cat "$tmp/slots")"
+rm -f "$tmp/token-slot"
+pass "a token never answers for the current passphrase, and the throwaway slot is told apart from it"

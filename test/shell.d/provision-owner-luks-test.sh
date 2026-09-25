@@ -103,15 +103,21 @@ slot_for() {
 }
 case "\$1" in
   open)
-    keyfile="" verbose=0
+    keyfile="" token_type="" verbose=0
     while ((\$#)); do
       case "\$1" in
         --verbose) verbose=1 ;;
         --key-file) keyfile=\$2; shift ;;
-        --token-type) shift ;;
+        --token-type) token_type=\$2; shift ;;
       esac
       shift
     done
+    # An enrolled token unlocks its slot whatever key is given, unless the
+    # allowed token types exclude it, as with cryptsetup.
+    if [[ -z \$token_type && -s "$tmp/token-slot" ]]; then
+      (( verbose )) && echo "Key slot \$(cat "$tmp/token-slot") unlocked." >&2
+      exit 0
+    fi
     material=\$(read_key "\$keyfile") || exit 1
     slot=\$(slot_for "\$material") || exit 1
     (( verbose )) && echo "Key slot \$slot unlocked" >&2
@@ -142,6 +148,9 @@ case "\$1" in
   luksDump)
     echo "Keyslots:"
     awk '{ printf "  %s: luks2\\n", \$1 }' "\$slots_file"
+    if [[ -s "$tmp/token-slot" ]]; then
+      printf 'Tokens:\\n  %s: luks2-keyring\\n\\tKeyslot:    %s\\n' "\$(cat "$tmp/token-id" 2>/dev/null || echo 0)" "\$(cat "$tmp/token-slot")"
+    fi
     echo "Digests:"
     ;;
   luksKillSlot)
@@ -232,7 +241,7 @@ fixture() {
   printf 'format=1\nencrypt=1\n' >"$root/var/lib/omarchy/mac-first-boot/install.conf"
   "$stub_bin/mkinitcpio" && : >"$calls"
   printf '0 throwaway-install-key\n' >"$slots"
-  rm -f "$tmp"/fail-* "$screen" "$tmp/gum-stdin"
+  rm -f "$tmp"/fail-* "$tmp/token-slot" "$tmp/token-id" "$screen" "$tmp/gum-stdin"
   : >"$OMARCHY_PROVISION_OWNER_LOG"
   printf 'nope\n%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
   password=owner-secret
@@ -368,6 +377,61 @@ for leftover in boot cmdline; do
   [[ -f $prov/pending ]] || fail "a leftover $leftover unlock keeps setup pending"
 done
 pass "a finished encrypt.state never ends setup while a boot-time unlock remains"
+
+# A token a previous owner enrolled (TPM2, FIDO2, keyring) answers a bare
+# cryptsetup open for any key. It never stands in for the owner's password or
+# the recovery key: each gets its own slot, and the token's slot is retired.
+fixture
+printf '5 tpm-sealed-key\n' >>"$slots"
+echo 5 >"$tmp/token-slot"
+prepare_luks_recovery "$device" >/dev/null || fail "the recovery key is prepared beside a token"
+recovery=$(slot_of "$recovery_key")
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
+  fail "setup finishes beside a token" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+owner=$(slot_of owner-secret)
+[[ -n $owner && -n $recovery && $owner != 5 && $recovery != 5 ]] ||
+  fail "the owner's password and the recovery key get their own slots beside a token" "$(cat "$slots")"
+[[ $(awk '{ print $1 }' "$slots" | sort -n | paste -sd' ') == "$(printf '%s\n' "$owner" "$recovery" | sort -n | paste -sd' ')" ]] ||
+  fail "the token's slot is retired with the throwaway" "$(cat "$slots")"
+grep -Fxq "owner_slot=$owner" "$encrypt_state" && grep -Fxq "recovery_slot=$recovery" "$encrypt_state" ||
+  fail "encrypt.state records the owner's and the recovery key's own slots" "$(cat "$encrypt_state")"
+pass "a previous owner's token never answers for the owner's password or the recovery key"
+
+# A retry beside a token, once the throwaway key is retired: only the password
+# the owner slot holds is taken.
+fixture
+printf '5 tpm-sealed-key\n' >>"$slots"
+echo 5 >"$tmp/token-slot"
+prepare_luks_recovery "$device" >/dev/null
+touch "$tmp/fail-kill"
+if OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1; then
+  fail "a failed slot retirement beside a token fails the attempt"
+fi
+rm "$tmp/fail-kill"
+awk '$1 != 0' "$slots" >"$slots.next" && mv "$slots.next" "$slots"
+password=another-password
+rekey_accepts_password && fail "beside a token, a retry refuses a password that opens nothing"
+password=owner-secret
+rekey_accepts_password || fail "beside a token, a retry takes the password the owner slot holds"
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
+  fail "the retry beside a token finishes" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+[[ $(wc -l <"$slots") == 2 && -z $(slot_of tpm-sealed-key) ]] || fail "the retry retires the token's slot" "$(cat "$slots")"
+pass "a retry beside a token takes only the password the owner slot holds"
+
+# luksDump lists tokens like keyslots: a keyring token numbered like a recorded
+# recovery slot that is gone never stands in for it, so the key is replaced.
+fixture
+prepare_luks_recovery "$device" >/dev/null
+lost_key=$recovery_key
+recovery=$(slot_of "$recovery_key")
+awk -v s="$recovery" '$1 != s' "$slots" >"$slots.next" && mv "$slots.next" "$slots"
+echo 0 >"$tmp/token-slot"
+echo "$recovery" >"$tmp/token-id"
+printf '%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
+prepare_luks_recovery "$device" >/dev/null || fail "the lost recovery key is replaced beside a token"
+[[ $RECOVERY_REPLACED == 1 && $recovery_key != "$lost_key" && $(slot_of "$recovery_key") == "$recovery" ]] ||
+  fail "a token numbered like the missing recovery slot does not stand in for it" "$(cat "$slots")"
+pass "a token numbered like a recorded slot that is gone never stands in for it"
 
 # The recovery step never runs in the background worker, whose output is a log.
 fixture

@@ -22,9 +22,12 @@
 # caller removes the journal with the rest of its provisioning state, so until
 # then a retry can only use the password the disk holds.
 
+# cryptsetup open tries enrolled tokens (TPM2, FIDO2, keyring) before the key
+# and reports a token's slot whatever key it was given. Restricting it to a
+# token type no token has leaves only the key to decide.
 luks_key_slot() {
   local out
-  out=$(LC_ALL=C cryptsetup open --test-passphrase --verbose --key-file "$1" "$2" 2>&1) || return 0
+  out=$(LC_ALL=C cryptsetup open --test-passphrase --verbose --token-type passphrase-only --key-file "$1" "$2" 2>&1) || return 0
   grep -o 'Key slot [0-9]* unlocked' <<<"$out" | grep -o '[0-9]*' | head -1 || true
 }
 
@@ -34,9 +37,12 @@ luks_slot_for() {
   luks_key_slot <(printf '%s' "$1") "$2"
 }
 
+# LUKS2 lists keyslots under "Keyslots:", and a luks2-keyring token under
+# "Tokens:" looks the same, so read only the keyslot section.
 luks_dump_slots() {
   cryptsetup luksDump "$1" | awk '
-    /^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }
+    /^[^ \t]/ { keyslots = ($0 == "Keyslots:") }
+    keyslots && /^ +[0-9]+: luks2/ { sub(":", "", $1); print $1 }
     /^Key Slot [0-9]+: ENABLED/ { sub(":", "", $3); print $3 }'
 }
 

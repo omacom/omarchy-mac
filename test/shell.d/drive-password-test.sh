@@ -19,7 +19,8 @@ if (( EUID == 0 )) && [[ $("$(dirname -- "${BASH_SOURCE[0]}")/../../bin/omarchy-
 fi
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+token_key=""
+trap 'rm -rf "$tmp"; [[ -z $token_key ]] || keyctl unlink "$token_key" @s >/dev/null 2>&1 || true' EXIT
 
 old_password=old-password
 new_password='new pass:word'
@@ -123,10 +124,11 @@ slot_of() {
 
 op=$1
 shift
-key_file="" positional=()
+key_file="" token_type="" positional=()
 while (( $# )); do
   case $1 in
     --key-file) key_file=$2; shift 2 ;;
+    --token-type) token_type=$2; shift 2 ;;
     --pbkdf | --iter-time) shift 2 ;;
     -*) shift ;;
     *) positional+=("$1"); shift ;;
@@ -140,12 +142,19 @@ if [[ $key_file == "-" ]]; then key=$(cat); elif [[ -n $key_file ]]; then key=$(
 if [[ $op == "luksDump" ]]; then
   echo "Keyslots:"
   cut -f1 "$slots" | sed 's/^/  /; s/$/: luks2/'
+  [[ -z ${TEST_TOKEN_SLOT:-} ]] || printf 'Tokens:\n  0: luks2-keyring\n\tKeyslot:    %s\n' "$TEST_TOKEN_SLOT"
   printf 'Digests:\n  0: pbkdf2\n'
   exit 0
 fi
 
 crash_point "cryptsetup $op"
 [[ $op != "open" || -z ${TEST_OPEN_FAIL:-} ]] || exit 1
+# An enrolled token unlocks its slot whatever key is given, unless the allowed
+# token types exclude it, as with cryptsetup.
+if [[ $op == "open" && -z $token_type && -n ${TEST_TOKEN_SLOT:-} ]]; then
+  echo "Key slot $TEST_TOKEN_SLOT unlocked."
+  exit 0
+fi
 target=""
 [[ $op == "luksKillSlot" ]] && target=${positional[1]}
 slot=$(slot_of "$key" "$target")
@@ -242,7 +251,7 @@ use() {
 }
 data=$tmp/dev/data
 
-# The slot the key opens, or nothing.
+# The slot the key opens, or nothing. Tokens never answer.
 opens() {
   local device=$1 key=$2 slot k
   if [[ $backend == "fake" ]]; then
@@ -250,7 +259,7 @@ opens() {
       [[ $k == "$key" ]] && { echo "$slot"; return; }
     done <"$device.slots"
   else
-    LC_ALL=C "$REAL_CRYPTSETUP" open --test-passphrase --verbose --key-file <(printf '%s' "$key") "$device" 2>&1 |
+    LC_ALL=C "$REAL_CRYPTSETUP" open --test-passphrase --verbose --token-type passphrase-only --key-file <(printf '%s' "$key") "$device" 2>&1 |
       grep -o 'Key slot [0-9]* unlocked' | grep -o '[0-9]*' || true
   fi
 }
@@ -279,7 +288,7 @@ volume() {
 # / on the system drive, which also holds a recovery key; a data drive beside it.
 fixture() {
   rm -rf "$tmp/state" "$tmp/output" "$tmp/trace" "$tmp"/dev/* "$tmp/slot-record" "$tmp/record-fail"
-  unset TEST_OPEN_FAIL TEST_CHPASSWD_FAIL TEST_CHANGE_FAIL TEST_CHANGE_PARTIAL TEST_KILL_FAIL TEST_FINDMNT_FAIL CRASH_ORPHAN
+  unset TEST_OPEN_FAIL TEST_CHPASSWD_FAIL TEST_CHANGE_FAIL TEST_CHANGE_PARTIAL TEST_KILL_FAIL TEST_FINDMNT_FAIL TEST_TOKEN_SLOT CRASH_ORPHAN
   system=$tmp/dev/system
   recovery=${1-$recovery_key}
   volume "$system" "$old_password" "$recovery"
@@ -290,6 +299,22 @@ fixture() {
   echo "$system" >"$tmp/select"
   : >"$tmp/prompts"
   : >"$tmp/sudo-calls"
+}
+
+# What a TPM2 or keyring enrolment leaves on the real volume: a systemd-tpm2
+# token and a luks2-keyring token on slot $2, the second answered from the
+# session keyring with $3. Fails when the kernel keyring is out of reach (no
+# keyctl, or a container's seccomp profile), so that a bare cryptsetup open does
+# not take the token in place of any key.
+enroll_tokens() {
+  local device=$1 slot=$2 key=$3 description=omarchy-test-token-$$
+  command -v keyctl >/dev/null || return 1
+  token_key=$(printf '%s' "$key" | keyctl padd user "$description" @s 2>/dev/null) || return 1
+  keyctl timeout "$token_key" 600 >/dev/null 2>&1 || true
+  printf '{"type":"systemd-tpm2","keyslots":["%s"],"tpm2-blob":"AA==","tpm2-pcrs":[7],"tpm2-pcr-bank":"sha256","tpm2-primary-alg":"ecc","tpm2-policy-hash":"00","tpm2-pin":false}' "$slot" |
+    "$REAL_CRYPTSETUP" token import --disable-external-tokens "$device" || return 1
+  "$REAL_CRYPTSETUP" token add --key-description "$description" --key-slot "$slot" "$device" >/dev/null || return 1
+  LC_ALL=C "$REAL_CRYPTSETUP" open --test-passphrase --verbose --key-file <(printf 'not-a-key') "$device" 2>&1 | grep -qx "Key slot $slot unlocked."
 }
 
 # One run of the command: an optional crash step, then answers for its prompts.
@@ -397,6 +422,21 @@ for run_spec in "${matrix[@]}"; do
   [[ -n $(opens "$system" "$old_password") && $(account owner) == "$old_password" ]] || fail "$backend: a wrong current password leaves the disk and accounts"
   pass "$backend: a wrong current password is refused before anything changes"
 
+  if [[ $backend == "luks2" ]]; then
+    fixture
+    if enroll_tokens "$system" 1 "$recovery_key"; then
+      if attempt 0 "not-the-password" "$new_password" "$new_password"; then fail "luks2: a live token does not stand in for the current password"; fi
+      said "That password does not open $system."
+      [[ -n $(opens "$system" "$old_password") && $(account owner) == "$old_password" ]] || fail "luks2: a refused password beside live tokens changes nothing"
+      attempt 0 "$old_password" "$new_password" "$new_password" || fail "luks2: a disk with live tokens changes its password" "$(cat "$tmp/output")"
+      consistent "beside live tokens" "$new_password"
+      [[ $(opens "$system" "$recovery_key") == "1" ]] || fail "luks2: the tokens' slot is left alone"
+      pass "luks2: with a live keyring token and a TPM2 token enrolled, only the real password opens the disk"
+    else
+      pass "the kernel keyring is out of reach; skipping the live token run"
+    fi
+  fi
+
   fixture ""
   attempt 0 "$old_password" "$new_password" "$new_password" || fail "$backend: a single-slot system disk changes" "$(cat "$tmp/output")"
   consistent "single slot" "$new_password"
@@ -450,6 +490,16 @@ for run_spec in "${matrix[@]}"; do
 done
 
 use fake x86
+
+fixture
+printf '5\t%s\n' tpm-sealed-key >>"$system.slots"
+export TEST_TOKEN_SLOT=5
+if attempt 0 "not-the-password" "$new_password" "$new_password"; then fail "an enrolled token does not stand in for the current password"; fi
+said "That password does not open $system."
+attempt 0 "$old_password" "$new_password" "$new_password" || fail "a disk with an enrolled token changes its password" "$(cat "$tmp/output")"
+consistent "beside an enrolled token" "$new_password"
+[[ $(opens "$system" tpm-sealed-key) == "5" ]] || fail "the token's slot is left alone"
+pass "an enrolled token never answers for a password, and its slot is left alone"
 
 fixture
 export TEST_CHANGE_FAIL=1
@@ -658,15 +708,28 @@ pass "apple: the change finishes only once the boot package recorded the owner's
 # system disk does not change; a data drive still does.
 fixture
 mv "$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots" "$tmp/luks-slots.off"
+mkdir -p "$tmp/lifecycle/var/lib/pacman/local/omarchy-mac-boot-20260925-2"
 if attempt 0 "$old_password" "$new_password" "$new_password"; then fail "an Apple boot package without luks-slots fails the command"; fi
-said "luks-slots on apple-silicon needs omarchy-mac-boot"
+said "which omarchy-mac-boot 20260925-2 does not provide; update omarchy-mac-boot"
 said "The system disk password did not change."
 ! grep -q 'luksChangeKey\|chpasswd' "$tmp/sudo-calls" && [[ ! -e $journal ]] || fail "a boot package without luks-slots changes nothing"
 consistent "boot package without luks-slots" "$old_password"
 echo "$data" >"$tmp/select"
 attempt 0 "$data_password" "$new_password" "$new_password" || fail "a data drive changes without luks-slots" "$(cat "$tmp/output")"
-mv "$tmp/luks-slots.off" "$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots"
 pass "apple: a boot package without luks-slots stops a system disk change before it starts, naming the package"
+
+# A Mac without omarchy-mac-boot at all predates it: nothing checks its slots,
+# so the change goes through and records nothing.
+fixture
+rm -r "$tmp/lifecycle/var/lib/pacman"
+attempt 0 "$old_password" "$new_password" "$new_password" || fail "a Mac without the boot package changes its disk password" "$(cat "$tmp/output")"
+# Checked as on x86: no slot recorded and no dispatch under sudo.
+platform=x86
+consistent "no boot package" "$new_password"
+platform=apple
+! grep -q 'Error:' "$tmp/output" || fail "without the boot package nothing is reported" "$(cat "$tmp/output")"
+mv "$tmp/luks-slots.off" "$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots"
+pass "apple: a Mac without omarchy-mac-boot changes its disk password and records no slot"
 
 fixture
 echo "$data" >"$tmp/select"
