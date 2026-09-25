@@ -59,7 +59,17 @@ The Mac-specific brightness and capture combinations are listed in
 
 ### Keyboard backlight
 
-Laptops with a keyboard backlight LED and an ambient light sensor light the keys in the dark and dim them as the room brightens. `Shift + Brightness Up/Down` still sets the level by hand; automatic control resumes when the ambient light changes enough that the old choice no longer fits. Automatic control pauses while the screen is locked or the lid is closed.
+Laptops with a keyboard backlight LED and an ambient light sensor light the keys in the dark and dim them as the room brightens. The keys turn off after ten seconds without a key press or trackpad touch and come back at the first input. `Shift + Brightness Up/Down` still sets the level by hand; automatic control resumes when the ambient light changes enough that the old choice no longer fits. Automatic control pauses while the screen is locked or the lid is closed.
+
+The thresholds live in `~/.config/omarchy/keyboard-backlight.conf`, one whole number per line, all optional:
+
+```bash
+DARK_LUX=8        # full keyboard light at or below this
+BRIGHT_LUX=180    # keys off at or above this, a straight ramp in between
+IDLE_SECONDS=10   # keys off after this long without input
+```
+
+`cat /sys/bus/iio/devices/iio:device*/in_illuminance_input` prints the live lux reading, the easiest way to pick thresholds for your room.
 
 Apple trackpads default to natural scrolling, physical clicks instead of
 tap-to-click, two-finger right-click, and a `0.4` scroll factor. Override any
