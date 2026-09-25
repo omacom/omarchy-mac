@@ -1,0 +1,158 @@
+#!/bin/bash
+
+# Refuse to install packages built for another hardware platform.
+#
+# Pacman runs this before every install or upgrade, through
+# 00-omarchy-platform-guard.hook, with the transaction's package names on
+# stdin. A package declares its platform with groups=('omarchy-platform-<name>'),
+# <name> being what omarchy-hw-platform prints, so its tags are read from the
+# synced repository databases. With --installed it checks the installed packages
+# instead, from the local database. docs/platform-guard.md has the contract.
+#
+# Only tagged packages depend on the platform: a transaction without one passes
+# without asking which machine this is, and a failure to read a database is
+# reported and skipped, so the guard never wedges pacman over untagged packages.
+
+set -euo pipefail
+
+# A fresh root may have no locales yet, and the database text needs none.
+export LC_ALL=C
+
+mode=transaction
+case ${1:-} in
+  "") ;;
+  --installed) mode=installed ;;
+  *)
+    echo "Usage: omarchy-platform-guard [--installed]" >&2
+    exit 2
+    ;;
+esac
+
+# Pacman runs hooks as root, chrooted into the transaction's root. There the
+# environment decides nothing; the overrides below exist for unprivileged tests.
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+  pacman_db=/var/lib/pacman
+  proc=/proc
+  manifest=/var/lib/omarchy/image-target
+  detector=/usr/bin/omarchy-hw-platform
+else
+  pacman_db=${OMARCHY_PACMAN_DB:-/var/lib/pacman}
+  proc=${OMARCHY_PROC_ROOT:-/proc}
+  manifest=${OMARCHY_IMAGE_TARGET:-/var/lib/omarchy/image-target}
+  detector=omarchy-hw-platform
+fi
+
+# Prints "<package> <platform>" for each platform tag in the desc records read.
+platform_tags() {
+  awk '
+    /^%[A-Z0-9]+%$/ { section = $0; next }
+    $0 == "" { section = ""; next }
+    section == "%NAME%" { name = $0 }
+    section == "%GROUPS%" && index($0, "omarchy-platform-") == 1 { print name, substr($0, 18) }
+  ' "$@"
+}
+
+sync_records() {
+  local db
+
+  for db in "$pacman_db"/sync/*.db; do
+    [[ -f $db ]] || continue
+    bsdtar -xOf "$db" 2>/dev/null || echo "Warning: could not read $db; the platform guard skips its packages" >&2
+  done
+}
+
+# An image build installs into a chroot on whatever host builds it, so there
+# the root-owned image-target manifest names the platform. A booted system
+# shares PID 1's root, and its own hardware decides.
+image_target() {
+  local owner perms line platform="" count=0
+
+  if [[ -L $manifest || ! -f $manifest ]]; then
+    echo "Error: the image-target manifest $manifest is not a regular file" >&2
+    return 1
+  fi
+
+  perms=$(stat -c '%u %a' -- "$manifest") || return 1
+  read -r owner perms <<<"$perms"
+  if [[ ! $owner =~ ^[0-9]+$ || ! $perms =~ ^[0-7]+$ ]] || (( owner != EUID || (8#$perms & 8#022) != 0 )); then
+    echo "Error: the image-target manifest $manifest must be owned and writable only by root" >&2
+    return 1
+  fi
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line == platform=* ]] || continue
+    platform=${line#platform=}
+    count=$(( count + 1 ))
+  done <"$manifest"
+
+  if (( count != 1 )) || [[ ! $platform =~ ^(apple-silicon|qualcomm|generic-aarch64|generic)$ ]]; then
+    echo "Error: the image-target manifest $manifest must set platform= once, to apple-silicon, qualcomm, generic-aarch64 or generic" >&2
+    return 1
+  fi
+
+  echo "$platform"
+}
+
+this_platform() {
+  if [[ -e $proc/1/root && $proc/1/root -ef / ]] || [[ ! -e $manifest && ! -L $manifest ]]; then
+    "$detector"
+  else
+    image_target
+  fi
+}
+
+declare -A wanted=() tags=()
+
+if [[ $mode == "installed" ]]; then
+  shopt -s nullglob
+  records=("$pacman_db"/local/*/desc)
+  shopt -u nullglob
+  (( ${#records[@]} > 0 )) || exit 0
+  if ! tag_lines=$(platform_tags "${records[@]}"); then
+    echo "Warning: could not read the local package database; the platform guard skips installed packages" >&2
+    exit 0
+  fi
+else
+  while IFS= read -r target; do
+    if [[ -n $target ]]; then
+      wanted[$target]=1
+    fi
+  done
+  (( ${#wanted[@]} > 0 )) || exit 0
+  if ! tag_lines=$(sync_records | platform_tags); then
+    echo "Warning: could not read the package databases; the platform guard skips this transaction" >&2
+    exit 0
+  fi
+fi
+
+while read -r name platform; do
+  [[ -n $name && -n $platform ]] || continue
+  [[ $mode == "installed" || -n ${wanted[$name]:-} ]] || continue
+  [[ " ${tags[$name]:-} " == *" $platform "* ]] || tags[$name]+=" $platform"
+done <<<"$tag_lines"
+
+(( ${#tags[@]} > 0 )) || exit 0
+
+if ! platform=$(this_platform); then
+  echo "Cannot tell which platform this machine is, so packages built for one platform are refused:" >&2
+  for name in "${!tags[@]}"; do
+    echo "  $name:${tags[$name]}"
+  done | sort >&2
+  exit 1
+fi
+
+refused=()
+for name in "${!tags[@]}"; do
+  [[ " ${tags[$name]} " == *" $platform "* ]] || refused+=("  $name:${tags[$name]}")
+done
+
+(( ${#refused[@]} > 0 )) || exit 0
+
+if [[ $mode == "installed" ]]; then
+  echo "Installed packages are built for another platform. This machine is $platform:" >&2
+else
+  echo "Refusing to install packages built for another platform. This machine is $platform:" >&2
+fi
+printf '%s\n' "${refused[@]}" | sort >&2
+exit 1

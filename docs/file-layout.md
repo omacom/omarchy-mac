@@ -73,6 +73,11 @@ bin/omarchy-upload-log         ──►  omarchy-settings    /usr/bin/  (needed
 
 default/libalpm/hooks/*.hook
                                 ──►  omarchy             /usr/share/libalpm/hooks/*.hook
+                                                        (except the platform guard below)
+default/libalpm/hooks/00-omarchy-platform-guard.hook,
+default/libalpm/scripts/omarchy-platform-guard
+                                ──►  omarchy-settings    /usr/share/libalpm/{hooks,scripts}/
+                                                        (see platform-guard.md)
 
 install/**                     ──►  omarchy             /usr/share/omarchy/install/
 migrations/**                  ──►  omarchy             /usr/share/omarchy/migrations/
