@@ -509,7 +509,7 @@ for run_spec in "${matrix[@]}"; do
         recovery_key=$(shown_keys | head -n 1)
         if run accepts "$recovery_key"; then fail "$backend: after '$point' the recovery key is refused as the password"; fi
         if run attempt "$recovery_key"; then fail "$backend: after '$point' setup refuses the recovery key"; fi
-        grep -q 'refused: Setup already set the disk password' "$tmp/screen" || fail "$backend: after '$point' the owner is told why"
+        grep -q 'refused: That is the disk recovery key' "$tmp/screen" || fail "$backend: after '$point' the owner is told why"
         assert_recoverable "recovery key refused after '$point'" "$owner_password"
       fi
 

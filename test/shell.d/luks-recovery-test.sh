@@ -50,6 +50,7 @@ cryptsetup() {
     open) printf 'Key slot %s unlocked\n' "$slot" ;;
     luksAddKey)
       [[ ! -e $test_tmp/add-fail ]] || { echo 'fixture add failure' >&2; return 1; }
+      rekey_state_get recovery_shown >"$test_tmp/shown-at-add" || : >"$test_tmp/shown-at-add"
       material=$(cat "$newfile") || return 1
       if [[ -z $requested ]]; then
         for (( requested=0; requested<32; requested++ )); do
@@ -146,14 +147,23 @@ prepare_luks_recovery "$device"
   fail "a recorded slot that holds the staged or the owner's key is never revoked" "$(cat "$slots")"
 pass "a recovery slot that names the staged or the owner's slot is reserved afresh"
 
-# An acknowledged slot that went missing is replaced, and the owner told.
+# An acknowledged slot that went missing is replaced, and the owner told. The
+# journal stops calling it acknowledged before the new key goes in, so a retry
+# after a kill there never keeps a key the owner has not seen.
 fixture
 printf 'recovery_slot=5\nrecovery_shown=1\n' >"$REKEY_STATE"
 chmod 600 "$REKEY_STATE"
+touch "$test_tmp/display-fail"
+if prepare_luks_recovery "$device"; then fail "an unacknowledged replacement fails the attempt"; fi
+[[ $(<"$test_tmp/shown-at-add") != "1" && $(rekey_state_get recovery_shown) == "0" ]] ||
+  fail "the replacement is not journaled as acknowledged when it is added"
+unseen_key=$recovery_key
+rm "$test_tmp/display-fail"
 prepare_luks_recovery "$device"
-[[ $RECOVERY_REPLACED == "1" && $(luks_slot_for "$recovery_key" "$device") == "5" ]] || fail "a missing acknowledged key is replaced"
+[[ $RECOVERY_REPLACED == "1" && $(luks_slot_for "$recovery_key" "$device") == "5" && -z $(luks_slot_for "$unseen_key" "$device") ]] ||
+  fail "a missing acknowledged key is replaced until the owner acknowledges the replacement"
 grep -q 'acknowledged recovery slot 5 is missing' "$LOG_FILE" || fail "the log says why"
-pass "an acknowledged recovery slot missing from the header is replaced and the owner told"
+pass "an acknowledged recovery slot missing from the header is replaced, and the owner told, until they acknowledge the new key"
 
 fixture
 printf 'nothing' >"$PROVISIONING_DIR/luks-key"

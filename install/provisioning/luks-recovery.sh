@@ -58,6 +58,8 @@ prepare_luks_recovery() {
   if [[ $shown == "1" ]]; then
     luks_slot_present "$device" "$slot" && return 0
     log_step "the acknowledged recovery slot ${slot:-?} is missing from $device; replacing its key"
+    # Until the owner acknowledges the replacement, a retry must not keep it.
+    rekey_state_put recovery_shown 0 || return 1
     RECOVERY_REPLACED=1
   elif [[ $shown == "0" ]]; then
     RECOVERY_REPLACED=1

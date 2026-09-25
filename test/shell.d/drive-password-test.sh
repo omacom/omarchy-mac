@@ -654,16 +654,19 @@ attempt 0 "$new_password" || fail "the rerun records the slot" "$(cat "$tmp/outp
 consistent "rerun after a failed record" "$new_password"
 pass "apple: the change finishes only once the boot package recorded the owner's new slot"
 
-# An omarchy-mac-boot older than luks-slots cannot record the slot either.
+# An omarchy-mac-boot older than luks-slots could not record the slot, so the
+# system disk does not change; a data drive still does.
 fixture
 mv "$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots" "$tmp/luks-slots.off"
 if attempt 0 "$old_password" "$new_password" "$new_password"; then fail "an Apple boot package without luks-slots fails the command"; fi
 said "luks-slots on apple-silicon needs omarchy-mac-boot"
-[[ -e $journal && $(account owner) == "$new_password" ]] || fail "a boot package without luks-slots keeps the journal"
+said "The system disk password did not change."
+! grep -q 'luksChangeKey\|chpasswd' "$tmp/sudo-calls" && [[ ! -e $journal ]] || fail "a boot package without luks-slots changes nothing"
+consistent "boot package without luks-slots" "$old_password"
+echo "$data" >"$tmp/select"
+attempt 0 "$data_password" "$new_password" "$new_password" || fail "a data drive changes without luks-slots" "$(cat "$tmp/output")"
 mv "$tmp/luks-slots.off" "$tmp/lifecycle/usr/lib/omarchy/mac-boot/luks-slots"
-attempt 0 "$new_password" || fail "the rerun with the boot package updated finishes" "$(cat "$tmp/output")"
-consistent "rerun after updating the boot package" "$new_password"
-pass "apple: a boot package without luks-slots keeps the change unfinished, naming the package"
+pass "apple: a boot package without luks-slots stops a system disk change before it starts, naming the package"
 
 fixture
 echo "$data" >"$tmp/select"

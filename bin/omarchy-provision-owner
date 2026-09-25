@@ -1159,7 +1159,11 @@ run_setup() {
     fi
     confirm_form || continue
     if ! rekey_accepts_password; then
-      notice "Setup already set the disk password. Enter that same password." 4
+      if luks_recovery_passphrase "$password"; then
+        notice "That is the disk recovery key. Choose a password of your own." 4
+      else
+        notice "Setup already set the disk password. Enter that same password." 4
+      fi
       continue
     fi
     break
@@ -1175,7 +1179,10 @@ run_setup() {
   RECOVERY_ACKED=0
   local offered=0
   recovery_key_offered || offered=$?
-  (( offered != 2 )) || return 1
+  if (( offered == 2 )); then
+    say --foreground 1 "Could not tell whether setup adds a disk recovery key; will retry."
+    return 1
+  fi
   if (( offered == 0 )) && [[ -f $PROVISIONING_DIR/luks-key ]]; then
     local rekey_device
     if ! rekey_device=$(luks_device) || [[ ! -e $rekey_device ]]; then
