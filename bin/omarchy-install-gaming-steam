@@ -6,14 +6,14 @@
 set -e
 
 echo "Installing Steam..."
-if [[ $(uname -m) == aarch64 ]]; then
+if omarchy-hw-apple-silicon; then
   omarchy-pkg-add steam omarchy-steam-fex
 else
   omarchy-pkg-add steam
 fi
 omarchy-install-gaming-gpu-lib32
 
-if [[ $(uname -m) == aarch64 ]]; then
+if omarchy-hw-apple-silicon; then
   omarchy-launch-steam --prepare
 fi
 
