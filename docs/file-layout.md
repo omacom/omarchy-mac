@@ -56,6 +56,8 @@ user on tty1 and runs the finalize step itself.
 
 On an encrypted install `omarchy-provision-owner` then re-keys LUKS from the staged install key to the owner's password through `install/provisioning/luks-rekey.sh`, which journals each step (phase and slot numbers, never keys) in `/var/lib/omarchy/provisioning/luks-rekey.state` so an interrupted first boot resumes. Setup finishes only once the staged key opens nothing, and removes the journal with `pending`, so a retry after the staged key is retired must use the password the disk holds.
 
+`omarchy-drive-password` reuses those journal helpers when the owner changes the password of the disk holding `/`: it changes the LUKS key, confirms the new key opens the disk and the old one no longer does, and only then sets the login and root passwords. `~/.local/state/omarchy/drive-password.state` records the disk's UUID, the key slots and the phase (never a password) until the accounts match, and the next run finishes an interrupted change with whichever of the old or new password the disk opens with.
+
 Current generated theme state lives under
 `~/.local/state/omarchy/current/`. Keep `~/.config/omarchy/` for files a user
 may intentionally version in a dotfile manager, such as user themes, hooks,
