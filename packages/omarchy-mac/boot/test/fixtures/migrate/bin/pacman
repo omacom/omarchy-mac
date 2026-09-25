@@ -1,0 +1,139 @@
+#!/bin/bash
+# A pacman stand-in for the migration fixtures. A package is "name version"; the
+# local database is <dbpath>/local/packages and a sync database is
+# <dbpath>/sync/<repo>.db, both lists of packages. Repositories are file://
+# directories holding <repo>.db. $MIGRATE_FIXTURE/conflicts lists
+# "package conflicting-package..." for every repository.
+set -euo pipefail
+
+fixture=${MIGRATE_FIXTURE:?}
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+config=$root/etc/pacman.conf
+dbpath=$root/var/lib/pacman
+cachedirs=() dbonly=0 ask="" format="" op="" flags="" args=()
+while (( $# )); do
+  case $1 in
+    --config) config=$2; shift 2 ;;
+    --dbpath) dbpath=$2; shift 2 ;;
+    --cachedir) cachedirs+=("$2"); shift 2 ;;
+    --gpgdir | --logfile) shift 2 ;;
+    --noconfirm) shift ;;
+    --ask) ask=$2; shift 2 ;;
+    --dbonly) dbonly=1; shift ;;
+    --print-format) format=$2; shift 2 ;;
+    --*) echo "fake pacman: unknown option $1" >&2; exit 1 ;;
+    -Q* | -S*) op=${1:1:1}; flags=${1:2}; shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+
+repositories() {
+  awk '/^\[/ { name = $0; gsub(/[][]/, "", name) } /^Server = / && name != "options" { sub(/^Server = /, ""); print name, $0 }' "$config"
+}
+
+declare -A version=()
+while read -r name ver; do
+  [[ -z $name ]] || version[$name]=$ver
+done <"$dbpath/local/packages"
+
+if [[ $op == "Q" ]]; then
+  if (( ${#args[@]} )); then
+    for name in "${args[@]}"; do
+      [[ -n ${version[$name]:-} ]] || { echo "error: package '$name' was not found" >&2; exit 1; }
+      [[ $flags == *q* ]] && echo "$name" || echo "$name ${version[$name]}"
+    done
+  else
+    for name in $(printf '%s\n' "${!version[@]}" | LC_ALL=C sort); do
+      [[ $flags == *q* ]] && echo "$name" || echo "$name ${version[$name]}"
+    done
+  fi
+  exit 0
+fi
+[[ $op == "S" ]] || { echo "fake pacman: unsupported operation" >&2; exit 1; }
+
+if [[ $flags == *y* ]]; then
+  mkdir -p "$dbpath/sync"
+  while read -r repo server; do
+    source_db=${server#file://}/$repo.db
+    [[ $server == file://* && -f $source_db ]] || { echo "error: failed to synchronize all databases ($repo)" >&2; exit 1; }
+    cp "$source_db" "$dbpath/sync/$repo.db"
+  done < <(repositories)
+  [[ $flags == *u* || ${#args[@]} -gt 0 ]] || exit 0
+fi
+
+lookup() { # name [repo] -> "repo version"
+  local name=$1 wanted=${2:-} repo server
+  while read -r repo server; do
+    [[ -z $wanted || $repo == "$wanted" ]] || continue
+    [[ -f $dbpath/sync/$repo.db ]] || continue
+    awk -v repo="$repo" -v name="$name" '$1 == name { print repo, $2; found = 1; exit } END { exit !found }' "$dbpath/sync/$repo.db" && return 0
+  done < <(repositories)
+  return 1
+}
+
+if [[ $flags == *l* ]]; then
+  while read -r repo server; do
+    [[ ${#args[@]} == 0 || $repo == "${args[0]}" ]] || continue
+    [[ -f $dbpath/sync/$repo.db ]] && awk -v repo="$repo" '{ print repo, $1, $2 }' "$dbpath/sync/$repo.db"
+  done < <(repositories)
+  exit 0
+fi
+
+newer() {
+  [[ $1 != "$2" && $(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1) == "$1" ]]
+}
+
+declare -A changed=()
+if [[ $flags == *u* ]]; then
+  for name in "${!version[@]}"; do
+    found=$(lookup "$name") || continue
+    if newer "${found#* }" "${version[$name]}"; then
+      version[$name]=${found#* }
+      changed[$name]=${found% *}
+    fi
+  done
+fi
+for target in "${args[@]}"; do
+  name=${target#*/} repo=""
+  [[ $target != */* ]] || repo=${target%%/*}
+  found=$(lookup "$name" "$repo") || { echo "error: target not found: $target" >&2; exit 1; }
+  version[$name]=${found#* }
+  changed[$name]=${found% *}
+done
+if [[ -f $fixture/conflicts ]]; then
+  while read -r name conflicting; do
+    [[ -n ${changed[$name]:-} ]] || continue
+    for other in $conflicting; do
+      [[ -n ${version[$other]:-} && -z ${changed[$other]:-} ]] || continue
+      [[ $ask == "4" ]] || { echo "error: unresolvable package conflicts detected" >&2; exit 1; }
+      unset "version[$other]"
+    done
+  done <"$fixture/conflicts"
+fi
+
+if [[ $flags == *p* ]]; then
+  for name in $(printf '%s\n' "${!changed[@]}" | LC_ALL=C sort); do
+    line=${format//%r/${changed[$name]}}
+    line=${line//%n/$name}
+    echo "${line//%v/${version[$name]}}"
+  done
+  exit 0
+fi
+if [[ $flags == *w* ]]; then
+  for name in "${!changed[@]}"; do
+    file="$name-${version[$name]}-aarch64.pkg.tar.zst"
+    for dir in "${cachedirs[@]}"; do
+      [[ ! -f $dir/$file ]] || continue 2
+    done
+    echo "fake" >"${cachedirs[0]}/$file"
+    echo "download $name ${version[$name]}" >>"$fixture/pacman.log"
+  done
+  exit 0
+fi
+if (( ! dbonly )); then
+  [[ ! -e $fixture/fail-transaction ]] || { echo "error: failed to commit transaction" >&2; exit 1; }
+  echo "transaction ${args[*]}" >>"$fixture/pacman.log"
+fi
+for name in "${!version[@]}"; do
+  echo "$name ${version[$name]}"
+done | LC_ALL=C sort >"$dbpath/local/packages"

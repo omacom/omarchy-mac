@@ -36,6 +36,7 @@ The set is fixed in the dispatcher; adding one is an upstream change. The operat
 | `update-preflight` | Update, before the package transaction | Refuses an update the platform can't boot afterwards | optional | ticket 35 |
 | `update-verify` | Update, after the package transaction | Verifies the boot chain boots the updated system. A failure blocks completion. | required | ticket 35 |
 | `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | optional until tickets 35 and 36, then required | `omarchy-provision-owner`; tickets 35, 36 |
+| `migrate` | The platform migration (`migrations/1790347292.sh`), on every update until it has run | Moves the machine onto the platform's official package set in place, or does nothing when the platform has no target set yet. Idempotent and resumable: a machine already on the target, or one whose migration waits for a reboot, exits 0. A refusal or failure exits non-zero and leaves the migration pending. | optional | the migration; ticket 42 |
 
 ## Platform registration
 
@@ -86,6 +87,7 @@ A dispatch point takes one of two shapes:
 | mx-mac's reset rollback, not yet in #527 | `reset-rollback` | Ticket 34 |
 | `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning uses it now. Ticket 35 wires the update path. |
 | `omarchy-apple-silicon-boot-check` | `update-verify` | Ticket 35 |
+| `omarchy-mac-migrate` (ticket 42) | `migrate` | `entrypoints/migrate` runs `omarchy-mac-migrate run` |
 
 - **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #527 put them and are sourced by absolute path.
 - **Owner and recovery slots:** #527's `rekey_luks_apple` sequence folds into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`). Only its boot step is `provision-commit`.

@@ -25,6 +25,7 @@ operations=(
   reset-prepare reset-verify reset-rollback
   update-preflight update-verify
   boot-rebuild
+  migrate
 )
 
 usage() {

@@ -1,0 +1,4 @@
+#!/bin/bash
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+echo "omarchy-mac-limine-deploy" >>"${MIGRATE_FIXTURE:?}/boot.log"
+cp "$root/usr/share/limine/BOOTAA64.EFI" "$root/boot/efi/EFI/BOOT/BOOTAA64.EFI"
