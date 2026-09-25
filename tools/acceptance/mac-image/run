@@ -562,12 +562,15 @@ serial_type() {
 }
 
 # Units fsync what they record, but ext4, vfat and btrfs keep the rest in the
-# page cache until writeback: give it the writeback interval before the guest
-# is stopped. Stopping leaves journals to replay, so disks are attached
+# page cache until writeback: give it time before the guest is stopped. On
+# btrfs a line appended to a log reaches the disk only after the dirty page
+# expires (30 s), is written back, and the next transaction commit (every 30 s)
+# records it, so 40 s lost the last lines of owner setup's log on image 2's
+# conversion. Stopping leaves journals to replay, so disks are attached
 # read-write and mounted read-only, which lets the kernel replay them.
 settle_guest() {
   local waited=0
-  while ((waited < 40)); do
+  while ((waited < 75)); do
     kill -0 "$qemu_pid" 2>/dev/null || fail "the guest exited while settling"
     sleep 5; waited=$((waited + 5))
   done
