@@ -137,11 +137,24 @@ luks_rekey_owner() {
   fi
 }
 
-luks_rekey_retire() {
-  local device=$1 owner slot slots
-
+# The slots setup keeps: the owner's, and a recovery slot (luks-recovery.sh)
+# once the owner acknowledged its key. An unacknowledged one is retired.
+luks_rekey_kept_slots() {
+  local owner recovery
   owner=$(rekey_state_get owner_slot || true)
-  if [[ -z $owner ]]; then
+  [[ -n $owner ]] || return 1
+  recovery=$(rekey_state_get recovery_slot || true)
+  if [[ -n $recovery && $recovery != "$owner" && $(rekey_state_get recovery_shown || true) == "1" ]]; then
+    printf '%s\n' "$owner" "$recovery" | sort -n
+  else
+    printf '%s\n' "$owner"
+  fi
+}
+
+luks_rekey_retire() {
+  local device=$1 kept slot slots
+
+  if ! kept=$(luks_rekey_kept_slots); then
     log_step "no owner slot is recorded; refusing to retire LUKS slots"
     return 1
   fi
@@ -152,7 +165,7 @@ luks_rekey_retire() {
     return 1
   fi
   for slot in $slots; do
-    [[ $slot == "$owner" ]] && continue
+    grep -Fxq "$slot" <<<"$kept" && continue
     if ! cryptsetup luksKillSlot -q --key-file <(printf '%s' "$password") "$device" "$slot"; then
       log_step "failed to kill LUKS slot $slot; keeping the staged key for retry"
       say --foreground 1 "Could not remove the throwaway LUKS key; will retry."
@@ -161,14 +174,14 @@ luks_rekey_retire() {
   done
 }
 
-# The staged key must open nothing before it is destroyed: only the owner slot
-# remains and no boot-time copy or unlock configuration is left behind.
+# The staged key must open nothing before it is destroyed: only the kept slots
+# remain and no boot-time copy or unlock configuration is left behind.
 luks_rekey_verify() {
-  local device=$1 owner slots
+  local device=$1 kept slots
 
-  owner=$(rekey_state_get owner_slot || true)
-  if ! slots=$(luks_dump_slots "$device") || [[ -z $owner || $slots != "$owner" ]]; then
-    log_step "LUKS slots other than the owner's remain on $device"
+  if ! kept=$(luks_rekey_kept_slots) || ! slots=$(luks_dump_slots "$device") ||
+    [[ $(sort -n <<<"$slots") != "$kept" ]]; then
+    log_step "the LUKS slots on $device are not exactly the ones setup keeps"
     return 1
   fi
   if [[ -n $(staged_key_slot "$device") ]]; then
@@ -183,7 +196,8 @@ luks_rekey_verify() {
 
 # Order: record the staged slot, add the owner's key, rebuild boot without the
 # auto-unlock (keeping the staged slot as the fallback while that can fail),
-# retire every other slot, then verify, destroy the staged key and record done.
+# retire every slot but the kept ones, then verify, destroy the staged key and
+# record done.
 # Failing is loud: silently keeping the staged key would leave the disk
 # effectively unencrypted.
 luks_rekey() {
