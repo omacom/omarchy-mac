@@ -22,6 +22,13 @@ cat >"$mock_bin/omarchy-hyprland-monitor-focused" <<'SH'
 printf '%s\n' "${FOCUSED_MONITOR:-eDP-1}"
 SH
 
+# Every case says which platform it runs on rather than inherit the machine
+# running the suite.
+cat >"$mock_bin/omarchy-hw-apple-silicon" <<'SH'
+#!/bin/bash
+[[ ${APPLE:-0} == 1 ]]
+SH
+
 cat >"$mock_bin/omarchy-hw-display" <<'SH'
 #!/bin/bash
 printf 'mock_backlight\n'
@@ -54,8 +61,8 @@ SH
 chmod +x "$mock_bin"/*
 
 run_brightness() {
-  CALL_LOG="$call_log" XDG_RUNTIME_DIR="$runtime_dir" PATH="$mock_bin:$ROOT/bin:$PATH" \
-    "$ROOT/bin/omarchy-brightness-display" "$@"
+  CALL_LOG="$call_log" XDG_RUNTIME_DIR="$runtime_dir" OMARCHY_DRM_CLASS="$test_tmp/drm" \
+    PATH="$mock_bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-brightness-display" "$@"
 }
 
 brightness=$(run_brightness --monitor DP-1)
@@ -144,3 +151,24 @@ if PATH="$mock_bin:$PATH" "$ROOT/bin/omarchy-hyprland-monitor-focused-apple"; th
   fail "focused non-Apple display is not detected as Apple"
 fi
 pass "named Apple display is detected independently of focus"
+
+# Apple's display driver has no DDC channel: a Mac skips the probe for such an
+# external monitor and never dims the built-in panel in its place.
+mkdir -p "$test_tmp/drm/card2-USB-1" "$test_tmp/drm/card2-eDP-1"
+: >"$call_log"
+if APPLE=1 run_brightness --monitor USB-1 >/dev/null 2>&1; then
+  fail "a Mac external monitor without DDC has no brightness backend"
+fi
+if APPLE=1 run_brightness --no-osd --monitor USB-1 +5% >/dev/null 2>&1; then
+  fail "setting a Mac external monitor without DDC fails"
+fi
+[[ ! -s $call_log ]] || fail "a Mac external monitor without DDC probes nothing" "$(<"$call_log")"
+brightness=$(APPLE=1 run_brightness --monitor eDP-1)
+[[ $brightness == "40" ]] || fail "a Mac built-in panel still uses the kernel backlight" "actual: $brightness"
+pass "a Mac skips DDC for an external monitor without a DDC channel"
+
+rm -f "$runtime_dir/omarchy-brightness-display-ddc/"*
+: >"$test_tmp/drm/card2-USB-1/ddc"
+brightness=$(APPLE=1 DDC_CONNECTOR=USB-1 run_brightness --monitor USB-1)
+[[ $brightness == "50" ]] || fail "a Mac external monitor with a DDC channel uses DDC" "actual: $brightness"
+pass "a Mac external monitor with a DDC channel uses DDC"
