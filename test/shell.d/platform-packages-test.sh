@@ -44,7 +44,7 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
       ;;
   esac
 
-  if [[ $platform == apple-silicon ]]; then
+  if [[ $platform == "apple-silicon" ]]; then
     while IFS= read -r package; do
       grep -Fxq "$package" "$work/$platform.packages" || fail "Apple Silicon: $package"
     done < <(names "$ROOT/install/omarchy-apple.packages")
@@ -53,7 +53,7 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
       fail "$platform: no Apple Silicon package" "$(grep -E "$apple_only" "$work/$platform.packages")"
   fi
 
-  if [[ $platform == qualcomm ]]; then
+  if [[ $platform == "qualcomm" ]]; then
     grep -Fxq linux-firmware-qcom "$work/$platform.packages" || fail "Qualcomm adds its firmware"
   else
     ! grep -Fxq linux-firmware-qcom "$work/$platform.packages" || fail "$platform: no Qualcomm firmware"
