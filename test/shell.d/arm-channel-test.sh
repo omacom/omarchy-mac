@@ -52,8 +52,8 @@ printf '%s\n' '[options]' 'Architecture = aarch64' '[extra]' 'Server = https://r
 cp "$test_tmp/fresh" "$test_tmp/fresh-before"
 omarchy_arm_channel_render "$test_tmp/fresh" rc "$test_tmp/fresh-rendered" fresh
 [[ $(omarchy_arm_channel_current "$test_tmp/fresh-rendered") == rc ]] || fail 'fresh candidate adds explicit RC lane'
-grep -qxF 'SigLevel = Optional TrustAll' "$test_tmp/fresh-rendered" ||
-  fail 'fresh bootstrap retains the disclosed legacy policy until trust is delivered'
+grep -qxF 'SigLevel = PackageRequired DatabaseRequired TrustedOnly' "$test_tmp/fresh-rendered" ||
+  fail 'fresh signed RC requires trusted package and database signatures'
 cmp "$test_tmp/fresh" "$test_tmp/fresh-before" || fail 'fresh render preserves active configuration'
 printf '%s\n' '[omarchy-aarch64]' 'Server = https://custom.example/repo' >"$test_tmp/hidden"
 printf 'Include = %s\n' "$test_tmp/hidden" >>"$test_tmp/fresh"
@@ -62,13 +62,21 @@ if omarchy_arm_channel_render "$test_tmp/fresh" rc "$test_tmp/rejected" fresh >/
 fi
 pass 'fresh candidates add a missing lane but reject hidden custom repositories'
 
+omarchy_arm_channel_render "$config" rc "$test_tmp/existing-fresh-rendered" fresh
+grep -qxF 'SigLevel = PackageRequired DatabaseRequired TrustedOnly' "$test_tmp/existing-fresh-rendered" ||
+  fail 'fresh signed RC leaves an existing managed stanza permissive'
+sed -n '/^\[private-first\]/,/^\[/p' "$test_tmp/existing-fresh-rendered" |
+  grep -qxF 'Server = https://private.example/$arch' || fail 'fresh strict render changed another repository'
+cmp "$config" "$test_tmp/original" || fail 'fresh strict render modified the active configuration'
+pass 'fresh signed RC hardens an existing managed lane before preflight'
+
 for template in "$ROOT/default/pacman/pacman.conf" "$ROOT/default/pacman/pacman-stable.conf" \
   "$ROOT/default/pacman/pacman-rc.conf" "$ROOT/default/pacman/pacman-edge.conf"; do
   sed -n '/^\[omarchy-aarch64\]/,/^\[/p' "$template" |
-    grep -qxF 'SigLevel = Optional TrustAll' ||
-    fail "bootstrap transition policy missing from $template"
+    grep -qxF 'SigLevel = PackageRequired DatabaseRequired TrustedOnly' ||
+    fail "strict signed-RC policy missing from $template"
 done
-pass 'all shipped ARM repository templates remain compatible with the one-time bootstrap'
+pass 'all shipped ARM repository templates require the trusted fork signer'
 
 printf '#!/bin/bash\necho aarch64\n' >"$test_tmp/bin/uname"
 cat >"$test_tmp/bin/omarchy-update" <<'SH'
