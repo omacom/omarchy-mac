@@ -122,7 +122,19 @@ mapfile -t out < <(after "$chain" base udev autodetect microcode modconf kms key
 [[ ${out[1]} == *"keyboard sd-vconsole block"* && ${out[1]} == *"sd-encrypt filesystems"* ]] ||
   fail "the full Mac chain ends with sd-vconsole after keyboard and sd-encrypt before filesystems" "HOOKS=(${out[1]})"
 (( $(grep -o sd-vconsole <<<"${out[1]}" | wc -l) == 1 )) || fail "the chain has one sd-vconsole" "HOOKS=(${out[1]})"
-echo 'ok - 90..94 over the stock busybox line: one sd-vconsole, after keyboard'
+
+# A runtime too old to ship the detector: the chain still acts as on a Mac.
+mkdir -p "$tmp/no-detector"
+ln -sf "$(command -v bash)" "$tmp/no-detector/bash"
+ln -sf "$(command -v grep)" "$tmp/no-detector/grep"
+vconsole KEYMAP=ru XKBLAYOUT=ru
+mapfile -t out < <(PATH=$tmp/no-detector after "$chain" "${stock[@]}")
+[[ ${out[1]} == "base systemd autodetect microcode modconf kms keyboard block asahi omarchy-vendorfw omarchy-mac-encrypt sd-encrypt filesystems fsck" ]] ||
+  fail "without the detector the chain keeps the Mac behaviour" "HOOKS=(${out[1]})"
+mapfile -t out < <(PATH=$tmp/no-detector after "$dropin" "${stock[@]}")
+[[ ${out[1]} == "base systemd autodetect microcode modconf kms keyboard block filesystems fsck" ]] ||
+  fail "without the detector the drop-in keeps the Mac behaviour" "HOOKS=(${out[1]})"
+echo 'ok - 90..94 over the stock busybox line: one sd-vconsole, after keyboard; without the detector the chain acts as on a Mac'
 
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${IN_OMARCHY_MAC_VCONSOLE_TEST:-0} != "1" ]]; then
   echo 'ok - source checks passed; disposable initramfs tests not run (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in)'

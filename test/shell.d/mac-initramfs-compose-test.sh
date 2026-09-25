@@ -136,9 +136,9 @@ composed=$(compose apple-silicon) || fail "the Apple drop-ins source cleanly ove
 pass "a legacy cryptdevice= Mac keeps its busybox line"
 
 new_etc 1
-sed -i "s/^HOOKS=.*/HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block asahi filesystems fsck)/" "$etc/mkinitcpio.conf"
+sed -i "s/^HOOKS=.*/HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block asahi omarchy-vendorfw filesystems fsck)/" "$etc/mkinitcpio.conf"
 composed=$(compose generic-aarch64) || fail "the Apple drop-ins source cleanly on an asahi root off a Mac"
-[[ $(field HOOKS "$composed") == "base systemd autodetect microcode modconf kms keyboard sd-vconsole block asahi omarchy-mac-encrypt sd-encrypt filesystems fsck" &&
+[[ $(field HOOKS "$composed") == "base systemd autodetect microcode modconf kms keyboard sd-vconsole block asahi omarchy-vendorfw omarchy-mac-encrypt sd-encrypt filesystems fsck" &&
   $(module_set "$(field MODULES "$composed")") == "$(module_set "$mx_modules")" ]] ||
   fail "an asahi root off a Mac keeps the Apple unlock and modules" "$composed"
 pass "an asahi root off a Mac keeps the Apple unlock and modules"
