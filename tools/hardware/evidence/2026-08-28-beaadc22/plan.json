@@ -1,0 +1,55 @@
+{
+  "catalog": {
+    "payload_digest": "sha256:09092b33afd4a89c86def3cd488d3908a4bf3ad067434c66ecddbe3ecebdddf7",
+    "sequence": 1787879642,
+    "trust_root_fingerprint": "sha256:a03d974f10b040b96c7cf65b10cb64c23df8604ff3bedf9de42c60f7918612cd"
+  },
+  "host": {
+    "chip": "Apple M1 Pro",
+    "container_free_bytes": 851375747072,
+    "container_identifier": "disk4",
+    "container_size_bytes": 994662584320,
+    "device_identifier": "apple,j314s",
+    "filevault_enabled": true,
+    "macos_version": "Version 26.0.1 (Build 25A362)",
+    "minimum_preferred_size_bytes": 164436849459,
+    "model": "MacBookPro18,3",
+    "physical_store_identifier": "disk0s2",
+    "power_source": "AC Power",
+    "shrinkable_bytes": 830225734861
+  },
+  "mode": "read-only-plan-probe",
+  "plan": {
+    "binding_digest": "sha256:5f310846b2b9cdb0b4ab6309b7dbc0bb3389307dcf2bff7382d3d4a9a0ac9a2f",
+    "candidate_kind": "resize",
+    "device_identifier": "apple,j314s",
+    "engine_digest": "sha256:09eefcb25ba434f084a3b1e0700c3277629f67f1d3514f59bddd6107a39dfde5",
+    "engine_version": "v0.9.0-omarchy.2",
+    "layout_digest": "sha256:548906f6f415159d6d1e2cd2f700e3e142474e0de6ce1b4da191e24b3920f8d2",
+    "length_bytes": 137438953472,
+    "metadata_digest": "sha256:af7aea805b5fcf9d130f622985a58f9f2bcea94a6a05db048bbab82bf10cf01e",
+    "offset_bytes": 857747943424,
+    "payload_digest": "sha256:80e3826665ba92380c32fbab3a0f8e4b5e738941d4baecb7a3d91b1894e4f699",
+    "plan_digest": "beaadc221960bd47ba46dbd14dd9b253a96cba38a59cbf80ac341d6a8d72f305",
+    "required_human_steps": [
+      "enterOneTrueRecovery",
+      "authenticateMachineOwner"
+    ],
+    "source_identifier": "disk0s2",
+    "store_identifier": "disk0"
+  },
+  "probe": {
+    "binary_sha256": "1b7dec8159d65b887010e52f75bf739bf74bab483012b8b707780d1db0829b06",
+    "source": "temporary executable compiled from the current OmarchyAppleInstallerTrustCore sources"
+  },
+  "recommendation": {
+    "candidate_kind": "resize",
+    "candidate_length_bytes": 994662584320,
+    "candidate_offset_bytes": 524312576,
+    "minimum_container_bytes": 181362753536,
+    "minimum_install_bytes": 67501031424,
+    "requested_length_bytes": 137438953472,
+    "source_identifier": "disk0s2"
+  },
+  "validation_time": "2026-08-28T01:43:18Z"
+}

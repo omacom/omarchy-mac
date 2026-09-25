@@ -13,14 +13,14 @@ try {
   function stub(name, body) { fs.writeFileSync(path.join(bin, name), '#!/bin/bash\n'+body+'\n', {mode:0o755}) }
   stub('pacman', `echo "$*" >> "$CALLS"
 case $1 in
--Slq) for p in primary secondary zed omazed xpadneo-dkms linux-headers linux-asahi-headers; do [[ $p == "\${MISSING:-}" ]] || echo "$p"; done ;;
+-Slq) for p in primary secondary zed omazed xpadneo-dkms linux-headers linux-asahi-headers linux-aurora-headers; do [[ $p == "\${MISSING:-}" ]] || echo "$p"; done ;;
 -Sp) [[ \${*: -1} == provided || \${*: -1} == 'provided>=1' ]] ;;
 -Qq|-Qi) exit 0 ;;
 *) exit 1 ;;
 esac`)
   stub('uname', 'echo uname >> "$CALLS"; echo "${ARCH:-x86_64}"')
   stub('omarchy-hw-apple-silicon', '[[ ${APPLE:-0} == 1 ]]')
-  stub('omarchy-hw-apple-kernel', 'echo linux-asahi')
+  stub('omarchy-pkg-kernel-headers', '[[ -n ${HEADERS:-} ]] && echo "$HEADERS"')
   const env = {...process.env, OMARCHY_PATH:root, CALLS:calls, PATH:bin+':'+root+'/bin:'+process.env.PATH}
   function run(script, extra={}) { return cp.spawnSync('bash', ['-euo','pipefail','-c',script], {env:{...env,...extra},encoding:'utf8'}) }
   const prelude = menu.guardScript({probe:{id:'probe',when:'true'}}).split('\n').filter(l=>!l.startsWith('if {')).join('\n')
@@ -44,12 +44,13 @@ esac`)
   }
   checkRow('install.editor.zed',0)
   checkRow('install.editor.zed',1,{MISSING:'zed'})
-  for (const apple of ['0','1']) {
-    const selected=apple==='1'?'linux-asahi-headers':'linux-headers'
-    checkRow('install.gaming.xbox-controllers',0,{APPLE:apple})
-    checkRow('install.gaming.xbox-controllers',1,{APPLE:apple,MISSING:selected})
-    checkRow('install.gaming.xbox-controllers',0,{APPLE:apple,MISSING:apple==='1'?'linux-headers':'linux-asahi-headers'})
+  for (const headers of ['linux-headers','linux-asahi-headers','linux-aurora-headers']) {
+    checkRow('install.gaming.xbox-controllers',0,{HEADERS:headers})
+    checkRow('install.gaming.xbox-controllers',1,{HEADERS:headers,MISSING:headers})
+    checkRow('install.gaming.xbox-controllers',1,{HEADERS:headers,MISSING:'xpadneo-dkms'})
+    checkRow('install.gaming.xbox-controllers',0,{HEADERS:headers,MISSING:headers==='linux-headers'?'linux-asahi-headers':'linux-headers'})
   }
+  checkRow('install.gaming.xbox-controllers',1,{HEADERS:''})
   fs.writeFileSync(calls,'')
   const cacheItems={}
   for (const id of ['install.browser.chrome','install.browser.brave']) cacheItems[id]={...byId[id],disabled:''}
