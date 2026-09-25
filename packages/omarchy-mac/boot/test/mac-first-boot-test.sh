@@ -144,8 +144,13 @@ deferred_stub() {
   exit 1
 }
 root=$OMARCHY_MAC_FIRST_BOOT_ROOT
-echo "keyring=$([[ -f $root/var/lib/omarchy/mac-first-boot/keyring ]] && echo yes || echo no)" >>"$CASE/deferred.log"
-echo deferred >>"$CASE/deferred.log"
+state=$root/var/lib/omarchy/mac-first-boot
+{
+  echo "keyring=$([[ -f $state/keyring ]] && echo yes || echo no)"
+  echo "owner-staged=$([[ -e $root/etc/systemd/system/omarchy-provision-owner.service ]] && echo yes || echo no)"
+  echo "pending=$([[ -e $state/pending ]] && echo yes || echo no)"
+  echo deferred
+} >>"$CASE/deferred.log"
 if [[ -e $CASE/deferred-fails ]]; then
   rm -f "$CASE/deferred-fails"
   echo "deferred failed" >&2
@@ -244,8 +249,9 @@ echo 'ok - the unit logs to the journal and holds no terminal; the script owns t
 
 # The generic deferred-hardware service runs after first boot, which drains the
 # queue once the keyring exists.
-[[ $(grep -v '^#' "$hardware_dropin") == $'[Unit]\nAfter=omarchy-mac-first-boot.service' ]] ||
-  fail "omarchy-provision-hardware.service waits for first boot"
+[[ $(grep -v '^#' "$hardware_dropin") == \
+  $'[Unit]\nAfter=omarchy-mac-first-boot.service\nConditionPathExists=!/var/lib/omarchy/mac-first-boot/pending' ]] ||
+  fail "omarchy-provision-hardware.service waits for first boot and never starts while it is pending"
 grep -Fq '"$root/usr/bin/omarchy-provision-hardware"' "$script" ||
   fail "first boot runs omarchy-provision-hardware"
 ! grep -Fq 'install/hardware/apple/limine-boot.sh"' "$script" ||
@@ -305,7 +311,9 @@ echo 'ok - a LUKS root and a plain root both go straight to provisioning, keepin
 new_case resume
 write_esp 'format=1' 'encrypt=0' 'lane=edge'
 touch "$case_dir/deferred-fails"
-expect_stop "a deferred-steps failure" "the deferred hardware steps failed"
+expect_stop "a deferred-steps failure" \
+  "the deferred hardware steps failed (see /var/log/omarchy-mac-first-boot.log and /var/log/omarchy-install.log)"
+[[ ! -e $root/etc/systemd/system/omarchy-provision-owner.service ]] || fail "a failed hardware step stages no owner setup"
 [[ ! -e $root/boot/efi/omarchy/install.conf ]] || fail "consume survives the failed attempt"
 [[ $(<"$root/var/lib/omarchy/mac-first-boot/install.conf") == $'format=1\nencrypt=0\nlane=edge' ]] ||
   fail "the consumed conf is kept for the retry"
@@ -474,7 +482,8 @@ write_esp 'format=1' 'encrypt=0'
 expect_handoff "keyring init"
 [[ $(<"$root/var/lib/omarchy/mac-first-boot/keyring") == "master=$keyring_master_fpr" ]] ||
   fail "the keyring record names this Mac's master key"
-[[ $(head -n 1 "$case_dir/deferred.log") == keyring=yes ]] || fail "deferred steps run after the keyring exists"
+[[ $(<"$case_dir/deferred.log") == $'keyring=yes\nowner-staged=no\npending=yes\ndeferred' ]] ||
+  fail "deferred hardware setup runs once the keyring exists, before owner setup is staged and first boot commits"
 [[ $(awk '/--init/{print "init"} /--populate /{print "populate"} /--add/{print "add"} /--lsign-key/{print "lsign"}' \
   "$case_dir/pacman-key.log") == $'init\npopulate' ]] ||
   fail "pacman-key initializes and populates the existing platform policy in order"

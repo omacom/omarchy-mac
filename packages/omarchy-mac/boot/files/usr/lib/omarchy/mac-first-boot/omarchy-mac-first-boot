@@ -149,7 +149,7 @@ run_deferred_steps() {
   # owner setup; a failed step stays queued and the retry resumes there. Its
   # service is ordered after first boot, so the two never run at once.
   "$root/usr/bin/omarchy-provision-hardware" >>"$log_file" 2>&1 ||
-    fail "the deferred hardware steps failed"
+    fail "the deferred hardware steps failed (see ${log_file#"$root"} and /var/log/omarchy-install.log)"
 }
 
 # What a deferred-user image carries for owner provisioning, plus the services
