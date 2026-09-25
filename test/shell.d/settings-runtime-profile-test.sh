@@ -23,7 +23,7 @@ omarchy_hooks="base udev plymouth keyboard autodetect microcode modconf kms keym
 cat >"$work/90-apple-fragment.conf" <<'CONF'
 _fragment_hooks=()
 for _fragment_hook in "${HOOKS[@]}"; do
-  [[ $_fragment_hook == filesystems ]] && _fragment_hooks+=(asahi)
+  [[ $_fragment_hook == "filesystems" ]] && _fragment_hooks+=(asahi)
   _fragment_hooks+=("$_fragment_hook")
 done
 HOOKS=("${_fragment_hooks[@]}")
@@ -38,7 +38,7 @@ composed() {
   mkdir -p "$conf_d"
   printf 'MODULES=()\nFILES=()\nHOOKS=(%s)\n' "$stock_hooks" >"$work/$platform-$fragment/mkinitcpio.conf"
   cp "$ROOT"/etc/mkinitcpio.conf.d/*.conf "$conf_d/"
-  if [[ $fragment == with-fragment ]]; then
+  if [[ $fragment == "with-fragment" ]]; then
     cp "$work/90-apple-fragment.conf" "$conf_d/"
   fi
 
@@ -55,12 +55,23 @@ composed() {
     ' bash "$work/$platform-$fragment/config"
 }
 
+apple_hooks="${stock_hooks/filesystems/asahi filesystems}"
 result=$(composed apple-silicon with-fragment)
-[[ ${result%%|*} == "${stock_hooks/filesystems/asahi filesystems}" ]] ||
+[[ ${result%%|*} == "$apple_hooks" ]] ||
   fail "Apple Silicon keeps the HOOKS its platform composed" "actual: ${result%%|*}"
 [[ " ${result#*|} " == *" thunderbolt? "* ]] ||
   fail "Apple Silicon asks for the Thunderbolt module only if its kernel has it" "actual: ${result#*|}"
+result=$(composed apple-silicon without-fragment)
+[[ ${result%%|*} == "$stock_hooks" ]] ||
+  fail "Apple Silicon keeps mkinitcpio.conf's HOOKS without a boot package" "actual: ${result%%|*}"
 pass "Apple Silicon keeps the HOOKS its platform composed"
+
+# An Apple image built in a chroot or booted in a VM runs on another machine:
+# its Apple hooks, not the detector, keep the baseline out.
+result=$(composed generic-aarch64 with-fragment)
+[[ ${result%%|*} == "$apple_hooks" ]] ||
+  fail "an Apple root on another machine keeps its HOOKS" "actual: ${result%%|*}"
+pass "an Apple root keeps its HOOKS on another machine"
 
 for platform in qualcomm generic-aarch64 generic; do
   result=$(composed "$platform" without-fragment)
@@ -71,8 +82,8 @@ for platform in qualcomm generic-aarch64 generic; do
 done
 pass "every other platform gets the Omarchy HOOKS baseline and an optional Thunderbolt module"
 
-# The detector failing (contradictory identity) or missing leaves the baseline
-# in place, as before the profile existed.
+# With no Apple hooks, a detector that fails (contradictory identity) or is
+# missing leaves the baseline in place, as before the profile existed.
 mkdir -p "$work/contradiction/proc/device-tree"
 printf '%s\0' apple,j416c qcom,x1e80100 >"$work/contradiction/proc/device-tree/compatible"
 hooks=$(OMARCHY_PROC_ROOT="$work/contradiction/proc" PATH="$ROOT/bin:$PATH" bash -c '
