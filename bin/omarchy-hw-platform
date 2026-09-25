@@ -56,7 +56,10 @@ for source in "${sources[@]}"; do
   vendor_source=$source
 done
 
-machine=$(uname -m)
+if ! machine=$(uname -m) || [[ -z $machine ]]; then
+  echo "Error: cannot read the CPU architecture" >&2
+  exit 1
+fi
 
 case $vendor in
   apple | qcom)

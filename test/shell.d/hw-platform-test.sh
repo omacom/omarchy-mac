@@ -20,11 +20,16 @@ if (( EUID != 0 )); then
   root_runner=(unshare --user --map-root-user)
 fi
 if (( EUID == 0 )) || unshare --user --map-root-user true 2>/dev/null; then
-  live=$("${root_runner[@]}" "$detector" 2>&1) || true
+  live=$("${root_runner[@]}" "$detector") || fail "root detects the live platform"
+  [[ $live =~ ^(apple-silicon|qualcomm|generic-aarch64|generic)$ ]] || fail "root detects the live platform" "live: $live"
   for platform in apple-silicon qualcomm generic-aarch64 generic; do
     fixture="$test_tmp/$platform"
-    overridden=$(OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:$ROOT/bin:$PATH" \
-      "${root_runner[@]}" "$detector" 2>&1) || true
+    if [[ -f $fixture/proc/device-tree/compatible ]]; then
+      mkdir -p "$fixture/sys/firmware/devicetree/base"
+      cp "$fixture/proc/device-tree/compatible" "$fixture/sys/firmware/devicetree/base/compatible"
+    fi
+    overridden=$(OMARCHY_PROC_ROOT="$fixture/proc" OMARCHY_SYS_ROOT="$fixture/sys" PATH="$fixture/bin:$ROOT/bin:$PATH" \
+      "${root_runner[@]}" "$detector") || fail "root detects the live platform with a $platform fixture in its environment"
     [[ $overridden == "$live" ]] ||
       fail "root ignores a $platform fixture in its environment" "live: $live
 with fixture: $overridden"
@@ -54,6 +59,13 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
   fi
   pass "the $platform fixture is detected and the Apple predicates agree"
 done
+
+# Systemd and the shell run the predicate by absolute path with whatever PATH
+# they have; it must use the detector shipped beside it.
+fixture="$test_tmp/apple-silicon"
+OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:/usr/bin:/bin" "$ROOT/bin/omarchy-hw-apple-silicon" ||
+  fail "the Apple predicate finds its detector without Omarchy on PATH"
+pass "the Apple predicate finds its detector without Omarchy on PATH"
 
 stub_bin="$test_tmp/bin"
 mkdir -p "$stub_bin"
@@ -156,6 +168,16 @@ if TEST_ARCH=x86_64 OMARCHY_PROC_ROOT="$test_tmp/cases/m1-pro/proc" PATH="$stub_
   fail "the Apple predicate fails closed on contradictory identity"
 fi
 pass "contradictory identity fails with an explanation"
+
+failing_uname="$test_tmp/failing-uname"
+mkdir -p "$failing_uname"
+printf '#!/bin/bash\nexit 1\n' >"$failing_uname/uname"
+chmod +x "$failing_uname/uname"
+if OMARCHY_PROC_ROOT="$test_tmp/cases/acpi/proc" PATH="$failing_uname:$PATH" "$detector" 2>"$test_tmp/error"; then
+  fail "an unreadable CPU architecture fails instead of guessing generic"
+fi
+grep -Fq "cannot read the CPU architecture" "$test_tmp/error" || fail "an unreadable CPU architecture explains itself" "$(cat "$test_tmp/error")"
+pass "an unreadable CPU architecture fails instead of guessing generic"
 
 # Dragon's omarchy-hw-qualcomm-soc: any "qcom," token in the boot device tree.
 dragon_qualcomm() {
