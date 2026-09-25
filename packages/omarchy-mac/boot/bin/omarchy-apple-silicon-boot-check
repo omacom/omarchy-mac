@@ -12,10 +12,11 @@
 #
 # --boot-chain checks only what the next boot reads, for omarchy update's
 # update-verify: the kernel, initramfs, unlock settings, device trees, m1n1
-# stage 2, U-Boot and Limine. It leaves out the installed files' mtree, a
-# second installed kernel (the one whose m1n1 is installed boots), LUKS
-# keyslots and provisioning leftovers, and an m1n1 image its owner took over
-# with M1N1_UPDATE_DISABLED.
+# stage 2, U-Boot and Limine. It holds only the kernel image, device trees and
+# m1n1 against their package mtree, checks the kernel the boot menu starts
+# first when both kernels are installed, and leaves out LUKS keyslots and
+# provisioning leftovers and an m1n1 image its owner took over with
+# M1N1_UPDATE_DISABLED.
 
 set -euo pipefail
 
@@ -60,19 +61,38 @@ installed=$(pacman -Qq) || fail "cannot list the installed packages"
 is_installed() {
   grep -Fxq -- "$1" <<<"$installed"
 }
+# The ESP Limine's tooling writes to: ESP_PATH, /boot/efi or on older
+# installs /boot.
+limine_esp_path() {
+  sudo sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$(path /etc/default/limine)" | tail -n 1
+}
+
+# The kernel the boot menu starts: the first kernel entry in Limine's menu,
+# where the tool writes the Omarchy block first, else GRUB's first entry.
+menu_kernel() {
+  if [[ -e $(path /var/lib/omarchy/limine.enabled) && -f $(path /etc/default/limine) ]]; then
+    sudo awk '{ sub(/^[[:space:]]+/, "") } /^\/\/linux-(aurora|asahi)$/ { print substr($0, 3); exit }' \
+      "$(path "$(limine_esp_path)/limine.conf")" 2>/dev/null
+  else
+    sudo grep -Eo 'vmlinuz-linux-(aurora|asahi)' "$(path /boot/grub/grub.cfg)" 2>/dev/null | sed -n '1s/^vmlinuz-//p'
+  fi
+}
+
 kernel=${1:-}
 if [[ -z $kernel ]]; then
   kernels=()
   for candidate in linux-aurora linux-asahi; do
-    if (( boot_chain )); then
-      ! is_installed "${bootloaders[$candidate]}" || kernels+=("$candidate")
-    else
-      ! is_installed "$candidate" || kernels+=("$candidate")
-    fi
+    ! is_installed "$candidate" || kernels+=("$candidate")
   done
-  (( ${#kernels[@]} == 1 )) ||
-    fail "cannot tell which kernel boots: ${kernels[*]:-neither linux-aurora nor linux-asahi} installed"
-  kernel=${kernels[0]}
+  if (( boot_chain && ${#kernels[@]} == 2 )); then
+    kernel=$(menu_kernel || true)
+    [[ -n $kernel ]] ||
+      fail "cannot tell which kernel boots: linux-aurora and linux-asahi are installed, and the boot menu starts neither"
+  else
+    (( ${#kernels[@]} == 1 )) ||
+      fail "cannot tell which kernel boots: ${kernels[*]:-neither linux-aurora nor linux-asahi} installed"
+    kernel=${kernels[0]}
+  fi
 fi
 [[ -n ${bootloaders[$kernel]:-} ]] ||
   fail "$kernel is not a kernel this check knows; it checks linux-aurora with m1n1-aurora and linux-asahi with m1n1"
@@ -89,9 +109,7 @@ done
 # The mtree check, minus the depmod outputs: the kernel package ships
 # modules.* and the depmod hook rewrites them on every install, so their
 # modification times never match. Anything else altered or missing fails.
-mtree_packages=("$kernel" "$bootloader")
-(( ! boot_chain )) || mtree_packages=()
-for package in "${mtree_packages[@]}"; do
+for package in "$kernel" "$bootloader"; do
   set +e
   mtree_output=$(LC_ALL=C pacman -Qkk "$package" 2>&1)
   mtree_status=$?
@@ -100,9 +118,15 @@ for package in "${mtree_packages[@]}"; do
   altered=$(grep -Ev ' altered files$' <<<"$mtree_output" |
     grep -Ev "^warning: database file for '[^']+' does not exist" |
     grep -Ev '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \(Modification time mismatch\)$' || true)
+  # --boot-chain holds only the files the boot files are built from: the
+  # kernel image, its device trees and m1n1.
+  if (( boot_chain )); then
+    altered=$(grep -E '^warning: [^:]+: /usr/lib/(modules/[^/]+/(vmlinuz|dtbs/)|asahi-boot/)' <<<"$altered" || true)
+  fi
   [[ -z $altered ]] || fail "installed $package files do not match the package mtree: $(head -n 1 <<<"$altered")"
   # pacman exits 1 for the depmod lines alone; any other failure is one.
   (( mtree_status == 0 )) || grep -Fq '(Modification time mismatch)' <<<"$mtree_output" ||
+    { (( boot_chain )) && grep -q '^warning: ' <<<"$mtree_output"; } ||
     fail "pacman -Qkk $package failed"
 done
 
@@ -262,9 +286,7 @@ fi
 # the LUKS mapping) the system needs, and the U-Boot slot must hold the
 # installed Limine.
 if (( limine_mac )); then
-  # The ESP Limine's tooling writes to: ESP_PATH, /boot/efi or on older
-  # installs /boot.
-  limine_esp=$(sudo sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$(path /etc/default/limine)" | tail -n 1)
+  limine_esp=$(limine_esp_path)
   [[ $limine_esp == /* ]] || fail "/etc/default/limine names no ESP_PATH"
   limine_cfg=$(path "$limine_esp/limine.conf")
   limine_uki=$(path "$limine_esp/EFI/Linux/omarchy_$kernel.efi")

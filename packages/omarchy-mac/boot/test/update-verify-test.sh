@@ -137,14 +137,46 @@ printf 'M1N1_UPDATE_DISABLED=1\n' >>"$mac_root/etc/default/update-m1n1"
 printf 'built by its owner\n' >>"$mac_esp/m1n1/boot.bin"
 beyond_boot_chain "an m1n1 image its owner took over" "M1N1_UPDATE_DISABLED is set"
 grep -Fq "m1n1/boot.bin is its owner's and is not checked" "$tmp/out" || fail "update-verify says it left m1n1 to its owner" "$(cat "$tmp/out")"
+# A second kernel, older, with its own entry after the one the menu starts.
+second_kernel() {
+  local asahi=6.14.8-asahi1-1-ARCH
+  mkdir -p "$mac_root/usr/lib/modules/$asahi/dtbs"
+  printf 'linux-asahi kernel\n' >"$mac_root/usr/lib/modules/$asahi/vmlinuz"
+  printf 'linux-asahi\n' >>"$mac_state/installed"
+  printf '/usr/lib/modules/%s/vmlinuz\n' "$asahi" >"$mac_state/files-linux-asahi"
+}
 limine_mac
-printf 'linux-asahi\n' >>"$mac_state/installed"
+second_kernel
+printf '  //linux-asahi\n    protocol: efi\n    path: boot():/EFI/Linux/omarchy_linux-asahi.efi#0\n    cmdline: quiet\n' >>"$mac_esp/limine.conf"
 beyond_boot_chain "a Mac with a second kernel installed" "cannot tell which kernel boots"
-grep -Fq "running linux-aurora $mac_kver" "$tmp/out" || fail "update-verify checks the kernel whose m1n1 is installed" "$(cat "$tmp/out")"
+grep -Fq "running linux-aurora $mac_kver" "$tmp/out" || fail "update-verify checks the kernel the menu starts" "$(cat "$tmp/out")"
 limine_mac
-: >"$mac_state/drift-linux-aurora"
-beyond_boot_chain "a kernel package file that drifted from its mtree" "linux-aurora files do not match the package mtree"
-pass "update-verify passes a healthy Mac with an extra keyslot, an owner-built m1n1, a second kernel or drifted package files"
+printf '/usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\n' "$mac_kver" >"$mac_state/drift-linux-aurora"
+beyond_boot_chain "a kernel module that drifted from its mtree" "linux-aurora files do not match the package mtree"
+pass "update-verify passes a healthy Mac with an extra keyslot, an owner-built m1n1, a second kernel or a drifted module"
+
+# What the boot files are built from still has to match its package.
+for drifted in "/usr/lib/modules/$mac_kver/vmlinuz" "${mac_dtbs[0]}"; do
+  limine_mac
+  printf '%s\n' "$drifted" >"$mac_state/drift-linux-aurora"
+  verify
+  expect_refused "a drifted ${drifted##*/}" "installed linux-aurora files do not match the package mtree: warning: linux-aurora: $drifted"
+done
+limine_mac
+printf '/usr/lib/asahi-boot/m1n1.bin\n' >"$mac_state/drift-m1n1-aurora"
+verify
+expect_refused "a drifted m1n1" "installed m1n1-aurora files do not match the package mtree"
+# With two kernels, the one the menu starts is checked, and it must boot.
+limine_mac
+second_kernel
+{
+  printf '/+Omarchy\n  //linux-asahi\n    protocol: efi\n    path: boot():/EFI/Linux/omarchy_linux-asahi.efi#0\n    cmdline: quiet\n'
+  sed 1d "$mac_esp/limine.conf"
+} >"$tmp/limine.conf"
+cp "$tmp/limine.conf" "$mac_esp/limine.conf"
+verify
+expect_refused "a Mac whose menu starts the second kernel first" "linux-asahi boots with m1n1, but m1n1 is not installed"
+pass "update-verify still refuses a drifted kernel image, device tree or m1n1, and checks the kernel the menu starts"
 
 limine_mac
 limine_mac_luks

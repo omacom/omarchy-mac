@@ -22,8 +22,9 @@ case "$*" in
   -Qq) cat "$MAC_STATE/installed" ;;
   "-Qlq "*) [[ -f $MAC_STATE/files-$2 ]] && cat "$MAC_STATE/files-$2" ;;
   "-Qkk "*)
+    # drift-<package> names the file that drifted.
     if [[ -e $MAC_STATE/drift-$2 ]]; then
-      printf 'warning: %s: /usr/lib/modules/x/kernel/drift.ko.zst (Size mismatch)\n' "$2" >&2
+      printf 'warning: %s: %s (Size mismatch)\n' "$2" "$(cat "$MAC_STATE/drift-$2")" >&2
       printf '%s: 2 total files, 1 altered files\n' "$2"
       exit 1
     fi

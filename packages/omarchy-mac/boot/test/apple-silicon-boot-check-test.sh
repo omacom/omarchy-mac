@@ -724,4 +724,9 @@ limine_on_system_esp
 sed -i 's/quiet$/quiet splash/' "$existing/limine.conf"
 TEST_EXISTING_MOUNT="$existing" run_check
 expect_fail "a system ESP with another menu" "/boot/efi/limine.conf is not the one on the system ESP"
+limine_on_system_esp
+printf 'M1N1_UPDATE_DISABLED=1\n' >"$root/etc/default/update-m1n1"
+printf 'GRUB\n' >"$existing/EFI/BOOT/BOOTAA64.EFI"
+TEST_EXISTING_MOUNT="$existing" run_check --boot-chain
+expect_fail "an m1n1 left to its owner beside another loader on the system ESP" "/boot/efi/EFI/BOOT/BOOTAA64.EFI is not the one on the system ESP"
 pass "a Limine Mac boots the Limine, menu and UKI on the system ESP"
