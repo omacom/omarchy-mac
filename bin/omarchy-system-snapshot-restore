@@ -6,10 +6,12 @@
 # omarchy:requires-sudo=true
 # omarchy:hidden=true
 
-# omarchy-snapshot restore runs limine-snapper-restore, which ships with
-# limine-snapper-sync -- a package Apple Silicon never installs, because limine
-# cannot boot a Mac. So "restore" was a command not found on every Mac, and the
-# snapshots taken before every update had no way back.
+# omarchy-snapshot restore runs limine-snapper-restore where Limine boots the
+# machine. This is the restore everywhere else: installs without
+# limine-snapper-sync, and Macs that still boot GRUB while they move to Limine.
+# A Mac that boots Limine is refused here, and a GRUB Mac restores only a
+# snapshot that carries the kernel on /boot (omarchy-mac-snapshot-check from
+# omarchy-mac-boot).
 #
 # This does the same job the way this layout allows: take a writable snapshot of
 # the chosen one, move the live @ aside, and put the new one in its place. That
@@ -211,6 +213,17 @@ warn_kernel_mismatch() {
   done
 }
 
+# A Mac that boots GRUB boots the kernel on /boot with the restored root's
+# modules, and m1n1 and U-Boot stay on the ESP: omarchy-mac-boot says whether
+# the snapshot at $1 carries that kernel, and why not.
+apple_snapshot_matches_boot() {
+  if omarchy-cmd-missing omarchy-mac-snapshot-check; then
+    warn "omarchy-mac-boot is not installed, so the snapshot cannot be checked against this Mac's boot partition"
+    return 1
+  fi
+  omarchy-mac-snapshot-check "$1"
+}
+
 cleanup() {
   (( REHEARSE )) && return 0
   mountpoint -q "$TOP" && umount "$TOP" 2>/dev/null || true
@@ -229,6 +242,14 @@ main() {
       *) fail "unknown argument: $1" ;;
     esac
   done
+
+  local apple=0
+  if [[ -z $rehearse_top ]] && omarchy-hw-apple-silicon; then
+    apple=1
+    if omarchy-cmd-present omarchy-mac-limine-active && omarchy-mac-limine-active; then
+      fail "this Mac boots Limine: restart, pick the snapshot under Snapshots in the Limine menu, and run omarchy-snapshot restore there"
+    fi
+  fi
 
   (( EUID == 0 )) || fail "run as root"
 
@@ -320,6 +341,9 @@ main() {
   (( index >= 0 )) || fail "could not match that choice"
 
   local source_path=${paths[$index]}
+  if (( apple )) && ! apple_snapshot_matches_boot "$TOP/$source_path"; then
+    fail "not restoring a snapshot this Mac's boot files do not match; nothing was changed"
+  fi
   local stamp
   stamp=$(date +%s)
 
@@ -328,9 +352,11 @@ main() {
   log "  subvolume: $source_path"
   log "  contents:  $(describe_subvolume "$source_path")"
   log "The current root is kept as @old-$stamp until you delete it."
-  warn "/boot is the EFI partition and is not part of any snapshot: the kernel"
-  warn "and initramfs stay as they are. After rolling back across a kernel"
-  warn "update, run 'sudo mkinitcpio -P'."
+  if (( ! apple )); then
+    warn "/boot is the EFI partition and is not part of any snapshot: the kernel"
+    warn "and initramfs stay as they are. After rolling back across a kernel"
+    warn "update, run 'sudo mkinitcpio -P'."
+  fi
   echo
   if (( ! REHEARSE )); then
     local typed

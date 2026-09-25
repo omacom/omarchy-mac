@@ -12,7 +12,7 @@ grep -F 'omarchy-cmd-missing limine-snapper-restore' "$snapshot" >/dev/null ||
 grep -F 'omarchy-system-snapshot-restore' "$snapshot" >/dev/null ||
   fail "snapshot restore falls back to the subvolume swap"
 ! grep -F 'omarchy-mac-snapshot-restore' "$snapshot" "$restore" >/dev/null ||
-  fail "snapshot restore does not use a Mac-prefixed command"
+  fail "snapshot restore does not use the GRUB-era omarchy-mac-snapshot-restore"
 grep -F 'subvol=/@' "$restore" >/dev/null ||
   fail "the fallback restore requires the @ subvolume layout"
 grep -F 'btrfs subvolume snapshot' "$restore" >/dev/null ||
@@ -29,6 +29,8 @@ cat >"$stub_bin/omarchy-cmd-missing" <<'SH'
 #!/bin/bash
 [[ $1 == limine-snapper-restore && ${LIMINE_RESTORE:-0} != 1 ]]
 SH
+# Not a Mac; snapshot-restore-mac-test.sh covers Macs.
+printf '#!/bin/bash\nexit 1\n' >"$stub_bin/omarchy-hw-apple-silicon"
 cat >"$stub_bin/sudo" <<'SH'
 #!/bin/bash
 printf 'sudo %s\n' "$*" >>"$TEST_LOG"
