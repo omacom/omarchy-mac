@@ -149,6 +149,29 @@ done
 [[ -f $stage/usr/share/wireplumber/wireplumber.conf.d/asahi-audio-no-suspend.conf ]] || fail 'the vendor speaker policy ships'
 pass 'the vendor speaker no-suspend policy replaces exact mx-mac user copies'
 
+# sudo -i clears XDG_RUNTIME_DIR while the owner's session bus still exists at
+# /run/user/UID. systemctl --user cannot reach it then, so setup must not try.
+python3 - "$user_setup" "$stage" "$work" <<'PY'
+import os, socket, subprocess, sys
+from pathlib import Path
+setup, stage, work = sys.argv[1:]
+runtime = Path(work)/'run-user'
+runtime.mkdir()
+script = Path(work)/'resume-setup'
+text = Path(setup).read_text().replace('$root/usr/', stage+'/usr/').replace('$root/etc/', stage+'/etc/').replace('$root/run/', stage+'/run/')
+script.write_text(text.replace('/run/user/$UID', str(runtime)))
+script.chmod(0o755)
+env = {k: v for k, v in os.environ.items() if k != 'XDG_RUNTIME_DIR'}
+env['HOME'] = work+'/resume'
+Path(env['CALLS']).write_text('')
+with socket.socket(socket.AF_UNIX) as bus:
+    bus.bind(str(runtime/'bus'))
+    subprocess.run([str(script)], env=env, check=True)
+    assert '--user' not in Path(env['CALLS']).read_text(), 'no user-bus call without XDG_RUNTIME_DIR'
+    assert (Path(env['HOME'])/'.config/systemd/user/graphical-session.target.wants/omarchy-asahi-mic.service').is_symlink()
+PY
+pass 'user setup skips the user bus when sudo cleared XDG_RUNTIME_DIR'
+
 # Live setup restarts a speakersafetyd left dead by a start-limit, and leaves a
 # running or disabled one alone.
 mkdir -p "$work/live" "$work/live-bin" "$stage/usr/lib/systemd/system"

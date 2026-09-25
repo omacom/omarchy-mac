@@ -51,8 +51,10 @@ elif [[ ! -L $wants/$unit || $(readlink "$wants/$unit") != "/usr/lib/systemd/use
   exit 0
 fi
 install -Dm644 /dev/null "$marker"
-# Offline user finalization needs no user bus or PipeWire endpoints.
-if [[ -z $root && -S ${XDG_RUNTIME_DIR:-/run/user/$UID}/bus ]]; then
+# Offline user finalization needs no user bus or PipeWire endpoints. systemctl
+# --user finds the bus only through XDG_RUNTIME_DIR, which sudo -i clears even
+# while the owner's session socket exists.
+if [[ -z $root && -n ${XDG_RUNTIME_DIR:-} && -S $XDG_RUNTIME_DIR/bus ]]; then
   systemctl --user daemon-reload
   systemctl --user cat "$unit"
   systemctl --user start "$unit"
