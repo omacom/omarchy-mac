@@ -1,6 +1,21 @@
-# Apple Silicon profile additions; install before omarchy-apply-system.
-# Consume alongside the shared base manifest, never on Intel/T2 or other ARM.
+# Apple Silicon additions, composed after omarchy-base.packages and
+# omarchy-aarch64.packages (omarchy-pkg-defaults apple-silicon); never on
+# Intel/T2 or other ARM. Install them before omarchy-apply-system. The kernel
+# and boot chain come with the image, as the kernel and bootloader do on x86_64.
 omarchy-mac
 omarchy-mac-boot
+
+# Audio: PipeWire's PulseAudio server and realtime scheduling, which x86_64
+# gets from its installer, and the Asahi speaker stack (install/hardware/apple/audio.sh).
+asahi-audio
+pipewire-alsa
+pipewire-pulse
+rtkit
+speakersafetyd
+
+# Hardware video decode (install/hardware/apple/video-decode.sh).
 avd-fw
 libva-v4l2_request-avd
+
+# Widevine for DRM streaming.
+widevine

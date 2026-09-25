@@ -1,8 +1,8 @@
 # Limine machines get "quiet splash" from the limine-entry-tool drop-in and the
 # plymouth hook from the mkinitcpio drop-in, both shipped by omarchy-settings.
-# Apple Silicon boots m1n1 -> U-Boot -> GRUB, and the aarch64 omarchy-settings
-# deliberately ships neither drop-in, so both have to land in the files GRUB
-# and mkinitcpio read directly. The menu title comes from GRUB_DISTRIBUTOR,
+# Apple Silicon boots m1n1 -> U-Boot -> GRUB, and omarchy-settings applies
+# neither drop-in there, so both have to land in the files GRUB and mkinitcpio
+# read directly. The menu title comes from GRUB_DISTRIBUTOR,
 # which defaults to the os-release name, so those machines otherwise offer to
 # boot "Arch Linux". Nothing here runs where Limine is installed or GRUB is not.
 omarchy-cmd-missing limine || return 0
