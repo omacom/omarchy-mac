@@ -32,6 +32,7 @@ esp=/boot/efi
 limine_gate=$R/var/lib/omarchy/limine.enabled
 limine_default=$R/etc/default/limine
 verify_unit=omarchy-mac-migrate-verify.service
+first_boot_marker=$R/var/lib/omarchy/mac-first-boot/pending
 candidate_repo=omarchy-mac-candidate
 
 # The Omarchy packaging key omarchy-keyring carries (as in omarchy-upgrade-to-quattro).
@@ -359,7 +360,21 @@ stage_candidate_repo() {
     install -m 644 "$target_set/$name" "$destination/$name" || return 1
     [[ $(sha256_of "$destination/$name") == "$sha" ]] || { echo "the copy of $name changed" >&2; return 1; }
   done < <(jq -r '.packages[] | "\(.filename)\t\(.sha256)"' "$target_set/manifest.json")
-  (cd "$destination" && repo-add -q "$candidate_repo.db.tar.gz" ./*.pkg.tar.*) >/dev/null || return 1
+  index_candidate_repo "$destination"
+}
+
+# Indexes the manifest's packages, and nothing else, in DIR (already holding
+# copies, or given links to the set with "link"). repo-add embeds a signature
+# lying beside a package, so the set's own signatures are never in DIR.
+index_candidate_repo() {
+  local destination=$1 mode=${2:-} files=() name
+  mapfile -t files < <(jq -r '.packages[].filename' "$target_set/manifest.json")
+  if [[ $mode == "link" ]]; then
+    for name in "${files[@]}"; do
+      ln -sfn "$target_set/$name" "$destination/$name" || return 1
+    done
+  fi
+  (cd "$destination" && repo-add -q "$candidate_repo.db.tar.gz" "${files[@]}") >/dev/null || return 1
   chmod -R go+rX "$destination"
 }
 
@@ -520,9 +535,7 @@ preflight() {
     if ! problem=$(verify_candidate_set "$target_set" "$work/gnupg"); then
       refuse "the candidate set does not verify: $problem"
     fi
-    (cd "$work/candidate" && repo-add -q "$candidate_repo.db.tar.gz" "$target_set"/*.pkg.tar.*) >/dev/null ||
-      die "cannot index the candidate set"
-    chmod -R go+rX "$work/candidate"
+    index_candidate_repo "$work/candidate" link || die "cannot index the candidate set"
   fi
   transaction=$work/transaction.conf
   transaction_conf "$future" "${target_set:+$work/candidate}" >"$transaction"
@@ -568,6 +581,7 @@ preflight() {
   printf '%s\n' "$cohort" >"$plan.new/cohort"
   printf '%s\n' "$boot_state" >"$plan.new/boot"
   printf '%s\n' "$luks" >"$plan.new/luks"
+  find "$first_boot_marker" "$R/var/lib/omarchy/first-boot/pending" -maxdepth 0 2>/dev/null >"$plan.new/first-boot" || true
   sync "$plan.new"/*
   rm -rf "$plan"
   mv "$plan.new" "$plan"
@@ -755,6 +769,12 @@ step_transaction() {
       die "the installed packages differ from the rehearsed transaction: $(diff "$expected" "$now" | grep '^[<>]' | head -n 3 | xargs)"
   fi
   rm -f "$pacman_db/sync/$candidate_repo".{db,db.sig}
+  # Fresh-image provisioning is never armed on an existing machine; a package
+  # may only carry over a marker the machine already had.
+  if [[ -e $first_boot_marker && ! -s $plan/first-boot ]]; then
+    say "Disarming the first-boot setup the transaction left on this installed Mac"
+    rm -f "$first_boot_marker"
+  fi
 }
 
 # Aurora, m1n1 and U-Boot came with the transaction; their stage-two image

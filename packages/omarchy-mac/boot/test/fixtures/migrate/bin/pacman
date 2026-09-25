@@ -133,6 +133,11 @@ fi
 if (( ! dbonly )); then
   [[ ! -e $fixture/fail-transaction ]] || { echo "error: failed to commit transaction" >&2; exit 1; }
   echo "transaction ${args[*]}" >>"$fixture/pacman.log"
+  # A package scriptlet that arms first boot, as a fresh image's would.
+  if [[ -e $fixture/scriptlet-arms-first-boot ]]; then
+    mkdir -p "$root/var/lib/omarchy/mac-first-boot"
+    : >"$root/var/lib/omarchy/mac-first-boot/pending"
+  fi
 fi
 for name in "${!version[@]}"; do
   echo "$name ${version[$name]}"

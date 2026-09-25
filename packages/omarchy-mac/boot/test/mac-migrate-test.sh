@@ -525,6 +525,18 @@ output=$(migrate run --target "$F/stable-target" 2>&1) && fail "another target i
 grep -q "a migration to candidate-set apple-test-fixture .* is in progress" <<<"$output" || fail "the refusal names the migration in progress" "$output"
 pass "a migration in progress keeps its target"
 
+new_fixture first-boot
+: >"$F/scriptlet-arms-first-boot"
+finish
+[[ ! -e $R/var/lib/omarchy/mac-first-boot/pending ]] || fail "a first-boot marker armed by the transaction is removed"
+new_fixture first-boot-kept
+: >"$F/scriptlet-arms-first-boot"
+mkdir -p "$R/var/lib/omarchy/mac-first-boot"
+: >"$R/var/lib/omarchy/mac-first-boot/pending"
+finish
+[[ -e $R/var/lib/omarchy/mac-first-boot/pending ]] || fail "a first-boot marker the Mac already had stays"
+pass "fresh-image first boot is never armed on an existing Mac"
+
 # --- A tester already on Aurora and Limine ------------------------------------
 
 # The converged image's state (the M2 Max): Aurora, m1n1-aurora, Limine in the
