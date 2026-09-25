@@ -487,6 +487,7 @@ pass "a journal for a disk that is not / is dropped"
 fixture
 if attempt 0 "$old_password" ""; then fail "an empty password is refused"; fi
 if attempt 0 "$old_password" "secret123" "*"; then fail "a mismatched confirmation is refused"; fi
+if attempt 0 "$old_password" "$old_password" "$old_password"; then fail "the current password is refused as the new one"; fi
 ! grep -q 'luksChangeKey\|chpasswd' "$tmp/sudo-calls" && [[ ! -e $journal && $(account owner) == "$old_password" ]] ||
   fail "refused passwords change nothing"
-pass "drive password rejects empty and mismatched passphrases before changing anything"
+pass "drive password rejects empty, mismatched and unchanged passphrases before changing anything"
