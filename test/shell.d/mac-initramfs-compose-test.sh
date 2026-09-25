@@ -32,13 +32,12 @@ SH
   chmod +x "$1/modinfo"
 }
 
+# omarchy-mac-boot depends on the runtime, so every fixture has the detector;
+# the package's own tests cover a runtime too old to ship it.
 for platform in apple-silicon qualcomm generic-aarch64 generic; do
   fake_platform "$test_tmp/platforms/$platform" "$platform"
   fake_modinfo "$test_tmp/platforms/$platform/bin"
 done
-# omarchy-settings without the runtime package: no detector on PATH.
-mkdir -p "$test_tmp/platforms/no-detector/bin"
-fake_modinfo "$test_tmp/platforms/no-detector/bin"
 
 # mkinitcpio's stock mkinitcpio.conf and Omarchy's drop-ins, reading a scratch
 # vconsole.conf. $1 is 1 to install omarchy-mac-boot's drop-ins too.
@@ -76,7 +75,6 @@ compose() {
   done
 
   local path="$fixture/bin:$ROOT/bin:$PATH"
-  [[ $1 != "no-detector" ]] || path="$fixture/bin"
   KERNELVERSION=7.1.12-test OMARCHY_PROC_ROOT="$fixture/proc" OMARCHY_PCI_DEVICES_PATH="$test_tmp/no-pci" PATH="$path" \
     "$BASH" -c '
       . "$1" || exit 1
@@ -125,11 +123,23 @@ composed=$(compose apple-silicon) || fail "the Apple drop-ins source cleanly wit
     "HOOKS=($(field HOOKS "$composed")) FILES=($(field FILES "$composed"))"
 pass "a non-Latin layout keeps sd-vconsole and vconsole.conf out of the Apple initramfs"
 
+# The baseline replaces mkinitcpio.conf's line, so a busybox encrypt line (a Mac
+# unlocked by cryptdevice=) only survives from a local drop-in sorting before
+# the Apple ones. They add the firmware hooks and leave its unlock alone.
+printf 'KEYMAP=us\nXKBLAYOUT=us\n' >"$vconsole_conf"
+new_etc 1
+printf 'HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystems fsck)\n' \
+  >"$etc/mkinitcpio.conf.d/50-local.conf"
+composed=$(compose apple-silicon) || fail "the Apple drop-ins source cleanly over a local busybox line"
+[[ $(field HOOKS "$composed") == "base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt asahi omarchy-vendorfw filesystems fsck" ]] ||
+  fail "a local busybox encrypt line keeps its unlock and gains the firmware hooks" "HOOKS=($(field HOOKS "$composed"))"
+pass "a local busybox encrypt line keeps its unlock and gains the firmware hooks"
+
 # Elsewhere, installing omarchy-mac-boot changes nothing: not HOOKS, MODULES or
 # FILES, whichever layout the machine has.
 for layout in us ru; do
   printf 'KEYMAP=%s\nXKBLAYOUT=%s\n' "$layout" "$layout" >"$vconsole_conf"
-  for platform in qualcomm generic-aarch64 generic no-detector; do
+  for platform in qualcomm generic-aarch64 generic; do
     new_etc 0
     without=$(compose "$platform") || fail "the baseline sources cleanly on $platform"
     new_etc 1
@@ -141,4 +151,4 @@ for layout in us ru; do
       fail "omarchy-mac-boot's drop-ins contribute nothing on $platform ($layout layout)" "$with"
   done
 done
-pass "omarchy-mac-boot's drop-ins contribute nothing on Qualcomm, generic aarch64, x86 or without the detector"
+pass "omarchy-mac-boot's drop-ins contribute nothing on Qualcomm, generic aarch64 or x86"

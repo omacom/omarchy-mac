@@ -102,7 +102,7 @@ mapfile -t out < <(after "$dropin" "${stock[@]}")
 echo 'ok - without vconsole.conf the line is unchanged and nothing is bundled'
 
 vconsole KEYMAP=ru XKBLAYOUT=ru
-for platform in qualcomm generic-aarch64 generic "" fail; do
+for platform in qualcomm generic-aarch64 generic ""; do
   for line in "${stock[*]}" "${busybox[*]}"; do
     # shellcheck disable=SC2086
     mapfile -t out < <(OMARCHY_TEST_HW_PLATFORM=$platform after "$dropin" $line)
@@ -110,7 +110,10 @@ for platform in qualcomm generic-aarch64 generic "" fail; do
       fail "the drop-in changes nothing off Apple Silicon (detector: ${platform:-empty})" "HOOKS=(${out[1]}) FILES=(${out[2]})"
   done
 done
-echo 'ok - off Apple Silicon the drop-in changes nothing, even for a non-Latin layout'
+if OMARCHY_TEST_HW_PLATFORM=fail bash -c 'HOOKS=(base systemd); source "$1"' _ "$dropin"; then
+  fail "a detector that cannot place the machine stops the build"
+fi
+echo 'ok - off Apple Silicon the drop-in changes nothing, even for a non-Latin layout; a failing detector stops it'
 
 # The whole Mac chain over a busybox line: 90 → 94, as mkinitcpio sources them.
 vconsole KEYMAP=dk-latin1 XKBLAYOUT=dk

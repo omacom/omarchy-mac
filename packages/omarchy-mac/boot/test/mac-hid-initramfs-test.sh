@@ -168,13 +168,18 @@ mapfile -t sourced < <(source_hid hid_apple=/lib/modules/x/hid-apple.ko)
   fail "a driver the kernel does not build is left out" "MODULES=(${sourced[1]})"
 echo 'ok - a driver the kernel does not build is left out'
 
-for platform in qualcomm generic-aarch64 generic "" fail; do
+for platform in qualcomm generic-aarch64 generic ""; do
   mapfile -t sourced < <(OMARCHY_TEST_HW_PLATFORM=$platform source_hid \
     hid_apple=/lib/modules/x/hid-apple.ko usbhid=/lib/modules/x/usbhid.ko thunderbolt=/lib/modules/x/thunderbolt.ko)
   [[ ${sourced[0]} == 0 && ${sourced[1]} == btrfs && ${sourced[2]} == unset ]] ||
     fail "the drop-in adds no module off Apple Silicon (detector: ${platform:-empty})" "status ${sourced[0]} MODULES=(${sourced[1]})"
 done
-echo 'ok - off Apple Silicon the drop-in adds no module'
+mapfile -t sourced < <(OMARCHY_TEST_HW_PLATFORM=fail source_hid hid_apple=/lib/modules/x/hid-apple.ko)
+[[ ${sourced[0]} != 0 ]] || fail "a detector that cannot place the machine stops the build"
+write_modinfo hid_apple=/lib/modules/x/hid-apple.ko
+modules=$(MODINFO_DIR=$tmp/modinfo KERNELVERSION=x PATH=$stub "$BASH" -c 'MODULES=(); source "$1"; printf "%s" "${MODULES[*]}"' bash "$hid_conf")
+[[ $modules == hid_apple ]] || fail "a runtime without the detector keeps the Apple modules" "MODULES=($modules)"
+echo 'ok - off Apple Silicon the drop-in adds no module; a failing detector stops it, a missing one keeps the Mac behaviour'
 
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${IN_OMARCHY_MAC_HID_TEST:-0} != "1" ]]; then
   echo 'ok - source checks passed; disposable initramfs/block tests not run (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in)'

@@ -79,11 +79,17 @@ hooks_after() {
 [[ $(hooks_after base udev autodetect keyboard keymap block encrypt filesystems fsck) == \
   "base udev autodetect keyboard keymap block encrypt filesystems fsck" ]] ||
   fail "a cryptdevice= Mac (busybox encrypt hook) keeps its HOOKS line untouched"
-for platform in qualcomm generic-aarch64 generic "" fail; do
+for platform in qualcomm generic-aarch64 generic ""; do
   [[ $(OMARCHY_TEST_HW_PLATFORM=$platform hooks_after base udev autodetect keyboard keymap block filesystems fsck) == \
     "base udev autodetect keyboard keymap block filesystems fsck" ]] ||
     fail "the drop-in leaves HOOKS alone off Apple Silicon (detector: ${platform:-empty})"
 done
+if OMARCHY_TEST_HW_PLATFORM=fail bash -c 'HOOKS=(base systemd block filesystems); source "$1"' _ "$DROPIN"; then
+  fail "a detector that cannot place the machine stops the build"
+fi
+[[ $(PATH=/nonexistent hooks_after base udev autodetect keyboard keymap block filesystems fsck) == \
+  "base systemd autodetect keyboard sd-vconsole block omarchy-mac-encrypt sd-encrypt filesystems fsck" ]] ||
+  fail "a runtime without the detector keeps the Apple hooks"
 
 grep -Fq 'cryptsetup reencrypt --encrypt' "$SCRIPT" &&
   grep -Fq -- '--reduce-device-size' "$SCRIPT" && grep -Fq -- '--device-size' "$SCRIPT" &&
