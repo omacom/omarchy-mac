@@ -68,6 +68,17 @@ cat >"$stub_bin/omarchy-mac-esp" <<'SH'
 [[ -n ${TEST_ESP-/boot/efi} ]] || exit 1
 echo "${TEST_ESP-/boot/efi}"
 SH
+# The root's LUKS header: keyslots, then tokens, which luksDump lists alike.
+cat >"$stub_bin/cryptsetup" <<'SH'
+#!/bin/bash
+[[ $1 == luksDump && -e $2 ]] || exit 1
+[[ -z ${TEST_DUMP_FAIL:-} ]] || exit 1
+printf 'LUKS header information\nVersion:       \t2\n\nKeyslots:\n'
+for slot in ${TEST_KEYSLOTS-2 3}; do printf '  %s: luks2\n\tKey:        512 bits\n' "$slot"; done
+printf 'Tokens:\n'
+for token in ${TEST_TOKENS-}; do printf '  %s: luks2-keyring\n\tKeyslot:    3\n' "$token"; done
+printf 'Digests:\n  0: pbkdf2\n'
+SH
 chmod +x "$stub_bin"/*
 
 luks_uuid=1b2c3d4e-0000-4000-8000-000000000001
@@ -103,7 +114,7 @@ limine_fixture() {
 }
 
 run() {
-  OMARCHY_MAC_BOOT_ROOT=$root PATH="$stub_bin:$PATH" "$entry/$1" 2>"$test_tmp/err"
+  OMARCHY_MAC_BOOT_ROOT=$root PATH="$stub_bin:$PATH" "$entry/$1" "${@:2}" 2>"$test_tmp/err"
 }
 
 snapshot() {
@@ -114,7 +125,7 @@ error_says() {
   grep -Fq "$1" "$test_tmp/err" || fail "the error says: $1" "$(cat "$test_tmp/err")"
 }
 
-for name in provision-prepare provision-commit provision-verify; do
+for name in provision-prepare provision-commit provision-verify luks-slots; do
   [[ -x $entry/$name && $(head -n 1 "$entry/$name") == "#!/bin/bash -p" ]] ||
     fail "$name is an executable entrypoint that ignores BASH_ENV"
 done
@@ -129,8 +140,8 @@ pass "provision-prepare accepts an encrypted image root and changes nothing"
 for platform in generic-aarch64 qualcomm generic; do
   fixture
   before=$(snapshot)
-  for name in provision-prepare provision-commit provision-verify; do
-    if TEST_PLATFORM=$platform run "$name"; then fail "$name refuses to run on $platform"; fi
+  for name in provision-prepare provision-commit provision-verify luks-slots; do
+    if TEST_PLATFORM=$platform run "$name" owner=2; then fail "$name refuses to run on $platform"; fi
     error_says "runs only on Apple Silicon"
   done
   [[ $(snapshot) == "$before" && ! -s $calls ]] || fail "nothing changes on $platform"
@@ -216,8 +227,8 @@ pass "provision-prepare requires the boot files to go to the ESP the Mac boots f
 # is the key, encrypt.state or the initramfs the Mac boots.
 fixture
 before=$(snapshot)
-for name in provision-prepare provision-commit provision-verify; do
-  if TEST_BOOT_UUID="" run "$name"; then fail "$name refuses while the Boot partition is not mounted"; fi
+for name in provision-prepare provision-commit provision-verify luks-slots; do
+  if TEST_BOOT_UUID="" run "$name" owner=2; then fail "$name refuses while the Boot partition is not mounted"; fi
   error_says "Boot partition is not mounted"
 done
 [[ $(snapshot) == "$before" && ! -s $calls ]] || fail "nothing changes without the Boot partition"
@@ -361,3 +372,73 @@ run provision-verify || fail "a declined Mac has no staged unlock"
 rm "$root/boot/omarchy/encrypt.state"
 run provision-verify || fail "a Mac without encrypt.state has no staged unlock"
 pass "provision-verify finds every boot-time copy of the staged unlock"
+
+# ── luks-slots ─────────────────────────────────────────────────────────────
+# A finished Mac: provision-commit recorded owner 2 and recovery 3.
+slots_fixture() {
+  fixture
+  run provision-commit || fail "the luks-slots fixture commits" "$(cat "$test_tmp/err")"
+  : >"$calls"
+  unset TEST_KEYSLOTS TEST_TOKENS TEST_DUMP_FAIL
+}
+
+state_is() {
+  [[ $(cat "$root/boot/omarchy/encrypt.state") == "format=1
+phase=finished
+partition=5f2b0c3e-0003
+luks_uuid=$luks_uuid
+$1" ]] || fail "$2" "$(cat "$root/boot/omarchy/encrypt.state")"
+}
+
+# The password change moved the owner's key from slot 2 to slot 0.
+slots_fixture
+before=$( (cd "$root" && find boot etc var dev -type f ! -name encrypt.state -exec sha256sum {} + | sort) )
+TEST_KEYSLOTS="0 3" run luks-slots owner=0 || fail "luks-slots records the owner's new slot" "$(cat "$test_tmp/err")"
+state_is $'owner_slot=0\nrecovery_slot=3' "the owner's new slot is recorded beside the recovery slot"
+[[ $( (cd "$root" && find boot etc var dev -type f ! -name encrypt.state -exec sha256sum {} + | sort) ) == "$before" && ! -s $calls ]] ||
+  fail "luks-slots changes nothing but encrypt.state"
+TEST_KEYSLOTS="0 3" run luks-slots owner=0 || fail "luks-slots is idempotent"
+state_is $'owner_slot=0\nrecovery_slot=3' "a repeated record changes nothing"
+TEST_KEYSLOTS="4 5" run luks-slots owner=4 recovery=5 || fail "luks-slots records both slots" "$(cat "$test_tmp/err")"
+state_is $'owner_slot=4\nrecovery_slot=5' "both slots are recorded"
+TEST_KEYSLOTS="4" run luks-slots owner=4 recovery= || fail "an empty recovery= records none" "$(cat "$test_tmp/err")"
+state_is 'owner_slot=4' "an empty recovery= drops the recovery slot"
+pass "luks-slots records the owner's and the recovery slot the header holds, keeping the rest of encrypt.state"
+
+refused() {
+  local context=$1 says=$2
+  shift 2
+  if run luks-slots "$@"; then fail "luks-slots refuses $context"; fi
+  error_says "$says"
+  state_is $'owner_slot=2\nrecovery_slot=3' "$context: encrypt.state is untouched"
+}
+slots_fixture
+TEST_KEYSLOTS="0 2" refused "a recorded recovery slot the header lost" "has no key in slot 3" owner=0
+TEST_KEYSLOTS="3" refused "an owner slot the header does not hold" "has no key in slot 0" owner=0
+TEST_KEYSLOTS="3" TEST_TOKENS="0" refused "a keyring token numbered like the owner's slot" "has no key in slot 0" owner=0
+refused "the same slot for both" "cannot share key slot 3" owner=3
+refused "a missing owner" "needs owner=<slot>" recovery=3
+refused "a slot past the header's 32" "needs owner=<slot>" owner=32
+refused "an argument it does not know" "not: slot=2" owner=2 slot=2
+refused "a malformed recovery slot" "needs recovery=<slot>" owner=2 recovery=x
+TEST_DUMP_FAIL=1 refused "an unreadable header" "Could not read the key slots" owner=2
+rm "$root/dev/disk/by-uuid/$luks_uuid"
+refused "a LUKS device crypttab does not name" "Could not find the encrypted disk" owner=2
+pass "luks-slots never records a slot the root's LUKS header does not hold"
+
+for phase in plaintext shrunk reencrypting encrypted; do
+  fixture
+  sed -i "s/^phase=.*/phase=$phase/" "$root/boot/omarchy/encrypt.state"
+  before=$(cat "$root/boot/omarchy/encrypt.state")
+  if run luks-slots owner=2 recovery=3; then fail "luks-slots refuses phase=$phase"; fi
+  [[ $(cat "$root/boot/omarchy/encrypt.state") == "$before" ]] || fail "phase=$phase: encrypt.state is untouched"
+done
+fixture
+sed -i 's/^phase=.*/phase=declined/' "$root/boot/omarchy/encrypt.state"
+before=$(cat "$root/boot/omarchy/encrypt.state")
+run luks-slots owner=2 || fail "a declined Mac has nothing to record"
+[[ $(cat "$root/boot/omarchy/encrypt.state") == "$before" ]] || fail "a declined Mac's encrypt.state is untouched"
+rm "$root/boot/omarchy/encrypt.state"
+run luks-slots owner=2 || fail "a Mac without encrypt.state has nothing to record"
+[[ ! -e $root/boot/omarchy/encrypt.state ]] || fail "luks-slots creates no encrypt.state"
+pass "luks-slots records nothing on a Mac the image did not encrypt, and waits for an unfinished conversion"

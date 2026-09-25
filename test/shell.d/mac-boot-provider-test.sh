@@ -29,7 +29,7 @@ for entry in omarchy-provision-owner omarchy-system-factory-reset; do
       fail "$entry leaves $pattern to the boot package" "$(grep -Fn -- "$pattern" "$ROOT/bin/$entry")"
   done
 done
-for operation in provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback; do
+for operation in provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback luks-slots; do
   [[ -x $work/stage/usr/lib/omarchy/mac-boot/$operation ]] || fail "omarchy-mac-boot ships $operation"
 done
 pass "owner provisioning and factory reset handle Apple boot files only through the boot package's dispatch entrypoints"

@@ -5,14 +5,16 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 # Owner provisioning's LUKS re-key, killed after every durable step and rerun.
-# Each attempt is its own process, like a reboot: the shared re-key, the unlock
-# callbacks lifted from omarchy-provision-owner, and a cryptsetup that is either
-# a slot-table fake or the real binary on a file-backed volume. The callbacks
-# reach the platform through the real omarchy-lifecycle-dispatch: on an x86
-# fixture it is a no-op and the Limine UKI path runs; on an Apple fixture a fake
-# omarchy-mac-boot with provisioning entrypoints owns the unlock on the boot
-# partition and GRUB command line; provision-owner-luks-test.sh runs the real
-# ones.
+# Each attempt is its own process, like a reboot: omarchy-provision-owner's
+# setup attempt from the accepted owner form on (the recovery key, then the
+# worker), the shared re-key and recovery code, and a cryptsetup that is either
+# a slot-table fake or the real binary on a file-backed LUKS2 or LUKS1 volume.
+# The callbacks reach the platform through the real omarchy-lifecycle-dispatch:
+# on an x86 fixture it is a no-op, the Limine UKI path runs and no recovery key
+# is made; on an Apple fixture a fake omarchy-mac-boot with provisioning and
+# luks-slots entrypoints owns the unlock on the boot partition and GRUB command
+# line and records the kept slots, so setup adds a recovery key;
+# provision-owner-luks-test.sh runs the real entrypoints.
 
 tmp=$(mktemp -d)
 token_key=""
@@ -73,6 +75,11 @@ SH
 mac_boot_entrypoint boot-rebuild <<'SH'
 echo rebuild >>"$TMP/rebuilds"
 SH
+mac_boot_entrypoint luks-slots <<'SH'
+[[ ! -e $TMP/record-fail ]] || exit 1
+printf '%s\n' "$@" >"$TMP/slot-record"
+crash "slots recorded"
+SH
 chmod 755 "$mac_boot"/*
 chmod -R go-w "$tmp/lifecycle"
 
@@ -81,20 +88,25 @@ seller_key=previous-owner-key
 owner_password=owner-password
 
 sed -n '/^PROVISIONING_UNLOCK_FILES=(/,/^)/p; /^UNLOCK_OWNER=/p; /^limine_auto_unlock_present() {/,/^}/p; /^limine_auto_unlock_drop() {/,/^}/p
-  /^unlock_owner() {/,/^}/p; /^luks_auto_unlock_present() {/,/^}/p; /^luks_auto_unlock_drop() {/,/^}/p' \
+  /^unlock_owner() {/,/^}/p; /^luks_auto_unlock_present() {/,/^}/p; /^luks_auto_unlock_drop() {/,/^}/p
+  /^luks_record_slots() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/unlock.sh"
-grep -q '^luks_auto_unlock_drop() {' "$tmp/unlock.sh" && grep -q '^limine_auto_unlock_drop() {' "$tmp/unlock.sh" ||
-  fail "omarchy-provision-owner defines the dispatched and Limine auto-unlock callbacks"
+grep -q '^luks_auto_unlock_drop() {' "$tmp/unlock.sh" && grep -q '^limine_auto_unlock_drop() {' "$tmp/unlock.sh" &&
+  grep -q '^luks_record_slots() {' "$tmp/unlock.sh" ||
+  fail "omarchy-provision-owner defines the dispatched and Limine auto-unlock callbacks and the slot record"
 sed -n '/^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p
-  /^platform_ready() {/,/^}/p; /^run_setup() {/,/^}/p; /^refresh_boot_entries() {/,/^}/p' \
+  /^platform_ready() {/,/^}/p; /^run_setup() {/,/^}/p; /^refresh_boot_entries() {/,/^}/p
+  /^recovery_key_offered() {/,/^}/p; /^rekey_accepts_password() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/provision.sh"
-grep -q '^run_provisioning() {' "$tmp/provision.sh" && grep -q '^run_setup() {' "$tmp/provision.sh" ||
+grep -q '^run_provisioning() {' "$tmp/provision.sh" && grep -q '^run_setup() {' "$tmp/provision.sh" &&
+  grep -q '^recovery_key_offered() {' "$tmp/provision.sh" ||
   fail "omarchy-provision-owner defines its setup and provisioning worker"
 
 cat >"$tmp/attempt.sh" <<'SH'
 set -euo pipefail
 
 source "$ROOT/install/provisioning/luks-rekey.sh"
+source "$ROOT/install/provisioning/luks-recovery.sh"
 source "$TMP/unlock.sh"
 
 PROVISIONING_DIR=$TMP/provisioning
@@ -140,11 +152,12 @@ shred() {
 }
 
 fake_cryptsetup() {
-  local op=$1 key_file="" token_type="" target="" extra="" material slot next
+  local op=$1 key_file="" token_type="" target="" extra="" requested="" material slot next
   shift
   while (( $# )); do
     case $1 in
       --key-file) key_file=$2; shift 2 ;;
+      --key-slot) requested=$2; shift 2 ;;
       --token-type) token_type=$2; shift 2 ;;
       -*) shift ;;
       *)
@@ -187,9 +200,13 @@ fake_cryptsetup() {
   case $op in
     open) echo "Key slot $slot unlocked." ;;
     luksAddKey)
-      for (( next = 0; next < 32; next++ )); do
-        awk '{ print $1 }' "$TMP/slots" | grep -qx "$next" || break
-      done
+      next=$requested
+      if [[ -z $next ]]; then
+        for (( next = 0; next < 32; next++ )); do
+          awk '{ print $1 }' "$TMP/slots" | grep -qx "$next" || break
+        done
+      fi
+      ! awk '{ print $1 }' "$TMP/slots" | grep -qx "$next" || return 1
       printf '%s %s\n' "$next" "$(cat "$extra")" >>"$TMP/slots"
       ;;
     *) return 1 ;;
@@ -207,13 +224,22 @@ cryptsetup() {
   fi
   (( status == 0 )) || return "$status"
   case $1 in
-    luksAddKey) echo add >>"$TMP/adds"; crash_point "owner key added" ;;
+    luksAddKey)
+      if [[ " $* " == *" --key-slot "* ]]; then
+        echo recovery >>"$TMP/adds"
+        crash_point "recovery key added"
+      else
+        echo owner >>"$TMP/adds"
+        crash_point "owner key added"
+      fi
+      ;;
     luksKillSlot) crash_point "slot ${*: -1} killed" ;;
   esac
 }
 
-# The first-boot worker around the re-key, with account and boot setup stubbed.
-provision() {
+# omarchy-provision-owner's setup functions, with account and boot setup and
+# the screen stubbed.
+setup_functions() {
   source "$TMP/provision.sh"
   STATE_FILE=$TMP/state
   FINALIZE_WARNING_FLAG=$TMP/finalize-warning
@@ -230,7 +256,38 @@ provision() {
   }
   luks_device() { echo "$DEVICE"; }
   systemctl() { :; }
+  clear_logo() { :; }
+  sleep() { :; }
+  say() { printf '%s\n' "$*" >>"$TMP/screen"; }
+}
+
+# The first-boot worker around the re-key.
+provision() {
+  setup_functions
   run_provisioning
+}
+
+# A whole setup attempt once the owner form is filled in: the password check,
+# the recovery key where the platform records one, then the worker.
+attempt() {
+  setup_functions
+  keyboard_form() { :; }
+  user_form() { :; }
+  confirm_form() { :; }
+  notice() {
+    printf 'refused: %s\n' "$1" >>"$TMP/screen"
+    exit 3
+  }
+  set_now() { NOW=0; }
+  render_setup_static() { :; }
+  render_setup_dynamic() { :; }
+  SHOW_CURSOR=""
+  # The key goes to a file only the test reads; it is not what the owner sees.
+  show_recovery_key() {
+    printf '%s %s\n' "$RECOVERY_REPLACED" "$1" >>"$TMP/recovery-shown"
+    crash_point "recovery key shown"
+  }
+  run_setup
 }
 
 # First-boot setup up to the owner form, with the screen captured.
@@ -248,6 +305,7 @@ setup() {
 
 case $MODE in
   provision) provision ;;
+  attempt) attempt ;;
   setup) setup ;;
   rekey) luks_rekey "$DEVICE" ;;
   accepts) luks_rekey_accepts_password "$DEVICE" ;;
@@ -286,7 +344,7 @@ slot_count() {
 fixture() {
   local format=${1:-luks2}
   rm -rf "$tmp/provisioning" "$tmp/etc" "$tmp/boot" "$tmp/log" "$tmp/output" "$tmp/trace" "$tmp/rebuilds" "$tmp/adds" "$tmp/rebuild-fail" "$tmp/kill-noop" \
-    "$tmp/prepare-fail" "$tmp/screen" "$tmp/stale" "$tmp/token-slot"
+    "$tmp/prepare-fail" "$tmp/screen" "$tmp/stale" "$tmp/token-slot" "$tmp/recovery-shown" "$tmp/slot-record" "$tmp/record-fail"
   mkdir -p "$tmp/provisioning"
   chmod 755 "$tmp/provisioning"
   touch "$tmp/provisioning/pending"
@@ -343,11 +401,21 @@ unlock_files_present() {
     grep -qs 'rd\.luks\.key=' "$tmp/etc/default/grub"
 }
 
+# Every recovery key setup showed, the last one first.
+shown_keys() {
+  [[ -e $tmp/recovery-shown ]] || return 0
+  tac "$tmp/recovery-shown" | cut -d' ' -f2
+}
+
 no_secrets_in() {
-  local file
+  local file key
+  local -a keys=(-e "$staged_key" -e "$seller_key" -e "$owner_password" -e "other-password")
+  for key in $(shown_keys); do
+    keys+=(-e "$key")
+  done
   for file in "$@"; do
     [[ -e $file ]] || continue
-    ! grep -Fq -e "$staged_key" -e "$seller_key" -e "$owner_password" -e "other-password" "$file" ||
+    ! grep -Fq "${keys[@]}" "$file" ||
       fail "$backend: $(basename "$file") holds no key material" "$(cat "$file")"
   done
 }
@@ -364,6 +432,11 @@ assert_recoverable() {
   if [[ -n $(opens "$staged_key") && ! -f $tmp/provisioning/luks-key ]]; then
     fail "$backend: $context: the staged key file is kept while it still unlocks the volume"
   fi
+  # Once the owner acknowledged a recovery key, it opens the disk from then on.
+  if grep -qsx 'recovery_shown=1' "$tmp/provisioning/luks-rekey.state"; then
+    [[ $(opens "$(shown_keys | head -n 1)") == "$(grep -s '^recovery_slot=' "$tmp/provisioning/luks-rekey.state" | cut -d= -f2)" ]] ||
+      fail "$backend: $context: the acknowledged recovery key opens its slot"
+  fi
   if [[ -f $tmp/provisioning/luks-rekey.state ]]; then
     [[ $(stat -c %a "$tmp/provisioning/luks-rekey.state") == "600" ]] || fail "$backend: $context: the journal is private"
   fi
@@ -371,17 +444,35 @@ assert_recoverable() {
   no_secrets_in "$tmp/provisioning/luks-rekey.state" "$tmp/log"
 }
 
+# The re-key finished: the owner's slot and, where setup made one, the recovery
+# slot whose key the owner acknowledged last are all the volume holds.
 assert_finished() {
-  local context=$1 password=$2 max_adds=${3:-1} adds=0
-  [[ $(slot_count) == "1" && -n $(opens "$password") ]] || fail "$backend: $context: only the owner's slot remains" "$(cat "$tmp/log")"
+  local context=$1 password=$2 max_adds=${3:-1} adds=0 kept=1 owner recovery="" recovery_key key
+  recovery_key=$(shown_keys | head -n 1)
+  owner=$(opens "$password")
+  [[ -z $recovery_key ]] || kept=2
+  [[ $(slot_count) == "$kept" && -n $owner ]] || fail "$backend: $context: only the owner's slot and an acknowledged recovery slot remain" "$(cat "$tmp/log")"
+  if [[ -n $recovery_key ]]; then
+    recovery=$(opens "$recovery_key")
+    [[ -n $recovery && $recovery != "$owner" ]] || fail "$backend: $context: the recovery key the owner acknowledged unlocks the volume"
+    for key in $(shown_keys | tail -n +2); do
+      [[ $key == "$recovery_key" || -z $(opens "$key") ]] || fail "$backend: $context: a replaced recovery key no longer unlocks the volume"
+    done
+  fi
   [[ -z $(opens "$staged_key") ]] || fail "$backend: $context: the staged install key no longer unlocks the volume"
   [[ -z $(opens "$seller_key") ]] || fail "$backend: $context: the previous owner's key no longer unlocks the volume"
   [[ ! -e $tmp/provisioning/luks-key ]] || fail "$backend: $context: the staged key file is destroyed"
   ! unlock_files_present || fail "$backend: $context: no boot-time auto-unlock remains"
-  [[ -f $tmp/adds ]] && adds=$(wc -l <"$tmp/adds")
+  [[ -f $tmp/adds ]] && adds=$(grep -c '^owner' "$tmp/adds" || true)
   (( adds <= max_adds )) || fail "$backend: $context: the owner's key is added at most $max_adds time(s)"
   ! run remains "$password" || fail "$backend: $context: nothing of the staged unlock remains"
-  no_secrets_in "$tmp/provisioning/luks-rekey.state" "$tmp/log" "$tmp/output"
+  if [[ $platform == "apple" ]]; then
+    [[ $(cat "$tmp/slot-record" 2>/dev/null) == "owner=$owner"$'\n'"recovery=$recovery" ]] ||
+      fail "$backend: $context: the boot package records the slots the volume keeps" "$(cat "$tmp/slot-record" 2>/dev/null)"
+  else
+    [[ ! -e $tmp/slot-record ]] || fail "$backend: $context: x86 records no slots"
+  fi
+  no_secrets_in "$tmp/provisioning/luks-rekey.state" "$tmp/log" "$tmp/output" "$tmp/slot-record"
 }
 
 # Setup completed: the disk opens with the password the account got, and the
@@ -399,12 +490,13 @@ else
   pass "cryptsetup is not installed; skipping the file-backed volume runs"
 fi
 
-# The crash matrix runs on every backend for x86 and on the fake for Apple.
+# The crash matrix runs whole setup attempts on every backend, for x86 and for
+# Apple, where the attempt adds and shows a recovery key before the worker.
 matrix=()
 for backend in "${backends[@]}"; do
   matrix+=("x86 $backend")
+  [[ " ${platforms[*]} " != *" apple "* ]] || matrix+=("apple $backend")
 done
-[[ " ${platforms[*]} " != *" apple "* ]] || matrix+=("apple fake")
 
 for run_spec in "${matrix[@]}"; do
   read -r platform backend <<<"$run_spec"
@@ -413,11 +505,17 @@ for run_spec in "${matrix[@]}"; do
   [[ $backend == "fake" ]] && format=luks2
 
   fixture "$format"
-  run provision "$owner_password" || fail "$backend: uninterrupted setup completes" "$(cat "$tmp/log" "$tmp/output")"
+  run attempt "$owner_password" || fail "$backend: uninterrupted setup completes" "$(cat "$tmp/log" "$tmp/output")"
   assert_provisioned "uninterrupted" "$owner_password"
   total_steps=$(cat "$tmp/steps")
   (( total_steps >= 11 )) || fail "$backend: every durable step is a crash point" "$(cat "$tmp/trace")"
-  pass "$platform $backend: uninterrupted setup leaves only the owner's slot and destroys the staged key"
+  if [[ $platform == "apple" ]]; then
+    [[ $(wc -l <"$tmp/recovery-shown") == "1" ]] || fail "apple $backend: the recovery key is shown once"
+    pass "apple $backend: uninterrupted setup leaves the owner's and the recovery slot, records them and destroys the staged key"
+  else
+    [[ ! -e $tmp/recovery-shown ]] || fail "x86 $backend: setup makes no recovery key"
+    pass "x86 $backend: uninterrupted setup leaves only the owner's slot and destroys the staged key"
+  fi
 
   # After each kill the owner reboots and answers the form again, with the same
   # password or a new one. The account takes whatever the form accepts, so the
@@ -425,7 +523,7 @@ for run_spec in "${matrix[@]}"; do
   for (( step = 1; step <= total_steps; step++ )); do
     for retry_password in "$owner_password" other-password; do
       fixture "$format"
-      if run provision "$owner_password" "$step"; then
+      if run attempt "$owner_password" "$step"; then
         fail "$backend: setup is killed at step $step"
       fi
       point=$(sed -n "${step}p" "$tmp/trace")
@@ -433,10 +531,19 @@ for run_spec in "${matrix[@]}"; do
       [[ -e $tmp/provisioning/pending ]] || fail "$backend: killed after '$point', setup runs again"
       staged_alive=$([[ -n $(opens "$staged_key") ]] && echo 1 || echo 0)
 
+      # The acknowledged recovery key is never taken as the owner's password.
+      if grep -qsx 'recovery_shown=1' "$tmp/provisioning/luks-rekey.state"; then
+        recovery_key=$(shown_keys | head -n 1)
+        if run accepts "$recovery_key"; then fail "$backend: after '$point' the recovery key is refused as the password"; fi
+        if run attempt "$recovery_key"; then fail "$backend: after '$point' setup refuses the recovery key"; fi
+        grep -q 'refused: That is the disk recovery key' "$tmp/screen" || fail "$backend: after '$point' the owner is told why"
+        assert_recoverable "recovery key refused after '$point'" "$owner_password"
+      fi
+
       if run accepts "$retry_password"; then
         [[ $retry_password == "$owner_password" ]] || (( staged_alive )) ||
           fail "$backend: after '$point' a new password is refused once the staged key is retired"
-        run provision "$retry_password" || fail "$backend: after '$point' setup completes" "$(cat "$tmp/log")"
+        run attempt "$retry_password" || fail "$backend: after '$point' setup completes" "$(cat "$tmp/log")"
         if [[ $retry_password == "$owner_password" ]]; then
           assert_provisioned "rerun after '$point'" "$retry_password"
           if head -n "$step" "$tmp/trace" | grep -q 'journal phase boot'; then
@@ -449,15 +556,19 @@ for run_spec in "${matrix[@]}"; do
       else
         [[ $retry_password != "$owner_password" ]] || fail "$backend: after '$point' the original password is always accepted"
         (( ! staged_alive )) || fail "$backend: after '$point' a new password is accepted while the staged key works"
-        if run provision "$retry_password"; then fail "$backend: after '$point' setup refuses a new password"; fi
+        if run attempt "$retry_password"; then fail "$backend: after '$point' setup refuses a new password"; fi
         assert_recoverable "refused new password after '$point'" "$owner_password"
         [[ -e $tmp/provisioning/pending ]] || fail "$backend: after '$point' a refused password keeps setup pending"
-        run provision "$owner_password" || fail "$backend: after '$point' the original password completes" "$(cat "$tmp/log")"
+        run attempt "$owner_password" || fail "$backend: after '$point' the original password completes" "$(cat "$tmp/log")"
         assert_provisioned "original password after '$point'" "$owner_password"
       fi
     done
   done
-  pass "$platform $backend: killed after each of $total_steps steps, setup resumes to a disk that opens with the account's password"
+  if [[ $platform == "apple" ]]; then
+    pass "apple $backend: killed after each of $total_steps steps, setup resumes to a disk that opens with the account's password and the recovery key the owner acknowledged, with both slots recorded"
+  else
+    pass "x86 $backend: killed after each of $total_steps steps, setup resumes to a disk that opens with the account's password"
+  fi
 
   if [[ $platform == "x86" ]]; then
     [[ ! -e $tmp/mac-boot-ran ]] || fail "x86 $backend: no Mac boot entrypoint runs" "$(cat "$tmp/mac-boot-ran")"
