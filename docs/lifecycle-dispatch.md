@@ -24,7 +24,7 @@ The first form runs the operation. `--resolve` prints the entrypoint the operati
 
 ## Operations
 
-The set is fixed in the dispatcher; adding one is an upstream change. The operations provisioning calls take no arguments and work on fixed paths: `/var/lib/omarchy/provisioning` holds the staged install key (`luks-key`) and the re-key journal (`luks-rekey.state`). Factory reset names the factory root it is about to activate, since that is not `/` yet, and hands `reset-commit` the throwaway key on standard input, never in arguments. The other operations define their arguments when their caller is wired.
+The set is fixed in the dispatcher; adding one is an upstream change. The `provision-*` operations take no arguments and work on fixed paths: `/var/lib/omarchy/provisioning` holds the staged install key (`luks-key`) and the re-key journal (`luks-rekey.state`). `luks-slots` takes the slot numbers it records. Factory reset names the factory root it is about to activate, since that is not `/` yet, and hands `reset-commit` the throwaway key on standard input, never in arguments. The other operations define their arguments when their caller is wired.
 
 | Operation | Called | Contract | Apple | Caller |
 | --- | --- | --- | --- | --- |
@@ -38,6 +38,7 @@ The set is fixed in the dispatcher; adding one is an upstream change. The operat
 | `update-preflight` | Update, before the keyring and package transaction | Refuses an update the platform can't boot afterwards. A failure stops the update. | optional | `omarchy-update-boot preflight` (`omarchy update`) |
 | `update-verify` | Update, after the last package step: the transaction, migrations, the post-update hook, AUR, mise and orphans | Read-only. Verifies the boot chain boots the updated system, whose new kernel may still wait for its reboot. A failure leaves the update unfinished: it exits non-zero and offers no reboot. | required | `omarchy-update-boot verify` (`omarchy update`) |
 | `boot-rebuild` | Whenever upstream rebuilds boot files: owner provisioning after a factory reset left entries for another machine identity, later kernel and initramfs hooks, snapshots and command-line changes | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | optional until ticket 36, then required | `omarchy-provision-owner`; ticket 36 |
+| `luks-slots` | Owner provisioning, once the re-key keeps only the owner's slot and the acknowledged recovery slot, before it destroys the staged key; the disk password change, once the owner's new key is confirmed | `luks-slots owner=<slot> [recovery=<slot>]` records the root volume's kept slots wherever the platform's boot checks look for them. Without `recovery=` the recorded recovery slot stays; an empty one records none. Idempotent. It fails when a slot is not in the LUKS header, and the caller then retries. A platform that implements it also has owner provisioning create a recovery passphrase (see [Recovery passphrase](#recovery-passphrase)). | required | `omarchy-provision-owner`, `omarchy-drive-password` |
 
 ## Platform registration
 
@@ -50,7 +51,7 @@ Registration is code in `bin/omarchy-lifecycle-dispatch`, not configuration. No 
 
 The entrypoint for an operation is `<implementation directory>/<operation>`. A registered platform's required operations must be shipped. Its optional operations may be left out, and then they are no-ops.
 
-`omarchy-mac-boot` ships the provisioning entrypoints from 20260925-2 (ticket 32), and owner provisioning has no other Apple path, so they are required: a Mac whose `omarchy-mac-boot` is older stops before the owner form with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key and `rd.luks.key=` behind. The reset entrypoints (ticket 34) are required for the same reason: a Mac without them stops before the reset is confirmed, where the generic path would rebuild a Limine UKI the Mac does not boot. `boot-rebuild` stays optional until ticket 36 ships it. `update-verify` is required, and `omarchy update` calls it (ticket 35).
+`omarchy-mac-boot` ships the provisioning entrypoints from 20260925-2 (ticket 32), and owner provisioning has no other Apple path, so they are required: a Mac whose `omarchy-mac-boot` is older stops before the owner form with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key and `rd.luks.key=` behind. The reset entrypoints (ticket 34) are required for the same reason: a Mac without them stops before the reset is confirmed, where the generic path would rebuild a Limine UKI the Mac does not boot. `luks-slots` (ticket 33) is required for the same reason: the boot check proves the owner's and the recovery slot, so a Mac whose package cannot record them stops before the owner form too, and `omarchy-drive-password` refuses to change the system disk. `boot-rebuild` stays optional until ticket 36 ships it. `update-verify` is required, and `omarchy update` calls it (ticket 35).
 
 ## Trust rules
 
@@ -68,10 +69,11 @@ A dispatch point takes one of two shapes:
 
 ### Owner provisioning (`bin/omarchy-provision-owner`)
 
-- `platform_ready` runs `provision-prepare` at the start of each setup attempt, before the keyboard and account forms. If it fails, the owner sees its error, the log records it, and the attempt ends in the retry or root-shell screen. On Apple, where `provision-prepare` is required, a Mac without `omarchy-mac-boot`'s entrypoints stops here with the dispatcher's error naming the package.
+- `platform_ready` runs `provision-prepare` and resolves `luks-slots` at the start of each setup attempt, before the keyboard and account forms. If either fails, the owner sees its error, the log records it, and the attempt ends in the retry or root-shell screen. On Apple, where both are required, a Mac without `omarchy-mac-boot`'s entrypoints stops here with the dispatcher's error naming the package.
 - Apple has no direct path any more (ticket 32): #527's `rekey_luks_apple` runs as the shared re-key with `omarchy-mac-boot`'s entrypoints, and a Mac without them stops at `provision-prepare`.
 - The shared re-key (`install/provisioning/luks-rekey.sh`) asks the caller for two callbacks: `luks_auto_unlock_present` and `luks_auto_unlock_drop`. `unlock_owner` resolves `provision-commit` and `provision-verify` once per process. If both resolve, the platform owns the unlock: drop is `provision-commit`, and present is `provision-verify` failing. If neither resolves, the Limine UKI callbacks run unchanged (x86, Snapdragon, generic aarch64). If only one resolves, or resolution fails, the unlock counts as present and can't be dropped, so setup never finishes.
 - After a factory reset left Limine entries for another machine identity, `refresh_boot_entries` starts the menu over from the template (core), then runs `boot-rebuild` if the platform implements it, and `limine-update` otherwise.
+- Where `luks-slots` resolves, `run_setup` creates the recovery passphrase before the worker starts (see [Recovery passphrase](#recovery-passphrase)). The shared re-key calls the caller's `luks_record_slots` once it has verified the kept slots and before it destroys the staged key; `omarchy-provision-owner` runs `luks-slots owner=<slot> recovery=<slot or empty>` there, a no-op where nothing records them.
 - Everything else stays upstream: the wizard, account and login, the journal, slot retirement, the proof that the staged key opens nothing, and cleanup.
 
 ### Factory reset (`bin/omarchy-system-factory-reset`)
@@ -88,6 +90,11 @@ A dispatch point takes one of two shapes:
 - `omarchy-update-boot` resolves the operation as the user first and runs it with `sudo` only when it resolves to an entrypoint, so an update with nothing to run never asks for root. A failed resolution fails the step with the dispatcher's message, except one: `update-verify` on a machine without its platform's boot package at all (exit 3) warns that the boot files were not verified and lets the update finish. Such a machine predates the package and boots a chain it does not manage; its migration installs the package, and from then on a failed verification blocks. A package too old to ship `update-verify` blocks, since the fix is one package update away.
 - The update path rebuilds no boot file itself: package hooks do, and `update-verify` catches what they missed.
 
+### Disk password change (`bin/omarchy-drive-password`)
+
+- After the system disk's key changed and the login and root passwords follow it, `record_owner_slot` resolves `luks-slots` as the user and, when it resolves, runs `sudo omarchy-lifecycle-dispatch luks-slots owner=<slot>`, so no other platform sees an extra `sudo`. Until that succeeds the journal stays, and the next run finishes the change and records the slot. The new key can land in another slot (cryptsetup 2.8's `luksChangeKey` moves a LUKS1 key to the first free slot, and keeps a LUKS2 one in place), and the boot check would then find a slot `encrypt.state` does not name.
+- The recovery key stays as it is: the system disk refuses it as the current password, and a new password in its form.
+
 ## Apple implementation
 
 `omarchy-mac-boot` implements the Apple operations. #503, landed as #527, moved the Apple boot code into `packages/omarchy-mac/boot/`, with sourced modules in `/usr/lib/omarchy-mac/boot` and commands in `/usr/bin`. Its modules become the implementation with small entrypoints around them (tickets 32, 34 and 35):
@@ -103,10 +110,19 @@ A dispatch point takes one of two shapes:
 | `restore_live_boot_files` in `lib/factory-reset.sh`, `restore_encrypt_state` in `omarchy-system-factory-reset` | `reset-rollback` | Ticket 34: the saved boot files and `encrypt.state` come back from `/run/omarchy-mac-boot/reset`; the old Limine menu only if every UKI it names is back with its hash. A partial restore keeps the copies there and fails. |
 | `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning calls it once shipped; until ticket 36 ships it, Apple refreshes stale entries with `limine-update`, as #527 did. The update path does not call it. |
 | `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` (ticket 35) runs the check limited to the boot chain (`--boot-chain`), with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. It holds only the kernel image, device trees and m1n1 against their packages, checks the kernel the boot menu starts first when both kernels are installed, and leaves out LUKS keyslots, provisioning leftovers and an m1n1 image its owner took over with `M1N1_UPDATE_DISABLED`. On failure it says not to reboot and how to rebuild the boot files. |
+| The owner and recovery slots `mark_encrypt_finished` wrote into `encrypt.state` once | `luks-slots` | New entrypoint (ticket 33): records `owner_slot` and `recovery_slot` after checking the root's LUKS header (named by `/etc/crypttab`) holds both, keeping `partition=`, `luks_uuid=` and the phase. A Mac whose image was not encrypted (no `encrypt.state`, or `declined`) records nothing. |
 
 - **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #527 put them and are sourced by absolute path.
-- **Owner and recovery slots:** #527's `rekey_luks_apple` sequence is folded into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`): the journal keeps a recovery slot once the owner acknowledged its key and retires every other one. Only its boot step is `provision-commit`.
-- **Recovery passphrase:** core prepares it (`prepare_luks_recovery`) only on Apple (`recovery_key_offered`), and a retry then keeps the owner's password. Whether every encrypted install gets one is a core decision for ticket 33, not a dispatch operation.
+- **Owner and recovery slots:** #527's `rekey_luks_apple` sequence is folded into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`): the journal keeps a recovery slot once the owner acknowledged its key and retires every other one. Only its boot step is `provision-commit`, and recording the final slots is `luks-slots`.
+
+## Recovery passphrase
+
+The recovery passphrase is core code; whether setup creates one is the platform boot package's call (ticket 33). A boot package that implements `luks-slots` records a recovery slot for its boot checks, so owner provisioning gives it one to record. `omarchy-mac-boot` implements it, as omarchy-mx-mac gave every Mac a recovery key. Every other platform keeps x86's first boot: the owner's password alone, no extra screen. Moving the decision into the boot package keeps the platform check out of the owner wizard, and turning it on elsewhere is a matter of that platform recording the slots.
+
+- **Order:** `prepare_luks_recovery` runs in the foreground before the worker, on every attempt while the staged key file exists. It reserves a free slot in the journal (`recovery_slot`), adds a new 48-character base32 key there with the staged install key, checks the key opens that slot, records `recovery_shown=0`, shows it, and records `recovery_shown=1` once the owner types the acknowledgement. The key is never written to disk or passed as an argument.
+- **Interruption:** an acknowledged key is kept. A key added but not acknowledged is removed and replaced in the same slot, and the owner is told to replace any copy they wrote down when it may have been on screen (`recovery_shown=0`). The worker, which retires every slot but the owner's and the acknowledged recovery slot, starts only after the acknowledgement.
+- **The owner's password:** the owner's slot is the re-key's own step, so a retry may still choose a new password while the staged key opens the disk, as on x86, even after the boot step: the re-key then retires the old password's slot and records the final slots with `luks-slots`. The recovery key is refused as the password.
+- **Temporary key:** setup finishes only after the re-key proved the staged key opens nothing, the boot package's `provision-verify` found no boot-time copy, and `luks-slots` recorded the kept slots.
 
 ## Qualcomm
 
@@ -132,5 +148,7 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
   - setup stopping before the owner form when the boot package is not ready, missing, or too old to ship the provisioning entrypoints
   - the stale-entry refresh rebuilding through `limine-update` on x86 and the boot package on Apple
   - the worker failing closed without the provisioning entrypoints, or when a boot package implements only one of `provision-commit` and `provision-verify`
-- `test/shell.d/provision-owner-luks-test.sh` runs owner provisioning through the dispatcher into `omarchy-mac-boot`'s staged entrypoints, and `packages/omarchy-mac/boot/test/mac-provision-test.sh` covers those entrypoints on their own (ticket 32).
+- `test/shell.d/provision-owner-luks-test.sh` runs owner provisioning through the dispatcher into `omarchy-mac-boot`'s staged entrypoints, and `packages/omarchy-mac/boot/test/mac-provision-test.sh` covers those entrypoints on their own (ticket 32) and `luks-slots` (ticket 33).
 - `test/shell.d/factory-reset-luks-test.sh` runs `stage_full_reset` through the real dispatcher: on x86 with Mac entrypoints on disk that must not run (generic path unchanged), and on Apple into `omarchy-mac-boot`'s staged reset entrypoints, covering a finished reset and a failed verification that rolls back to the previous root. `packages/omarchy-mac/boot/test/mac-reset-test.sh` covers the reset entrypoints on their own (ticket 34).
+- `test/shell.d/luks-rekey-journal-test.sh` also runs the Apple setup attempt, recovery step included, killed after every durable step on the slot-table fake and on file-backed LUKS2 and LUKS1 volumes (ticket 33).
+- `test/shell.d/drive-password-test.sh` checks that an Apple password change records the owner's new slot through `luks-slots`, including after an interruption, and that x86 never calls it.

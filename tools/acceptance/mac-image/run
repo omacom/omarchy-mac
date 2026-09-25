@@ -1,48 +1,46 @@
 #!/bin/bash
-# Boot a built Mac image in a KVM guest and prove its first boots.
+# Run a Mac image's lifecycle scenarios in KVM guests.
 #
-# The image is what the installer app writes to a Mac: an ESP tree, boot.img
-# (ext4, GRUB + kernel + initramfs) and root.img (btrfs). This harness assembles
-# them into one GPT disk and boots it twice over:
-#
-#   plain      install.conf encrypt=0 on the ESP: first boot finishes without
-#              touching the root and hands off to owner provisioning
-#   encrypted  no install.conf (the app's default, encrypt=1): the initrd unit
-#              converts the root to LUKS2 in place, regenerates GRUB and the
-#              initramfs, continues into /dev/mapper/root and finishes first
-#              boot; a second boot unlocks through sd-encrypt with the key the
-#              GRUB cmdline names
+# The image is what the Apple Silicon image producer (omacom/omarchy-mac-installer
+# image-builder) writes and the installer app puts on a Mac: an ESP tree with
+# m1n1, Limine and the Omarchy UKI, boot.img (ext4) and root.img (btrfs). Each
+# scenario assembles them into one GPT disk and boots it with the command line
+# of the first Limine kernel entry on that disk's ESP, as the Mac would.
 #
 # The Aurora kernel has no PL011 console, generic PCI host or ACPI, so it cannot
 # run on QEMU's virt machine. The guest boots a generic Arch Linux ARM kernel
-# instead, with an initramfs built inside the image's own root from the image's
-# own mkinitcpio configuration (asahi, omarchy-vendorfw, omarchy-mac-encrypt,
-# sd-encrypt hooks): the units under test are the image's, the kernel is not.
-# GRUB itself and the Apple hardware are qualified on a real Mac.
+# instead, with an initramfs built inside the image's own root from its own
+# mkinitcpio configuration: the units under test are the image's, the kernel is
+# not. The guest's device tree carries an Apple root compatible, so the image's
+# Apple gates take their Apple paths. Owner setup runs on the serial console
+# instead of tty1, the only change to the image's own behaviour. m1n1, U-Boot,
+# Limine itself and the Apple hardware are qualified on a real Mac.
 #
-# Runs on an aarch64 Linux host with /dev/kvm, qemu-system-aarch64, losetup,
-# btrfs-progs, dosfstools, gptfdisk, overlayfs and passwordless sudo.
+#   tools/acceptance/mac-image/run --image DIR [--scenario NAME]...
+#   tools/acceptance/mac-image/run --list
 #
-#   tools/acceptance/mac-image/run --release mac-image-10-rc-… [--repo maralcbr/omarchy-pkgs]
-#   tools/acceptance/mac-image/run --payload omarchy-….zip --lane rc
-#
-# Evidence goes to ~/vm-evidence/mac-image-<run-id>/ (run.txt, serial logs).
+# Evidence goes to ~/vm-evidence/mac-image-<run-id>/ (run.txt, serial logs,
+# guest logs, SHA256SUMS).
 
 set -euo pipefail
 
 acceptance=$(cd "$(dirname "$0")/.." && pwd)
-repo=${OMARCHY_VM_IMAGE_REPO:-maralcbr/omarchy-pkgs}
-release=""
-image_file=""
+image_dir=""
 payload=""
 lane=""
 keep=0
-only=""
+list=0
+requested=()
 run_id=${OMARCHY_VM_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
 state=${OMARCHY_VM_IMAGE_STATE_DIR:-$HOME/vm-mac-image}
 evidence_root=${OMARCHY_VM_EVIDENCE_DIR:-$HOME/vm-evidence}
 alarm_mirror=${OMARCHY_VM_ALARM_MIRROR:-'https://downloads.aicodelabs.com.au/mirror/alarm/20260906/$repo/os/$arch'}
 signing_key=${OMARCHY_VM_IMAGE_KEY_FILE:-$acceptance/keys/omarchy-arm-repository.asc}
+# The Mac boots through U-Boot's UEFI, and the image's boot tooling only builds
+# a UKI under UEFI, so the guest boots through QEMU's edk2 firmware: Arch
+# Linux's edk2-aarch64 from the permanent archive, pinned by digest.
+uefi_url=${OMARCHY_VM_UEFI_URL:-https://archive.archlinux.org/packages/e/edk2-aarch64/edk2-aarch64-202608-1-any.pkg.tar.zst}
+uefi_sha256=${OMARCHY_VM_UEFI_SHA256:-07651fafa99d4569ce59a1c1653eb83a4bb02112abeb1656e1354c0fd5b6aa69}
 vm_memory_mb=${OMARCHY_VM_MEMORY_MB:-8192}
 vm_cpus=${OMARCHY_VM_CPUS:-8}
 boot_timeout=${OMARCHY_VM_IMAGE_BOOT_TIMEOUT:-900}
@@ -50,41 +48,83 @@ disk_gib=${OMARCHY_VM_IMAGE_DISK_GIB:-35}
 ESP_UUID=4F4D-5801
 BOOT_UUID=4f4d5801-424f-4f54-8000-000000000001
 ROOT_UUID=4f4d5801-524f-4f54-8000-000000000001
+apple_compatible=(apple,j314s apple,t6000 apple,arm-platform)
+apple_model="Apple MacBook Pro (14-inch, M1 Pro, 2021)"
+owner_user=owner
+
+scenarios=(first-boot conversion second-boot password-change update snapshot-restore factory-reset)
+declare -A about=(
+  [first-boot]="plain install (encrypt=0): first boot, owner setup, console login; Plymouth theme, /.snapshots, default sink"
+  [conversion]="encrypted install: LUKS2 conversion in the initrd, first boot, owner setup re-keys to the owner password and a recovery key"
+  [second-boot]="the re-keyed disk boots Limine's command line: a wrong password is refused, the owner's unlocks"
+  [password-change]="omarchy-drive-password moves the disk, login and root to a new password; the next boot unlocks with it"
+  [update]="update with post-update boot verification (needs update-verify, omacom/omarchy-mac#543)"
+  [snapshot-restore]="snapshot boot and restore (needs the snapshot boot check, ticket 36)"
+  [factory-reset]="factory reset through lifecycle dispatch (needs reset-prepare, ticket 34)"
+)
 
 while (($#)); do
   case "$1" in
-    --release) (($# >= 2)) || { echo "--release needs a tag" >&2; exit 1; }; release=$2; shift ;;
-    --repo) (($# >= 2)) || { echo "--repo needs owner/name" >&2; exit 1; }; repo=$2; shift ;;
+    --image) (($# >= 2)) || { echo "--image needs a directory" >&2; exit 1; }; image_dir=$2; shift ;;
     --payload) (($# >= 2)) || { echo "--payload needs a zip" >&2; exit 1; }; payload=$2; shift ;;
     --lane) (($# >= 2)) || { echo "--lane needs edge, rc or stable" >&2; exit 1; }; lane=$2; shift ;;
-    --only) (($# >= 2)) || { echo "--only needs plain or encrypted" >&2; exit 1; }; only=$2; shift ;;
+    --scenario) (($# >= 2)) || { echo "--scenario needs a name" >&2; exit 1; }; IFS=, read -ra names <<<"$2"; requested+=("${names[@]}"); shift ;;
+    --list) list=1 ;;
     --keep) keep=1 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
 done
 
-fail() { echo "not ok - $*" >&2; exit 1; }
-say() { echo "==> $*"; }
-ok() { echo "ok - $*"; echo "ok - $*" >>"$evidence_dir/run.txt"; }
+if ((list)); then
+  for name in "${scenarios[@]}"; do printf '%-17s %s\n' "$name" "${about[$name]}"; done
+  printf '%-17s %s\n' fresh-install "first-boot, conversion and second-boot (the default)" all "every scenario"
+  exit 0
+fi
 
-[[ -n $release || -n $payload ]] || fail "give --release TAG or --payload ZIP"
-[[ -z $release || -z $payload ]] || fail "--release and --payload are exclusive"
-[[ -z $only || $only == plain || $only == encrypted ]] || fail "--only takes plain or encrypted"
-[[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || fail "OMARCHY_VM_RUN_ID must be 1-64 letters, digits, dots, dashes or underscores"
-[[ $vm_cpus =~ ^[1-9][0-9]*$ && $vm_memory_mb =~ ^[1-9][0-9]*$ && $boot_timeout =~ ^[1-9][0-9]*$ && $disk_gib =~ ^[1-9][0-9]*$ ]] ||
-  fail "OMARCHY_VM_CPUS, OMARCHY_VM_MEMORY_MB, OMARCHY_VM_IMAGE_BOOT_TIMEOUT and OMARCHY_VM_IMAGE_DISK_GIB must be positive integers"
-[[ $alarm_mirror == https://* && $alarm_mirror == *'$repo'* && $alarm_mirror == *'$arch'* ]] ||
-  fail 'OMARCHY_VM_ALARM_MIRROR must be an https URL containing $repo and $arch'
+((${#requested[@]})) || requested=(fresh-install)
+declare -A selected=()
+for name in "${requested[@]}"; do
+  case $name in
+    fresh-install) selected[first-boot]=1 selected[conversion]=1 selected[second-boot]=1 ;;
+    all) for s in "${scenarios[@]}"; do selected[$s]=1; done ;;
+    *) [[ -n ${about[$name]:-} ]] || { echo "Unknown scenario: $name (see --list)" >&2; exit 1; }; selected[$name]=1 ;;
+  esac
+done
+
+[[ -n $image_dir || -n $payload ]] || { echo "give --image DIR or --payload ZIP" >&2; exit 1; }
+[[ -z $image_dir || -z $payload ]] || { echo "--image and --payload are exclusive" >&2; exit 1; }
+[[ -z $image_dir || -z $lane ]] || { echo "--lane is read from IMAGE with --image" >&2; exit 1; }
+[[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || { echo "OMARCHY_VM_RUN_ID must be 1-64 letters, digits, dots, dashes or underscores" >&2; exit 1; }
+[[ $vm_cpus =~ ^[1-9][0-9]*$ && $vm_memory_mb =~ ^[1-9][0-9]*$ && $boot_timeout =~ ^[1-9][0-9]*$ && $disk_gib =~ ^[1-9][0-9]*$ ]] || {
+  echo "OMARCHY_VM_CPUS, OMARCHY_VM_MEMORY_MB, OMARCHY_VM_IMAGE_BOOT_TIMEOUT and OMARCHY_VM_IMAGE_DISK_GIB must be positive integers" >&2
+  exit 1
+}
+[[ $uefi_url == https://* && $uefi_sha256 =~ ^[0-9a-f]{64}$ ]] || { echo "OMARCHY_VM_UEFI_URL must be https and OMARCHY_VM_UEFI_SHA256 a sha256" >&2; exit 1; }
+[[ $alarm_mirror == https://* && $alarm_mirror == *'$repo'* && $alarm_mirror == *'$arch'* ]] || {
+  echo 'OMARCHY_VM_ALARM_MIRROR must be an https URL containing $repo and $arch' >&2
+  exit 1
+}
+
+evidence_dir=""
+checks_failed=0
+record() { echo "$*"; [[ -z $evidence_dir ]] || echo "$*" >>"$evidence_dir/run.txt"; }
+fail() { record "not ok - $*" >&2; exit 1; }
+# A failed check that later scenarios do not depend on: the run goes on and fails at the end.
+not_ok() { record "not ok - $*"; checks_failed=1; }
+ok() { record "ok - $*"; }
+skip() { record "skip - $*"; }
+say() { echo "==> $*"; }
+
 [[ $(uname -m) == aarch64 ]] || fail "this harness boots aarch64 guests on an aarch64 KVM host"
 [[ -r /dev/kvm ]] || fail "/dev/kvm is not readable"
-for tool in qemu-system-aarch64 sgdisk mkfs.vfat losetup btrfs bsdtar sha256sum gpg curl awk sed mount umount chroot lsinitcpio \
-    truncate stat dd blkid tee realpath; do
+for tool in qemu-system-aarch64 fdtput socat sgdisk mkfs.vfat losetup btrfs cryptsetup bsdtar sha256sum gpg curl awk sed \
+    mount umount chroot lsinitcpio python3 base64 truncate stat dd cp blkid tee realpath udevadm; do
   command -v "$tool" >/dev/null || fail "missing tool: $tool"
 done
-[[ -z $release ]] || command -v gh >/dev/null || fail "missing tool: gh (needed for --release)"
-sudo -n true 2>/dev/null || fail "passwordless sudo is required (losetup, mounts, chroot)"
-[[ -f $signing_key ]] || fail "signing key $signing_key is missing"
+sudo -n true 2>/dev/null || fail "passwordless sudo is required (losetup, cryptsetup, mounts, chroot)"
+[[ -z $image_dir || -f $signing_key ]] || fail "signing key $signing_key is missing"
+[[ -z $payload ]] || payload=$(realpath -m -- "$payload")
 
 # A failed run's directory is kept and a passing one's deleted, so evidence
 # must never live beneath the state directory.
@@ -92,84 +132,130 @@ state_real=$(realpath -m -- "$state")
 evidence_root=$(realpath -m -- "$evidence_root")
 [[ $evidence_root != "$state_real" && $evidence_root != "$state_real"/* ]] ||
   fail "the evidence directory $evidence_root is inside the state directory $state_real"
-work=$state/runs/$run_id
+work=$state_real/runs/$run_id
+mkdir -p "$work" "$evidence_root/mac-image-$run_id"
 evidence_dir=$evidence_root/mac-image-$run_id
-mkdir -p "$work" "$evidence_dir"
 : >"$evidence_dir/run.txt"
+serial_sock=$work/serial.sock
+((${#serial_sock} < 100)) || fail "the run directory $work is too long for a socket path"
 loops=()
 mounts=()
+mappers=()
 qemu_pid=""
+udev_rule=""
+secrets=()
 
 cleanup() {
-  local status=$?
-  [[ -z $qemu_pid ]] || kill "$qemu_pid" 2>/dev/null || true
-  local m
+  local status=$? i f secret
+  [[ -z $qemu_pid ]] || { kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true; }
   for ((i = ${#mounts[@]} - 1; i >= 0; i--)); do
-    m=${mounts[$i]}
-    sudo umount -R "$m" 2>/dev/null || sudo umount "$m" 2>/dev/null || true
+    sudo -n umount -R "${mounts[$i]}" 2>/dev/null || sudo -n umount "${mounts[$i]}" 2>/dev/null || true
   done
-  for l in "${loops[@]+"${loops[@]}"}"; do
-    sudo losetup -d "$l" 2>/dev/null || true
+  for ((i = ${#mappers[@]} - 1; i >= 0; i--)); do
+    sudo -n cryptsetup close "${mappers[$i]}" 2>/dev/null || true
   done
+  for f in "${loops[@]+"${loops[@]}"}"; do
+    sudo -n losetup -d "$f" 2>/dev/null || true
+  done
+  if [[ -n $udev_rule ]]; then
+    sudo -n rm -f "$udev_rule" && sudo -n udevadm control --reload 2>/dev/null || true
+  fi
+  # The guest is disposable, but its passwords and recovery key stay out of evidence.
+  for secret in "${secrets[@]+"${secrets[@]}"}"; do
+    for f in "$evidence_dir"/*; do
+      [[ -f $f ]] && sed -i "s/$secret/<redacted>/g" "$f"
+    done
+  done
+  (cd "$evidence_dir" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs -r sha256sum >SHA256SUMS) || true
   if ((status == 0 && keep == 0)); then
-    sudo rm -rf "$work"
+    sudo -n rm -rf "$work"
   else
     echo "run directory kept: $work" >&2
   fi
+  echo "evidence in $evidence_dir" >&2
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# A desktop automounter would mount the run's loop and mapper devices, and ask
+# the Mac's owner for a password to do it.
+hide_devices_from_udisks() {
+  udev_rule=/run/udev/rules.d/60-omarchy-vm-mac-image-$$.rules
+  printf '%s\n' 'SUBSYSTEM=="block", KERNEL=="loop*", ENV{UDISKS_IGNORE}="1"' \
+    'SUBSYSTEM=="block", ENV{DM_NAME}=="omarchy-vm-*", ENV{UDISKS_IGNORE}="1"' |
+    sudo -n install -D -m 0644 /dev/stdin "$udev_rule" && sudo -n udevadm control --reload ||
+    fail "could not hide the run's loop devices from udisks"
+}
+
+sha256() { sha256sum "$1" | awk '{ print $1 }'; }
+field() { sed -n "s/^$1=//p" "$2"; }
 
 # ── the image ────────────────────────────────────────────────────────────────
-fetch_release() {
-  say "fetching $release from $repo"
-  mkdir -p "$work/release"
-  gh release download "$release" -R "$repo" --dir "$work/release" --pattern 'IMAGE' --pattern 'IMAGE.sig' \
-    --pattern 'PROVENANCE' --pattern 'installer_data.json' --pattern '*.zip' --pattern '*.zip.part*' ||
-    fail "could not download $release"
-  local home
-  home=$(mktemp -d)
-  gpg --batch --homedir "$home" --import "$signing_key" 2>/dev/null
-  gpg --batch --homedir "$home" --verify "$work/release/IMAGE.sig" "$work/release/IMAGE" 2>/dev/null ||
-    fail "IMAGE.sig does not verify with $signing_key"
-  rm -rf "$home"
-  image_file=$work/release/IMAGE
-  lane=$(sed -n 's/^lane=//p' "$image_file")
+image_file=""
+image_signature=unsigned
+
+verify_image_dir() {
+  local f name size digest line
+  image_dir=$(realpath -- "$image_dir")
+  for f in IMAGE PROVENANCE INSPECTION installer_data.json; do
+    [[ -f $image_dir/$f ]] || fail "$image_dir has no $f"
+  done
+  image_file=$image_dir/IMAGE
+  [[ $(field format "$image_file") == 2 ]] || fail "IMAGE is not format=2 (the image producer's)"
+  [[ $(field platform "$image_file") == apple-silicon ]] || fail "IMAGE is not an apple-silicon image"
+  lane=$(field lane "$image_file")
   [[ $lane == edge || $lane == rc || $lane == stable ]] || fail "IMAGE names no lane"
-  local name size digest line
-  line=$(sed -n 's/^payload=//p' "$work/release/PROVENANCE")
-  [[ -n $line ]] || fail "PROVENANCE has no payload line"
+  if [[ -f $image_dir/IMAGE.sig ]]; then
+    local home=$work/gnupg-image
+    mkdir -p -m 700 "$home"
+    gpg --batch --homedir "$home" --import "$signing_key" 2>/dev/null
+    gpg --batch --homedir "$home" --verify "$image_dir/IMAGE.sig" "$image_file" 2>/dev/null ||
+      fail "IMAGE.sig does not verify with $signing_key"
+    image_signature="signed by the repository key"
+  fi
+  line=$(field payload "$image_dir/PROVENANCE")
   IFS='|' read -r name size digest <<<"$line"
   [[ $name =~ ^omarchy-[0-9]{4}\.[0-9]{2}\.[0-9]{2}-aarch64-apple-silicon-mac-$lane-os-package\.zip$ && $size =~ ^[1-9][0-9]*$ && $digest =~ ^[0-9a-f]{64}$ ]] ||
     fail "PROVENANCE names no $lane Mac image payload"
-  payload=$work/release/$name
-  if [[ ! -f $payload ]]; then
-    local parts=()
-    for part in "$payload".part[0-9][0-9]; do [[ -f $part ]] && parts+=("$part"); done
-    ((${#parts[@]} >= 2)) || fail "$release holds neither $name nor its parts"
-    cat "${parts[@]}" >"$payload"
-    rm -f "${parts[@]}"
-  fi
+  payload=$image_dir/$name
+  [[ -f $payload ]] || fail "$image_dir lacks $name"
   [[ $(stat -c %s "$payload") == "$size" ]] || fail "$name is $(stat -c %s "$payload") bytes, PROVENANCE says $size"
-  [[ $(sha256sum "$payload" | awk '{ print $1 }') == "$digest" ]] || fail "$name does not match the PROVENANCE digest"
-  ok "$release: IMAGE signed by the repository key; $name matches PROVENANCE ($size bytes); members checked against IMAGE after unpacking"
+  [[ $(sha256 "$payload") == "$digest" ]] || fail "$name does not match the PROVENANCE digest"
+  [[ $(field inspection_sha256 "$image_dir/PROVENANCE") == "$(sha256 "$image_dir/INSPECTION")" ]] || fail "INSPECTION does not match PROVENANCE"
+  [[ $(field installer_data_sha256 "$image_dir/PROVENANCE") == "$(sha256 "$image_dir/installer_data.json")" ]] ||
+    fail "installer_data.json does not match PROVENANCE"
+  [[ $(field input_digest "$image_file") =~ ^[0-9a-f]{64}$ && $(field input_digest "$image_file") == "$(field inputs_sha256 "$image_dir/PROVENANCE")" ]] ||
+    fail "IMAGE and PROVENANCE name different inputs"
+  [[ ! -f $image_dir/inputs || $(sha256 "$image_dir/inputs") == "$(field input_digest "$image_file")" ]] || fail "inputs does not match IMAGE"
+  python3 - "$image_dir/INSPECTION" <<'PY' || fail "INSPECTION did not pass"
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("kind") == "apple-image-inspection" and d.get("result") == "passed" and not d.get("failed_checks") else 1)
+PY
+  {
+    echo "image_dir=$image_dir"
+    echo "image_signature=$image_signature"
+    echo "payload=$name|$size|$digest"
+    for f in candidate_set candidate_source_commit builder_commit package_set_sha256 input_digest; do
+      echo "$f=$(field "$f" "$image_file")"
+    done
+  } >>"$evidence_dir/run.txt"
+  ok "$(field candidate_set "$image_file"): IMAGE ($image_signature), PROVENANCE and a passed INSPECTION agree; $name matches ($size bytes)"
 }
 
-# IMAGE (the signed file) digests every payload member; PROVENANCE does not
-# sign anything, so the unpacked members are held to IMAGE.
+# IMAGE digests every payload member; PROVENANCE signs nothing, so the unpacked
+# members are held to IMAGE.
 verify_members() {
   local line path digest count=0
   while IFS= read -r line; do
     IFS='|' read -r path digest <<<"$line"
     [[ $path == boot.img || $path == root.img || $path == omarchy-volume.icns || $path == esp/* ]] || fail "IMAGE names an unexpected member $path"
     [[ -f $work/payload/$path ]] || fail "payload lacks $path, which IMAGE names"
-    [[ $(sha256sum "$work/payload/$path" | awk '{ print $1 }') == "$digest" ]] || fail "$path does not match IMAGE"
+    [[ $(sha256 "$work/payload/$path") == "$digest" ]] || fail "$path does not match IMAGE"
     count=$((count + 1))
-  done < <(sed -n 's/^image_sha256=//p' "$image_file")
+  done < <(field image_sha256 "$image_file")
   ((count >= 4)) || fail "IMAGE digests fewer than four members"
-  local input_digest
-  input_digest=$(sed -n 's/^input_digest=//p' "$image_file")
-  [[ $input_digest =~ ^[0-9a-f]{64}$ ]] || fail "IMAGE has no input_digest"
-  echo "input_digest=$input_digest" >>"$evidence_dir/run.txt"
   ok "every member IMAGE names matches its digest ($count members)"
 }
 
@@ -181,39 +267,87 @@ unpack_payload() {
   say "unpacking ${payload##*/} (lane $lane)"
   mkdir -p "$work/payload"
   (cd "$work/payload" && bsdtar -xf "$payload") || fail "could not unpack the payload"
-  for f in esp/EFI/BOOT/BOOTAA64.EFI esp/m1n1/boot.bin boot.img root.img; do
+  for f in esp/EFI/BOOT/BOOTAA64.EFI esp/m1n1/boot.bin esp/limine.conf boot.img root.img; do
     [[ -f $work/payload/$f ]] || fail "payload lacks $f"
   done
-  [[ $(sudo blkid -c /dev/null -o value -s UUID "$work/payload/boot.img") == "$BOOT_UUID" ]] || fail "boot.img UUID"
-  [[ $(sudo blkid -c /dev/null -o value -s UUID "$work/payload/root.img") == "$ROOT_UUID" ]] || fail "root.img UUID"
-  echo "payload_sha256=$(sha256sum "$payload" | awk '{ print $1 }')" >>"$evidence_dir/run.txt"
-  ok "payload unpacked: ESP tree, boot.img ($BOOT_UUID), root.img ($ROOT_UUID)"
+  [[ $(sudo -n blkid -c /dev/null -o value -s UUID "$work/payload/boot.img") == "$BOOT_UUID" ]] || fail "boot.img UUID"
+  [[ $(sudo -n blkid -c /dev/null -o value -s UUID "$work/payload/root.img") == "$ROOT_UUID" ]] || fail "root.img UUID"
+  [[ -n $image_file ]] || echo "payload_sha256=$(sha256 "$payload") (unverified)" >>"$evidence_dir/run.txt"
+  ok "payload unpacked: ESP tree with Limine, boot.img ($BOOT_UUID), root.img ($ROOT_UUID)"
   [[ -z $image_file ]] || verify_members
 }
 
-# ── the generic kernel and the image's own initramfs ────────────────────────
+# ── loop devices, mappers and mounts ─────────────────────────────────────────
 # Sets ATTACHED; a command substitution would lose the bookkeeping.
 attach() {
-  ATTACHED=$(sudo losetup -f --show "$@") || fail "losetup $*"
+  ATTACHED=$(sudo -n losetup -f --show "$@") || fail "losetup $*"
   loops+=("$ATTACHED")
 }
 
 detach_last() {
   ((${#loops[@]})) || return 0
-  sudo losetup -d "${loops[-1]}" || fail "losetup -d ${loops[-1]}"
+  sudo -n losetup -d "${loops[-1]}" || fail "losetup -d ${loops[-1]}"
   unset 'loops[-1]'
 }
 
 mount_tracked() {
-  sudo mount "$@" || fail "mount $*"
+  sudo -n mount "$@" || fail "mount $*"
   mounts+=("${@: -1}")
 }
 
 umount_last() {
   ((${#mounts[@]})) || return 0
-  sudo umount -R "${mounts[-1]}" 2>/dev/null || sudo umount "${mounts[-1]}" || fail "umount ${mounts[-1]}"
+  sudo -n umount -R "${mounts[-1]}" 2>/dev/null || sudo -n umount "${mounts[-1]}" || fail "umount ${mounts[-1]}"
   unset 'mounts[-1]'
 }
+
+# Opens a LUKS partition with a passphrase file; sets OPENED to the mapper.
+open_luks() {
+  local name=omarchy-vm-$run_id-${#mappers[@]}
+  sudo -n cryptsetup open --key-file "$2" "$1" "$name" || fail "cryptsetup open $1"
+  mappers+=("$name")
+  OPENED=/dev/mapper/$name
+}
+
+close_last() {
+  ((${#mappers[@]})) || return 0
+  sudo -n cryptsetup close "${mappers[-1]}" || fail "cryptsetup close ${mappers[-1]}"
+  unset 'mappers[-1]'
+}
+
+# Sets SLOT to the slot a passphrase file opens, or empties it when no slot
+# takes the passphrase (exit 2). Any other error fails the run: it must not
+# read as a refusal. Not for a command substitution, where fail cannot stop it.
+luks_slot() {
+  local out status=0
+  SLOT=""
+  out=$(sudo -n cryptsetup open --test-passphrase --verbose --key-file "$2" "$1" 2>&1) || status=$?
+  case $status in
+    0) SLOT=$(sed -n 's/^Key slot \([0-9]*\) unlocked.*/\1/p' <<<"$out") ;;
+    2) ;;
+    *) fail "cryptsetup could not test a passphrase on $1 (exit $status): $out" ;;
+  esac
+}
+
+luks_slot_count() {
+  sudo -n cryptsetup luksDump "$1" | awk '/^  [0-9]+: luks2/ { n++ } END { print n + 0 }'
+}
+
+passphrase_file() {
+  local file=$work/$1.key
+  printf '%s' "$2" >"$file"
+  chmod 600 "$file"
+  echo "$file"
+}
+
+# The command line of the first kernel entry in a limine.conf: what Limine boots.
+limine_cmdline() {
+  sudo -n awk '/^[[:space:]]*\/\/[^\/]/ && !entry { entry = 1; next }
+    entry && /^[[:space:]]*cmdline:/ { sub(/^[[:space:]]*cmdline:[[:space:]]*/, ""); print; exit }' "$1"
+}
+
+# ── the generic kernel, the Apple device tree and the image's own initramfs ──
+declare -A image_ships=()
 
 build_generic_kernel() {
   say "building the generic ALARM kernel and an initramfs from the image's mkinitcpio hooks"
@@ -230,29 +364,32 @@ build_generic_kernel() {
   curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 --retry 3 -o "$work/dl/$pkg.sig" "$db_url/$pkg.sig" ||
     fail "could not fetch $pkg.sig"
   local home
-  home=$(mktemp -d)
+  home=$work/gnupg-alarm
+  mkdir -p -m 700 "$home"
   # The snapshot's packages carry Arch Linux ARM's builder signature; the keyring
   # package inside the image root holds the same keys.
-  local rootdev lower=$work/lower merged=$work/merged
+  local rootdev lower=$work/lower
   attach -r "$work/payload/root.img"; rootdev=$ATTACHED
-  mkdir -p "$lower" "$merged" "$work/upper" "$work/overlay-work"
+  mkdir -p "$lower" "$work/merged" "$work/upper" "$work/overlay-work"
   mount_tracked -o ro,subvol=@ "$rootdev" "$lower"
-  mount_tracked -t overlay overlay -o "lowerdir=$lower,upperdir=$work/upper,workdir=$work/overlay-work" "$merged"
   gpg --batch --homedir "$home" --import "$lower"/usr/share/pacman/keyrings/archlinuxarm.gpg 2>/dev/null ||
     fail "the image root has no archlinuxarm keyring"
   gpg --batch --homedir "$home" --trust-model always --verify "$work/dl/$pkg.sig" "$work/dl/$pkg" 2>/dev/null ||
     fail "$pkg is not signed by an Arch Linux ARM key"
-  rm -rf "$home"
-  for d in dev proc sys; do
-    sudo mount --rbind "/$d" "$merged/$d" && sudo mount --make-rslave "$merged/$d" || fail "bind /$d"
-    mounts+=("$merged/$d")
+  local path
+  for path in update:/usr/lib/omarchy/mac-boot/update-verify \
+      snapshot-restore:/etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check \
+      factory-reset:/usr/lib/omarchy/mac-boot/reset-prepare; do
+    ! sudo -n test -e "$lower${path#*:}" || image_ships[${path%%:*}]=${path#*:}
   done
-  mount_tracked -t tmpfs tmpfs "$merged/tmp"
-  sudo cp "$work/dl/$pkg" "$merged/tmp/kernel.pkg.tar.xz"
   local image_kernel
   image_kernel=$(ls "$lower/usr/lib/modules")
   [[ $(wc -l <<<"$image_kernel") == 1 ]] || fail "the image root holds more than one kernel: $image_kernel"
-  sudo chroot "$merged" bash -euo pipefail -c '
+  # The overlay and the chroot's /dev, /proc and /sys live in a private mount
+  # namespace that ends with the build. Bound into the host's, they propagate
+  # into every service's namespace, where the host's unmount does not reach
+  # them, and the payload's loop device stays busy until a reboot.
+  local chroot_script='
     bsdtar -xf /tmp/kernel.pkg.tar.xz -C / --exclude=.PKGINFO --exclude=.MTREE --exclude=.BUILDINFO --exclude=.INSTALL
     ver=$(ls /usr/lib/modules | grep -vx "$1" | head -n 1)
     [[ -n $ver ]] || { echo "no generic kernel version" >&2; exit 1; }
@@ -263,9 +400,17 @@ build_generic_kernel() {
     grep -q "Running build hook: \[asahi\]" /tmp/mkinitcpio.log
     cp /boot/Image /tmp/Image-generic
     printf "%s\n" "$ver" >/tmp/generic.version
-  ' bash "$image_kernel" || fail "the generic initramfs did not build inside the image root"
-  sudo cp "$merged/tmp/Image-generic" "$merged/tmp/initramfs-generic.img" "$merged/tmp/generic.version" "$merged/tmp/mkinitcpio.log" "$work/generic/"
-  sudo chown "$(id -u):$(id -g)" "$work/generic"/*
+  '
+  sudo -n unshare --mount --propagation private bash -euo pipefail -c '
+    work=$1 lower=$2 merged=$1/merged
+    mount -t overlay overlay -o "lowerdir=$lower,upperdir=$work/upper,workdir=$work/overlay-work" "$merged"
+    for d in dev proc sys; do mount --rbind "/$d" "$merged/$d"; done
+    mount -t tmpfs tmpfs "$merged/tmp"
+    cp "$work/dl/$3" "$merged/tmp/kernel.pkg.tar.xz"
+    chroot "$merged" bash -euo pipefail -c "$5" bash "$4"
+    cp "$merged/tmp/Image-generic" "$merged/tmp/initramfs-generic.img" "$merged/tmp/generic.version" "$merged/tmp/mkinitcpio.log" "$work/generic/"
+  ' bash "$work" "$lower" "$pkg" "$image_kernel" "$chroot_script" || fail "the generic initramfs did not build inside the image root"
+  sudo -n chown "$(id -u):$(id -g)" "$work/generic"/*
   local hook_files
   hook_files=$(lsinitcpio "$work/generic/initramfs-generic.img" | grep -c 'omarchy-mac-encrypt') || true
   ((hook_files >= 3)) || fail "the generic initramfs carries no omarchy-mac-encrypt unit"
@@ -277,57 +422,147 @@ build_generic_kernel() {
   ok "generic kernel $(cat "$work/generic/generic.version") + initramfs from the image's hooks (image kernel $image_kernel)"
 }
 
+fetch_uefi() {
+  curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 --retry 3 -o "$work/dl/edk2.pkg.tar.zst" "$uefi_url" ||
+    fail "could not fetch ${uefi_url##*/}"
+  [[ $(sha256 "$work/dl/edk2.pkg.tar.zst") == "$uefi_sha256" ]] || fail "${uefi_url##*/} does not match its pinned digest"
+  bsdtar -xOf "$work/dl/edk2.pkg.tar.zst" usr/share/edk2/aarch64/QEMU_EFI.fd >"$work/generic/QEMU_EFI.fd" &&
+    [[ -s $work/generic/QEMU_EFI.fd ]] || fail "${uefi_url##*/} has no usr/share/edk2/aarch64/QEMU_EFI.fd"
+  echo "uefi_firmware=${uefi_url##*/}|$uefi_sha256" >>"$evidence_dir/run.txt"
+  ok "UEFI firmware ${uefi_url##*/} matches its pinned digest"
+}
+
+# QEMU's own virt device tree, with an Apple root compatible and model, so the
+# image's detectors see a Mac. Dumped with the guest's machine options; with
+# ACPI off, the firmware hands this tree to the kernel.
+machine=virt,accel=kvm,gic-version=host,acpi=off
+make_apple_dtb() {
+  qemu-system-aarch64 -M "$machine,dumpdtb=$work/apple.dtb" -cpu host -m "$vm_memory_mb" -smp "$vm_cpus" \
+    -display none >/dev/null 2>&1 || fail "could not dump QEMU's virt device tree"
+  fdtput -t s "$work/apple.dtb" / compatible "${apple_compatible[@]}" linux,dummy-virt &&
+    fdtput -t s "$work/apple.dtb" / model "$apple_model" || fail "could not give the device tree an Apple root compatible"
+  ok "guest device tree: ${apple_compatible[*]} over QEMU virt"
+}
+
 # ── the disk ─────────────────────────────────────────────────────────────────
 make_disk() {
   local disk=$1 install_conf=${2:-}
-  say "assembling $disk"
+  say "assembling ${disk##*/}"
   rm -f "$disk"
   truncate -s "${disk_gib}G" "$disk"
-  sgdisk -o -n1:0:+512M -t1:ef00 -c1:EFI -n2:0:+2G -t2:8300 -c2:BOOT -n3:0:0 -t3:8300 -c3:ROOT "$disk" >/dev/null ||
+  sgdisk -o -n1:0:+500M -t1:ef00 -c1:EFI -n2:0:+2G -t2:8300 -c2:BOOT -n3:0:0 -t3:8300 -c3:ROOT "$disk" >/dev/null ||
     fail "sgdisk"
   local dev
   attach -P "$disk"; dev=$ATTACHED
-  sudo mkfs.vfat -F 32 -i "${ESP_UUID/-/}" -n OMARCHY_EFI "${dev}p1" >/dev/null || fail "mkfs.vfat"
+  sudo -n mkfs.vfat -F 32 -i "${ESP_UUID/-/}" -n OMARCHY_EFI "${dev}p1" >/dev/null || fail "mkfs.vfat"
   mkdir -p "$work/esp-mnt"
   mount_tracked "${dev}p1" "$work/esp-mnt"
-  sudo cp -r "$work/payload/esp/." "$work/esp-mnt/"
-  sudo mkdir -p "$work/esp-mnt/omarchy"
+  sudo -n cp -r "$work/payload/esp/." "$work/esp-mnt/"
+  sudo -n mkdir -p "$work/esp-mnt/omarchy"
   if [[ -n $install_conf ]]; then
-    printf '%s' "$install_conf" | sudo tee "$work/esp-mnt/omarchy/install.conf" >/dev/null
+    printf '%s' "$install_conf" | sudo -n tee "$work/esp-mnt/omarchy/install.conf" >/dev/null
   fi
   umount_last
-  sudo dd if="$work/payload/boot.img" of="${dev}p2" bs=4M conv=sparse,fsync status=none || fail "dd boot.img"
-  sudo dd if="$work/payload/root.img" of="${dev}p3" bs=4M conv=sparse,fsync status=none || fail "dd root.img"
   detach_last
-}
-
-# ── the guest ────────────────────────────────────────────────────────────────
-boot_guest() {
-  local disk=$1 log=$2 append=$3
-  rm -f "$log"
-  qemu-system-aarch64 -M virt,accel=kvm,gic-version=host -cpu host -m "$vm_memory_mb" -smp "$vm_cpus" \
-    -kernel "$work/generic/Image-generic" -initrd "$work/generic/initramfs-generic.img" \
-    -append "$append console=ttyAMA0,115200 loglevel=7 systemd.journald.forward_to_console=1 zswap.enabled=0" \
-    -drive "file=$disk,format=raw,if=none,id=d0,cache=writeback" -device virtio-blk-pci,drive=d0,romfile= \
-    -netdev user,id=n0 -device virtio-net-pci,netdev=n0,romfile= \
-    -device virtio-rng-pci -device qemu-xhci -device usb-kbd \
-    -display none -serial "file:$log" -monitor none -pidfile "$work/qemu.pid" &
-  qemu_pid=$!
-}
-
-wait_serial() {
-  local log=$1 pattern=$2 what=$3 waited=0
-  until grep -aq -- "$pattern" "$log" 2>/dev/null; do
-    kill -0 "$qemu_pid" 2>/dev/null || fail "$what: the guest exited (see $log)"
-    ((waited < boot_timeout)) || fail "$what: not seen within ${boot_timeout}s (see $log)"
-    sleep 5; waited=$((waited + 5))
+  # Straight into the disk file at each partition's offset: the loop device's
+  # extra page cache made this several times slower.
+  local part start
+  for part in 2:boot.img 3:root.img; do
+    start=$(sgdisk -i "${part%%:*}" "$disk" | sed -n 's/^First sector: \([0-9]*\).*/\1/p')
+    [[ $start =~ ^[0-9]+$ ]] || fail "sgdisk has no first sector for partition ${part%%:*}"
+    dd if="$work/payload/${part#*:}" of="$disk" bs=4M seek=$((start * 512)) oflag=seek_bytes conv=notrunc,sparse status=none ||
+      fail "dd ${part#*:}"
   done
 }
 
-# First boot removes install.conf from the vfat ESP without a sync (a persisted
-# copy on the root already won, and a retry deletes it again), so the unlink
-# sits in the page cache until writeback. Give it the writeback interval
-# before the guest is stopped.
+# A scenario's own copy of another's disk: a reflink where the host filesystem
+# has them, else a sparse copy.
+copy_disk() {
+  cp --reflink=auto --sparse=always "$1" "$2" || fail "could not copy ${1##*/}"
+}
+
+# Mounts a disk's ESP read-only and prints its Limine command line.
+disk_cmdline() {
+  local dev cmdline
+  attach -P -r "$1"; dev=$ATTACHED
+  mkdir -p "$work/mnt"
+  mount_tracked -o ro "${dev}p1" "$work/mnt"
+  cmdline=$(limine_cmdline "$work/mnt/limine.conf")
+  umount_last
+  detach_last
+  [[ $cmdline == *root=* ]] || fail "${1##*/}: the first Limine kernel entry has no root= command line"
+  DISK_CMDLINE=$cmdline
+}
+
+# ── the guest ────────────────────────────────────────────────────────────────
+# Owner setup asks on tty1; the guest has no display, so a credential drop-in
+# moves it to the serial console, and the serial login waits for it.
+provision_dropin=$'[Service]\nTTYPath=/dev/ttyAMA0\nTTYRows=40\nTTYColumns=120\n'
+getty_dropin=$'[Unit]\nAfter=omarchy-provision-owner.service\n'
+vm_append="console=ttyAMA0,115200 loglevel=7 systemd.show_status=true systemd.journald.forward_to_console=1 plymouth.enable=0"
+vm_append+=" systemd.set_credential_binary=systemd.unit-dropin.omarchy-provision-owner.service:$(printf '%s' "$provision_dropin" | base64 -w0)"
+vm_append+=" systemd.set_credential_binary=systemd.unit-dropin.serial-getty@ttyAMA0.service:$(printf '%s' "$getty_dropin" | base64 -w0)"
+
+serial_log=""
+serial_pos=0
+serial_match=""
+
+boot_guest() {
+  local disk=$1 log=$2 cmdline=$3
+  rm -f "$log" "$serial_sock"
+  echo "$cmdline" >"${log%.log}.cmdline"
+  qemu-system-aarch64 -M "$machine" -cpu host -m "$vm_memory_mb" -smp "$vm_cpus" \
+    -bios "$work/generic/QEMU_EFI.fd" -dtb "$work/apple.dtb" -kernel "$work/generic/Image-generic" -initrd "$work/generic/initramfs-generic.img" \
+    -append "$cmdline $vm_append" \
+    -drive "file=$disk,format=raw,if=none,id=d0,cache=writeback" -device virtio-blk-pci,drive=d0,romfile= \
+    -netdev user,id=n0 -device virtio-net-pci,netdev=n0,romfile= \
+    -device virtio-rng-pci -device qemu-xhci -device usb-kbd \
+    -display none -monitor none \
+    -chardev "socket,id=ser0,path=$serial_sock,server=on,wait=off,logfile=$log" -serial chardev:ser0 &
+  qemu_pid=$!
+  serial_log=$log
+  serial_pos=0
+}
+
+# Waits for an extended regex in the serial log past the last match, and moves
+# past it; the text matched is left in serial_match. Returns 1 on timeout.
+serial_find() {
+  local pattern=$1 timeout=$2 waited=0 hit LC_ALL=C
+  while true; do
+    hit=$(tail -c +$((serial_pos + 1)) "$serial_log" 2>/dev/null | grep -a -b -o -E -m1 -- "$pattern" | head -n 1) || true
+    if [[ -n $hit ]]; then
+      serial_match=${hit#*:}
+      serial_pos=$((serial_pos + ${hit%%:*} + ${#serial_match}))
+      return 0
+    fi
+    kill -0 "$qemu_pid" 2>/dev/null || return 2
+    ((waited < timeout)) || return 1
+    sleep 2; waited=$((waited + 2))
+  done
+}
+
+serial_expect() {
+  local status=0
+  serial_find "$1" "${3:-$boot_timeout}" || status=$?
+  ((status != 2)) || fail "$2: the guest exited (see ${serial_log##*/})"
+  ((status == 0)) || fail "$2: not seen within ${3:-$boot_timeout}s (see ${serial_log##*/})"
+}
+
+# QEMU takes serial input only as fast as the guest drains the UART's 16-byte
+# FIFO, and drops what is still unread when the writer disconnects: the
+# connection stays open until the guest has read it all.
+serial_send() {
+  { printf '%s' "$1"; sleep 1; } | socat -u - "UNIX-CONNECT:$serial_sock" 2>/dev/null || fail "could not type on the guest's console"
+}
+
+serial_type() {
+  serial_send "$1"$'\r'
+}
+
+# Units fsync what they record, but ext4, vfat and btrfs keep the rest in the
+# page cache until writeback: give it the writeback interval before the guest
+# is stopped. Stopping leaves journals to replay, so disks are attached
+# read-write and mounted read-only, which lets the kernel replay them.
 settle_guest() {
   local waited=0
   while ((waited < 40)); do
@@ -342,102 +577,413 @@ stop_guest() {
   qemu_pid=""
 }
 
-root_append="root=UUID=$ROOT_UUID rw rootflags=subvol=@ rootfstype=btrfs"
-
-# The guest is stopped with SIGTERM (owner provisioning holds tty1, so a
-# power-key shutdown never completes), which leaves ext4 and btrfs journals to
-# replay. The units fsync what they record, and on btrfs an fsync lands in the
-# tree-log: only a replay makes it visible. The disks are therefore attached
-# read-write and mounted read-only, which lets the kernel replay both journals.
-# ── plain first boot ─────────────────────────────────────────────────────────
-plain_boot() {
-  local disk=$work/plain.img log=$evidence_dir/plain-serial.log
-  make_disk "$disk" $'format=1\nencrypt=0\nlane='"$lane"$'\n'
-  say "plain first boot"
-  boot_guest "$disk" "$log" "$root_append"
-  wait_serial "$log" "install.conf sets encrypt=0" "plain: the encrypt unit read install.conf"
-  wait_serial "$log" "Finished Omarchy first boot" "plain: first boot"
-  wait_serial "$log" "Starting Omarchy provisioning first-boot user setup" "plain: owner provisioning"
-  ! grep -aq "Failed to start Omarchy first boot" "$log" || fail "plain: first boot reported a failure"
-  settle_guest
-  stop_guest
-  local dev
-  attach -P "$disk"; dev=$ATTACHED
-  mkdir -p "$work/mnt"
-  [[ $(sudo blkid -c /dev/null -o value -s TYPE "${dev}p3") == btrfs ]] || fail "plain: the root is no longer plain btrfs"
-  mount_tracked -o ro,subvol=@ "${dev}p3" "$work/mnt"
-  local st=$work/mnt/var/lib/omarchy/mac-first-boot
-  sudo test ! -e "$st/pending" || fail "plain: first boot left its pending marker"
-  sudo test -f "$st/install.conf" && sudo grep -qx 'encrypt=0' "$st/install.conf" || fail "plain: install.conf was not persisted"
-  sudo grep -q '^master=[0-9A-F]\{40\}$' "$st/keyring" || fail "plain: no per-Mac pacman master key recorded"
-  sudo test -f "$work/mnt/var/lib/omarchy/provisioning/pending" || fail "plain: owner provisioning is not armed"
-  sudo test ! -e "$st/last-error" || fail "plain: $(sudo cat "$st/last-error")"
-  umount_last
-  mount_tracked -o ro "${dev}p1" "$work/mnt"
-  sudo test ! -e "$work/mnt/omarchy/install.conf" || fail "plain: install.conf is still on the ESP"
-  umount_last
-  mount_tracked -o ro "${dev}p2" "$work/mnt"
-  sudo grep -q 'phase=declined' "$work/mnt/omarchy/encrypt.state" || fail "plain: encrypt.state does not record the decline"
-  umount_last
-  detach_last
-  ok "plain first boot: install.conf consumed, root left plain (phase=declined), keyring made, owner provisioning armed"
+# Answers owner setup the way an owner at the Mac would, keeping every default.
+# An encrypted install shows a recovery key: it is kept in recovery_key.
+owner_setup() {
+  local what=$1 encrypted=$2 setup_timeout=$((boot_timeout * 2))
+  serial_expect 'Press Return to Start Setup' "$what: owner setup greeter"
+  serial_send $'\r'
+  serial_expect 'Select keyboard layout' "$what: keyboard step" 120
+  serial_send $'\r'
+  serial_expect 'Username> ' "$what: username" 120
+  serial_type "$owner_user"
+  serial_expect 'Password> ' "$what: password" 60
+  serial_type "$owner_password"
+  serial_expect 'Confirm> ' "$what: password confirmation" 60
+  serial_type "$owner_password"
+  local prompt
+  for prompt in 'Full name> ' 'Email address> ' 'Hostname> ' 'Timezone' 'Does this look right\?'; do
+    serial_expect "$prompt" "$what: owner setup prompt $prompt" 120
+    serial_send $'\r'
+  done
+  if ((encrypted)); then
+    serial_expect 'This is your disk recovery key' "$what: recovery key screen" "$setup_timeout"
+    serial_expect '[A-Z2-7]{4}(-[A-Z2-7]{4}){11}' "$what: recovery key" 60
+    recovery_key=$serial_match
+    secrets+=("$recovery_key")
+    serial_expect 'to continue' "$what: recovery key acknowledgement" 60
+    # gum draws the placeholder's first letter in the cursor's style.
+    serial_expect 'wrote it down' "$what: acknowledgement prompt" 60
+    serial_type 'I wrote it down'
+  fi
+  serial_expect 'login: |Setup hit an error' "$what: owner setup finished and the console login" "$setup_timeout"
+  [[ $serial_match == 'login: ' ]] || fail "$what: owner setup hit an error (its log is in the guest's /var/log/omarchy-provision-owner.log)"
 }
 
-# ── encrypted first boot and the boot after it ───────────────────────────────
-encrypted_boot() {
-  local disk=$work/encrypted.img log=$evidence_dir/encrypted-serial.log
-  make_disk "$disk" ""
-  say "encrypted first boot (no install.conf)"
-  boot_guest "$disk" "$log" "$root_append"
-  wait_serial "$log" "encrypting in place" "encrypted: conversion start"
-  wait_serial "$log" "conversion finished" "encrypted: conversion"
-  wait_serial "$log" "sysroot.mount drop-in What=/dev/mapper/root" "encrypted: sysroot repointed"
-  wait_serial "$log" "Finished Omarchy first boot" "encrypted: first boot"
-  wait_serial "$log" "Starting Omarchy provisioning first-boot user setup" "encrypted: owner provisioning"
-  ! grep -aq "Failed to start Encrypt the Omarchy Mac root\|update-grub failed\|mkinitcpio -P failed" "$log" ||
-    fail "encrypted: the encrypt unit reported a failure"
+# Logs the owner in on the serial console; returns 1 when the password is
+# refused. The shell's prompt is the owner's, so readiness is an echo whose
+# output differs from its typed line.
+console_login() {
+  local what=$1 password=$2 tries=0
+  serial_expect 'login: ' "$what: console login prompt"
+  serial_type "$owner_user"
+  serial_expect 'Password: ' "$what: console password prompt" 60
+  serial_type "$password"
+  local status
+  while true; do
+    status=0
+    serial_find '__ready_28__|Login incorrect' 15 || status=$?
+    ((status != 0)) || break
+    ((status != 2)) || fail "$what: the guest exited (see ${serial_log##*/})"
+    ((++tries < 8)) || fail "$what: no shell after logging in (see ${serial_log##*/})"
+    serial_type 'echo __ready_$((20+8))__'
+  done
+  [[ $serial_match == __ready_28__ ]]
+}
+
+# Runs a command in the console shell, answering prompts from a table of
+# "extended-regex=reply" pairs until it exits; sets guest_status, and
+# guest_output to what the console showed meanwhile.
+guest_run() {
+  local what=$1 command=$2 pattern='__exit_[0-9]+__' pair last="" start=$serial_pos
+  shift 2
+  declare -A replies=()
+  for pair in "$@"; do
+    replies[${pair%%=*}]=${pair#*=}
+    pattern+="|${pair%%=*}"
+  done
+  serial_type "$command; echo __exit_\$?__"
+  while true; do
+    serial_expect "$pattern" "$what" 600
+    if [[ $serial_match =~ ^__exit_([0-9]+)__$ ]]; then
+      guest_status=${BASH_REMATCH[1]}
+      guest_output=$(tail -c +$((start + 1)) "$serial_log" | head -c $((serial_pos - start)) | tr -d '\0') || true
+      return 0
+    fi
+    # A prompt redrawn after its answer is not asked again.
+    [[ $serial_match != "$last" ]] || continue
+    last=$serial_match
+    for pair in "${!replies[@]}"; do
+      if [[ $serial_match =~ ^($pair)$ ]]; then
+        serial_type "${replies[$pair]}"
+        break
+      fi
+    done
+  done
+}
+
+first_boot_finished() {
+  serial_expect 'Finished .*Omarchy first boot|First boot stopped: [^[:cntrl:]]*' "$1: first boot"
+  [[ $serial_match == Finished* ]] || fail "$1: $serial_match"
+}
+
+unlock_prompt() {
+  serial_expect 'passphrase for disk' "$1: the disk password prompt"
+}
+
+no_emergency() {
+  ! grep -aq "Emergency Mode\|Failed to start .*Encrypt the Omarchy Mac root\|Failed to mount /run/systemd/cryptsetup/keydev-root" "$serial_log" ||
+    fail "$1: emergency mode or a failed unlock (see ${serial_log##*/})"
+}
+
+# ── checks on a stopped guest's disk ─────────────────────────────────────────
+# Mounts partition 3's root read-only (through LUKS when it is encrypted, with
+# the passphrase file given) at $work/mnt, and @log at $work/log.
+mount_root() {
+  local part=$1 key=${2:-} dev=$1
+  if [[ $(sudo -n blkid -c /dev/null -o value -s TYPE "$part") == crypto_LUKS ]]; then
+    open_luks "$part" "$key"; dev=$OPENED
+  fi
+  mkdir -p "$work/mnt" "$work/log"
+  mount_tracked -o ro,subvol=@ "$dev" "$work/mnt"
+  mount_tracked -o ro,subvol=@log "$dev" "$work/log"
+}
+
+umount_root() {
+  umount_last
+  umount_last
+  [[ $(sudo -n blkid -c /dev/null -o value -s TYPE "$1") != crypto_LUKS ]] || close_last
+}
+
+keep_guest_logs() {
+  local prefix=$1 log
+  for log in omarchy-mac-first-boot.log omarchy-provision-owner.log; do
+    ! sudo -n test -f "$work/log/$log" || sudo -n cat "$work/log/$log" >"$evidence_dir/$prefix-$log"
+  done
+}
+
+owner_state() {
+  local what=$1 root=$work/mnt st=$work/mnt/var/lib/omarchy/mac-first-boot
+  sudo -n test ! -e "$st/pending" || fail "$what: first boot left its pending marker"
+  sudo -n test ! -e "$st/last-error" || fail "$what: first boot failed: $(sudo -n cat "$st/last-error")"
+  sudo -n grep -q '^master=[0-9A-F]\{40\}$' "$st/keyring" || fail "$what: no per-Mac pacman master key recorded"
+  sudo -n test ! -e "$root/var/lib/omarchy/provisioning/pending" || fail "$what: owner setup left provisioning pending"
+  sudo -n grep -q "^$owner_user:" "$root/etc/passwd" || fail "$what: owner setup created no $owner_user account"
+  sudo -n grep -q 'first-boot setup complete' "$work/log/omarchy-provision-owner.log" || fail "$what: owner setup did not log its completion"
+}
+
+# The boot splash: the theme configured, and the theme in the UKI Limine boots.
+check_plymouth() {
+  local root=$work/mnt theme uki
+  theme=$(sudo -n awk -F= '/^\[Daemon\]/ { d = 1; next } /^\[/ { d = 0 } d && $1 == "Theme" { t = $2 } END { print t }' "$root/etc/plymouth/plymouthd.conf" 2>/dev/null) || true
+  [[ -n $theme ]] || theme=$(sudo -n awk -F= '$1 == "Theme" { t = $2 } END { print t }' "$root/usr/share/plymouth/plymouthd.defaults" 2>/dev/null) || true
+  if [[ $theme != omarchy ]]; then
+    not_ok "$1: the Plymouth theme is ${theme:-unset}, not omarchy"
+    return 0
+  fi
+  uki=$(sudo -n find "$work/esp/EFI/Linux" -maxdepth 1 -name 'omarchy_*.efi' ! -name '*fallback*' | head -n 1)
+  [[ -n $uki ]] || { not_ok "$1: no Omarchy UKI on the ESP to hold the splash"; return 0; }
+  sudo -n cat "$uki" >"$work/uki.efi"
+  python3 - "$work/uki.efi" "$work/uki-initrd.img" <<'PY' || { not_ok "$1: the UKI has no .initrd section"; return 0; }
+import struct, sys
+data = open(sys.argv[1], "rb").read()
+pe = struct.unpack_from("<I", data, 0x3C)[0]
+sections, optional = struct.unpack_from("<H", data, pe + 6)[0], struct.unpack_from("<H", data, pe + 20)[0]
+for i in range(sections):
+    name, vsize, _, rawsize, rawptr = struct.unpack_from("<8sIIII", data, pe + 24 + optional + 40 * i)
+    if name.rstrip(b"\0") == b".initrd":
+        open(sys.argv[2], "wb").write(data[rawptr:rawptr + min(vsize, rawsize)])
+        sys.exit(0)
+sys.exit(1)
+PY
+  if lsinitcpio "$work/uki-initrd.img" | grep -Eq '(^|/)usr/share/plymouth/themes/omarchy/'; then
+    ok "$1: the Plymouth theme is omarchy, in the configuration and in the UKI's initramfs"
+  else
+    not_ok "$1: the Plymouth theme is omarchy, but the UKI's initramfs does not carry it"
+  fi
+}
+
+check_snapshots() {
+  if sudo -n btrfs subvolume show "$work/mnt/.snapshots" >/dev/null 2>&1; then
+    ok "$1: /.snapshots is a btrfs subvolume"
+  else
+    not_ok "$1: /.snapshots is not a btrfs subvolume ($(sudo -n stat -c %F "$work/mnt/.snapshots" 2>/dev/null || echo missing)), so Snapper and Limine's snapshot entries cannot work"
+  fi
+}
+
+# ── scenarios ────────────────────────────────────────────────────────────────
+scenario_first_boot() {
+  local disk=$work/first-boot.img log=$evidence_dir/first-boot-serial.log dev
+  make_disk "$disk" $'format=1\nencrypt=0\nlane='"$lane"$'\n'
+  say "first-boot: plain install (install.conf encrypt=0)"
+  boot_guest "$disk" "$log" "$(limine_cmdline "$work/payload/esp/limine.conf")"
+  serial_expect 'install.conf sets encrypt=0' "first-boot: the encrypt unit read install.conf"
+  first_boot_finished first-boot
+  owner_setup first-boot 0
+  no_emergency first-boot
   settle_guest
   stop_guest
-  local dev luks
   attach -P "$disk"; dev=$ATTACHED
-  mkdir -p "$work/mnt"
-  [[ $(sudo blkid -c /dev/null -o value -s TYPE "${dev}p3") == crypto_LUKS ]] || fail "encrypted: the root is not crypto_LUKS"
-  luks=$(sudo blkid -c /dev/null -o value -s UUID "${dev}p3")
-  mount_tracked -o ro "${dev}p2" "$work/mnt"
-  sudo grep -q 'phase=configured' "$work/mnt/omarchy/encrypt.state" || fail "encrypted: encrypt.state is not phase=configured"
-  sudo grep -q "luks_uuid=$luks" "$work/mnt/omarchy/encrypt.state" || fail "encrypted: encrypt.state names another LUKS UUID"
-  [[ $(sudo stat -c '%s %a' "$work/mnt/omarchy/luks-key") == "64 600" ]] || fail "encrypted: the throwaway key is not 64 bytes 0600"
-  sudo grep -q "rd.luks.name=$luks=root rd.luks.key=$luks=/omarchy/luks-key:UUID=$BOOT_UUID" "$work/mnt/grub/grub.cfg" ||
-    fail "encrypted: grub.cfg does not unlock through the Boot key"
+  [[ $(sudo -n blkid -c /dev/null -o value -s TYPE "${dev}p3") == btrfs ]] || fail "first-boot: the root is no longer plain btrfs"
+  mount_root "${dev}p3"
+  keep_guest_logs first-boot
+  owner_state first-boot
+  sudo -n grep -qx 'encrypt=0' "$work/mnt/var/lib/omarchy/mac-first-boot/install.conf" || fail "first-boot: install.conf was not persisted"
+  mkdir -p "$work/esp"
+  mount_tracked -o ro "${dev}p1" "$work/esp"
+  sudo -n test ! -e "$work/esp/omarchy/install.conf" || fail "first-boot: install.conf is still on the ESP"
+  sudo -n grep -Fq 'boot():/EFI/Linux/omarchy_' "$work/esp/limine.conf" || fail "first-boot: limine.conf boots no Omarchy UKI"
+  local machine_id
+  machine_id=$(sudo -n cat "$work/mnt/etc/machine-id")
+  [[ $machine_id =~ ^[0-9a-f]{32}$ ]] || fail "first-boot: first boot left no machine ID"
+  sudo -n grep -Fq "machine-id=$machine_id" "$work/esp/limine.conf" ||
+    fail "first-boot: the deferred Limine step did not rebuild the menu for this Mac"
+  ok "first-boot: install.conf consumed, root left plain, keyring made, the deferred Limine step rebuilt the menu and UKI for this Mac, owner setup finished and the console login is up"
+  check_plymouth first-boot
+  check_snapshots first-boot
+  skip "first-boot: default audio sink: N/A in a VM (no Apple audio device, so no card profile to fall back from); hardware validation checks it"
+  umount_last
+  umount_root "${dev}p3"
+  mkdir -p "$work/boot"
+  mount_tracked -o ro "${dev}p2" "$work/boot"
+  sudo -n grep -q 'phase=declined' "$work/boot/omarchy/encrypt.state" || fail "first-boot: encrypt.state does not record the decline"
   umount_last
   detach_last
+  ok "first-boot: encrypt.state records phase=declined"
+}
+
+conversion_disk=""
+
+scenario_conversion() {
+  local disk=$work/conversion.img log=$evidence_dir/conversion-serial.log dev luks owner_key recovery_file cmdline owner_slot recovery_slot
+  make_disk "$disk" ""
+  say "conversion: encrypted install (no install.conf)"
+  boot_guest "$disk" "$log" "$(limine_cmdline "$work/payload/esp/limine.conf")"
+  serial_expect 'encrypting in place' "conversion: conversion start"
+  serial_expect 'conversion finished' "conversion: conversion"
+  serial_expect 'rebuilding the Limine UKI and entries' "conversion: Limine rebuilt for the LUKS root"
+  serial_expect 'sysroot.mount drop-in What=/dev/mapper/root' "conversion: sysroot repointed"
+  first_boot_finished conversion
+  ! grep -aq 'Failed to start .*Encrypt the Omarchy Mac root\|update-grub failed\|mkinitcpio -P failed\|omarchy-mac-boot-update failed' "$log" ||
+    fail "conversion: the encrypt unit reported a failure"
   local conversion
   conversion=$(grep -a -o 'conversion finished in [0-9]*s ([0-9]* MiB/s)' "$log" | tail -n 1)
-  ok "encrypted first boot: root converted to LUKS2 ($conversion), GRUB and initramfs regenerated, first boot finished on /dev/mapper/root"
-
-  say "second boot through sd-encrypt"
-  local log2=$evidence_dir/encrypted-second-serial.log
-  boot_guest "$disk" "$log2" "root=/dev/mapper/root rw rootflags=subvol=@ rootfstype=btrfs rd.luks.name=$luks=root rd.luks.key=$luks=/omarchy/luks-key:UUID=$BOOT_UUID"
-  wait_serial "$log2" "Volume root already active\|Set up cryptsetup for root\|Finished Cryptography Setup for root" "second boot: unlock"
-  wait_serial "$log2" "login:" "second boot: login prompt"
-  ! grep -aq "Emergency Mode\|Failed to mount /run/systemd/cryptsetup/keydev-root\|Failed to start Encrypt the Omarchy Mac root" "$log2" ||
-    fail "second boot: emergency mode or a failed unlock"
+  ok "conversion: root converted to LUKS2 in the initrd ($conversion), Limine rebuilt, first boot finished on /dev/mapper/root"
+  owner_setup conversion 1
+  no_emergency conversion
+  settle_guest
   stop_guest
-  ok "second boot: sd-encrypt unlocked with the Boot key after the encrypt unit, no emergency mode, login reached"
+  attach -P "$disk"; dev=$ATTACHED
+  [[ $(sudo -n blkid -c /dev/null -o value -s TYPE "${dev}p3") == crypto_LUKS ]] || fail "conversion: the root is not crypto_LUKS"
+  sudo -n cryptsetup isLuks --type luks2 "${dev}p3" || fail "conversion: the root is not LUKS2"
+  luks=$(sudo -n blkid -c /dev/null -o value -s UUID "${dev}p3")
+  owner_key=$(passphrase_file owner "$owner_password")
+  recovery_file=$(passphrase_file recovery "$recovery_key")
+  luks_slot "${dev}p3" "$owner_key"; owner_slot=$SLOT
+  luks_slot "${dev}p3" "$recovery_file"; recovery_slot=$SLOT
+  [[ -n $owner_slot ]] || fail "conversion: the owner's password does not open the disk"
+  [[ -n $recovery_slot && $recovery_slot != "$owner_slot" ]] || fail "conversion: the recovery key does not open the disk in a slot of its own"
+  [[ $(luks_slot_count "${dev}p3") == 2 ]] ||
+    fail "conversion: $(luks_slot_count "${dev}p3") key slots, not just the owner's and the recovery key's"
+  ok "conversion: the owner's password (slot $owner_slot) and the recovery key (slot $recovery_slot) open the disk, and no other key slot is left for the temporary key"
+  mkdir -p "$work/boot"
+  mount_tracked -o ro "${dev}p2" "$work/boot"
+  sudo -n grep -q 'phase=finished' "$work/boot/omarchy/encrypt.state" || fail "conversion: encrypt.state is not phase=finished"
+  sudo -n grep -q "luks_uuid=$luks" "$work/boot/omarchy/encrypt.state" || fail "conversion: encrypt.state names another LUKS UUID"
+  sudo -n test ! -e "$work/boot/omarchy/luks-key" || fail "conversion: the temporary key is still on the Boot partition"
+  umount_last
+  mount_root "${dev}p3" "$owner_key"
+  keep_guest_logs conversion
+  owner_state conversion
+  sudo -n test ! -e "$work/mnt/var/lib/omarchy/provisioning/luks-key" || fail "conversion: the provisioning copy of the temporary key remains"
+  sudo -n grep -q "^root UUID=$luks none luks" "$work/mnt/etc/crypttab" || fail "conversion: /etc/crypttab does not name the LUKS root"
+  ! sudo -n grep -q 'rd.luks.key=' "$work/mnt/etc/default/grub" || fail "conversion: /etc/default/grub still names the temporary key"
+  mkdir -p "$work/esp"
+  mount_tracked -o ro "${dev}p1" "$work/esp"
+  cmdline=$(limine_cmdline "$work/esp/limine.conf")
+  [[ $cmdline == *"rd.luks.name=$luks=root"* ]] || fail "conversion: Limine's command line does not unlock $luks: $cmdline"
+  [[ $cmdline != *rd.luks.key=* ]] || fail "conversion: Limine's command line still names the temporary key: $cmdline"
+  umount_last
+  umount_root "${dev}p3"
+  detach_last
+  ok "conversion: encrypt.state finished, temporary key files gone, crypttab set, Limine unlocks $luks with no key file"
+  conversion_disk=$disk
 }
 
-if [[ -n $release ]]; then fetch_release; fi
+need_conversion() {
+  [[ -z $conversion_disk ]] || return 0
+  say "$1 needs a converted, re-keyed disk: running conversion first"
+  scenario_conversion
+}
+
+scenario_second_boot() {
+  need_conversion second-boot
+  local disk=$work/second-boot.img log=$evidence_dir/second-boot-serial.log
+  copy_disk "$conversion_disk" "$disk"
+  disk_cmdline "$disk"
+  say "second-boot: Limine's command line, unlocked at the password prompt"
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt second-boot
+  serial_type not-the-password
+  serial_expect 'passphrase for disk' "second-boot: the prompt again after a wrong password" 120
+  serial_type "$owner_password"
+  serial_expect 'login: ' "second-boot: login prompt"
+  grep -aq 'Failed to activate with specified passphrase' "$log" || fail "second-boot: the wrong password was not reported as refused"
+  no_emergency second-boot
+  stop_guest
+  ok "second-boot: Limine's command line asks for the disk password, refuses a wrong one, unlocks with the owner's and reaches the login prompt"
+}
+
+scenario_password_change() {
+  need_conversion password-change
+  local disk=$work/password-change.img log=$evidence_dir/password-change-serial.log dev new_password old_key new_key
+  new_password=$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)
+  secrets+=("$new_password")
+  copy_disk "$conversion_disk" "$disk"
+  disk_cmdline "$disk"
+  say "password-change: omarchy-drive-password from the owner's console"
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt password-change
+  serial_type "$owner_password"
+  console_login password-change "$owner_password" || fail "password-change: $owner_user could not log in with the password setup gave"
+  local replies=("\[sudo\] password for [a-z]+:=$owner_password" "Current encryption password=$owner_password"
+    "Enter passphrase to be changed:=$owner_password" "New encryption password=$new_password" "Confirm new encryption password=$new_password")
+  guest_run "password-change: omarchy-drive-password" omarchy-drive-password "${replies[@]}"
+  # Its drive list is an unprivileged blkid, which only reads the cache a root
+  # blkid leaves in /run/blkid: before one has run this boot, it finds no drive.
+  if ((guest_status != 0)) && [[ $guest_output == *"No encrypted drives"* ]]; then
+    not_ok "password-change: omarchy-drive-password finds no encrypted drive until root has run blkid this boot (its unprivileged blkid only reads /run/blkid/blkid.tab)"
+    guest_run "password-change: sudo blkid" "sudo blkid >/dev/null" "${replies[0]}"
+    guest_run "password-change: omarchy-drive-password" omarchy-drive-password "${replies[@]}"
+  fi
+  ((guest_status == 0)) || fail "password-change: omarchy-drive-password exited $guest_status (see ${log##*/})"
+  settle_guest
+  stop_guest
+  attach -P "$disk"; dev=$ATTACHED
+  old_key=$(passphrase_file owner "$owner_password")
+  new_key=$(passphrase_file new "$new_password")
+  luks_slot "${dev}p3" "$new_key"
+  [[ -n $SLOT ]] || fail "password-change: the new password does not open the disk"
+  luks_slot "${dev}p3" "$old_key"
+  [[ -z $SLOT ]] || fail "password-change: the old password still opens the disk (slot $SLOT)"
+  luks_slot "${dev}p3" "$(passphrase_file recovery "$recovery_key")"
+  [[ -n $SLOT ]] || fail "password-change: the recovery key no longer opens the disk"
+  [[ $(luks_slot_count "${dev}p3") == 2 ]] || fail "password-change: $(luks_slot_count "${dev}p3") key slots after the change, not 2"
+  detach_last
+  ok "password-change: the new password opens the disk, the old one no longer does, the recovery slot stays"
+  log=$evidence_dir/password-change-reboot-serial.log
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt password-change
+  serial_type "$new_password"
+  if console_login password-change "$new_password"; then
+    guest_run "password-change: su to root" "su -c 'echo __root_\$((6*7))__' root" "Password: ?=$new_password"
+    if grep -aq '__root_42__' "$log"; then
+      ok "password-change: the next boot unlocks with the new password, and it logs in $owner_user and root"
+    else
+      not_ok "password-change: the next boot unlocks with the new password and it logs in $owner_user, but root does not take it"
+    fi
+  elif console_login password-change "$owner_password"; then
+    not_ok "password-change: the next boot unlocks with the new password, but $owner_user still logs in with the old one: the login password did not follow the disk's"
+  else
+    not_ok "password-change: the next boot unlocks with the new password, but neither password logs in $owner_user"
+  fi
+  no_emergency password-change
+  stop_guest
+}
+
+# Cases whose lifecycle entrypoints no image ships yet. Each is named and runs
+# on its own; it skips while the image lacks the entrypoint, and fails once an
+# image ships it, so the case gets automated before anything relies on it.
+entrypoint_case() {
+  local name=$1 why=$2
+  if [[ -n ${image_ships[$name]:-} ]]; then
+    not_ok "$name: the image ships ${image_ships[$name]}; automate this case"
+  else
+    skip "$name: $why"
+  fi
+}
+
+scenario_update() {
+  entrypoint_case update "the image has no /usr/lib/omarchy/mac-boot/update-verify (post-update boot verification, omacom/omarchy-mac#543)"
+}
+
+scenario_snapshot_restore() {
+  entrypoint_case snapshot-restore "the image has no /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check (snapshot boot and restore, ticket 36)"
+}
+
+scenario_factory_reset() {
+  entrypoint_case factory-reset "the image has no /usr/lib/omarchy/mac-boot/reset-prepare (factory reset through lifecycle dispatch, ticket 34)"
+}
+
+# ── the run ──────────────────────────────────────────────────────────────────
+owner_password=$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)
+secrets+=("$owner_password")
+recovery_key=""
+guest_status=""
+guest_output=""
+DISK_CMDLINE=""
+OPENED=""
+SLOT=""
+
+ran=()
+for name in "${scenarios[@]}"; do [[ -z ${selected[$name]:-} ]] || ran+=("$name"); done
+echo "scenarios=${ran[*]}" >>"$evidence_dir/run.txt"
+hide_devices_from_udisks
+[[ -z $image_dir ]] || verify_image_dir
 unpack_payload
 build_generic_kernel
-[[ $only == encrypted ]] || plain_boot
-[[ $only == plain ]] || encrypted_boot
+fetch_uefi
+make_apple_dtb
 {
   echo "run_id=$run_id"
   echo "lane=$lane"
-  [[ -z $release ]] || echo "release=$release"
   echo "generic_kernel=$(cat "$work/generic/generic.version")"
   echo "alarm_mirror=$alarm_mirror"
   echo "host=$(uname -n) $(uname -r)"
   echo "harness_commit=$(git -C "$acceptance" rev-parse HEAD 2>/dev/null || true)"
 } >>"$evidence_dir/run.txt"
-say "evidence in $evidence_dir"
+for name in "${ran[@]}"; do
+  "scenario_${name//-/_}"
+done
+((checks_failed == 0)) || { echo "not ok - one or more checks failed (see $evidence_dir/run.txt)" >&2; exit 1; }
+say "all scenarios passed: ${ran[*]}"

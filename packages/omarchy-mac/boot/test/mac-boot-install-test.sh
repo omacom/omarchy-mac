@@ -40,7 +40,7 @@ for file in "$ROOT"/entrypoints/*; do
     fail "${file##*/} is staged as a mode 755 dispatch entrypoint"
 done
 [[ $(stat -c %a "$stage/usr/lib/omarchy/mac-boot") == 755 ]] || fail "the entrypoint directory is writable by root only"
-for operation in provision-prepare provision-commit provision-verify; do
+for operation in provision-prepare provision-commit provision-verify luks-slots; do
   [[ -x $stage/usr/lib/omarchy/mac-boot/$operation ]] || fail "$operation is staged"
 done
 pass "the provisioning entrypoints are staged where omarchy-lifecycle-dispatch looks for them"

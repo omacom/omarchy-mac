@@ -8,7 +8,7 @@ dispatch="$ROOT/bin/omarchy-lifecycle-dispatch"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback update-preflight update-verify boot-rebuild)
+operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback update-preflight update-verify boot-rebuild luks-slots)
 apple_optional=(update-preflight boot-rebuild)
 
 for platform in apple-silicon qualcomm generic-aarch64 generic; do

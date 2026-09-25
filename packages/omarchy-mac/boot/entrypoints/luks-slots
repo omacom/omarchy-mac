@@ -1,0 +1,21 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch luks-slots owner=<slot> [recovery=<slot>]. Owner
+# provisioning runs this once the re-key keeps only the owner's and the
+# recovery slot, and omarchy-drive-password after it changed the owner's key,
+# which can land in another slot. It records them in encrypt.state on the boot
+# partition, where the boot check proves the LUKS header holds exactly those
+# slots.
+
+set -euo pipefail
+
+# Root reads only the live system and a fixed PATH; unprivileged tests may
+# stage the package under a fixture root.
+MAC_BOOT_ROOT=""
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+else
+  MAC_BOOT_ROOT=${OMARCHY_MAC_BOOT_ROOT:-}
+fi
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/provision.sh"
+record_luks_slots "$@"
