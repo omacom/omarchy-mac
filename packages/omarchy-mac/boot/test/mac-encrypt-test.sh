@@ -90,6 +90,9 @@ fi
 [[ $(PATH=/nonexistent hooks_after base udev autodetect keyboard keymap block filesystems fsck) == \
   "base systemd autodetect keyboard sd-vconsole block omarchy-mac-encrypt sd-encrypt filesystems fsck" ]] ||
   fail "a runtime without the detector keeps the Apple hooks"
+[[ $(OMARCHY_TEST_HW_PLATFORM=generic-aarch64 hooks_after base systemd block asahi omarchy-vendorfw filesystems fsck) == \
+  "base systemd block asahi omarchy-vendorfw omarchy-mac-encrypt sd-encrypt filesystems fsck" ]] ||
+  fail "the asahi hook marks an Apple root off a Mac, as the baseline has it"
 
 grep -Fq 'cryptsetup reencrypt --encrypt' "$SCRIPT" &&
   grep -Fq -- '--reduce-device-size' "$SCRIPT" && grep -Fq -- '--device-size' "$SCRIPT" &&

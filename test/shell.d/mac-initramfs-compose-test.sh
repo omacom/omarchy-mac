@@ -123,17 +123,25 @@ composed=$(compose apple-silicon) || fail "the Apple drop-ins source cleanly wit
     "HOOKS=($(field HOOKS "$composed")) FILES=($(field FILES "$composed"))"
 pass "a non-Latin layout keeps sd-vconsole and vconsole.conf out of the Apple initramfs"
 
-# The baseline replaces mkinitcpio.conf's line, so a busybox encrypt line (a Mac
-# unlocked by cryptdevice=) only survives from a local drop-in sorting before
-# the Apple ones. They add the firmware hooks and leave its unlock alone.
+# A legacy Mac unlocked through cryptdevice= keeps its busybox line, and the
+# asahi hook marks an Apple root off a Mac too, as in a VM: the Apple drop-ins
+# follow the baseline there.
 printf 'KEYMAP=us\nXKBLAYOUT=us\n' >"$vconsole_conf"
+legacy="base asahi udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystems fsck"
 new_etc 1
-printf 'HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystems fsck)\n' \
-  >"$etc/mkinitcpio.conf.d/50-local.conf"
-composed=$(compose apple-silicon) || fail "the Apple drop-ins source cleanly over a local busybox line"
-[[ $(field HOOKS "$composed") == "base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt asahi omarchy-vendorfw filesystems fsck" ]] ||
-  fail "a local busybox encrypt line keeps its unlock and gains the firmware hooks" "HOOKS=($(field HOOKS "$composed"))"
-pass "a local busybox encrypt line keeps its unlock and gains the firmware hooks"
+sed -i "s/^HOOKS=.*/HOOKS=($legacy)/" "$etc/mkinitcpio.conf"
+composed=$(compose apple-silicon) || fail "the Apple drop-ins source cleanly over a legacy busybox line"
+[[ $(field HOOKS "$composed") == "$legacy" ]] ||
+  fail "a legacy cryptdevice= Mac keeps its busybox line" "HOOKS=($(field HOOKS "$composed"))"
+pass "a legacy cryptdevice= Mac keeps its busybox line"
+
+new_etc 1
+sed -i "s/^HOOKS=.*/HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block asahi filesystems fsck)/" "$etc/mkinitcpio.conf"
+composed=$(compose generic-aarch64) || fail "the Apple drop-ins source cleanly on an asahi root off a Mac"
+[[ $(field HOOKS "$composed") == "base systemd autodetect microcode modconf kms keyboard sd-vconsole block asahi omarchy-mac-encrypt sd-encrypt filesystems fsck" &&
+  $(module_set "$(field MODULES "$composed")") == "$(module_set "$mx_modules")" ]] ||
+  fail "an asahi root off a Mac keeps the Apple unlock and modules" "$composed"
+pass "an asahi root off a Mac keeps the Apple unlock and modules"
 
 # Elsewhere, installing omarchy-mac-boot changes nothing: not HOOKS, MODULES or
 # FILES, whichever layout the machine has.
