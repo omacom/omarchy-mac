@@ -1,0 +1,4 @@
+# Additions for every aarch64 platform, composed after omarchy-base.packages
+# (omarchy-pkg-defaults). x86_64 gets zram-generator from its installer, and
+# omarchy-settings' zram and reclaim settings expect it everywhere.
+zram-generator

@@ -96,7 +96,7 @@ run_leaf
 [[ ! -s $calls ]] || fail "a configured machine is not rebuilt again" "$(cat "$calls")"
 pass "the leaf is idempotent"
 
-# A drop-in already naming plymouth (the x86 omarchy_hooks.conf shape) means
+# A drop-in already naming plymouth (the shape of Omarchy's HOOKS baseline) means
 # the main file is not edited, but GRUB still gets its options.
 new_fixture drop-in
 stock_asahi

@@ -1,0 +1,21 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch provision-commit. Owner provisioning runs this once
+# the owner's LUKS slot exists: drop rd.luks.key= from GRUB's defaults, rebuild
+# the initramfs and the boot files, remove the staged key from the boot
+# partition and record encrypt.state phase=finished, so the next boot asks for
+# the password. A failure leaves the boot-partition key, and rd.luks.key=
+# restored, so the retry still boots unattended.
+
+set -euo pipefail
+
+# Root reads only the live system and a fixed PATH; unprivileged tests may
+# stage the package under a fixture root.
+MAC_BOOT_ROOT=""
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+else
+  MAC_BOOT_ROOT=${OMARCHY_MAC_BOOT_ROOT:-}
+fi
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/provision.sh"
+provision_commit

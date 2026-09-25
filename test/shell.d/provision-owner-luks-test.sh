@@ -4,508 +4,448 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
-export OMARCHY_MAC_BOOT_LIB="$ROOT/packages/omarchy-mac/boot/lib"
+# Owner provisioning on an Apple Silicon image, from the recovery key to a
+# finished setup: omarchy-provision-owner's own functions, the shared re-key
+# journal, the real omarchy-lifecycle-dispatch and omarchy-mac-boot's real
+# provisioning entrypoints, staged by its install script into a fixture root.
+# cryptsetup is a slot-table fake; the boot tools the entrypoints run are stubs.
+require_platform_fixtures "the Apple Silicon owner provisioning path"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-stub_bin="$tmp/bin"
-root="$tmp/root"
-calls="$tmp/calls"
-slots="$tmp/slots"
-prov="$tmp/provisioning"
-boot_key="$tmp/boot/omarchy/luks-key"
-encrypt_state="$tmp/boot/omarchy/encrypt.state"
-grub_default="$tmp/default/grub"
-device="$tmp/luks-device"
-mkdir -p "$stub_bin" "$prov" "$tmp/boot/omarchy" "$tmp/default" "$root"
-chmod 755 "$prov"
-: >"$calls"
+fake_platform "$tmp/apple" apple-silicon
+stub_bin=$tmp/bin
+root=$tmp/root
+calls=$tmp/calls
+slots=$tmp/slots
+device=$tmp/luks-device
+prov=$root/var/lib/omarchy/provisioning
+boot_key=$root/boot/omarchy/luks-key
+encrypt_state=$root/boot/omarchy/encrypt.state
+grub_default=$root/etc/default/grub
+mkdir -p "$stub_bin"
 : >"$device"
+bash "$ROOT/packages/omarchy-mac/boot/install" "$root"
 
-printf 'throwaway-install-key\n' >"$prov/luks-key"
-chmod 600 "$prov/luks-key"
-printf 'throwaway-install-key\n' >"$boot_key"
-chmod 600 "$boot_key"
-# The files are binary-safe passphrases without a newline in production; keep
-# the same bytes the stub will compare against.
-printf 'throwaway-install-key' >"$prov/luks-key"
-printf 'throwaway-install-key' >"$boot_key"
-cat >"$encrypt_state" <<'EOF'
-format=1
-phase=encrypted
-partition=PART-UUID-1
-luks_uuid=abcd-ef
-EOF
-
-cat >"$grub_default" <<'EOF'
-GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root rd.luks.key=abcd-ef=/omarchy/luks-key:UUID=4F4D-5801 root=/dev/mapper/root"
-EOF
-
-printf '0 throwaway-install-key\n' >"$slots"
-
-cat >"$stub_bin/omarchy-hw-apple-silicon" <<'SH'
+# Dispatch runs an entrypoint with an empty environment; each fixture
+# entrypoint hands the staged one its root, stubs and platform fixture.
+lifecycle=$tmp/lifecycle
+mkdir -p "$lifecycle/usr/lib/omarchy/mac-boot"
+for operation in provision-prepare provision-commit provision-verify luks-slots; do
+  cat >"$lifecycle/usr/lib/omarchy/mac-boot/$operation" <<SH
 #!/bin/bash
-exit 0
+echo "$operation" >>"$calls"
+exec /usr/bin/env OMARCHY_MAC_BOOT_ROOT="$root" OMARCHY_PROC_ROOT="$tmp/apple/proc" \\
+  PATH="$stub_bin:$tmp/apple/bin:$ROOT/bin:/usr/bin:/bin" "$root/usr/lib/omarchy/mac-boot/$operation" "\$@"
 SH
-
-cat >"$stub_bin/update-grub" <<SH
-#!/bin/bash
-printf 'update-grub %s\n' "\$*" >>"$calls"
-if [[ -f "$tmp/grub-fail" ]]; then
-  rm -f "$tmp/grub-fail"
-  exit 1
-fi
-exit 0
-SH
-
-# The re-key regenerates boot files through omarchy-mac-boot-update, which on
-# a GRUB Mac is update-grub.
-cp "$ROOT/packages/omarchy-mac/boot/bin/omarchy-mac-boot-update" "$stub_bin/omarchy-mac-boot-update"
-cat >"$stub_bin/omarchy-mac-limine-active" <<'SH'
-#!/bin/bash
-exit 1
-SH
-chmod +x "$stub_bin/omarchy-mac-limine-active"
+done
+chmod 755 "$lifecycle/usr/lib/omarchy/mac-boot"/*
+chmod -R go-w "$lifecycle"
 
 cat >"$stub_bin/mkinitcpio" <<SH
 #!/bin/bash
-printf 'mkinitcpio %s\n' "\$*" >>"$calls"
-exit 0
+echo "mkinitcpio \$*" >>"$calls"
+[[ ! -e $tmp/fail-mkinitcpio ]] || exit 1
+printf '%s\n' ./usr/lib/systemd/system-generators/systemd-cryptsetup-generator \\
+  ./usr/lib/systemd/system/omarchy-vendorfw-initrd.service \\
+  ./usr/lib/systemd/system/systemd-cryptsetup@.service.d/omarchy-vendorfw-initrd.conf >"$root/boot/initramfs-linux-aurora.img"
 SH
-
+cat >"$stub_bin/lsinitcpio" <<'SH'
+#!/bin/bash
+[[ $1 == -l && -f $2 ]] && cat "$2"
+SH
+cat >"$stub_bin/omarchy-mac-kernel" <<'SH'
+#!/bin/bash
+echo linux-aurora
+SH
+cat >"$stub_bin/findmnt" <<'SH'
+#!/bin/bash
+# The Boot partition at /boot, as an image mounts it.
+if [[ " $* " == *" --mountpoint "* && " $* " == *" UUID "* && ${*: -1} == */boot ]]; then
+  echo "${TEST_BOOT_UUID-4f4d5801-424f-4f54-8000-000000000001}"
+  exit 0
+fi
+exec /usr/bin/findmnt "$@"
+SH
+cat >"$stub_bin/omarchy-mac-esp" <<'SH'
+#!/bin/bash
+echo /boot/efi
+SH
+cat >"$stub_bin/omarchy-mac-boot-update" <<SH
+#!/bin/bash
+echo "omarchy-mac-boot-update" >>"$calls"
+sed -n 's/^GRUB_CMDLINE_LINUX="\(.*\)"/linux \/vmlinuz-linux-aurora \1/p' "$grub_default" >"$root/boot/grub/grub.cfg"
+SH
+for tool in limine-update update-grub; do
+  printf '#!/bin/bash\necho %s >>"%s"\n' "$tool" "$calls" >"$stub_bin/$tool"
+done
 cat >"$stub_bin/stty" <<'SH'
 #!/bin/bash
 echo "24 80"
 SH
-
-: >"$tmp/gum-stdin"
-cat >"$stub_bin/gum" <<SH
-#!/bin/bash
-printf 'gum %s\n' "\$*" >>"$calls"
-cat >/dev/null
-exit 0
-SH
+printf '#!/bin/bash\nexit 0\n' >"$stub_bin/systemctl"
 
 cat >"$stub_bin/cryptsetup" <<SH
 #!/bin/bash
 printf 'cryptsetup %s\n' "\$*" >>"$calls"
 slots_file="$slots"
 read_key() {
-  local path=\$1
-  [[ -n "\$path" && -e "\$path" ]] || return 1
-  cat "\$path"
+  [[ -n "\$1" && -e "\$1" ]] || return 1
+  cat "\$1"
 }
 slot_for() {
-  local material=\$1 line slot rest
+  local slot rest
   while read -r slot rest; do
-    [[ \$rest == "\$material" ]] && { printf '%s' "\$slot"; return 0; }
+    [[ \$rest == "\$1" ]] && { printf '%s' "\$slot"; return 0; }
   done <"\$slots_file"
   return 1
 }
-add_slot() {
-  local material=\$1 next
-  next=\$(awk '{s=\$1} END {print s+1}' "\$slots_file")
-  next=\${requested_slot:-\$next}
-  printf '%s %s\n' "\$next" "\$material" >>"\$slots_file"
-}
 case "\$1" in
   open)
-    keyfile=""
-    verbose=0
+    keyfile="" token_type="" verbose=0
     while ((\$#)); do
       case "\$1" in
         --verbose) verbose=1 ;;
         --key-file) keyfile=\$2; shift ;;
+        --token-type) token_type=\$2; shift ;;
       esac
       shift
     done
+    # An enrolled token unlocks its slot whatever key is given, unless the
+    # allowed token types exclude it, as with cryptsetup.
+    if [[ -z \$token_type && -s "$tmp/token-slot" ]]; then
+      (( verbose )) && echo "Key slot \$(cat "$tmp/token-slot") unlocked." >&2
+      exit 0
+    fi
     material=\$(read_key "\$keyfile") || exit 1
     slot=\$(slot_for "\$material") || exit 1
     (( verbose )) && echo "Key slot \$slot unlocked" >&2
     exit 0
     ;;
   luksAddKey)
-    requested_slot=""
-    if [[ -f "$tmp/add-fail" ]]; then echo "fixture: keyslot write failed" >&2; exit 1; fi
-    keyfile=""
-    device=""
-    newfile=""
+    keyfile="" target="" newfile="" requested=""
     shift
     while ((\$#)); do
       case "\$1" in
         --key-file) keyfile=\$2; shift 2 ;;
-        --key-slot) requested_slot=\$2; shift 2 ;;
+        --key-slot) requested=\$2; shift 2 ;;
         --*) shift ;;
-        *)
-          if [[ -z \$device ]]; then
-            device=\$1
-          else
-            newfile=\$1
-          fi
-          shift
-          ;;
+        *) if [[ -z \$target ]]; then target=\$1; else newfile=\$1; fi; shift ;;
       esac
     done
     material=\$(read_key "\$keyfile") || exit 1
     slot_for "\$material" >/dev/null || exit 1
     new=\$(read_key "\$newfile") || exit 1
-    add_slot "\$new"
-    exit 0
+    next=\$requested
+    if [[ -z \$next ]]; then
+      for (( next = 0; next < 32; next++ )); do
+        awk '{ print \$1 }' "\$slots_file" | grep -qx "\$next" || break
+      done
+    fi
+    printf '%s %s\n' "\$next" "\$new" >>"\$slots_file"
     ;;
   luksDump)
+    echo "Keyslots:"
     awk '{ printf "  %s: luks2\\n", \$1 }' "\$slots_file"
-    exit 0
-    ;;
-  luksUUID)
-    echo abcd-ef
-    exit 0
+    if [[ -s "$tmp/token-slot" ]]; then
+      printf 'Tokens:\\n  %s: luks2-keyring\\n\\tKeyslot:    %s\\n' "\$(cat "$tmp/token-id" 2>/dev/null || echo 0)" "\$(cat "$tmp/token-slot")"
+    fi
+    echo "Digests:"
     ;;
   luksKillSlot)
+    [[ ! -e $tmp/fail-kill ]] || exit 1
     kill_slot=""
     while ((\$#)); do
       [[ \$1 =~ ^[0-9]+$ ]] && kill_slot=\$1
       shift
     done
-    [[ -n \$kill_slot ]] || exit 1
     awk -v s="\$kill_slot" '\$1 != s { print }' "\$slots_file" >"\$slots_file.new"
     mv "\$slots_file.new" "\$slots_file"
-    exit 0
     ;;
   *) exit 1 ;;
 esac
 SH
 chmod +x "$stub_bin"/*
 
-omarchy="$tmp/omarchy"
-mkdir -p "$omarchy/install/provisioning"
+omarchy=$tmp/omarchy
+mkdir -p "$omarchy/install/provisioning" "$omarchy/bin"
 printf 'OMARCHY\n' >"$omarchy/logo.txt"
 : >"$omarchy/install/provisioning/setup-form.sh"
 cp "$ROOT/install/provisioning/luks-rekey.sh" "$ROOT/install/provisioning/luks-recovery.sh" "$omarchy/install/provisioning/"
+for command in omarchy-lifecycle-dispatch omarchy-hw-platform omarchy-hw-apple-silicon; do
+  ln -s "$ROOT/bin/$command" "$omarchy/bin/$command"
+done
 
-export PATH="$stub_bin:$PATH"
-export OMARCHY_PATH="$omarchy"
-export OMARCHY_PROVISIONING_DIR="$prov"
-export OMARCHY_PROVISION_OWNER_LOG="$tmp/provision.log"
-export OMARCHY_BOOT_LUKS_KEY="$boot_key"
-export OMARCHY_ENCRYPT_STATE="$encrypt_state"
-export OMARCHY_GRUB_DEFAULT="$grub_default"
-export OMARCHY_LUKS_DEVICE="$device"
-export OMARCHY_PROVISION_OWNER_SOURCE=1
-export COLUMNS=80
-: >"$OMARCHY_PROVISION_OWNER_LOG"
+export PATH="$stub_bin:$tmp/apple/bin:$PATH"
+export OMARCHY_PATH=$omarchy OMARCHY_PROC_ROOT=$tmp/apple/proc OMARCHY_LIFECYCLE_ROOT=$lifecycle
+export OMARCHY_PROVISIONING_DIR=$prov OMARCHY_PROVISION_OWNER_LOG=$tmp/provision.log
+export OMARCHY_LUKS_DEVICE=$device OMARCHY_PROVISION_OWNER_SOURCE=1 COLUMNS=80
 
 # shellcheck disable=SC1091
 source "$ROOT/bin/omarchy-provision-owner"
-export PATH="$stub_bin:$PATH"
 
-password="owner-secret"
-recovery_key=$(generate_recovery_passphrase)
-[[ $recovery_key =~ ^([A-Z2-7]{4}-){11}[A-Z2-7]{4}$ ]] ||
-  fail "recovery key is 12 base32 groups of 4" "$recovery_key"
+# The worker's account steps and the screen are not under test.
+STATE_FILE=$tmp/state
+FINALIZE_WARNING_FLAG=$tmp/finalize-warning
+username=owner hostname="" timezone=""
+create_user() { :; }
+install_authorized_keys() { :; }
+configure_login() { :; }
+configure_hostname() { :; }
+configure_timezone() { :; }
+finalize_user() { :; }
+limine_entries_stale() { return 1; }
+clear_logo() { :; }
+PADDING_LEFT=0
+sleep() { :; }
+screen=$tmp/screen
+say() { [[ $1 != --foreground ]] || shift 2; printf '%s\n' "$*" >>"$screen"; }
 
-touch "$prov/pending"
-: >"$calls"
-: >"$tmp/gum-stdin"
-printf 'nope\n%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
 cat >"$stub_bin/gum" <<SH
 #!/bin/bash
 printf 'gum %s\n' "\$*" >>"$calls"
 if [[ "\$1" == "style" ]]; then
   cat >>"$tmp/gum-stdin"
-fi
-if [[ "\$1" == "input" ]]; then
+elif [[ "\$1" == "input" ]]; then
   cat >/dev/null
-  IFS= read -r line <"$tmp/gum-input" || exit 1
+  # Out of answers: fail the attempt rather than loop on the prompt.
+  IFS= read -r line <"$tmp/gum-input" || { echo "gum input exhausted" >>"$calls"; kill -TERM "\$PPID"; exit 1; }
   tail -n +2 "$tmp/gum-input" >"$tmp/gum-input.new"
   mv "$tmp/gum-input.new" "$tmp/gum-input"
   printf '%s\n' "\$line"
 fi
-exit 0
 SH
 chmod +x "$stub_bin/gum"
 
-prepare_luks_recovery "$device" >"$tmp/show.out"
-grep -aqF $'\e[3J' "$tmp/show.out" || fail "recovery display clearing uses CSI 3J" "$(od -An -tx1 "$tmp/show.out" | head)"
+luks_uuid=1b2c3d4e-0000-4000-8000-000000000001
+key_line="rd.luks.key=$luks_uuid=/omarchy/luks-key:UUID=4f4d5801-424f-4f54-8000-000000000001"
 
-[[ -f $prov/luks-key ]] || fail "acknowledgement leaves the provisioning luks-key in place"
-[[ -f $boot_key ]] || fail "acknowledgement leaves the Boot-partition luks-key in place"
-[[ -f $prov/pending ]] || fail "acknowledgement leaves provisioning/pending in place"
-grep -Fxq 'phase=encrypted' "$encrypt_state" ||
-  fail "acknowledgement does not finalise encrypt.state" "$(cat "$encrypt_state")"
-(( $(grep -cF 'cryptsetup luksAddKey' "$calls") == 2 )) ||
-  fail "owner and verified recovery slots exist before acknowledgement"
-grep -Fq "$recovery_key" "$slots" || fail "the displayed key is installed"
-grep -Fxq 'recovery_shown=1' "$REKEY_STATE" || fail "acknowledgement is durable"
-! grep -F "$recovery_key" "$calls" >/dev/null ||
-  fail "the recovery key is not passed as a gum argument" "$(cat "$calls")"
-[[ "$(<"$tmp/gum-stdin")" == "$recovery_key" ]] ||
-  fail "the recovery key is fed to gum on stdin" "$(cat "$tmp/gum-stdin")"
-grep -F "$RECOVERY_ACK_PHRASE" "$calls" >/dev/null ||
-  fail "the owner types the acknowledgement phrase"
-! grep -F 'Show it again' "$calls" >/dev/null || fail "there is no re-show path"
-! grep -F 'gum confirm' "$calls" >/dev/null || fail "acknowledgement is typed, not a confirm"
-(( $(grep -c '^gum input' "$calls") == 2 )) ||
-  fail "a wrong phrase is rejected until the owner types the acknowledgement" "$(cat "$calls")"
-! grep -Fq "$recovery_key" "$OMARCHY_PROVISION_OWNER_LOG" ||
-  fail "the recovery key is never written to the provision log after display"
-
-: >"$calls"
-touch "$tmp/grub-fail"
-if rekey_luks; then
-  fail "re-key fails closed when update-grub fails"
-fi
-[[ ! -e $prov/luks-key ]] || fail "a failed GRUB step after phase=rekeyed has already shredded the staged key"
-[[ ! -e $boot_key ]] || fail "a failed GRUB step after phase=rekeyed has already shredded the Boot-partition key"
-grep -Fxq 'phase=rekeyed' "$encrypt_state" ||
-  fail "a failed GRUB step leaves encrypt.state phase=rekeyed" "$(cat "$encrypt_state")"
-(( $(wc -l <"$slots") == 2 )) || fail "a failed GRUB step has already retired the throwaway slot" "$(cat "$slots")"
-[[ -f $REKEY_STATE ]] || fail "slot numbers remain recorded for retry"
-grep -q '^owner_slot=' "$REKEY_STATE" || fail "owner slot is recorded" "$(cat "$REKEY_STATE")"
-grep -q '^recovery_slot=' "$REKEY_STATE" || fail "recovery slot is recorded" "$(cat "$REKEY_STATE")"
-grep -Fxq 'recovery_shown=1' "$REKEY_STATE" || fail "recovery_shown=1 is recorded after acknowledgement" "$(cat "$REKEY_STATE")"
-[[ -f $prov/pending ]] || fail "provisioning state is not removed before phase=finished"
-! grep -Fq 'cryptsetup luksAddKey' "$calls" ||
-  fail "the worker uses the already-confirmed slots" "$(cat "$calls")"
-grep -F 'cryptsetup luksKillSlot' "$calls" >/dev/null || fail "the staged-key slot is killed after slots are recorded"
-
-recorded_owner=$(awk -F= '$1 == "owner_slot" { print $2 }' "$REKEY_STATE")
-recorded_recovery=$(awk -F= '$1 == "recovery_slot" { print $2 }' "$REKEY_STATE")
-
-# A new --attempt process only has a freshly generated recovery key in memory.
-# The retry must reuse the recorded slot rather than adding another.
-: >"$calls"
-recovery_key=$(generate_recovery_passphrase)
-RECOVERY_ACKED=0
-rekey_luks
-
-! grep -F 'cryptsetup luksAddKey' "$calls" >/dev/null ||
-  fail "retry reuses recorded owner and recovery slots without the original key" "$(cat "$calls")"
-grep -Fx 'update-grub ' "$calls" >/dev/null || fail "retry regenerates grub.cfg with update-grub"
-grep -F 'mkinitcpio -P' "$calls" >/dev/null || fail "retry rebuilds the initramfs" "$(cat "$calls")"
-(( $(wc -l <"$slots") == 2 )) || fail "retry does not accumulate LUKS slots" "$(cat "$slots")"
-
-[[ ! -e $prov/luks-key ]] || fail "provisioning luks-key is shredded"
-[[ ! -e $boot_key ]] || fail "Boot-partition luks-key is shredded"
-[[ ! -e $REKEY_STATE ]] || fail "re-key state is removed after success"
-! grep -q 'rd.luks.key=' "$grub_default" ||
-  fail "rd.luks.key= is dropped from GRUB_CMDLINE_LINUX" "$(cat "$grub_default")"
-grep -q 'rd.luks.name=' "$grub_default" || fail "rd.luks.name= is kept"
-grep -q 'root=/dev/mapper/root' "$grub_default" || fail "root=/dev/mapper/root is kept"
-
-grep -Fxq 'format=1' "$encrypt_state" || fail "encrypt.state keeps format=1" "$(cat "$encrypt_state")"
-grep -Fxq 'phase=finished' "$encrypt_state" || fail "encrypt.state is phase=finished" "$(cat "$encrypt_state")"
-grep -Fxq 'partition=PART-UUID-1' "$encrypt_state" || fail "encrypt.state keeps partition=" "$(cat "$encrypt_state")"
-grep -Fxq 'luks_uuid=abcd-ef' "$encrypt_state" || fail "encrypt.state keeps luks_uuid=" "$(cat "$encrypt_state")"
-grep -Fxq "owner_slot=$recorded_owner" "$encrypt_state" ||
-  fail "encrypt.state records the owner slot" "$(cat "$encrypt_state")"
-grep -Fxq "recovery_slot=$recorded_recovery" "$encrypt_state" ||
-  fail "encrypt.state records the recovery slot" "$(cat "$encrypt_state")"
-
-! grep -Fq "$recovery_key" "$OMARCHY_PROVISION_OWNER_LOG" ||
-  fail "the recovery key is never written to the provision log"
-! grep -Fq "$recovery_key" "$grub_default" || fail "the recovery key is not stored in GRUB config"
-[[ ! -e $prov/recovery-key && ! -e $tmp/boot/omarchy/recovery-key ]] ||
-  fail "the recovery key is never written to a keyfile"
-
-! grep -Fq 'limine-update' "$calls" || fail "Apple re-key does not call limine-update"
-[[ $(stat -c %a "$prov") == "755" ]] ||
-  fail "journal writes leave the provisioning directory readable for the new user's Node tarball" "$(stat -c %a "$prov")"
-pass "Apple LUKS re-key adds a recovery keyslot, shreds both keyfiles, and drops rd.luks.key="
-
-# Recorded recovery slot missing: fail rather than add another.
-printf 'format=1\nphase=encrypted\npartition=PART-UUID-1\nluks_uuid=abcd-ef\n' >"$encrypt_state"
-printf '0 throwaway-install-key\n1 owner-secret\n' >"$slots"
-printf 'throwaway-install-key' >"$prov/luks-key"
-printf 'throwaway-install-key' >"$boot_key"
-printf 'owner_slot=1\nrecovery_slot=9\nrecovery_shown=1\n' >"$REKEY_STATE"
-touch "$prov/pending"
-: >"$calls"
-recovery_key="AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH-IIII-JJJJ-KKKK-LLLL"
-RECOVERY_ACKED=0
-if rekey_luks; then
-  fail "a missing recorded recovery slot fails closed"
-fi
-! grep -F 'cryptsetup luksAddKey' "$calls" >/dev/null ||
-  fail "a missing recorded recovery slot does not add another" "$(cat "$calls")"
-[[ -f $prov/pending ]] || fail "a missing recorded slot keeps provisioning state"
-pass "a missing recorded recovery slot fails rather than adding another"
-
-# Crash after shred, before phase=finished: resume without the throwaway keyfile.
-printf 'format=1\nphase=rekeyed\npartition=PART-UUID-1\nluks_uuid=abcd-ef\nowner_slot=1\nrecovery_slot=2\n' >"$encrypt_state"
-printf '1 owner-secret\n2 recovery-material\n' >"$slots"
-printf 'owner_slot=1\nrecovery_slot=2\nrecovery_shown=1\n' >"$REKEY_STATE"
-rm -f "$prov/luks-key" "$boot_key"
-cat >"$grub_default" <<'EOF'
-GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root rd.luks.key=abcd-ef=/omarchy/luks-key:UUID=4F4D-5801 root=/dev/mapper/root"
-EOF
-touch "$prov/pending"
-: >"$calls"
-recovery_key=""
-RECOVERY_ACKED=0
-password="owner-secret"
-rekey_luks
-! grep -F 'cryptsetup luksAddKey' "$calls" >/dev/null ||
-  fail "resume from phase=rekeyed does not add slots" "$(cat "$calls")"
-grep -Fxq 'phase=finished' "$encrypt_state" || fail "resume from phase=rekeyed reaches phase=finished"
-[[ -f $prov/pending ]] || fail "resume does not drop provisioning state from rekey_luks"
-! grep -q 'rd.luks.key=' "$grub_default" || fail "resume drops rd.luks.key="
-pass "finalisation resumes from phase=rekeyed without the throwaway keyfile"
-
-# xtrace must not persist the owner or recovery secret into the provision log.
-printf 'format=1\nphase=encrypted\npartition=PART-UUID-1\nluks_uuid=abcd-ef\n' >"$encrypt_state"
-printf '0 throwaway-install-key\n' >"$slots"
-printf 'throwaway-install-key' >"$prov/luks-key"
-printf 'throwaway-install-key' >"$boot_key"
-rm -f "$REKEY_STATE"
-cat >"$grub_default" <<'EOF'
-GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root rd.luks.key=abcd-ef=/omarchy/luks-key:UUID=4F4D-5801 root=/dev/mapper/root"
-EOF
-recovery_key="ZZZZ-YYYY-XXXX-WWWW-VVVV-UUUU-TTTT-SSSS-RRRR-QQQQ-PPPP-OOOO"
-password="owner-secret-xtrace"
-printf '0 throwaway-install-key\n' >"$slots"
-# The stub compares slot material exactly; owner-secret-xtrace is new.
-: >"$OMARCHY_PROVISION_OWNER_LOG"
-: >"$calls"
-printf '%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
-prepare_luks_recovery "$device" >"$tmp/xtrace-screen"
-set -x
-rekey_luks >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1
-set +x
-! grep -Fq "$recovery_key" "$OMARCHY_PROVISION_OWNER_LOG" ||
-  fail "xtrace does not persist the recovery key in the provision log" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
-! grep -Fq "$password" "$OMARCHY_PROVISION_OWNER_LOG" ||
-  fail "xtrace does not persist the owner password in the provision log" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
-pass "secret-bearing re-key commands are not captured under xtrace"
-
-# Slot reuse must authenticate a retry's password before changing accounts.
-printf '1 owner-pass\n2 recovery-pass\n' >"$slots"
-printf 'owner_slot=1\nrecovery_slot=2\nrecovery_shown=1\n' >"$prov/luks-rekey.state"
-if luks_ensure_slot different-password "$device" owner_slot; then
-  fail "a retry cannot reuse an owner slot with a different password"
-fi
-pass "owner slot reuse authenticates the retry password"
-
-# Losing the staged key and device during an incomplete transaction is not
-# evidence that encryption was declined.
-printf 'format=1\nphase=rekeyed\nowner_slot=1\nrecovery_slot=2\n' >"$encrypt_state"
-rm -f "$prov/luks-key" "$device"
-if rekey_luks; then fail "an incomplete re-key rejects an unavailable device"; fi
-pass "an incomplete re-key cannot silently skip a missing device"
-
-# Finished must never mean success while reset credentials/configuration remain.
-: >"$device"
-printf 'format=1\nphase=finished\n' >"$encrypt_state"
-for leftover in provisioning boot cmdline; do
-  rm -f "$prov/luks-key" "$boot_key"
-  printf 'GRUB_CMDLINE_LINUX="quiet"\n' >"$grub_default"
-  case $leftover in
-    provisioning) printf dummy >"$prov/luks-key" ;;
-    boot) printf dummy >"$boot_key" ;;
-    cmdline) printf 'GRUB_CMDLINE_LINUX="rd.luks.key=dummy"\n' >"$grub_default" ;;
-  esac
-  : >"$calls"
-  if rekey_luks; then fail "finished refuses leftover $leftover"; fi
-  ! grep -Fq 'cryptsetup luksKillSlot' "$calls" || fail "inconsistent finished state does not retire slots"
-done
-pass "finished state refuses staged credentials and persistent auto-unlock configuration"
-
-reset_recovery_fixture() {
-  printf 'format=1\nphase=configured\n' >"$encrypt_state"
-  printf '0 throwaway-install-key\n1 owner-secret\n' >"$slots"
+# The state an encrypted image's first boot hands owner setup: the initramfs
+# converted the root with a throwaway key, staged on the boot partition and in
+# the provisioning directory, and named on GRUB's command line.
+fixture() {
+  rm -rf "$root/boot" "$root/etc" "$root/var" "$root/dev"
+  mkdir -p "$root/boot/omarchy" "$root/boot/grub" "$root/etc/default" "$root/dev/disk/by-uuid" "$prov" \
+    "$root/var/lib/omarchy/mac-first-boot"
+  chmod 755 "$prov"
   printf 'throwaway-install-key' >"$prov/luks-key"
   printf 'throwaway-install-key' >"$boot_key"
-  printf 'owner_slot=1\n' >"$REKEY_STATE"
+  chmod 600 "$prov/luks-key" "$boot_key"
+  touch "$prov/pending"
+  printf 'format=1\nphase=configured\npartition=5f2b0c3e-0003\nluks_uuid=%s\n' "$luks_uuid" >"$encrypt_state"
+  printf 'GRUB_CMDLINE_LINUX="rd.luks.name=%s=root %s root=/dev/mapper/root"\n' "$luks_uuid" "$key_line" >"$grub_default"
+  printf 'linux /vmlinuz-linux-aurora rd.luks.name=%s=root %s\n' "$luks_uuid" "$key_line" >"$root/boot/grub/grub.cfg"
+  printf 'root UUID=%s none luks\n' "$luks_uuid" >"$root/etc/crypttab"
+  : >"$root/dev/disk/by-uuid/$luks_uuid"
+  printf 'format=1\nencrypt=1\n' >"$root/var/lib/omarchy/mac-first-boot/install.conf"
+  "$stub_bin/mkinitcpio" && : >"$calls"
+  printf '0 throwaway-install-key\n' >"$slots"
+  rm -f "$tmp"/fail-* "$tmp/token-slot" "$tmp/token-id" "$screen" "$tmp/gum-stdin"
+  : >"$OMARCHY_PROVISION_OWNER_LOG"
+  printf 'nope\n%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
   password=owner-secret
   recovery_key=""
   RECOVERY_ACKED=0
-  : >"$calls"
-  : >"$tmp/gum-stdin"
-  printf '%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
+  UNLOCK_OWNER=""
 }
 
-reset_recovery_fixture
-touch "$tmp/add-fail"
-if prepare_luks_recovery "$device"; then fail "failed slot creation aborts recovery display"; fi
-[[ ! -s $tmp/gum-stdin ]] || fail "an uninstalled recovery key is never shown"
-grep -Fq 'fixture: keyslot write failed' "$LOG_FILE" || fail "cryptsetup diagnostics reach the private log"
-[[ -n $(rekey_state_get recovery_slot) ]] || fail "slot intent precedes its header write"
-rm "$tmp/add-fail"
-prepare_luks_recovery "$device" >"$tmp/retry-screen"
-[[ $(luks_slot_for "$recovery_key" "$device") == "$(rekey_state_get recovery_slot)" ]] || fail "retry displays a usable key"
-pass "failed key creation retains diagnostics and never displays an unusable key"
+slot_of() {
+  awk -v m="$1" '$2 == m { print $1; exit }' "$slots"
+}
 
-# Kill the foreground transaction while displaying: durable slot intent lets
-# the next attempt revoke precisely the unacknowledged key, even after restart.
-reset_recovery_fixture
-if (show_recovery_key() { exit 71; }; prepare_luks_recovery "$device"); then
-  fail "interrupted recovery display must not complete"
+# ── the whole first-boot setup ─────────────────────────────────────────────
+fixture
+platform_ready || fail "an encrypted image is ready for owner setup" "$(cat "$screen" 2>/dev/null)"
+recovery_key_offered || fail "omarchy-mac-boot records the kept slots, so setup offers a recovery key"
+prepare_luks_recovery "$device" >"$tmp/show.out"
+grep -aqF $'\e[3J' "$tmp/show.out" || fail "the recovery screen clears the scrollback"
+[[ $(<"$tmp/gum-stdin") == "$recovery_key" ]] || fail "the recovery key reaches gum on stdin only"
+! grep -F "$recovery_key" "$calls" >/dev/null || fail "the recovery key is never a command argument"
+recovery=$(slot_of "$recovery_key")
+[[ -n $recovery && -z $(slot_of owner-secret) ]] || fail "the recovery slot exists before the worker runs, the owner's comes with the re-key" "$(cat "$slots")"
+: >"$calls"
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
+  fail "first-boot setup finishes" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+owner=$(slot_of owner-secret)
+
+[[ $(awk '{ print $1 }' "$slots" | sort -n | paste -sd' ') == "$(printf '%s\n' "$owner" "$recovery" | sort -n | paste -sd' ')" ]] ||
+  fail "only the owner's and the acknowledged recovery slots remain" "$(cat "$slots")"
+[[ -z $(slot_of throwaway-install-key) ]] || fail "the throwaway key opens nothing"
+[[ ! -e $prov/luks-key && ! -e $boot_key ]] || fail "both copies of the throwaway key are gone"
+[[ ! -e $prov/pending && ! -e $prov/luks-rekey.state ]] || fail "setup drops pending and the journal"
+[[ $(<"$grub_default") == "GRUB_CMDLINE_LINUX=\"rd.luks.name=$luks_uuid=root root=/dev/mapper/root\"" ]] ||
+  fail "only rd.luks.key= leaves GRUB's defaults" "$(cat "$grub_default")"
+! grep -q 'rd.luks.key=' "$root/boot/grub/grub.cfg" || fail "the rebuilt grub.cfg asks for the password"
+[[ $(<"$encrypt_state") == "format=1
+phase=finished
+partition=5f2b0c3e-0003
+luks_uuid=$luks_uuid
+owner_slot=$owner
+recovery_slot=$recovery" ]] || fail "encrypt.state is finished with the kept slots" "$(cat "$encrypt_state")"
+grep -qx provision-commit "$calls" && grep -qx provision-verify "$calls" && grep -qx luks-slots "$calls" ||
+  fail "the boot package commits and verifies the unlock and records the slots through dispatch" "$(cat "$calls")"
+! grep -Eq '^(limine-update|update-grub)$' "$calls" || fail "the Limine UKI path never runs on Apple Silicon" "$(cat "$calls")"
+! grep -Fq -e "$recovery_key" -e owner-secret -e throwaway-install-key "$OMARCHY_PROVISION_OWNER_LOG" ||
+  fail "no key material reaches the provision log"
+pass "an encrypted Apple image's first boot re-keys to the owner, keeps the recovery key and takes the throwaway key out of the boot chain"
+
+# ── install.conf handoff before the owner is asked anything ────────────────
+fixture
+rm "$encrypt_state"
+if platform_ready; then fail "setup stops on a plain root when install.conf asked for encryption"; fi
+grep -q 'set up to encrypt its disk, but the disk was not encrypted' "$screen" &&
+  grep -q 'set up to encrypt its disk' "$OMARCHY_PROVISION_OWNER_LOG" ||
+  fail "the boot package's reason reaches the owner and the log" "$(cat "$screen" "$OMARCHY_PROVISION_OWNER_LOG")"
+printf 'format=1\nencrypt=0\n' >"$root/var/lib/omarchy/mac-first-boot/install.conf"
+rm -f "$prov/luks-key" "$boot_key" "$screen"
+sed -i "s| $key_line||" "$grub_default" "$root/boot/grub/grub.cfg"
+platform_ready || fail "encrypt=0 lets a plain root be set up" "$(cat "$screen" 2>/dev/null)"
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
+  fail "a plain Mac finishes setup" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+! grep -q provision-commit "$calls" && ! grep -q 'cryptsetup luks' "$calls" || fail "a plain Mac is not re-keyed" "$(cat "$calls")"
+pass "provision-prepare holds setup to the encryption install.conf asked for"
+
+# ── failures and retries ──────────────────────────────────────────────────
+# A failed boot rebuild keeps the unattended unlock and every slot.
+fixture
+prepare_luks_recovery "$device" >/dev/null
+touch "$tmp/fail-mkinitcpio"
+if OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1; then
+  fail "a failed boot rebuild fails the attempt"
 fi
-old_recovery=$(awk '$1 == 2 { print $2 }' "$slots")
-[[ -n $old_recovery ]] || fail "display starts only after installing the slot"
-[[ $(rekey_state_get recovery_shown || true) != 1 ]] || fail "interrupted display is not acknowledged"
-prepare_luks_recovery "$device" >"$tmp/retry-screen"
-! grep -Fq "$old_recovery" "$slots" || fail "retry revokes the unacknowledged key"
-(( $(wc -l <"$slots") == 3 )) || fail "retry does not accumulate slots"
-grep -Fq 'Replace any earlier copy' "$calls" || fail "retry explains replacement"
-: >"$calls"
-: >"$tmp/gum-stdin"
-prepare_luks_recovery "$device"
-[[ ! -s $tmp/gum-stdin ]] || fail "acknowledged recovery key is not shown again"
-! grep -Eq 'cryptsetup luks(AddKey|KillSlot)' "$calls" || fail "acknowledged retry leaves slots intact"
-pass "interrupted display replaces its key; acknowledged retries preserve their key"
+[[ -f $boot_key && -f $prov/luks-key && -f $prov/pending ]] || fail "a failed rebuild keeps the throwaway key and setup pending"
+grep -q "$key_line" "$grub_default" || fail "a failed rebuild restores rd.luks.key="
+[[ -n $(slot_of throwaway-install-key) ]] || fail "a failed rebuild retires no slot"
+grep -Fxq 'phase=configured' "$encrypt_state" || fail "a failed rebuild leaves encrypt.state configured"
+rm "$tmp/fail-mkinitcpio"
+prepare_luks_recovery "$device" >/dev/null || fail "the retry's recovery step keeps the acknowledged key"
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
+  fail "the retry finishes" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+[[ $(wc -l <"$slots") == 2 && ! -e $boot_key && ! -e $prov/pending ]] || fail "the retry finishes with two slots" "$(cat "$slots")"
+pass "a failed boot rebuild keeps the unattended unlock and every slot for the retry"
 
-# A background worker cannot prepare or display a recovery key into its log.
-reset_recovery_fixture
-if OMARCHY_PROVISION_WORKER=1 prepare_luks_recovery "$device"; then fail "worker cannot prepare recovery UI"; fi
-if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "worker rejects an unconfirmed recovery slot"; fi
-[[ -f $prov/luks-key && -f $boot_key ]] || fail "unconfirmed recovery preserves staged unlock for retry"
-pass "worker refuses an unconfirmed recovery key"
+# Interrupted after the boot package committed, before the slots were retired:
+# encrypt.state is already finished while the throwaway slot and file remain.
+fixture
+prepare_luks_recovery "$device" >/dev/null
+touch "$tmp/fail-kill"
+if OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1; then
+  fail "a failed slot retirement fails the attempt"
+fi
+grep -Fxq 'phase=finished' "$encrypt_state" && [[ ! -e $boot_key && -f $prov/luks-key ]] ||
+  fail "the boot chain was committed before the retirement failed"
+rm "$tmp/fail-kill"
+recovery=$(slot_of "$recovery_key")
+first_owner=$(slot_of owner-secret)
+grep -Fxq "owner_slot=$first_owner" "$encrypt_state" || fail "the commit recorded the first password's slot"
+password=$recovery_key
+rekey_accepts_password && fail "the recovery key is never the owner's password"
+password=another-password
+rekey_accepts_password || fail "while the throwaway key opens the disk a retry may choose a new password"
+shown_before=$(grep -c '^gum style' "$calls")
+prepare_luks_recovery "$device" >/dev/null || fail "the retry keeps the acknowledged recovery key"
+[[ $(grep -c '^gum style' "$calls") == "$shown_before" ]] || fail "the acknowledged key is not shown again"
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
+  fail "the retry finishes after the commit" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+owner=$(slot_of another-password)
+[[ $(wc -l <"$slots") == 2 && -n $owner && $(slot_of "$recovery_key") == "$recovery" && -z $(slot_of throwaway-install-key) &&
+  -z $(slot_of owner-secret) && ! -e $prov/luks-key ]] ||
+  fail "the retry keeps the new password and the recovery key, and retires the rest" "$(cat "$slots")"
+[[ $owner != "$first_owner" ]] && grep -Fxq "owner_slot=$owner" "$encrypt_state" && grep -Fxq "recovery_slot=$recovery" "$encrypt_state" ||
+  fail "encrypt.state follows the owner's slot the retry moved" "$(cat "$encrypt_state")"
+pass "a retry after the commit may still change the password, and encrypt.state records the slots setup kept"
 
-reset_recovery_fixture
-prepare_luks_recovery "$device" >"$tmp/confirmed-screen"
-: >"$calls"
-if (sync() { return 1; }; rekey_luks); then fail "rekey rejects a failed phase sync"; fi
-[[ -f $prov/luks-key && -f $boot_key ]] || fail "failed phase sync retains retry keys"
-! grep -Fq 'cryptsetup luksKillSlot' "$calls" || fail "failed phase sync retires no slots"
-grep -Fxq 'phase=configured' "$encrypt_state" || fail "failed phase sync retains prior journal"
-pass "failed rekey journal persistence retains the staged unlock for retry"
+# A finished re-key never ends setup while any boot-time unlock remains: the
+# journal's last check asks the boot package.
+for leftover in boot cmdline; do
+  fixture
+  rm "$prov/luks-key"
+  printf '1 owner-secret\n' >"$slots"
+  printf 'staged_slot=0\nowner_slot=1\nphase=done\n' >"$prov/luks-rekey.state"
+  sed -i 's/^phase=.*/phase=finished/' "$encrypt_state"
+  if [[ $leftover == boot ]]; then
+    sed -i "s| $key_line||" "$grub_default" "$root/boot/grub/grub.cfg"
+  else
+    rm "$boot_key"
+  fi
+  if OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1; then
+    fail "setup does not finish with a leftover $leftover unlock"
+  fi
+  grep -q 'the boot-time auto-unlock is still configured' "$OMARCHY_PROVISION_OWNER_LOG" ||
+    fail "$leftover: provision-verify is what stops setup" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+  [[ -f $prov/pending ]] || fail "a leftover $leftover unlock keeps setup pending"
+done
+pass "a finished encrypt.state never ends setup while a boot-time unlock remains"
 
-# A retry after the boot rebuild failed (keys already shredded) must use the
-# password the recorded owner slot holds; a different one would leave the
-# account and disk passwords diverged.
-printf 'format=1\nphase=rekeyed\npartition=PART-UUID-1\nluks_uuid=abcd-ef\nowner_slot=1\nrecovery_slot=2\n' >"$encrypt_state"
-printf '1 first-pass\n2 recovery-material\n' >"$slots"
-printf 'owner_slot=1\nrecovery_slot=2\nrecovery_shown=1\n' >"$REKEY_STATE"
-rm -f "$prov/luks-key" "$boot_key"
-printf 'GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root root=/dev/mapper/root"\n' >"$grub_default"
-: >"$calls"
-password="second-pass"
-if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "a retry with a different password cannot finish the re-key"; fi
-grep -Fxq 'phase=rekeyed' "$encrypt_state" || fail "a refused retry keeps phase=rekeyed"
-! grep -Eq 'cryptsetup luksKillSlot|mkinitcpio' "$calls" || fail "a refused retry changes neither slots nor boot files"
-owner_password_opens_recorded_slot "$device" && fail "the retry password is reported as the disk password"
-password="first-pass"
-OMARCHY_PROVISION_WORKER=1 rekey_luks || fail "the recorded password finishes the re-key"
-grep -Fxq 'phase=finished' "$encrypt_state" || fail "the recorded password reaches phase=finished"
-password="second-pass"
-if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "a finished re-key refuses a different password"; fi
-password="first-pass"
-mv "$device" "$device.hidden"
-if OMARCHY_PROVISION_WORKER=1 rekey_luks; then fail "a finished re-key cannot skip the password check without its device"; fi
-mv "$device.hidden" "$device"
-pass "re-key retries must use the recorded owner password"
+# A token a previous owner enrolled (TPM2, FIDO2, keyring) answers a bare
+# cryptsetup open for any key. It never stands in for the owner's password or
+# the recovery key: each gets its own slot, and the token's slot is retired.
+fixture
+printf '5 tpm-sealed-key\n' >>"$slots"
+echo 5 >"$tmp/token-slot"
+prepare_luks_recovery "$device" >/dev/null || fail "the recovery key is prepared beside a token"
+recovery=$(slot_of "$recovery_key")
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
+  fail "setup finishes beside a token" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+owner=$(slot_of owner-secret)
+[[ -n $owner && -n $recovery && $owner != 5 && $recovery != 5 ]] ||
+  fail "the owner's password and the recovery key get their own slots beside a token" "$(cat "$slots")"
+[[ $(awk '{ print $1 }' "$slots" | sort -n | paste -sd' ') == "$(printf '%s\n' "$owner" "$recovery" | sort -n | paste -sd' ')" ]] ||
+  fail "the token's slot is retired with the throwaway" "$(cat "$slots")"
+grep -Fxq "owner_slot=$owner" "$encrypt_state" && grep -Fxq "recovery_slot=$recovery" "$encrypt_state" ||
+  fail "encrypt.state records the owner's and the recovery key's own slots" "$(cat "$encrypt_state")"
+pass "a previous owner's token never answers for the owner's password or the recovery key"
 
-# A failed write while dropping rd.luks.key= reports failure and keeps GRUB's
-# defaults intact rather than truncating them.
-printf 'GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root rd.luks.key=abcd-ef=/omarchy/luks-key:UUID=4F4D-5801"\n' >"$grub_default"
-before=$(cat "$grub_default")
-chmod 555 "$(dirname "$grub_default")"
-status=0
-grub_drop_rd_luks_key "$grub_default" || status=$?
-chmod 755 "$(dirname "$grub_default")"
-(( status != 0 )) || fail "a failed GRUB defaults write is reported"
-[[ $(cat "$grub_default") == "$before" ]] || fail "a failed GRUB defaults write leaves the file intact"
-grub_drop_rd_luks_key "$grub_default" || fail "rd.luks.key= is dropped when the write succeeds"
-[[ $(cat "$grub_default") == 'GRUB_CMDLINE_LINUX="rd.luks.name=abcd-ef=root"' ]] || fail "only rd.luks.key= is removed" "$(cat "$grub_default")"
-pass "dropping rd.luks.key= is atomic and reports failed writes"
+# A retry beside a token, once the throwaway key is retired: only the password
+# the owner slot holds is taken.
+fixture
+printf '5 tpm-sealed-key\n' >>"$slots"
+echo 5 >"$tmp/token-slot"
+prepare_luks_recovery "$device" >/dev/null
+touch "$tmp/fail-kill"
+if OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1; then
+  fail "a failed slot retirement beside a token fails the attempt"
+fi
+rm "$tmp/fail-kill"
+awk '$1 != 0' "$slots" >"$slots.next" && mv "$slots.next" "$slots"
+password=another-password
+rekey_accepts_password && fail "beside a token, a retry refuses a password that opens nothing"
+password=owner-secret
+rekey_accepts_password || fail "beside a token, a retry takes the password the owner slot holds"
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
+  fail "the retry beside a token finishes" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+[[ $(wc -l <"$slots") == 2 && -z $(slot_of tpm-sealed-key) ]] || fail "the retry retires the token's slot" "$(cat "$slots")"
+pass "a retry beside a token takes only the password the owner slot holds"
+
+# luksDump lists tokens like keyslots: a keyring token numbered like a recorded
+# recovery slot that is gone never stands in for it, so the key is replaced.
+fixture
+prepare_luks_recovery "$device" >/dev/null
+lost_key=$recovery_key
+recovery=$(slot_of "$recovery_key")
+awk -v s="$recovery" '$1 != s' "$slots" >"$slots.next" && mv "$slots.next" "$slots"
+echo 0 >"$tmp/token-slot"
+echo "$recovery" >"$tmp/token-id"
+printf '%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
+prepare_luks_recovery "$device" >/dev/null || fail "the lost recovery key is replaced beside a token"
+[[ $RECOVERY_REPLACED == 1 && $recovery_key != "$lost_key" && $(slot_of "$recovery_key") == "$recovery" ]] ||
+  fail "a token numbered like the missing recovery slot does not stand in for it" "$(cat "$slots")"
+pass "a token numbered like a recorded slot that is gone never stands in for it"
+
+# The recovery step never runs in the background worker, whose output is a log.
+fixture
+if OMARCHY_PROVISION_WORKER=1 prepare_luks_recovery "$device"; then fail "the worker cannot show a recovery key"; fi
+[[ $(wc -l <"$slots") == 1 ]] || fail "the worker adds no slot for a recovery key it cannot show"
+pass "the recovery key is shown only on the setup terminal"
+
+# xtrace never records the owner's password or the recovery key.
+fixture
+password=owner-secret-xtrace
+prepare_luks_recovery "$device" >/dev/null
+set -x
+OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1
+set +x
+! grep -Fq -e "$recovery_key" -e "$password" "$OMARCHY_PROVISION_OWNER_LOG" ||
+  fail "xtrace keeps secrets out of the provision log" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
+pass "secret-bearing re-key commands are not captured under xtrace"

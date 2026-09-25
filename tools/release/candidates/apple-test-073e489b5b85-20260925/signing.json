@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "set": "apple-test-073e489b5b85-20260925",
+  "manifest_sha256": "89be5ae2ae62af18bba2c25e11880773a2352ebbc605900e4a27e2e427ff2ea0",
+  "set_sha256": "6a0477b35e287e11630c620c3c91e35aa6582f18e945bb5488f9c85af84a63ba",
+  "signer": {
+    "fingerprint": "E11E851AF82E02AEF54C8794599A6024E3D35379",
+    "uid": "Omarchy Mac candidate test lane (not for installed systems)",
+    "key": "candidate-signing-key.asc",
+    "key_sha256": "19ff58f4c32bafa20482ff8609555ddfecc0b9e86ae54491b084f431f84170d9"
+  },
+  "signed_at": "2026-09-25T20:07:29+1000",
+  "signatures": [
+    {
+      "file": "omarchy-4.0.0.alpha.quattro.r1790328152.g073e489b5b85-1.361203357120001-aarch64.pkg.tar.xz",
+      "sha256": "917b6a50fdab08071043b0af934b211f2a86171b59bb28bc2380443c9962e142",
+      "signature": "omarchy-4.0.0.alpha.quattro.r1790328152.g073e489b5b85-1.361203357120001-aarch64.pkg.tar.xz.sig",
+      "signature_sha256": "1120b3ede0a6e6d1f2339ea9399bbdd1c4210d39a1381b882abd9a291a8769e0"
+    },
+    {
+      "file": "omarchy-settings-4.0.0.alpha.quattro.r1790328152.g073e489b5b85-1.361203357120001-aarch64.pkg.tar.xz",
+      "sha256": "56d1365b17d609bc9d60de4c26a22a782982be0cd47b0fb535769c32314e9ae9",
+      "signature": "omarchy-settings-4.0.0.alpha.quattro.r1790328152.g073e489b5b85-1.361203357120001-aarch64.pkg.tar.xz.sig",
+      "signature_sha256": "b3ca4637ba2f3d672461fa65a924c70f8e5a7e0de58ef5c4aba61479ced9c5a1"
+    },
+    {
+      "file": "omarchy-mac-0.1.0-5.361203357120001-aarch64.pkg.tar.xz",
+      "sha256": "89281c731e42e717f8766e2fbe87f1b5c89deb2f2bc77511085dd22e48f3cdf2",
+      "signature": "omarchy-mac-0.1.0-5.361203357120001-aarch64.pkg.tar.xz.sig",
+      "signature_sha256": "1caa2d9bed8c51dcea5f1f7833d78d0076dd6bd889721b0f87f5f374c0c2ab28"
+    },
+    {
+      "file": "omarchy-mac-boot-20260921-10.361203357120001-aarch64.pkg.tar.xz",
+      "sha256": "722d6ac00537f7eb36cbfb7e8389f518520e5fcfc8a6e9183791cfe196e5332e",
+      "signature": "omarchy-mac-boot-20260921-10.361203357120001-aarch64.pkg.tar.xz.sig",
+      "signature_sha256": "32d91f36f0dca207f3aded954bd9819fb76cfbc39befb89542aebd980b4ae386"
+    },
+    {
+      "file": "linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst",
+      "sha256": "9201253d17ada58381a2cfd116ec24315fbf5f3b458d75da9a2217ca04898c86",
+      "signature": "linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "97e7ae3eda11bd5a2cbab70a446fe41512015de17bc17046258eb0ca319d2be4"
+    },
+    {
+      "file": "linux-aurora-headers-7.1.12.aurora2-10-aarch64.pkg.tar.zst",
+      "sha256": "cbc397e8b16e26e0297998ec80cc00884ac0a0f4ad286a0cba9dd3c9a4249d80",
+      "signature": "linux-aurora-headers-7.1.12.aurora2-10-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "08108a3da1c28c4b04aceacf13ad3a67910b1714e014a88aa1480c0cdb03b0cd"
+    },
+    {
+      "file": "m1n1-aurora-1.6.1.aurora1-3-aarch64.pkg.tar.zst",
+      "sha256": "5e01b73b0cf2145d9917621b2a3fab4b6703ee7f9e684aae4eb26e1e2ccafc34",
+      "signature": "m1n1-aurora-1.6.1.aurora1-3-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "0b9f4b30c49a342d33cf6a02544ac66634f3aabff378cff38204aaf87cf150f7"
+    },
+    {
+      "file": "uboot-asahi-2026.07.asahi2-4-aarch64.pkg.tar.zst",
+      "sha256": "5f20164d0d4c4e5bb5fb2c344ae255fcccfeffec366fdd6194ed2b12b521918e",
+      "signature": "uboot-asahi-2026.07.asahi2-4-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "9b67c909b206e6baa579730adb999cc148b5b4a60b801107415fda26789f5256"
+    },
+    {
+      "file": "limine-mkinitcpio-hook-1.39.0-2-aarch64.pkg.tar.zst",
+      "sha256": "8d3c904056e0880db39152207f62cdff2d3c9cf16598dfb7eb512149f3ebd8b0",
+      "signature": "limine-mkinitcpio-hook-1.39.0-2-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "380b82dccb5748868b7bcc735925ad3865164fae42e964ad1850c1e5dd04665c"
+    }
+  ]
+}

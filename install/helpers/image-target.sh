@@ -17,6 +17,11 @@
 # runs the queue on the real hardware. Unknown manifest keys are ignored so the
 # format can grow.
 #
+# The manifest is also the only source of the image's platform: until that boot,
+# omarchy-hw-platform reports its platform instead of the build host's, so the
+# initramfs, services and packages the build sets up are the target's. It reads
+# the manifest by the same rules as omarchy_image_read_manifest below.
+#
 # Root always uses the fixed paths. Only a non-root test may move them under
 # OMARCHY_IMAGE_ROOT, so no environment variable can make a live system defer,
 # skip or replay its hardware setup.

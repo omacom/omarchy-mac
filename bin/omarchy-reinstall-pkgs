@@ -13,6 +13,18 @@ omarchy-refresh-pacman
 # Downgrade any packages to the stable setup
 omarchy-update-pacman -Suu --noconfirm
 
-# Ensure all packages are installed
-mapfile -t packages < <(grep -v '^#' "$OMARCHY_PATH/install/omarchy-base.packages" | grep -v '^$')
+# Ensure this platform's default packages are installed. A default no
+# configured repository offers yet (an aarch64 build still unpublished) is
+# reported and left out rather than failing the whole transaction.
+default_packages=$(omarchy-pkg-defaults)
+mapfile -t defaults <<<"$default_packages"
+source "$OMARCHY_PATH/bin/omarchy-pkg-available"
+packages=()
+for package in "${defaults[@]}"; do
+  if omarchy-pkg-available "$package"; then
+    packages+=("$package")
+  else
+    echo "Skipping $package: no configured repository offers it" >&2
+  fi
+done
 omarchy-update-pacman -Syu --noconfirm --needed "${packages[@]}"

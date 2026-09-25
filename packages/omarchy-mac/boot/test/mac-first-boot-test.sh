@@ -154,6 +154,10 @@ state=$root/var/lib/omarchy/mac-first-boot
 if [[ -e $CASE/deferred-fails ]]; then
   rm -f "$CASE/deferred-fails"
   echo "deferred failed" >&2
+  exit 75
+fi
+if [[ -e $CASE/deferred-refuses ]]; then
+  echo "untrusted manifest" >&2
   exit 1
 fi
 STUB
@@ -251,8 +255,8 @@ echo 'ok - the unit logs to the journal and holds no terminal; the script owns t
 # The generic deferred-hardware service runs after first boot, which drains the
 # queue once the keyring exists.
 [[ $(grep -v '^#' "$hardware_dropin") == \
-  $'[Unit]\nAfter=omarchy-mac-first-boot.service\nConditionPathExists=!/var/lib/omarchy/mac-first-boot/pending' ]] ||
-  fail "omarchy-provision-hardware.service waits for first boot and never starts while it is pending"
+  $'[Unit]\nAfter=omarchy-mac-first-boot.service NetworkManager.service\nConditionPathExists=!/var/lib/omarchy/mac-first-boot/pending\n\n[Service]\nExecStartPre=-/usr/bin/nm-online -q -s -t 30' ]] ||
+  fail "omarchy-provision-hardware.service waits for first boot and the network, and never starts while first boot is pending"
 grep -Fq 'provision=$root/usr/bin/omarchy-provision-hardware' "$script" ||
   fail "first boot runs omarchy-provision-hardware"
 ! grep -Fq 'install/hardware/apple/limine-boot.sh"' "$script" ||
@@ -322,6 +326,18 @@ grep -Fq 'deferred failed' "$root/var/log/omarchy-mac-first-boot.log" &&
 grep -Fq 'Some hardware setup could not finish yet (see /var/log/omarchy-mac-first-boot.log and /var/log/omarchy-install.log)' "$case_dir/out" ||
   fail "the journal names both logs"
 echo 'ok - a deferred hardware step that cannot finish yet is left to its service and first boot hands off'
+
+# Any other failure means no hardware setup ran (an untrusted manifest or
+# queue): first boot stops and retries rather than handing off.
+new_case refused-hardware
+write_esp 'format=1' 'encrypt=0'
+touch "$case_dir/deferred-refuses"
+expect_stop "a deferred hardware setup that refused to run" 'the deferred hardware setup could not run (omarchy-provision-hardware exited 1)'
+! grep -q '^systemctl start' "$case_dir/systemctl.log" || fail "nothing is started when the hardware setup refused to run"
+rm -f "$case_dir/deferred-refuses"
+: >"$case_dir/systemctl.log"
+expect_handoff "a retry once the hardware setup runs"
+echo 'ok - a deferred hardware setup that refused to run keeps first boot on its retry screen'
 
 # ── pending removed only on success ────────────────────────────────────────
 new_case pending-stays
