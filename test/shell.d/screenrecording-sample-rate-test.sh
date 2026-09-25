@@ -21,6 +21,9 @@ RECORDING_FILE="$work/latest"
 echo "$recording" >"$RECORDING_FILE"
 finalize_recording
 
+# The pass trims the first 0.1 s, so a shorter file proves it ran.
+duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$recording")
+awk -v d="$duration" 'BEGIN { exit !(d < 0.95) }' || fail "the loudness pass processed the recording" "$duration"
 rate=$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of csv=p=0 "$recording")
 [[ $rate == "48000" ]] || fail "the finalized recording keeps 48 kHz audio" "$rate"
 pass "the finalized recording keeps 48 kHz audio"
