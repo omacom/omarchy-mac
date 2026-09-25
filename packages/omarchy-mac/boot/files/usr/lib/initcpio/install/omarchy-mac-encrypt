@@ -1,0 +1,49 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+
+build() {
+    add_module dm-crypt
+    add_module ext4
+    add_module vfat
+    add_all_modules '/crypto/'
+
+    local binary
+    for binary in cryptsetup btrfs blkid lsblk awk findmnt mount umount bash \
+        chroot dd install sed grep mv cat mkdir chmod readlink stat sync date \
+        udevadm systemctl; do
+        add_binary "$binary"
+    done
+
+    add_file /usr/lib/omarchy/initcpio/omarchy-mac-encrypt
+    add_file /usr/lib/omarchy/initcpio/omarchy-mac-encrypt.service \
+        /usr/lib/systemd/system/omarchy-mac-encrypt.service 644
+    add_symlink /usr/lib/systemd/system/initrd-root-device.target.requires/omarchy-mac-encrypt.service \
+        ../omarchy-mac-encrypt.service
+    add_file /usr/lib/omarchy/initcpio/omarchy-mac-encrypt-keydev.conf \
+        '/usr/lib/systemd/system/run-systemd-cryptsetup-keydev\x2droot.mount.d/omarchy-mac-encrypt.conf' 644
+
+    # Snapshot boots from the GRUB menu (grub-btrfs) mount read-only history;
+    # the overlay unit makes that boot writable in a tmpfs for the session.
+    add_module overlay
+    add_binary mountpoint
+    add_file /usr/lib/omarchy/initcpio/omarchy-mac-snapshot-overlay
+    add_file /usr/lib/omarchy/initcpio/omarchy-mac-snapshot-overlay.service \
+        /usr/lib/systemd/system/omarchy-mac-snapshot-overlay.service 644
+    add_symlink /usr/lib/systemd/system/initrd-root-fs.target.wants/omarchy-mac-snapshot-overlay.service \
+        ../omarchy-mac-snapshot-overlay.service
+
+    local rule
+    for rule in 10-dm.rules 13-dm-disk.rules 95-dm-notify.rules; do
+        [[ -f /usr/lib/udev/rules.d/$rule ]] && add_file "/usr/lib/udev/rules.d/$rule"
+    done
+    return 0
+}
+
+help() {
+    cat <<HELPEOF
+Systemd initrd unit that encrypts a plain btrfs root in place on first boot
+when /boot/efi/omarchy/install.conf is absent or encrypt=1. Journal lives on
+the ext4 Boot partition (/boot/omarchy/encrypt.state); throwaway key at
+/boot/omarchy/luks-key. No mkinitcpio runtime hook.
+HELPEOF
+}

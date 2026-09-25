@@ -1,0 +1,18 @@
+[Unit]
+Description=Overlay a read-only snapshot root with a tmpfs for this boot
+DefaultDependencies=no
+# A GRUB snapshot entry mounts a read-only snapper snapshot as /sysroot. The
+# systemd initrd runs no mkinitcpio runtime hook, so grub-btrfs's overlayfs
+# hook never applies; this unit does the same after sysroot.mount.
+After=sysroot.mount
+Requires=sysroot.mount
+Before=initrd-root-fs.target initrd-parse-etc.service
+ConditionKernelCommandLine=rootflags
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/omarchy/initcpio/omarchy-mac-snapshot-overlay
+StandardOutput=journal
+StandardError=journal

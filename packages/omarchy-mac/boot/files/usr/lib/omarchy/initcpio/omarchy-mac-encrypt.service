@@ -1,0 +1,26 @@
+[Unit]
+Description=Encrypt the Omarchy Mac root in place
+DefaultDependencies=no
+# DefaultDependencies=no pulls nothing in: udevd and its trigger are wanted
+# here so the by-uuid/by-partuuid links exist before the root is resolved.
+# omarchy-vendorfw-initrd.service (pre-unlock firmware) is wanted when present.
+Wants=systemd-udevd.service systemd-udev-trigger.service omarchy-vendorfw-initrd.service
+After=systemd-udevd.service systemd-udev-trigger.service systemd-udev-settle.service omarchy-vendorfw-initrd.service
+Before=cryptsetup-pre.target sysroot.mount initrd-root-device.target
+Conflicts=shutdown.target emergency.target
+Before=shutdown.target
+# Continuation: the script writes sysroot.mount.d/omarchy-mac-encrypt.conf
+# (What=/dev/mapper/root) and runs systemctl daemon-reload so this boot
+# mounts the opened mapper.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=infinity
+ExecStart=/usr/lib/omarchy/initcpio/omarchy-mac-encrypt
+# Progress goes to the journal and the kernel log, never straight to the
+# console: on a Mac loglevel=0 keeps the splash clean, while a serial console
+# without "quiet" (the VM harness) still sees every line. A failure is shown
+# through Plymouth and left in /run/omarchy-mac-encrypt.failed.
+StandardOutput=journal+kmsg
+StandardError=journal+kmsg

@@ -19,7 +19,7 @@ owner_password=owner-password
 sed -n '/^PROVISIONING_UNLOCK_FILES=(/,/^)/p; /^luks_auto_unlock_present() {/,/^}/p; /^luks_auto_unlock_drop() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/unlock.sh"
 grep -q '^luks_auto_unlock_drop() {' "$tmp/unlock.sh" || fail "omarchy-provision-owner defines the Limine auto-unlock callbacks"
-sed -n '/^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p' \
+sed -n '/^encrypt_state_get() {/,/^}/p; /^rekey_luks() {/,/^}/p; /^run_provisioning() {/,/^}/p; /^cleanup_oem_state() {/,/^}/p' \
   "$ROOT/bin/omarchy-provision-owner" | sed "s|/etc/|$tmp/etc/|g" >"$tmp/provision.sh"
 grep -q '^run_provisioning() {' "$tmp/provision.sh" || fail "omarchy-provision-owner defines its provisioning worker"
 
@@ -147,6 +147,10 @@ provision() {
   }
   luks_device() { echo "$DEVICE"; }
   systemctl() { :; }
+  # The generic path: no Apple encrypt.state or Boot-partition key.
+  apple_silicon() { return 1; }
+  ENCRYPT_STATE=$TMP/boot/encrypt.state
+  BOOT_LUKS_KEY=$TMP/boot/luks-key
   run_provisioning
 }
 
