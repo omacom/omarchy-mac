@@ -1,0 +1,218 @@
+#!/bin/bash
+
+# omarchy:summary=Refuse to restore a snapshot the Apple Silicon boot files do not match
+# omarchy:args=[<snapshot root>]
+# omarchy:hidden=true
+# omarchy:requires-sudo=true
+
+# The kernel and initramfs on the ext4 boot partition, and m1n1, the device
+# trees and U-Boot on the system ESP, are outside every snapshot: a restored
+# root boots with the ones installed now. A snapshot is restored only when
+# they match it. Nothing here writes anything.
+#
+# With a snapshot root it checks that the snapshot carries the kernel on /boot,
+# for the subvolume swap (omarchy-system-snapshot-restore) on a Mac that still
+# boots GRUB.
+#
+# With no argument it is the limine-snapper-sync pre hook
+# /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check and acts only on a
+# restore, which HOOK_CMDLINE names. A Limine Mac restores the snapshot it
+# booted from the Limine menu; that running root, and the kernel Limine saved
+# with it, must pass omarchy-apple-silicon-boot-check against the live boot
+# files. Status 100
+# makes the hook runner stop the restore before it changes anything. It runs
+# before 05-omarchy-mac-limine-gate so a GRUB Mac is told why.
+
+set -uo pipefail
+
+boot_dir=${OMARCHY_BOOT_DIR:-/boot}
+snapshots_dir=${OMARCHY_SNAPSHOTS_DIR:-/.snapshots}
+cmdline_file=${OMARCHY_CMDLINE:-/proc/cmdline}
+
+why_outside() {
+  cat >&2 <<'MESSAGE'
+
+A snapshot holds the root file system only. The kernel and initramfs on the
+boot partition, and m1n1, the device trees and U-Boot on the EFI system
+partition, stay as they are, so a restored snapshot would boot with boot files
+that do not match it. This happens when the snapshot was taken before a kernel
+or boot firmware update.
+MESSAGE
+}
+
+# The snapshot at $1 carries the kernel on /boot: a module tree of the
+# installed Apple kernel package whose image is the one on /boot.
+carries_boot_kernel() {
+  local tree=$1 label=$2 kernel image dir found=0
+  local -a versions=()
+  if ! kernel=$(omarchy-mac-kernel); then
+    echo "Cannot tell which Apple kernel is installed, so $label cannot be checked against the boot partition." >&2
+    return 1
+  fi
+  image=$boot_dir/vmlinuz-$kernel
+  if [[ ! -f $image ]]; then
+    echo "$image is missing, so $label cannot be checked against the boot partition." >&2
+    return 1
+  fi
+  for dir in "$tree"/usr/lib/modules/*/; do
+    [[ -f $dir/pkgbase && $(<"$dir/pkgbase") == "$kernel" ]] || continue
+    dir=${dir%/}
+    versions+=("${dir##*/}")
+    if [[ -f $dir/modules.dep ]] && cmp -s "$dir/vmlinuz" "$image"; then
+      found=1
+    fi
+  done
+  (( found )) && return 0
+
+  if (( ${#versions[@]} )); then
+    echo "$label has $kernel ${versions[*]}, not the $kernel kernel on the boot partition." >&2
+  else
+    echo "$label has no $kernel kernel, the kernel on the boot partition." >&2
+  fi
+  why_outside
+  cat >&2 <<'MESSAGE'
+Restore a snapshot taken with the current kernel. To restore this one, first
+install its kernel package on the current system, then restore it.
+MESSAGE
+  return 1
+}
+
+# On a refusal the restore aborts and a terminal opened for it closes: keep
+# the explanation on screen until it has been read.
+refuse() {
+  if [[ -t 0 ]]; then
+    read -r -p "Press Enter to close. " _ || true
+  fi
+  exit 100
+}
+
+# The snapshot the running system booted, from rootflags=subvol=...
+booted_snapshot() {
+  local word flag
+  local -a words=() flags
+  [[ -r $cmdline_file ]] || return 1
+  read -r -a words <"$cmdline_file" || true
+  for word in "${words[@]}"; do
+    [[ $word == rootflags=* ]] || continue
+    IFS=, read -r -a flags <<<"${word#rootflags=}"
+    for flag in "${flags[@]}"; do
+      if [[ $flag =~ ^subvol=.*/\.snapshots/([0-9]+)/snapshot/?$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# The kernel and boot firmware packages installed in the running root.
+boot_packages() {
+  pacman -Q 2>/dev/null | awk '$1 ~ /^(linux-aurora|linux-asahi|m1n1-aurora|m1n1|uboot-asahi)$/ { print "  " $0 }'
+}
+
+hook() {
+  local mode="" kernels_id="" want_id=0 word number reason packages
+  local -a words
+  read -r -a words <<<"${HOOK_CMDLINE:-}"
+  for word in "${words[@]}"; do
+    if (( want_id )); then
+      kernels_id=$word
+      want_id=0
+      continue
+    fi
+    case $word in
+      --restore) mode=restore ;;
+      --restore-kernels)
+        mode=kernels
+        want_id=1
+        ;;
+    esac
+  done
+  [[ -n $mode ]] || exit 0
+  omarchy-hw-apple-silicon || exit 0
+
+  # Kernel files alone (snapper rollback's plugin): the snapshot's kernel must
+  # be the one on /boot, or the root would boot a kernel it has no modules for.
+  if [[ $mode == kernels ]]; then
+    if [[ ! $kernels_id =~ ^[0-9]+$ ]]; then
+      echo "limine-snapper-sync --restore-kernels names no snapshot; not restoring kernel files on this Mac." >&2
+      refuse
+    fi
+    if ! carries_boot_kernel "$snapshots_dir/$kernels_id/snapshot" "Snapshot $kernels_id"; then
+      refuse
+    fi
+    exit 0
+  fi
+
+  if ! number=$(booted_snapshot); then
+    if omarchy-mac-limine-active; then
+      cat >&2 <<'MESSAGE'
+On a Mac, restore a snapshot from the snapshot itself: restart, open Snapshots
+in the Limine menu, pick the snapshot, and run omarchy-snapshot restore once it
+is up. The restore then checks that snapshot against this Mac's boot files
+before it changes anything.
+
+Snapshots taken before Limine was activated on this Mac are not in that menu:
+Limine saved no kernel for them, so they cannot be booted or restored.
+limine-snapper-list shows the snapshots the menu offers.
+MESSAGE
+    else
+      cat >&2 <<'MESSAGE'
+This Mac boots GRUB, so limine-snapper-restore does not apply. Restore with
+omarchy-snapshot restore, which swaps the root subvolume.
+MESSAGE
+    fi
+    refuse
+  fi
+
+  # A root from before the Limine activation would put GRUB's boot setup back
+  # under Limine.
+  if ! omarchy-mac-limine-active; then
+    cat >&2 <<MESSAGE
+Snapshot $number was taken before Limine was activated on this Mac. Restoring
+it would bring back a system that boots through GRUB, so it cannot be restored.
+MESSAGE
+    refuse
+  fi
+
+  # The running kernel is the one Limine saved with the snapshot, which the
+  # restore puts back: it must be the snapshot's installed kernel too, so no
+  # pending reboot is allowed.
+  echo "Checking snapshot $number against this Mac's boot files"
+  if ! reason=$(omarchy-apple-silicon-boot-check 2>&1 >/dev/null); then
+    {
+      echo "Snapshot $number does not match this Mac's boot files, so it is not restored:"
+      printf '  %s\n' "${reason:-omarchy-apple-silicon-boot-check failed}"
+    } >&2
+    why_outside
+    packages=$(boot_packages)
+    cat >&2 <<'MESSAGE'
+Reboot into the current system, or restore a snapshot taken since that update.
+To restore this one, first install its kernel and boot firmware packages on the
+current system, then boot the snapshot again and restore it.
+MESSAGE
+    if [[ -n $packages ]]; then
+      echo "This snapshot has:" >&2
+      printf '%s\n' "$packages" >&2
+    fi
+    refuse
+  fi
+  echo "Snapshot $number matches this Mac's boot files"
+}
+
+case $# in
+  0) hook ;;
+  1)
+    case $1 in
+      -h | --help)
+        echo "Usage: omarchy-mac-snapshot-check [<snapshot root>]"
+        exit 0
+        ;;
+    esac
+    carries_boot_kernel "$1" "This snapshot" || exit 1
+    ;;
+  *)
+    echo "Usage: omarchy-mac-snapshot-check [<snapshot root>]" >&2
+    exit 2
+    ;;
+esac
