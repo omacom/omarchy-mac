@@ -22,7 +22,7 @@ pass 'real systemctl upgrade repairs generated enablement links'
 WIFI_ID=4434 PATH="$work/bin:$PATH" "$work/fresh/usr/bin/omarchy-mac-setup-system" "$work/fresh"
 for target in suspend hibernate hybrid-sleep suspend-then-hibernate; do
   link="$work/fresh/etc/systemd/system/$target.target.wants/omarchy-wifi-resume-fix.service"
-  [[ $(readlink "$link") == /usr/lib/systemd/system/omarchy-wifi-resume-fix.service ]] || fail 'BCM4388 enables the vendor unit'
+  [[ $(readlink "$link") == "/usr/lib/systemd/system/omarchy-wifi-resume-fix.service" ]] || fail 'BCM4388 enables the vendor unit'
 done
 [[ ! -e $work/fresh/etc/systemd/system/omarchy-wifi-resume-fix.service ]] || fail 'fresh setup writes no /etc unit'
 pass 'real systemctl enables recovery on a fresh BCM4388 Mac'
