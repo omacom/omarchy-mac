@@ -94,6 +94,7 @@ run_check() {
     export OMARCHY_LIMINE_GATE="$mac_root/var/lib/omarchy/limine.enabled" OMARCHY_LIMINE_DEFAULT="$mac_root/etc/default/limine"
     export OMARCHY_BOOT_DIR="$mac_root/boot" OMARCHY_SNAPSHOTS_DIR="$tmp/snapshots"
     export OMARCHY_SNAPSHOT_TOP="$tmp/top" OMARCHY_SNAPSHOT_RESTORE_LOCK="$tmp/restore.lock" OMARCHY_SNAPSHOT_CHECK_STATE="$tmp/state"
+    export OMARCHY_SNAPSHOT_TOP_DIR="$tmp/top-dir"
     [[ -z ${TEST_NO_TOP:-} ]] || unset OMARCHY_SNAPSHOT_TOP
     bash "${TEST_HOOK:-$tmp/hooks/pre.d/04-omarchy-mac-snapshot-check}" "$@" </dev/null
   ) >"$tmp/out" 2>"$tmp/err"
@@ -296,7 +297,7 @@ restored_root() {
   done
   touch -d '-2 minutes' "$restored/.snapshots/7/info.xml" "$restored/.snapshots/20/info.xml"
   touch -d '-1 minute' "$tmp/state/started"
-  cp -a "$mac_root/usr" "$mac_root/etc" "$restored/"
+  cp -a "$mac_root/usr" "$mac_root/etc" "$mac_root/var" "$restored/"
   printf '%s\n' "$1" >"$restored/usr/lib/modules/$mac_kver/vmlinuz"
   printf 'linux-aurora\n' >"$restored/usr/lib/modules/$mac_kver/pkgbase"
   : >"$restored/usr/lib/modules/$mac_kver/modules.dep"
@@ -374,9 +375,14 @@ restored_root "linux-aurora kernel from another build"
 run_post "--restore --no-mutex" "$snapshot_cmdline"
 expect_undo "a snapshot picked from the list with another kernel"
 { printf 'linux-aurora kernel from another build\n'; printf 'initrd\n'; } >"$mac_esp/EFI/Linux/omarchy_linux-aurora.efi"
-TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$snapshot_cmdline"
-(( status == 0 )) && [[ ! -s $tmp/check-ran ]] && grep -Fq "Press l and pick snapshot 12, the backup that restore made." "$tmp/out" ||
+run_check "--restore --no-mutex" "$snapshot_cmdline"
+(( status == 0 )) && grep -Fq "Press l and pick snapshot 12, the backup that restore made." "$tmp/out" ||
   fail "the restore that undoes a refused one is let through (status $status: $(cat "$tmp/out" "$tmp/err"))"
+# A backup that is gone is not named.
+printf '99\n' >"$tmp/state/undo"
+run_check "--restore --no-mutex" "$snapshot_cmdline"
+(( status == 0 )) && grep -Fq "Press l and pick the backup that restore made." "$tmp/out" ||
+  fail "a backup that no longer exists is not named (status $status: $(cat "$tmp/out" "$tmp/err"))"
 limine_mac
 cp "$tmp/state/undo" "$tmp/undo"
 restored_root "linux-aurora kernel $mac_kver"
@@ -386,15 +392,68 @@ expect_allowed "the previous root put back"
 [[ ! -e $tmp/state/undo ]] || fail "a restored root that matches ends the undo"
 pass "a refused restore can be undone through the hooks"
 
-# The post hook reads the restored root off the top level it mounts; when that
-# fails nothing was checked, and it says so.
+# An undo left over does not skip the check of a booted root that matches.
+limine_mac
+restored_root "linux-aurora kernel $mac_kver"
+printf '12\n' >"$tmp/state/undo"
+run_check "--restore --no-mutex" "$snapshot_cmdline"
+expect_allowed "a matching snapshot with an undo left over"
+grep -Fq "Snapshot 7 matches this Mac's boot files" "$tmp/out" && ! grep -Fq "let through" "$tmp/out" ||
+  fail "a leftover undo lets nothing skip the check" "$(cat "$tmp/out")"
+pass "a leftover undo only applies while the booted root fails its check"
+
+# A root from before the Limine activation, picked from the list, is refused
+# after the restore as the pre hook refuses it booted.
+limine_mac
+restored_root "linux-aurora kernel $mac_kver"
+rm "$tmp/top/@/var/lib/omarchy/limine.enabled"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot from before the Limine activation picked from the list" "is from before Limine was activated on this Mac"
+restored_root "linux-aurora kernel $mac_kver"
+printf 'ESP_PATH="/boot"\nENABLE_UKI=yes\n' >"$tmp/top/@/etc/default/limine"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot whose Limine writes to another ESP" "writes to another ESP"
+pass "the post hook refuses a restored root from before the Limine activation"
+
+# The post hook reads the restored root off the top level it mounts read-only,
+# and unmounts it again.
+mkdir -p "$tmp/mount-stub"
+cat >"$tmp/mount-stub/mount" <<'SH'
+#!/bin/bash
+[[ $* == "-o ro,subvolid=5 /dev/disk/by-uuid/r "* ]] || exit 32
+cp -a "$TEST_TOP_SOURCE/." "$4/"
+echo "$4" >>"$MAC_STATE/mounts"
+SH
+chmod +x "$tmp/mount-stub/mount"
+limine_mac
+restored_root "linux-aurora kernel $mac_kver"
+mkdir -p "$tmp/top-dir"
+TEST_TOP_SOURCE=$tmp/top TEST_PATH_FIRST=$tmp/mount-stub TEST_NO_TOP=1 run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_allowed "a restored root read off the mounted top level"
+[[ -z $(ls -A "$tmp/top-dir") ]] || fail "the top level is unmounted and its mountpoint removed"
+pass "the post hook mounts the top level read-only and leaves nothing behind"
+
+# When it cannot read the restored root, or tell the platform, nothing was
+# checked: it says so, and arms no undo that would let the next restore skip
+# its check.
+expect_unchecked() {
+  local description=$1
+  shift
+  expect_refused "$description" "The restored root was not checked against this Mac's boot files" "$@"
+  [[ ! -e $tmp/state/undo ]] || fail "$description arms no undo"
+  ! grep -Fq "Ignore the" "$tmp/err" || fail "$description does not say to ignore the reboot prompt"
+}
 limine_mac
 restored_root "linux-aurora kernel $mac_kver"
 TEST_NO_TOP=1 run_post "--restore --no-mutex" "$snapshot_cmdline"
-expect_refused "a restored root that cannot be read" "Cannot read the restored root" "Do not reboot yet"
+expect_unchecked "a restored root on a top level that cannot be mounted" "Cannot read the btrfs top level"
+[[ -z $(ls -A "$tmp/top-dir") ]] || fail "a failed mount leaves no mountpoint behind"
 TEST_NO_DETECTOR=1 TEST_APPLE_STATUS=127 run_post "--restore --no-mutex" "$snapshot_cmdline"
-expect_refused "a restore where the platform cannot be told" "Cannot tell which platform this is, so the restored root was not checked"
-pass "the post hook refuses what it cannot check"
+expect_unchecked "a restore where the platform cannot be told" "Cannot tell which platform this is"
+rm -rf "$tmp/top/@"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_unchecked "a restore that left no @" "left no root subvolume @"
+pass "the post hook reports what it cannot check, and arms no undo"
 
 # The UKI the restore put back must carry the restored kernel.
 limine_mac
@@ -402,9 +461,4 @@ restored_root "linux-aurora kernel $mac_kver"
 { printf 'linux-aurora kernel 6.16.0-aurora9-ARCH\n'; printf 'initrd\n'; } >"$mac_esp/EFI/Linux/omarchy_linux-aurora.efi"
 run_post "--restore --no-mutex" "$snapshot_cmdline"
 expect_undo "a restore that put back a UKI with another kernel" "does not carry the restored root's $mac_kver kernel"
-limine_mac
-restored_root "linux-aurora kernel $mac_kver"
-rm -rf "$tmp/top/@"
-run_post "--restore --no-mutex" "$snapshot_cmdline"
-expect_refused "a restore that left no @" "left no root subvolume @"
 pass "the post hook checks the UKI the restore put back"

@@ -86,7 +86,7 @@ snapshot_root_tree() {
   local tree=$1 modules
   rm -rf "$tree"
   mkdir -p "$tree/.snapshots/12"
-  cp -a "$mac_root/usr" "$mac_root/etc" "$tree/"
+  cp -a "$mac_root/usr" "$mac_root/etc" "$mac_root/var" "$tree/"
   modules=$tree/usr/lib/modules/$mac_kver
   printf '%s\n' "$2" >"$modules/vmlinuz"
   printf 'linux-aurora\n' >"$modules/pkgbase"
@@ -210,6 +210,8 @@ run_swap_restore() {
     export PATH="$tmp/$platform/bin:$common:$ROOT/bin:$ROOT/packages/omarchy-mac/boot/bin:$PATH"
     export CALLS="$tmp/calls" OMARCHY_PROC_ROOT="$tmp/$platform/proc"
     export OMARCHY_LIMINE_GATE="$mac_root/var/lib/omarchy/limine.enabled" OMARCHY_LIMINE_DEFAULT="$mac_root/etc/default/limine"
+    printf '%s\n' "${TEST_CMDLINE:-$live_cmdline}" >"$tmp/cmdline"
+    export OMARCHY_CMDLINE="$tmp/cmdline"
     bash "$ROOT/bin/omarchy-system-snapshot-restore" </dev/null
   ) >"$tmp/out" 2>"$tmp/err"
   status=$?
@@ -222,9 +224,14 @@ run_swap_restore apple-silicon
 rm "$mac_root/var/lib/omarchy/limine.enabled"
 run_swap_restore apple-silicon
 grep -Fq "run as root" "$tmp/err" || fail "a GRUB Mac reaches the subvolume swap" "$(cat "$tmp/err")"
+TEST_CMDLINE=$snapshot_cmdline run_swap_restore apple-silicon
+(( status != 0 )) && grep -Fq "running a snapshot from before Limine was activated on it, which cannot be restored" "$tmp/err" ||
+  fail "the subvolume swap refuses a Mac's snapshot boot with why" "$(cat "$tmp/err")"
 run_swap_restore generic
 grep -Fq "run as root" "$tmp/err" && ! grep -Fq Limine "$tmp/err" || fail "x86 reaches the subvolume swap as before" "$(cat "$tmp/err")"
-pass "the GRUB-era restore runs only where Limine does not boot the Mac"
+TEST_CMDLINE=$snapshot_cmdline run_swap_restore generic
+grep -Fq "run as root" "$tmp/err" && ! grep -Fq Limine "$tmp/err" || fail "x86 in a snapshot boot reaches the subvolume swap as before" "$(cat "$tmp/err")"
+pass "the GRUB-era restore runs only where Limine does not boot the Mac, and never from a Mac's snapshot boot"
 
 # On a GRUB Mac the swap restores only a snapshot root carrying the kernel on
 # /boot: GRUB boots that kernel with the restored root's modules.

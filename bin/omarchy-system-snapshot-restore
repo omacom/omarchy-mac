@@ -249,6 +249,10 @@ main() {
     if omarchy-cmd-present omarchy-mac-limine-active && omarchy-mac-limine-active; then
       fail "this Mac boots Limine: restart, pick the snapshot under Snapshots in the Limine menu, and run omarchy-snapshot restore there"
     fi
+    # A snapshot boot came from Limine's menu, and this root predates Limine.
+    if grep -Eq '(^|[[:space:]])rootflags=([^[:space:]]*,)?subvol=[^[:space:],]*/\.snapshots/[0-9]+/snapshot' "${OMARCHY_CMDLINE:-/proc/cmdline}" 2>/dev/null; then
+      fail "this Mac is running a snapshot from before Limine was activated on it, which cannot be restored; reboot into the current system"
+    fi
   fi
 
   (( EUID == 0 )) || fail "run as root"
