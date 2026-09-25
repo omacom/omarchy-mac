@@ -1,8 +1,12 @@
 # Sourced by check. Lists are relative to the repository root.
-lists=(install/omarchy-base.packages install/omarchy-apple.packages)
-packages=(omarchy omarchy-settings omarchy-mac-boot linux-aurora m1n1-aurora uboot-asahi)
+lists=(install/omarchy-base.packages install/omarchy-aarch64.packages install/omarchy-apple.packages)
+# The image's kernel, boot chain and Asahi platform packages.
+packages=(omarchy omarchy-settings omarchy-mac-boot linux-aurora linux-aurora-headers m1n1-aurora uboot-asahi
+  limine limine-mkinitcpio-hook limine-snapper-sync asahi-alarm-keyring asahi-bless asahi-desktop-meta
+  asahi-fwextract asahi-scripts alsa-ucm-conf-asahi lzfse startup-disk tiny-dfr)
 forbidden_repos=(omarchy-aarch64)
-transitions=(omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-aurora m1n1-aurora uboot-asahi)
+transitions=(omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-aurora m1n1-aurora uboot-asahi
+  hyprland aquamarine limine-mkinitcpio-hook)
 kernel=linux-aurora
 unpublished=(
   [obs-studio]="not built for aarch64 by Arch Linux ARM"
