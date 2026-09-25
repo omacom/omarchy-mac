@@ -1,0 +1,168 @@
+SYSTEM
+ProductName:		macOS
+ProductVersion:		26.0.1
+BuildVersion:		25A362
+arm64
+BOOT
+/dev/disk4s1
+POLICIES
+{
+  "EF0906B0-56C5-4FFC-8FB0-8690209333E4" : {
+    "CSEC" : true,
+    "CEPO" : 1,
+    "smb3" : false,
+    "auxp_exists" : false,
+    "sip2" : true,
+    "SDOM" : 1,
+    "spih_exists" : false,
+    "CHIP" : 24576,
+    "CRPO" : true,
+    "coih_exists" : true,
+    "properly_paired" : true,
+    "baa_certified" : true,
+    "smb4" : false,
+    "lobo" : true,
+    "os_type" : "macOS",
+    "smb0" : true,
+    "sip3" : false,
+    "os_paired_to_current" : false,
+    "vuid" : "EF0906B0-56C5-4FFC-8FB0-8690209333E4",
+    "sip0_exists" : false,
+    "os_type_overriden" : false,
+    "auxi_exists" : false,
+    "auxr_exists" : false,
+    "bputil_version" : "0.1.14",
+    "smb1" : true,
+    "kuid" : "0BD893AE-2D91-4F64-B764-76AC8547DC40",
+    "smb5" : false,
+    "lpnh" : "1CB60551F57649F257F3BE581D2D99B55350DA6819A53639D50C912767D402819F249520D0C582CCEB5C6F02E6C9B1B6",
+    "love" : "22.7.74.0.0,0",
+    "rpnh" : "96FA4BEE3B719DAEA689C64A47624214381F7466C3EFB36977126144D9F4E2A6D99A1EFDB033D5CA0F1ECDF154604213",
+    "sip0" : 0,
+    "stng" : 54,
+    "os_lpnh" : "1CB60551F57649F257F3BE581D2D99B55350DA6819A53639D50C912767D402819F249520D0C582CCEB5C6F02E6C9B1B6",
+    "BORD" : 8,
+    "stng_exists" : true,
+    "smb2" : false,
+    "os_ronh" : "B38817E39B7F9DE15E2D18CD2D8A2F3F2C90EC27D5D8E8CAE3593B17E264E6100B43826DCB5D81395046DAE5BA2BDF1D",
+    "security_mode" : "permissive",
+    "coih" : "4386BBBE045E1A69FEB643C513E7C6D426A14362243F3A48EFADF3FB1477C9DBCF3E2EBEC69A29CFBC79922366854097",
+    "ECID" : 7354513223745566,
+    "sip1" : false,
+    "nsih" : "F0BECB9487D762B44360A8E8F8CD00D724B861897FC900BEBB7A5D90F286A7CE2329B53E91BC20DEED0439E15414B1A6"
+  },
+  "3EE75828-1F54-4365-9BA7-E7217E81D869" : {
+    "CSEC" : true,
+    "CEPO" : 1,
+    "smb3" : false,
+    "auxp_exists" : false,
+    "sip2" : false,
+    "spih" : "B0151A465E9F553D008B7C7928CA89F1DAB04C88661EFEF90899D8C6913B320C2115D21B1C2C5C877BF3DEB3214CC45F",
+    "SDOM" : 1,
+    "spih_exists" : true,
+    "CHIP" : 24576,
+    "CRPO" : true,
+    "coih_exists" : false,
+    "properly_paired" : true,
+    "baa_certified" : true,
+    "smb4" : false,
+    "lobo" : true,
+    "os_type" : "macOS",
+    "smb0" : false,
+    "sip3" : false,
+    "os_paired_to_current" : false,
+    "vuid" : "3EE75828-1F54-4365-9BA7-E7217E81D869",
+    "sip0_exists" : false,
+    "os_type_overriden" : false,
+    "auxi_exists" : false,
+    "auxr_exists" : false,
+    "bputil_version" : "0.1.14",
+    "smb1" : false,
+    "kuid" : "0BD893AE-2D91-4F64-B764-76AC8547DC40",
+    "smb5" : false,
+    "lpnh" : "1CB60551F57649F257F3BE581D2D99B55350DA6819A53639D50C912767D402819F249520D0C582CCEB5C6F02E6C9B1B6",
+    "love" : "25.1.362.0.0,0",
+    "rpnh" : "96FA4BEE3B719DAEA689C64A47624214381F7466C3EFB36977126144D9F4E2A6D99A1EFDB033D5CA0F1ECDF154604213",
+    "sip0" : 0,
+    "stng" : 46,
+    "os_lpnh" : "1CB60551F57649F257F3BE581D2D99B55350DA6819A53639D50C912767D402819F249520D0C582CCEB5C6F02E6C9B1B6",
+    "BORD" : 8,
+    "stng_exists" : true,
+    "smb2" : false,
+    "os_ronh" : "B38817E39B7F9DE15E2D18CD2D8A2F3F2C90EC27D5D8E8CAE3593B17E264E6100B43826DCB5D81395046DAE5BA2BDF1D",
+    "security_mode" : "full",
+    "sip1" : false,
+    "ECID" : 7354513223745566,
+    "nsih" : "C79266B86FE8649F17330433891853CFB9FD68200A576919DEFDDEE450DA0C2CA8202F388F50A0C3064DF96ED639258D"
+  }
+}
+DISKS
+/dev/disk0 (internal, physical):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:      GUID_partition_scheme                        *1.0 TB     disk0
+   1:             Apple_APFS_ISC Container disk2         524.3 MB   disk0s1
+   2:                 Apple_APFS Container disk4         857.2 GB   disk0s2
+   3:                 Apple_APFS Container disk3         2.5 GB     disk0s3
+   4:                        EFI EFI - OMARC             524.3 MB   disk0s4
+   5:           Linux Filesystem                         2.1 GB     disk0s5
+   6:           Linux Filesystem                         132.3 GB   disk0s6
+   7:        Apple_APFS_Recovery Container disk1         5.4 GB     disk0s7
+
+/dev/disk3 (synthesized):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:      APFS Container Scheme -                      +2.5 GB     disk3
+                                 Physical Store disk0s3
+   1:                APFS Volume Omarchy - Data          954.4 KB   disk3s1
+   2:                APFS Volume Omarchy                 1.4 MB     disk3s2
+   3:                APFS Volume Preboot                 197.3 MB   disk3s3
+   4:                APFS Volume Recovery                809.2 MB   disk3s4
+
+/dev/disk4 (synthesized):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:      APFS Container Scheme -                      +857.2 GB   disk4
+                                 Physical Store disk0s2
+   1:                APFS Volume Macintosh HD            18.0 GB    disk4s1
+   2:              APFS Snapshot com.apple.os.update-... 18.0 GB    disk4s1s1
+   3:                APFS Volume Preboot                 16.7 GB    disk4s2
+   4:                APFS Volume Recovery                2.5 GB     disk4s3
+   5:                APFS Volume Macintosh HD - Data     113.1 GB   disk4s5
+   6:                APFS Volume VM                      20.5 KB    disk4s6
+
+VOLUME_GROUPS
+APFS Containers (4 found)
+|
++-- Container disk1 C2D953C9-A90A-4B81-9166-7084CDCF4E62
+|   |
+|   +-> No Volume Groups among 2 Volumes
+|
++-- Container disk2 4EF9CBAA-EFF6-4C08-813E-90B7579CD6D3
+|   |
+|   +-> No Volume Groups among 4 Volumes
+|
++-- Container disk3 D1E92AEA-7B92-4AE7-B797-5FB34DA898D1
+|   |
+|   +-> Volume Group EF0906B0-56C5-4FFC-8FB0-8690209333E4
+|       =================================================
+|       APFS Volume Disk (Role):   disk3s1 (Data)
+|       Name:                      Omarchy - Data
+|       Volume UUID:               EF0906B0-56C5-4FFC-8FB0-8690209333E4
+|       Capacity Consumed:         954368 B (954.4 KB)
+|       -------------------------------------------------
+|       APFS Volume Disk (Role):   disk3s2 (System)
+|       Name:                      Omarchy
+|       Volume UUID:               F473A1EB-FA1A-43BE-B2B7-E390EAAF4196
+|       Capacity Consumed:         1376256 B (1.4 MB)
+|
++-- Container disk4 828BF48F-49FE-43AB-9AA1-3E69A41CB033
+    |
+    +-> Volume Group 3EE75828-1F54-4365-9BA7-E7217E81D869
+        =================================================
+        APFS Volume Disk (Role):   disk4s1 (System)
+        Name:                      Macintosh HD
+        Volume UUID:               4A43476A-F5DA-4DF2-9EC5-D0A0BA895F55
+        Capacity Consumed:         17999663104 B (18.0 GB)
+        -------------------------------------------------
+        APFS Volume Disk (Role):   disk4s5 (Data)
+        Name:                      Macintosh HD - Data
+        Volume UUID:               59A1B79D-79E9-4AF5-9CE7-A55C3DDEC6E4
+        Capacity Consumed:         113141075968 B (113.1 GB)

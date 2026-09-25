@@ -1,5 +1,5 @@
 #!/bin/bash
-# omarchy:summary=Activate the Apple microphone mapping for this user
+# omarchy:summary=Apply Apple Silicon display and microphone defaults for this user
 # omarchy:hidden=true
 set -euo pipefail
 root=${1:-/}
@@ -8,6 +8,28 @@ root=${root%/}
 omarchy-hw-apple-silicon || exit 0
 config=${XDG_CONFIG_HOME:-$HOME/.config}
 legacy="$root/usr/share/omarchy-mac/legacy"
+
+# Apple's display controller runs its own firmware, and a hardware cursor plane
+# makes every pointer update a round trip into it, so the pointer lags the hand.
+# Draw it in the frame the compositor renders anyway. Written once into the
+# user's overrides; an existing cursor setting or a later removal is theirs.
+looknfeel="$config/hypr/looknfeel.lua"
+cursor_marker="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/mac-cursor-configured"
+if [[ ! -f $cursor_marker && -f $looknfeel ]]; then
+  if ! grep -q 'no_hardware_cursors' "$looknfeel"; then
+    cat >>"$looknfeel" <<'LUA'
+
+-- omarchy-mac: draw the pointer in software. A hardware cursor on Apple's
+-- display controller lags behind the hand.
+hl.config({
+  cursor = {
+    no_hardware_cursors = true,
+  },
+})
+LUA
+  fi
+  install -Dm644 /dev/null "$cursor_marker"
+fi
 
 # A matching user copy hides future vendor updates. Modified files and links stay.
 retire() {

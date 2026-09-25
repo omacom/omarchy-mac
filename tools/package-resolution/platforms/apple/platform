@@ -1,0 +1,12 @@
+# Sourced by check. Lists are relative to the repository root.
+lists=(install/omarchy-base.packages install/omarchy-apple.packages)
+packages=(omarchy omarchy-settings omarchy-mac-boot linux-aurora m1n1-aurora uboot-asahi)
+forbidden_repos=(omarchy-aarch64)
+transitions=(omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-aurora m1n1-aurora uboot-asahi)
+kernel=linux-aurora
+unpublished=(
+  [obs-studio]="not built for aarch64 by Arch Linux ARM"
+  [omarchy-mac]="not on pkgs.omarchy.org edge before ticket 08"
+  [omarchy-mac-boot]="not on pkgs.omarchy.org edge before ticket 09"
+  [m1n1-aurora]="not on pkgs.omarchy.org edge before ticket 07"
+)

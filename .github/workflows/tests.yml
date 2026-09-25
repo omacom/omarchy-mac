@@ -1,0 +1,102 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [quattro-upstream]
+  push:
+    branches: [quattro-upstream]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  suites:
+    name: Shell suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ARCH_IMAGE: archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
+    steps:
+      - name: Check out omarchy-mac
+        uses: actions/checkout@v7
+        with:
+          path: omarchy-mac
+
+      # Packaging and installer coverage in the runtime suite reads the sibling
+      # recipe and ISO repositories.
+      - name: Check out omarchy-pkgs
+        uses: actions/checkout@v7
+        with:
+          repository: omacom/omarchy-pkgs
+          path: omarchy-pkgs
+          persist-credentials: false
+
+      - name: Check out omarchy-iso
+        uses: actions/checkout@v7
+        with:
+          repository: omacom/omarchy-iso
+          path: omarchy-iso
+          persist-credentials: false
+
+      - name: Start Arch container
+        id: arch
+        run: |
+          docker run -d --init --name arch \
+            -v "$GITHUB_WORKSPACE:/work" -w /work/omarchy-mac \
+            "$ARCH_IMAGE" sleep infinity
+          docker exec arch pacman -Syu --noconfirm --needed \
+            git jq lua python python-yaml nodejs npm ripgrep shellcheck imagemagick ffmpeg kitty \
+            gum plocate openssh unzip bc libarchive libxkbcommon desktop-file-utils glib2 sqlite
+          docker exec arch bash -c 'echo "en_US.UTF-8 UTF-8" >/etc/locale.gen && locale-gen'
+          docker exec arch useradd --create-home --uid "$(id -u)" tester
+
+      # test/shell runs every file and lists the failed ones at the end. Only
+      # the files in .github/known-test-failures may fail.
+      - name: Runtime suite (test/all)
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' }}
+        run: |
+          log=$RUNNER_TEMP/runtime.log
+          status=0
+          docker exec -u tester -e HOME=/home/tester \
+            -e OMARCHY_PATH=/work/omarchy-mac \
+            -e OMARCHY_PKGS_PATH=/work/omarchy-pkgs \
+            -e OMARCHY_ISO_PATH=/work/omarchy-iso \
+            arch bash -c 'PATH="$OMARCHY_PATH/bin:$PATH" ./test/all' 2>&1 | tee "$log" || status=$?
+
+          known=$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' omarchy-mac/.github/known-test-failures | sort -u)
+          failed=$(sed -n '/ test files failed:$/,/^$/s/^  //p' "$log" | sort -u)
+          failed_suites=$(sed -n '/ suites failed:$/,$s/^  //p' "$log" | sort -u)
+
+          if (( status != 0 )) && [[ -z $failed || $failed_suites != test/shell ]]; then
+            echo "::error::test/all failed beyond individual shell test files (exit $status; failed suites: ${failed_suites:-none})"
+            exit 1
+          fi
+
+          for file in $(comm -12 <(echo "$failed") <(echo "$known")); do
+            echo "::warning::$file failed (listed in .github/known-test-failures)"
+          done
+          for file in $(comm -13 <(echo "$failed") <(echo "$known")); do
+            echo "::warning::$file passed; remove it from .github/known-test-failures once it is fixed"
+          done
+          unexpected=$(comm -23 <(echo "$failed") <(echo "$known"))
+          for file in $unexpected; do
+            echo "::error::$file failed"
+          done
+          [[ -z $unexpected ]]
+
+      - name: omarchy-mac package suite
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' }}
+        run: docker exec -u tester -e HOME=/home/tester arch packages/omarchy-mac/test/all
+
+      - name: omarchy-mac boot package suite
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' && hashFiles('omarchy-mac/packages/omarchy-mac/boot/test/all') != '' }}
+        run: docker exec -u tester -e HOME=/home/tester arch packages/omarchy-mac/boot/test/all

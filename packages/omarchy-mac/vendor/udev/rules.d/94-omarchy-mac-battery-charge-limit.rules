@@ -1,0 +1,2 @@
+# Reapply the charge limit saved by omarchy-battery-charge-limit when the Apple SMC battery appears.
+ACTION=="add", SUBSYSTEM=="power_supply", KERNEL=="macsmc-battery", RUN+="/usr/lib/omarchy-mac/battery-charge-limit-restore"
