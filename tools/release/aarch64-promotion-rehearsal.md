@@ -44,7 +44,7 @@ This settles the question ticket 30 left open. `publish.yml` runs `bin/publish-a
 4. refuses to move a package backwards or over other bytes of the same version;
 5. downloads the files, checks each against the source database's `%SHA256SUM%`, and publishes them with `bin/publish-artifact --mirror rc --arch aarch64`. It then checks the target holds exactly its earlier entries with the set's replaced or added, and prints the commands that undo it.
 
-`--withdraw --to <channel> --arch <arch> --package <names...>` removes entries from a channel's database with `repo-remove` and uploads the database. `--reinstate --to <channel> --arch <arch> --file <filenames...>` publishes a file the channel still holds back into its database, over a newer entry. Files are never deleted, since published filenames are immutable. Withdraw removes the stale -9. Together the two undo any promotion.
+`--withdraw --to <channel> --arch <arch> --package <names...> --expect <name=version...>` removes entries from a channel's database with `repo-remove` and uploads the database. It runs only when `--expect` names exactly the entries it would drop, and a dry run prints that list. `--reinstate --to <channel> --arch <arch> --file <filenames...>` publishes a file the channel still holds back into its database, over a newer entry. Files are never deleted, since published filenames are immutable. Withdraw removes the stale -9. Together the two undo any promotion.
 
 `promote.yml` runs all three modes by `workflow_dispatch` in the `publish` environment and concurrency group, with `dry_run` on by default. GitHub keeps one pending run per concurrency group and cancels an older pending one, which is how the publishes of #626 and #631 were lost. So a preflight job refuses while any publish is running or queued. The same pull request makes `bin/publish-artifact` stop on an unreadable channel instead of starting a new database, which would have dropped every entry.
 
@@ -65,18 +65,18 @@ The pair (`omarchy`, `omarchy-settings`) is `pinned`. rc builds it natively from
 
 ## Stale linux-aurora -9
 
-Withdraw it: `promote-artifact --withdraw --to rc --arch aarch64 --package linux-aurora` (the pkgbase takes the headers too). Do not use `bin/repo remove` on the host. Dropping a name needs `sync --prune`, which deletes every remote file missing from the host's tree, and that includes all of CI's rc/aarch64 files.
+Withdraw it: `promote-artifact --withdraw --to rc --arch aarch64 --package linux-aurora --expect linux-aurora=7.1.12.aurora2-9 linux-aurora-headers=7.1.12.aurora2-9` (the pkgbase takes the headers too). Do not use `bin/repo remove` on the host. Dropping a name needs `sync --prune`, which deletes every remote file missing from the host's tree, and that includes all of CI's rc/aarch64 files.
 
 ## The plan
 
 The owner runs these steps. Every change goes through a dry run first.
 
 1. Merge omacom/omarchy-pkgs#642 (`promote-artifact`, `promote.yml`, the metadata-only build check).
-2. Withdraw the stale kernel: `gh workflow run promote.yml -R omacom/omarchy-pkgs -f action=withdraw -f to=rc -f arch=aarch64 -f packages=linux-aurora`, read the log, then again with `-f dry_run=false`.
+2. Withdraw the stale kernel: `gh workflow run promote.yml -R omacom/omarchy-pkgs -f action=withdraw -f to=rc -f arch=aarch64 -f packages=linux-aurora`. Read the log, then run it again with `-f dry_run=false -f expect="linux-aurora=7.1.12.aurora2-9 linux-aurora-headers=7.1.12.aurora2-9"`, the list the dry run prints.
 3. The pair on aarch64, as above.
 4. Qualify: VM acceptance and M1 Pro and M2 Max cold boots of the set. `mac-release --dry-run --to rc` with the ten `--package` names below prints the digest and the exact `boot=` lines. On 2026-09-26 the digest was `6d4bda8e56f35780feaf135546ac799f31c224871c33490d67ad9713295c8e3b`, 11 entries.
 5. Widen: `mac-release` opens the pull request; merge it, which publishes nothing.
-6. Promote: `gh workflow run promote.yml -R omacom/omarchy-pkgs -f from=edge -f to=rc -f arch=aarch64 -f packages="linux-aurora m1n1-aurora uboot-asahi omarchy-mac omarchy-mac-boot limine-mkinitcpio-hook aquamarine limine-snapper-sync omarchy-keyring ttf-jetbrains-mono-nerd-basic" -f expect_sha256=<digest>`, read the dry run, then again with `-f dry_run=false`.
+6. Promote: `gh workflow run promote.yml -R omacom/omarchy-pkgs -f from=edge -f to=rc -f arch=aarch64 -f packages="linux-aurora m1n1-aurora uboot-asahi omarchy-mac omarchy-mac-boot limine-mkinitcpio-hook aquamarine limine-snapper-sync omarchy-keyring ttf-jetbrains-mono-nerd-basic" -f expect=<digest>`, read the dry run, then again with `-f dry_run=false`. A real run needs `expect`. The workflow only acts on aarch64 in rc or stable unless `override_scope` is set.
 7. Check: rc/aarch64 serves the 11 entries with edge's sha256, and the three x86_64 databases hash as before.
 
 ## Rehearsal
@@ -93,7 +93,7 @@ The owner runs these steps. Every change goes through a dry run first.
 
 ## Rollback
 
-- Run the commands the promotion printed. Withdraw what it added (`action=withdraw` with those names). Reinstate what it replaced (`action=reinstate` with the earlier filenames, which are still in the slot). Once -9 is withdrawn, this promotion replaces nothing, so its rollback is the withdrawal of the 11 names. Both are tested, in the rehearsal and in `tests/promote-artifact.sh`. The files stay in R2 and nothing references them.
+- Run the commands the promotion printed. Withdraw what it added (`action=withdraw` with those names, and `expect` set to the `name=version` list it printed). Reinstate what it replaced (`action=reinstate` with the earlier filenames, which are still in the slot). Once -9 is withdrawn, this promotion replaces nothing, so its rollback is the withdrawal of the 11 names. Both are tested, in the rehearsal and in `tests/promote-artifact.sh`. The files stay in R2 and nothing references them.
 - Revert the widening pull request, so the next promotion cannot carry the set by accident. After the build check fix, that revert is metadata-only as well.
 - Macs that already updated keep what they installed: pacman does not downgrade on `-Syu`, and a withdrawn package just becomes foreign. A bad package, a boot package above all, is fixed forward: a new pkgrel on edge, qualified and promoted again.
 
@@ -102,5 +102,6 @@ The owner runs these steps. Every change goes through a dry run first.
 - `mac-release` still plans `bin/repo advance` on the host. Once omarchy-pkgs#642 lands, its advance step should dispatch `promote.yml` with `--expect-sha256` set to its set digest, then keep its existing after-checks. That drops `OMARCHY_REPO_HOST` and the host dry-run comparison.
 - The aarch64 rc build of the pinned pair (above).
 - `publish.yml` loses merges: GitHub keeps one pending run per concurrency group, so the publishes of #370, #451, #598, #626 and #631 were cancelled while waiting. A promotion that holds the group widens the window, and a publish can still start between `promote.yml`'s preflight and its job. After each promotion, check that no publish run was cancelled, and dispatch `publish.yml` again for any that was. The fix belongs to omarchy-pkgs, a queue that never cancels.
+- A host guard in #642 makes `sync-repo` and `advance-channel` refuse aarch64 (`CI_ONLY_ARCHES`) unless `OMARCHY_ALLOW_HOST_PUBLISH=1` is set. Without it, adding aarch64 to the host's `PUBLISHED_ARCHES` would let a host `advance` or release rebuild an aarch64 database from the host's tree, and the name-only sync check would put older versions back over promoted entries.
 - The host/R2 split also affects the x86_64 `advance` for anything CI publishes. Upstream's `ci/README.md` still lists "disable the host's auto-release timers for any channel CI publishes to" as not done.
 - stable later goes the same way: `--from rc --to stable`. The pair moves rc → stable under the current rule.

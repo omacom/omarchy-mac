@@ -45,7 +45,8 @@ for package in "${set[@]}"; do
 done
 
 say "A1 live: withdraw the stale linux-aurora from rc/aarch64 (dry run)"
-"$pkgs/bin/promote-artifact" --remote "$live" --withdraw --to rc --arch aarch64 --package linux-aurora --dry-run || true
+"$pkgs/bin/promote-artifact" --remote "$live" --withdraw --to rc --arch aarch64 --package linux-aurora --dry-run | tee "$work/a1" || true
+read -r -a stale_expect <<<"$(sed -n 's/.*Expect: --expect //p' "$work/a1")"
 
 say "A2 live: promote with master's recipes, before widening (dry run; a refusal is expected)"
 if "$pkgs/bin/promote-artifact" --remote "$live" --from edge --to rc --arch aarch64 --package "${set[@]}" --dry-run 2>&1 | tee "$work/a2"; then
@@ -89,7 +90,7 @@ unset GNUPGHOME
 
 say "B1 sandbox: withdraw linux-aurora from rc/aarch64"
 entries rc/aarch64 >"$work/rc.0"
-"$pkgs/bin/promote-artifact" --remote "$r2" --withdraw --to rc --arch aarch64 --package linux-aurora
+"$pkgs/bin/promote-artifact" --remote "$r2" --withdraw --to rc --arch aarch64 --package linux-aurora --expect "${stale_expect[@]}"
 entries rc/aarch64 >"$work/rc.1"
 LC_ALL=C comm -23 "$work/rc.0" "$work/rc.1" | sed 's/^/  gone: /'
 
@@ -120,7 +121,8 @@ check "no change on the second run" 'grep -q "already serves the set" "$work/b3"
 
 say "B4 sandbox: rollback, withdrawing what the promotion added"
 mapfile -t added < <(sed -E 's|-[^-]+-[^-]+/$||' "$work/added")
-"$pkgs/bin/promote-artifact" --remote "$r2" --withdraw --to rc --arch aarch64 --package "${added[@]}"
+mapfile -t added_expect < <(sed -E 's|^(.*)-([^-]+-[^-]+)/$|\1=\2|' "$work/added")
+"$pkgs/bin/promote-artifact" --remote "$r2" --withdraw --to rc --arch aarch64 --package "${added[@]}" --expect "${added_expect[@]}"
 entries rc/aarch64 >"$work/rc.3"
 check "rc/aarch64 entries back to the pre-promotion set" '[[ $(cat "$work/rc.1") == "$(cat "$work/rc.3")" ]]'
 check "x86_64 databases still byte-identical" '[[ $(dbs | grep x86_64) == "$x86_before" ]]'
