@@ -75,10 +75,16 @@ cat >"$work/stubs/omarchy-refresh-pacman" <<'SH'
 printf 'refresh %s\n' "$*" >>"$STUB_LOG"
 SH
 printf '#!/bin/bash\n' >"$work/stubs/lspci"
+# The configured repositories offer every default except $UNPUBLISHED.
+cat >"$work/stubs/pacman" <<'SH'
+#!/bin/bash
+[[ $1 == "-Slq" ]] || exit 1
+grep -vx "${UNPUBLISHED:-}" "$DEFAULTS_FILE"
+SH
 chmod +x "$work/stubs/"*
 
 for platform in apple-silicon generic; do
-  export STUB_LOG="$work/$platform.log"
+  export STUB_LOG="$work/$platform.log" DEFAULTS_FILE="$work/$platform.packages" UNPUBLISHED=""
   : >"$STUB_LOG"
   OMARCHY_PROC_ROOT="$work/$platform/proc" PATH="$work/stubs:$work/$platform/bin:$ROOT/bin:$PATH" \
     omarchy-reinstall-pkgs
@@ -87,3 +93,13 @@ for platform in apple-silicon generic; do
     fail "$platform: reinstall installs the platform's default set" "$(tail -n 1 "$STUB_LOG")"
 done
 pass "omarchy-reinstall-pkgs installs the platform's default set"
+
+export STUB_LOG="$work/unpublished.log" DEFAULTS_FILE="$work/apple-silicon.packages" UNPUBLISHED=omarchy-mac
+: >"$STUB_LOG"
+OMARCHY_PROC_ROOT="$work/apple-silicon/proc" PATH="$work/stubs:$work/apple-silicon/bin:$ROOT/bin:$PATH" \
+  omarchy-reinstall-pkgs 2>"$work/unpublished.err"
+expected="-Syu --noconfirm --needed $(grep -vx omarchy-mac "$work/apple-silicon.packages" | tr '\n' ' ')"
+[[ $(tail -n 1 "$STUB_LOG") == "${expected% }" ]] ||
+  fail "reinstall leaves out a default no repository offers" "$(tail -n 1 "$STUB_LOG")"
+grep -Fq "Skipping omarchy-mac" "$work/unpublished.err" || fail "reinstall reports the default it leaves out"
+pass "omarchy-reinstall-pkgs reports and leaves out a default no repository offers"
