@@ -155,6 +155,8 @@ for module in crypto_lzo crypto_lz4; do
     cp "$elf" "/lib/modules/$kver/kernel/extra/${module//_/-}.ko"
 done
 depmod "$kver" >/dev/null 2>&1 || true
+# mkinitcpio runs with PATH=/usr/bin:/bin, where omarchy ships the detector.
+install -Dm755 "$ROOT/test/helpers/omarchy-hw-platform" /usr/bin/omarchy-hw-platform
 install -Dm644 "$dropin" /etc/mkinitcpio.conf.d/94-omarchy-mac-vconsole.conf
 cat >/etc/mkinitcpio.conf <<'CONF'
 MODULES=()

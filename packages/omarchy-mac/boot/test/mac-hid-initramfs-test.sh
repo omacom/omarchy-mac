@@ -282,6 +282,8 @@ install -Dm644 "$late_unit" /usr/lib/omarchy/initcpio/omarchy-vendorfw.service
 install -Dm644 "$early_unit" /usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.service
 install -Dm644 "$cryptsetup_dropin" /usr/lib/omarchy/initcpio/omarchy-vendorfw-cryptsetup.conf
 install -Dm755 "$install_hook" /usr/lib/initcpio/install/omarchy-vendorfw
+# mkinitcpio runs with PATH=/usr/bin:/bin, where omarchy ships the detector.
+install -Dm755 "$ROOT/test/helpers/omarchy-hw-platform" /usr/bin/omarchy-hw-platform
 install -Dm644 "$hid_conf" /etc/mkinitcpio.conf.d/92-omarchy-mac-hid.conf
 install -Dm644 "$files/etc/mkinitcpio.conf.d/90-omarchy-mac.conf" /etc/mkinitcpio.conf.d/90-omarchy-mac.conf
 
