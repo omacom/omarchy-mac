@@ -100,7 +100,7 @@ run_guard() {
   shift
   printf '%s\n' "$@" |
     OMARCHY_PACMAN_DB="${GUARD_DB:-$db}" OMARCHY_PROC_ROOT="${GUARD_PROC:-$test_tmp/$platform/proc}" \
-      OMARCHY_IMAGE_TARGET="${GUARD_MANIFEST:-$test_tmp/no-manifest}" \
+      OMARCHY_IMAGE_ROOT="${GUARD_IMAGE_ROOT:-$test_tmp/no-image}" \
       PATH="$test_tmp/$platform/bin:$ROOT/bin:$PATH" "$guard" "${GUARD_ARGS[@]}" \
       >"$test_tmp/out" 2>"$test_tmp/err"
 }
@@ -133,10 +133,11 @@ decoy=apple-silicon
 fake_platform "$test_tmp/decoy" "$decoy"
 mkdir -p "$test_tmp/decoy/proc/1" "$test_tmp/decoy-host"
 ln -s "$test_tmp/decoy-host" "$test_tmp/decoy/proc/1/root"
-printf 'platform=%s\n' "$decoy" >"$test_tmp/decoy-manifest"
-chmod 644 "$test_tmp/decoy-manifest"
+mkdir -p "$test_tmp/decoy-image/var/lib/omarchy/image"
+printf 'format=1\nplatform=%s\n' "$decoy" >"$test_tmp/decoy-image/var/lib/omarchy/image/target"
+chmod 644 "$test_tmp/decoy-image/var/lib/omarchy/image/target"
 decoy_env=(OMARCHY_PACMAN_DB="$test_tmp/probe" OMARCHY_PROC_ROOT="$test_tmp/decoy/proc"
-  OMARCHY_IMAGE_TARGET="$test_tmp/decoy-manifest" PATH="$test_tmp/decoy/bin:$ROOT/bin:$PATH")
+  OMARCHY_IMAGE_ROOT="$test_tmp/decoy-image" PATH="$test_tmp/decoy/bin:$ROOT/bin:$PATH")
 
 # As root, the guard reads the live databases and the live platform, never the
 # fixtures its environment names: a tagged name in a fixture database is only
@@ -193,7 +194,7 @@ done
 # Privileged mode keeps exported functions out: one named awk would otherwise
 # swallow every tag.
 if printf 'omarchy-mac\n' | env "BASH_FUNC_awk%%=() { :; }" OMARCHY_PACMAN_DB="$db" \
-  OMARCHY_PROC_ROOT="$test_tmp/generic-aarch64/proc" OMARCHY_IMAGE_TARGET="$test_tmp/no-manifest" \
+  OMARCHY_PROC_ROOT="$test_tmp/generic-aarch64/proc" OMARCHY_IMAGE_ROOT="$test_tmp/no-image" \
   PATH="$test_tmp/generic-aarch64/bin:$ROOT/bin:$PATH" "$guard" 2>/dev/null; then
   fail "an exported function cannot hide tags from the guard"
 fi
@@ -228,7 +229,9 @@ grep -Fq "Cannot tell which platform this machine is" "$test_tmp/err" || fail "t
 pass "an unknown platform refuses only tagged packages"
 
 # Image builds: a chroot on some build host, with the target in a manifest.
-manifest="$test_tmp/image-target"
+image="$test_tmp/image"
+mkdir -p "$image/var/lib/omarchy/image"
+manifest="$image/var/lib/omarchy/image/target"
 chroot_proc() {
   local platform="$1" proc="$test_tmp/chroot-$1"
   rm -rf "$proc"
@@ -238,23 +241,23 @@ chroot_proc() {
   ln -s "$test_tmp/build-host-root" "$proc/1/root"
   printf '%s\n' "$proc"
 }
-printf '# written by the image builder\nbuilder=test\nplatform=apple-silicon\n' >"$manifest"
+printf '# written by the image builder\nformat=1\nbuilder=test\nplatform=apple-silicon\n' >"$manifest"
 chmod 644 "$manifest"
 
-GUARD_MANIFEST=$manifest refuses "a booted system ignores an image-target manifest" generic-aarch64 omarchy-mac
-GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc generic-aarch64) \
+GUARD_IMAGE_ROOT=$image refuses "a booted system ignores an image manifest" generic-aarch64 omarchy-mac
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic-aarch64) \
   allows "an Apple image builds on a generic host from its manifest" generic-aarch64 omarchy-mac linux-aurora
-GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc generic) \
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic) \
   allows "an Apple image builds on an x86 host from its manifest" generic omarchy-mac
 proc_less="$test_tmp/proc-less"
 cp -a "$test_tmp/generic-aarch64/proc" "$proc_less"
 rm -rf "$proc_less/1"
-GUARD_MANIFEST=$manifest GUARD_PROC=$proc_less \
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$proc_less \
   allows "a root without /proc is an image build too" generic-aarch64 omarchy-mac
-GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc generic-aarch64) \
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic-aarch64) \
   refuses "an Apple image refuses Qualcomm packages" generic-aarch64 x1e-firmware
-printf 'platform=generic-aarch64\n' >"$manifest"
-GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc apple-silicon) \
+printf 'format=1\nplatform=generic-aarch64\n' >"$manifest"
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc apple-silicon) \
   refuses "the build host's Apple device tree never decides the image target" apple-silicon omarchy-mac
 GUARD_PROC=$(chroot_proc apple-silicon) \
   allows "a chroot without a manifest, such as an installer on the target, uses the hardware" apple-silicon omarchy-mac
@@ -266,40 +269,47 @@ refuses "a booted system refuses Apple packages" generic-aarch64 omarchy-mac
 hidden_root="$test_tmp/hidden-root"
 cp -a "$test_tmp/generic-aarch64/proc" "$hidden_root"
 rm "$hidden_root/1/root"
-printf 'platform=apple-silicon\n' >"$manifest"
-GUARD_MANIFEST=$manifest GUARD_PROC=$hidden_root \
+printf 'format=1\nplatform=apple-silicon\n' >"$manifest"
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$hidden_root \
   refuses "a system whose PID 1 root cannot be compared uses the hardware, not a manifest" generic-aarch64 omarchy-mac
 GUARD_ARGS=(--platform)
-GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc generic) allows "--platform reports an image build's target" generic
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic) allows "--platform reports an image build's target" generic
 [[ $(cat "$test_tmp/out") == "apple-silicon" ]] || fail "--platform reports an image build's target" "$(cat "$test_tmp/out")"
-GUARD_MANIFEST=$manifest allows "--platform reports a booted system's hardware" qualcomm
+GUARD_IMAGE_ROOT=$image allows "--platform reports a booted system's hardware" qualcomm
 [[ $(cat "$test_tmp/out") == "qualcomm" ]] || fail "--platform reports a booted system's hardware" "$(cat "$test_tmp/out")"
 GUARD_ARGS=()
 pass "image builds take their platform from the manifest, and only image builds"
 
 bad_manifest() {
   local description="$1"
-  GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc generic-aarch64) \
+  GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic-aarch64) \
     refuses "$description refuses tagged packages" generic-aarch64 omarchy-mac
-  grep -Fq "image-target manifest" "$test_tmp/err" || fail "$description is explained" "$(cat "$test_tmp/err")"
-  GUARD_MANIFEST=$manifest GUARD_PROC=$(chroot_proc generic-aarch64) \
+  grep -Fq "image manifest" "$test_tmp/err" || fail "$description is explained" "$(cat "$test_tmp/err")"
+  GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic-aarch64) \
     allows "$description still lets untagged packages install" generic-aarch64 firefox
 }
-printf 'platform=apple-silicon\n' >"$manifest"
+printf 'format=1\nplatform=apple-silicon\n' >"$manifest"
 chmod 664 "$manifest"
 bad_manifest "a group-writable manifest"
 chmod 646 "$manifest"
 bad_manifest "a world-writable manifest"
 chmod 644 "$manifest"
-printf 'platform=apple\n' >"$manifest"
+printf 'format=1\nplatform=apple\n' >"$manifest"
 bad_manifest "a manifest naming an unknown platform"
-printf 'platform=apple-silicon\nplatform=qualcomm\n' >"$manifest"
-bad_manifest "a manifest naming two platforms"
-printf 'target=apple-silicon\n' >"$manifest"
+printf 'format=1\ntarget=apple-silicon\n' >"$manifest"
 bad_manifest "a manifest without a platform"
-printf 'platform=apple-silicon\n' >"$test_tmp/real-manifest"
-rm "$manifest"
-ln -s "$test_tmp/real-manifest" "$manifest"
+printf 'platform=apple-silicon\n' >"$manifest"
+bad_manifest "a manifest without format=1"
+printf 'format=2\nplatform=apple-silicon\n' >"$manifest"
+bad_manifest "a manifest in an unknown format"
+printf 'format=1\napple-silicon\n' >"$manifest"
+bad_manifest "a malformed manifest"
+printf 'format=1\nplatform=apple-silicon\n' >"$manifest"
+chmod 777 "$image/var/lib/omarchy/image"
+bad_manifest "a manifest in a directory others can write"
+chmod 755 "$image/var/lib/omarchy/image"
+mv "$manifest" "$image/var/lib/omarchy/image/real-target"
+ln -s real-target "$manifest"
 bad_manifest "a symlinked manifest"
 rm "$manifest"
 pass "a manifest that is not root's own, well-formed file is refused"
@@ -330,16 +340,29 @@ alpm="$test_tmp/alpm"
 run_leaf() {
   local platform="$1"
   OMARCHY_ALPM_ROOT="$alpm" OMARCHY_PACMAN_DB="${GUARD_DB:-$db}" OMARCHY_PROC_ROOT="$test_tmp/$platform/proc" \
-    OMARCHY_IMAGE_TARGET="$test_tmp/no-manifest" PATH="$test_tmp/$platform/bin:$ROOT/bin:$PATH" \
+    OMARCHY_IMAGE_ROOT="$test_tmp/no-image" PATH="$test_tmp/$platform/bin:$ROOT/bin:$PATH" \
     bash -eE -c 'source "$1"' bash "$leaf" >"$test_tmp/out" 2>"$test_tmp/err"
 }
 
 mkdir -p "$alpm"
-if run_leaf apple-silicon; then
-  fail "hardware setup refuses to start without the platform guard"
+for platform in apple-silicon qualcomm; do
+  if run_leaf "$platform"; then
+    fail "hardware setup on $platform refuses to start without the platform guard"
+  fi
+  grep -Fq "install omarchy-settings in a transaction before hardware setup" "$test_tmp/err" ||
+    fail "a missing guard is explained" "$(cat "$test_tmp/err")"
+done
+# Machines without platform packages keep installing with a settings package
+# from before the guard, as the unversioned dev pair can leave them.
+for platform in generic-aarch64 generic; do
+  GUARD_DB="$test_tmp/installed-apple" run_leaf "$platform" ||
+    fail "hardware setup on $platform continues without the platform guard" "$(cat "$test_tmp/err")"
+  grep -Fq "platform guard from omarchy-settings is not installed; continuing on $platform" "$test_tmp/out" ||
+    fail "a missing guard on $platform is logged" "$(cat "$test_tmp/out")"
+done
+if run_leaf contradiction; then
+  fail "hardware setup refuses to start without the guard when the platform cannot be told"
 fi
-grep -Fq "install omarchy-settings in a transaction before hardware setup" "$test_tmp/err" ||
-  fail "a missing guard is explained" "$(cat "$test_tmp/err")"
 mkdir -p "$alpm/usr/share/libalpm/hooks"
 cp "$hook" "$alpm/usr/share/libalpm/hooks/"
 if run_leaf apple-silicon; then

@@ -45,14 +45,16 @@ esac
 if (( EUID == 0 )); then
   pacman_db=/var/lib/pacman
   proc=/proc
-  manifest=/var/lib/omarchy/image-target
+  image_root=""
   detector=/usr/share/libalpm/scripts/omarchy-hw-platform
 else
   pacman_db=${OMARCHY_PACMAN_DB:-/var/lib/pacman}
   proc=${OMARCHY_PROC_ROOT:-/proc}
-  manifest=${OMARCHY_IMAGE_TARGET:-/var/lib/omarchy/image-target}
+  image_root=${OMARCHY_IMAGE_ROOT:-}
   detector=omarchy-hw-platform
 fi
+image_dir=$image_root/var/lib/omarchy/image
+manifest=$image_dir/target
 
 # Prints "<package> <platform>" for each platform tag in the desc records read.
 platform_tags() {
@@ -74,9 +76,9 @@ sync_records() {
 }
 
 # An image build installs into a chroot on whatever host builds it, or into a
-# root without /proc; there the root-owned image-target manifest names the
-# platform. A booted system shares PID 1's root, and its own hardware decides,
-# as it does whenever PID 1 is visible but its root cannot be compared.
+# root without /proc; there the root-owned image manifest names the platform.
+# A booted system shares PID 1's root, and its own hardware decides, as it does
+# whenever PID 1 is visible but its root cannot be compared.
 image_build() {
   if [[ -e $proc/1/root ]]; then
     [[ ! $proc/1/root -ef / ]]
@@ -85,29 +87,47 @@ image_build() {
   fi
 }
 
-image_target() {
-  local owner perms line platform="" count=0
+# Owned by root (whoever runs this), not a symlink, writable by no one else.
+trusted() {
+  local owner perms
 
-  if [[ -L $manifest || ! -f $manifest ]]; then
-    echo "Error: the image-target manifest $manifest is not a regular file" >&2
-    return 1
-  fi
-
-  perms=$(stat -c '%u %a' -- "$manifest") || return 1
+  [[ -e $1 && ! -L $1 ]] || return 1
+  perms=$(stat -c '%u %a' -- "$1") || return 1
   read -r owner perms <<<"$perms"
-  if [[ ! $owner =~ ^[0-9]+$ || ! $perms =~ ^[0-7]+$ ]] || (( owner != EUID || (8#$perms & 8#022) != 0 )); then
-    echo "Error: the image-target manifest $manifest must be owned and writable only by root" >&2
+  [[ $owner =~ ^[0-9]+$ && $perms =~ ^[0-7]+$ ]] && (( owner == EUID && (8#$perms & 8#022) == 0 ))
+}
+
+# The image manifest as image builds write it (install/helpers/image-target.sh
+# in the omarchy runtime, which this package cannot source): format=1 and
+# platform=, unknown keys ignored, and any other line refused.
+image_target() {
+  local line key value format="" platform=""
+
+  if [[ ! -d $image_dir || ! -f $manifest ]] || ! trusted "$image_dir" || ! trusted "$manifest"; then
+    echo "Error: the image manifest $manifest is not a root-owned regular file" >&2
     return 1
   fi
 
   while IFS= read -r line || [[ -n $line ]]; do
-    [[ $line == platform=* ]] || continue
-    platform=${line#platform=}
-    count=$(( count + 1 ))
+    [[ -n $line && $line != \#* ]] || continue
+    if [[ $line != *=* ]]; then
+      echo "Error: the image manifest $manifest is malformed: $line" >&2
+      return 1
+    fi
+    key=${line%%=*}
+    value=${line#*=}
+    case $key in
+      format) format=$value ;;
+      platform) platform=$value ;;
+    esac
   done <"$manifest"
 
-  if (( count != 1 )) || [[ ! $platform =~ ^(apple-silicon|qualcomm|generic-aarch64|generic)$ ]]; then
-    echo "Error: the image-target manifest $manifest must set platform= once, to apple-silicon, qualcomm, generic-aarch64 or generic" >&2
+  if [[ $format != "1" ]]; then
+    echo "Error: the image manifest $manifest is not format=1" >&2
+    return 1
+  fi
+  if [[ ! $platform =~ ^(apple-silicon|qualcomm|generic-aarch64|generic)$ ]]; then
+    echo "Error: the image manifest $manifest names no known platform: ${platform:-none}" >&2
     return 1
   fi
 

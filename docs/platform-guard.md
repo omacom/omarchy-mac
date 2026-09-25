@@ -33,30 +33,31 @@ That covers `linux-aurora` (top level, so both `linux-aurora` and `linux-aurora-
 
 ## Which platform
 
-- **A booted system**, where the transaction root is PID 1's root: `omarchy-hw-platform`, so the hardware decides. Environment overrides and any image-target manifest in the root are ignored. The hardware also decides when PID 1 is visible but its root cannot be compared.
-- **An image build**, where the transaction runs in a chroot on a build host (arch-chroot, or `pacman --root`) or in a root without `/proc`: the image-target manifest at `/var/lib/omarchy/image-target` in the image's root decides. Without a manifest the hardware decides, which is right for an installer running on the target machine, and which refuses Apple packages on a build host that is not a Mac; the refusal says so. A container or nspawn build whose PID 1 runs in the image root counts as a booted system, so its build steps run in a chroot.
-- **The manifest** is a regular file owned by root and writable only by root. It sets `platform=` once, to `apple-silicon`, `qualcomm`, `generic-aarch64` or `generic`. Comments and other `key=value` lines are ignored. Any other manifest refuses tagged packages.
+- **A booted system**, where the transaction root is PID 1's root: `omarchy-hw-platform`, so the hardware decides. Environment overrides and any image manifest in the root are ignored. The hardware also decides when PID 1 is visible but its root cannot be compared.
+- **An image build**, where the transaction runs in a chroot on a build host (arch-chroot, or `pacman --root`) or in a root without `/proc`: the image manifest at `/var/lib/omarchy/image/target` in the image's root decides. Without a manifest the hardware decides, which is right for an installer running on the target machine, and which refuses Apple packages on a build host that is not a Mac; the refusal says so. A container or nspawn build whose PID 1 runs in the image root counts as a booted system, so its build steps run in a chroot.
+- **The manifest** is the one ticket 41 defines for deferred hardware setup (`install/helpers/image-target.sh`): a regular file owned by root and writable only by root, in a directory the same holds for, with `format=1` and `platform=` set to `apple-silicon`, `qualcomm`, `generic-aarch64` or `generic`. Comments and other `key=value` lines are ignored; any other line, format or platform refuses tagged packages. The guard reads it by the same rules, since omarchy-settings cannot source the runtime's helper.
 - `omarchy-platform-guard --platform` prints the platform the guard checks against.
 
 An image builder writes the manifest before the first transaction that installs platform packages:
 
 ```bash
-install -Dm644 /dev/stdin "$root/var/lib/omarchy/image-target" <<<'platform=apple-silicon'
+install -d -m 0755 "$root/var/lib/omarchy/image"
+printf 'format=1\nplatform=apple-silicon\n' | install -m 0644 /dev/stdin "$root/var/lib/omarchy/image/target"
 ```
 
-A booted image ignores it, so leaving it in place does no harm.
+A booted image ignores it; its first boot retires it to `target.booted` when the deferred hardware setup runs.
 
 ## Order on a fresh install
 
 A hook installed in a transaction does not check that transaction: pacman loads pre-transaction hooks before it extracts any package. So:
 
 1. The installer installs `omarchy-settings` in a transaction before any platform package. The generic ISO does: its early bootstrap transaction installs the settings package before the runtime and `omarchy-base.packages`, and its first pacstrap holds no platform package.
-2. Platform packages come in a later transaction: `install/omarchy-apple.packages`, the Apple kernel and the boot chain included, so none of them may be in a first pacstrap. An Apple image builder must install the settings package first, write the image-target manifest, then install the Apple set. The mx-mac era builders do not: they pacstrap the Aurora kernel, m1n1 and U-Boot first and write no manifest, so they cannot build an image with tagged packages until they follow this order.
-3. `omarchy-apply-hardware` starts with `install/hardware/platform-guard.sh`. It fails when the hook or its script is missing, then runs `omarchy-platform-guard --installed`, which checks every installed package against the platform, so anything an installer placed without the guard is caught. System setup before it installs no packages. `test/shell.d/platform-guard-test.sh` checks this order.
+2. Platform packages come in a later transaction: `install/omarchy-apple.packages`, the Apple kernel and the boot chain included, so none of them may be in a first pacstrap. An Apple image builder must install the settings package first, write the image manifest, then install the Apple set. The mx-mac era builders do not: they pacstrap the Aurora kernel, m1n1 and U-Boot first and write no manifest, so they cannot build an image with tagged packages until they follow this order.
+3. `omarchy-apply-hardware` starts with `install/hardware/platform-guard.sh`. On Apple Silicon and Qualcomm it fails when the hook or its script is missing; elsewhere, where no platform packages exist, it logs that and continues, so a settings package from before the guard (the dev pair is not version locked) cannot stop an x86 install. With the guard present it runs `omarchy-platform-guard --installed`, which checks every installed package against the platform, so anything an installer placed without the guard is caught. With ticket 41's deferred hardware setup, an image build queues this step with the rest and runs it on the machine's first boot. System setup before it installs no packages. `test/shell.d/platform-guard-test.sh` checks this order.
 
 ## Services and entry points
 
-The guard keeps platform packages off other machines; their services and commands still re-check the platform when they activate. Every `omarchy-mac` command asks `omarchy-hw-apple-silicon` before acting, and every unit carries an `ExecCondition=`. `packages/omarchy-mac/test/platform-test.sh` holds each command and unit to that. Its configuration fragments for NetworkManager, modprobe and WirePlumber have no activation step to check from; they rely on the guard.
+The guard keeps platform packages off other machines; their services and commands still re-check the platform when they activate. Every `omarchy-mac` command and every helper its units and udev rules run asks `omarchy-hw-platform` or `omarchy-hw-apple-silicon` before acting, and every service carries an `ExecCondition=`. `packages/omarchy-mac/test/platform-test.sh` holds each of them to that. Its configuration fragments for NetworkManager, modprobe and WirePlumber have no activation step to check from; they rely on the guard.
 
 ## Packaging
 
