@@ -16,8 +16,9 @@ mac_arch=aarch64
 channel_order=(edge rc stable)
 # Packages that decide what a Mac boots: VM acceptance boots a generic kernel
 # and cannot qualify them, so a promotion that moves one needs a record from
-# a real Mac. The same rule as the fork lane's.
-boot_package_pattern='^(linux-.+|m1n1.*|uboot-.+|asahi-fwextract|asahi-scripts|omarchy-apple-boot|omarchy-mac-boot|limine-mkinitcpio-hook|.+-dkms)$'
+# a real Mac. The same rule as the fork lane's, plus omarchy-settings, whose
+# mkinitcpio and Limine drop-ins ship on aarch64 too.
+boot_package_pattern='^(linux-.+|m1n1.*|uboot-.+|asahi-fwextract|asahi-scripts|omarchy-apple-boot|omarchy-mac-boot|omarchy-settings|limine-mkinitcpio-hook|.+-dkms)$'
 
 sha256_of() {
   if command -v sha256sum >/dev/null; then
