@@ -1,0 +1,21 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch provision-prepare. Owner provisioning runs this
+# before it asks the owner anything, on every attempt. It succeeds when this
+# Mac can finish setup: the disk is encrypted if install.conf asked for it (an
+# absent install.conf means encrypt), the initramfs loads the keyboard firmware
+# before the password prompt, and the boot files go to the ESP the Mac boots
+# from. It changes nothing.
+
+set -euo pipefail
+
+# Root reads only the live system and a fixed PATH; unprivileged tests may
+# stage the package under a fixture root.
+MAC_BOOT_ROOT=""
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+else
+  MAC_BOOT_ROOT=${OMARCHY_MAC_BOOT_ROOT:-}
+fi
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/provision.sh"
+provision_prepare

@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# omarchy:summary=Print where the system ESP of this Apple Silicon Mac is mounted
+# omarchy:hidden=true
+
+# Limine, its menu and the UKI live on the ESP that U-Boot boots from. Omarchy
+# mounts it at /boot/efi; installs from before that, and Asahi's own images,
+# mount it at /boot, where the kernels share the filesystem with it. The ESP is
+# the partition the device tree names (asahi,efi-system-partition, as
+# asahi-scripts' mount_sys_esp reads it) mounted whole at /boot/efi, else at
+# /boot; without that name, the FAT filesystem mounted whole at /boot/efi, else
+# at /boot. Exits 1, printing nothing, when there is none.
+
+set -uo pipefail
+
+esp_node=${OMARCHY_ESP_PARTUUID_FILE:-/proc/device-tree/chosen/asahi,efi-system-partition}
+
+esp_uuid=""
+[[ ! -r $esp_node ]] || esp_uuid=$(tr -d '\0' <"$esp_node" | tr '[:upper:]' '[:lower:]')
+
+for candidate in /boot/efi /boot; do
+  findmnt -n -r -o FSTYPE,FSROOT,PARTUUID --mountpoint "$candidate" 2>/dev/null |
+    awk -v uuid="$esp_uuid" '$1 == "vfat" && $2 == "/" && (uuid == "" || tolower($3) == uuid) { found = 1 } END { exit !found }' ||
+    continue
+  printf '%s\n' "$candidate"
+  exit 0
+done
+
+echo "omarchy-mac-esp: the system ESP${esp_uuid:+ (PARTUUID=$esp_uuid)} is not mounted at /boot/efi or /boot" >&2
+exit 1

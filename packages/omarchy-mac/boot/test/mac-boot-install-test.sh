@@ -33,6 +33,18 @@ for file in "$ROOT"/bin/*; do
 done
 pass "every payload file keeps its installed path, content and mode"
 
+# omarchy-lifecycle-dispatch runs only root-owned entrypoints nobody else can write.
+for file in "$ROOT"/entrypoints/*; do
+  staged=$stage/usr/lib/omarchy/mac-boot/${file##*/}
+  cmp -s "$file" "$staged" && [[ $(stat -c %a "$staged") == 755 ]] ||
+    fail "${file##*/} is staged as a mode 755 dispatch entrypoint"
+done
+[[ $(stat -c %a "$stage/usr/lib/omarchy/mac-boot") == 755 ]] || fail "the entrypoint directory is writable by root only"
+for operation in provision-prepare provision-commit provision-verify; do
+  [[ -x $stage/usr/lib/omarchy/mac-boot/$operation ]] || fail "$operation is staged"
+done
+pass "the provisioning entrypoints are staged where omarchy-lifecycle-dispatch looks for them"
+
 # Every shipped mkinitcpio drop-in rebuilds the initramfs when it changes.
 hook=$ROOT/files/usr/share/libalpm/hooks/91-omarchy-mac-boot-initramfs.hook
 for dropin in "$ROOT"/files/etc/mkinitcpio.conf.d/*.conf; do

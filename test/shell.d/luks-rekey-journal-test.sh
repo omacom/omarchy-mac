@@ -628,3 +628,24 @@ if run provision "$owner_password"; then fail "a half-implemented unlock fails p
   fail "a half-implemented unlock runs neither the platform nor the Limine path" "$(cat "$tmp/half-ran")"
 runtime=$ROOT
 pass "a boot package implementing only half of the unlock pair fails closed"
+
+# A recovery slot the owner acknowledged (luks-recovery.sh) survives the
+# retirement; one whose key was never acknowledged is retired with the rest.
+platform=x86
+backend=fake
+for acknowledged in 1 0; do
+  fixture
+  printf '2 recovery-key\n' >>"$tmp/slots"
+  printf 'recovery_slot=2\n' >"$tmp/provisioning/luks-rekey.state"
+  (( acknowledged )) && echo 'recovery_shown=1' >>"$tmp/provisioning/luks-rekey.state"
+  chmod 600 "$tmp/provisioning/luks-rekey.state"
+  run rekey "$owner_password" || fail "the re-key with a recorded recovery slot completes" "$(cat "$tmp/log")"
+  [[ -z $(opens "$staged_key") && -z $(opens "$seller_key") && -n $(opens "$owner_password") ]] ||
+    fail "the staged and previous owner's keys are retired beside a recovery slot"
+  if (( acknowledged )); then
+    [[ $(opens recovery-key) == 2 && $(slot_count) == 2 ]] || fail "an acknowledged recovery slot is kept" "$(cat "$tmp/slots")"
+  else
+    [[ -z $(opens recovery-key) && $(slot_count) == 1 ]] || fail "an unacknowledged recovery slot is retired" "$(cat "$tmp/slots")"
+  fi
+done
+pass "the re-key keeps an acknowledged recovery slot and retires an unacknowledged one"
