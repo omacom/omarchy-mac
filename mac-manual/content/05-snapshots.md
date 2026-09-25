@@ -11,9 +11,9 @@ Snapshots work as they do on x86 Omarchy, described in [System snapshots](https:
 1. Restart and pick the snapshot in the Limine menu by its date and Omarchy version.
 2. Once it is up, click the notification to restore it, or run `omarchy-snapshot restore`.
 
-Restore from the snapshot you booted: run from the current system, the restore tells you to boot the snapshot first. If you pick a different snapshot from the restore's own list instead, it's checked after the restore. When it doesn't match, you're told not to reboot and how to put the previous root back. A snapshot holds the root file system, not `/home`, so it undoes a broken update but does not bring back lost files.
+Restore from the snapshot you booted: run from the current system, the restore tells you to boot the snapshot first. If you pick a different snapshot from the restore's own list instead, it's checked after the restore. When it doesn't match, you're told not to reboot. Run `omarchy-snapshot restore` again and pick the backup that restore made to put the previous root back. A snapshot holds the root file system, not `/home`, so it undoes a broken update but does not bring back lost files.
 
-Snapshots taken before Limine was activated on your Mac are not in the Limine menu. Limine saved no kernel for them, so they can't be booted or restored. `limine-snapper-list` shows the snapshots the menu offers.
+Snapshots taken before Limine was activated on your Mac can't be restored. Limine saved no kernel for most of them, so they aren't in the menu, and one that is gets refused. `limine-snapper-list` shows the snapshots the menu offers.
 
 ## What a snapshot does not hold on a Mac
 

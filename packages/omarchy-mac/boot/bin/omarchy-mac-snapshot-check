@@ -8,7 +8,7 @@
 # The kernel and initramfs on the ext4 boot partition, and m1n1, the device
 # trees and U-Boot on the system ESP, are outside every snapshot: a restored
 # root boots with the ones installed now. A snapshot is restored only when
-# they match it. Nothing here writes anything.
+# they match it. Nothing here writes anything but its own markers in /run.
 #
 # With a snapshot root it checks that the snapshot carries the kernel on /boot,
 # for the subvolume swap (omarchy-system-snapshot-restore) on a Mac that still
@@ -29,7 +29,9 @@
 #   limine-snapper-restore's own list can put back a snapshot other than the one
 #   booted, so the restored @ must hold the running root's boot files, and the
 #   UKI the restore put on the ESP its kernel. Status 100 keeps the restore from
-#   offering the reboot, and the message says how to undo it.
+#   offering the reboot, and the message says how to undo it. Undoing it means
+#   restoring again from a boot whose ESP now holds another kernel, so the pre
+#   hook lets that one restore through unchecked and this hook checks its result.
 
 set -uo pipefail
 
@@ -46,6 +48,9 @@ else
 fi
 top=${OMARCHY_SNAPSHOT_TOP:-}
 top_mounted=""
+# started: when the pre hook let a restore through. undo: the backup to pick
+# after a restore this Mac's boot files do not match.
+state=${OMARCHY_SNAPSHOT_CHECK_STATE:-/run/omarchy-mac-snapshot-check}
 boot_kver=""
 
 why_outside() {
@@ -171,27 +176,41 @@ restore_mode() {
   printf '%s\n' "$mode"
 }
 
-# Only a Mac's restores are this hook's to check; a platform that cannot be
-# told is not waved through. A root from before the platform detector has only
-# omarchy-hw-apple-silicon.
+# Only a Mac's restores are this hook's to check. A root from before the
+# platform detector has only omarchy-hw-apple-silicon. Anything but a clear
+# answer returns 2: the platform cannot be told, which is not waved through.
 on_a_mac() {
-  local platform
-  if ! command -v omarchy-hw-platform >/dev/null 2>&1; then
+  local platform status
+  if command -v omarchy-hw-platform >/dev/null 2>&1; then
+    if platform=$(omarchy-hw-platform); then
+      [[ $platform == apple-silicon ]]
+      return
+    fi
+  else
     omarchy-hw-apple-silicon
-    return
+    status=$?
+    (( status > 1 )) || return "$status"
   fi
-  if ! platform=$(omarchy-hw-platform); then
-    echo "Cannot tell which platform this is, so the restore cannot be checked against its boot files; not restoring." >&2
-    refuse
-  fi
-  [[ $platform == apple-silicon ]]
+  return 2
+}
+
+# Lets the restore through, noting when, so the post hook can tell the backup
+# the restore makes from older snapshots.
+let_through() {
+  mkdir -p "$state" 2>/dev/null && : >"$state/started"
+  exit 0
 }
 
 before_restore() {
-  local mode number reason packages tree id
+  local mode number reason packages tree id platform=0 backup
   mode=$(restore_mode)
   [[ -n $mode ]] || exit 0
-  on_a_mac || exit 0
+  on_a_mac || platform=$?
+  if (( platform == 2 )); then
+    echo "Cannot tell which platform this is, so the restore cannot be checked against its boot files; not restoring." >&2
+    refuse
+  fi
+  (( platform == 0 )) || exit 0
 
   # Kernel files alone (snapper rollback's plugin): the snapshot's kernel must
   # be the one on /boot, or the root would boot a kernel it has no modules for.
@@ -217,6 +236,19 @@ before_restore() {
     exit 0
   fi
 
+  # Undoing a restore the post hook refused: the ESP holds the kernel of the
+  # root it refused, so a check here would refuse the undo too.
+  if [[ $mode == restore && -f $state/undo ]]; then
+    backup=$(<"$state/undo")
+    cat <<MESSAGE
+The last restore put back a root this Mac's boot files do not match, so this
+one is not checked first and can put the previous root back.
+Press l and pick ${backup:+snapshot $backup, }the backup that restore made.
+It is checked afterwards.
+MESSAGE
+    let_through
+  fi
+
   if ! number=$(booted_snapshot); then
     if omarchy-mac-limine-active; then
       cat >&2 <<'MESSAGE'
@@ -225,9 +257,9 @@ in the Limine menu, pick the snapshot, and run omarchy-snapshot restore once it
 is up. The restore then checks that snapshot against this Mac's boot files
 before it changes anything.
 
-Snapshots taken before Limine was activated on this Mac are not in that menu:
-Limine saved no kernel for them, so they cannot be booted or restored.
-limine-snapper-list shows the snapshots the menu offers.
+Snapshots taken before Limine was activated on this Mac cannot be restored.
+Limine saved no kernel for most of them, so they are not in that menu, and one
+that is gets refused. limine-snapper-list shows the snapshots the menu offers.
 MESSAGE
     else
       cat >&2 <<'MESSAGE'
@@ -272,6 +304,13 @@ MESSAGE
     refuse
   fi
   echo "Snapshot $number matches this Mac's boot files"
+  let_through
+}
+
+# fstab's root row, also as omarchy-mac-snapshot-overlay leaves it commented out
+# in a snapshot boot: device, type and options.
+fstab_root() {
+  awk '{ sub(/^# omarchy-mac-snapshot-overlay: /, "") } $1 !~ /^#/ && $2 == "/" { print $1, $3, $4; exit }' "$1" 2>/dev/null
 }
 
 # The first way the restored root at $1 does not boot with the live boot files,
@@ -279,6 +318,16 @@ MESSAGE
 restored_mismatch() {
   local restored=$1 kernel esp uki size linux
   carries_boot_kernel "$restored" "The restored root" 2>&1 || return 0
+  # The boot check held the booted root's crypttab and root mount against the
+  # Limine command line; a root from before encryption differs here.
+  if [[ -e $root/etc/crypttab || -e $restored/etc/crypttab ]] && ! cmp -s "$root/etc/crypttab" "$restored/etc/crypttab"; then
+    echo "The restored root's /etc/crypttab is not the one the Limine command line unlocks."
+    return 0
+  fi
+  if [[ $(fstab_root "$root/etc/fstab") != "$(fstab_root "$restored/etc/fstab")" ]]; then
+    echo "The restored root mounts / differently from the root the Limine command line boots."
+    return 0
+  fi
   if ! diff -rq "$root/usr/lib/modules/$boot_kver/dtbs" "$restored/usr/lib/modules/$boot_kver/dtbs" >/dev/null 2>&1; then
     echo "The restored root's $boot_kver device trees are not the ones in m1n1 on the ESP."
     return 0
@@ -301,10 +350,7 @@ restored_mismatch() {
     echo "The restore left no Limine UKI at ${esp:-the ESP}/EFI/Linux/omarchy_$kernel.efi."
     return 0
   fi
-  if ! command -v objcopy >/dev/null 2>&1; then
-    echo "objcopy (binutils) is not installed; not checking the kernel inside the restored UKI" >&2
-    return 1
-  fi
+  command -v objcopy >/dev/null 2>&1 || return 1
   if ! linux=$(mktemp); then
     echo "Cannot make a scratch file to read the restored UKI."
     return 0
@@ -321,7 +367,7 @@ restored_mismatch() {
 }
 
 after_restore() {
-  local lock restored="" reason backup
+  local lock restored="" reason backup="" platform=0
   [[ $(restore_mode) == restore ]] || exit 0
   for lock in "${restore_locks[@]}"; do
     if [[ -f $lock && $(<"$lock") == restored ]]; then
@@ -329,9 +375,12 @@ after_restore() {
     fi
   done
   [[ -n $restored ]] || exit 0
-  on_a_mac || exit 0
+  on_a_mac || platform=$?
+  (( platform != 1 )) || exit 0
 
-  if ! mount_top; then
+  if (( platform == 2 )); then
+    reason="Cannot tell which platform this is, so the restored root was not checked."
+  elif ! mount_top; then
     reason="Cannot read the restored root to check it against this Mac's boot files."
   elif [[ ! -d $top/@/usr ]]; then
     reason="The restore left no root subvolume @ to check."
@@ -339,11 +388,21 @@ after_restore() {
     reason=$(restored_mismatch "$top/@")
   fi
   if [[ -z $reason ]]; then
-    echo "The restored root matches this Mac's boot files"
+    rm -f "$state/undo"
+    if command -v objcopy >/dev/null 2>&1; then
+      echo "The restored root matches this Mac's boot files"
+    else
+      echo "The restored root matches this Mac's boot files; objcopy (binutils) is not installed, so the kernel inside the restored UKI was not checked"
+    fi
     exit 0
   fi
 
-  backup=$(find "$top/@/.snapshots" -mindepth 1 -maxdepth 1 -regex '.*/[0-9]+' -printf '%f\n' 2>/dev/null | sort -n | tail -n 1)
+  # The backup is the snapshot the restore wrote since the pre hook let it through.
+  if [[ -f $state/started && -n $top ]]; then
+    backup=$(find "$top/@/.snapshots" -mindepth 2 -maxdepth 2 -name info.xml -newer "$state/started" -printf '%h\n' 2>/dev/null |
+      sed 's|.*/||' | grep -E '^[0-9]+$' | sort -n | tail -n 1)
+  fi
+  mkdir -p "$state" 2>/dev/null && printf '%s\n' "$backup" >"$state/undo"
   {
     echo "The restore put back a root this Mac's boot files do not match:"
     printf '  %s\n' "$reason"
@@ -355,6 +414,7 @@ before a restore, and this one was picked from the restore's own list.
 To put the previous root back, run omarchy-snapshot restore again, press l,
 and pick ${backup:+snapshot $backup, }the backup this restore just made.
 To restore another snapshot, boot it from the Limine menu and restore it there.
+Ignore the "Please reboot manually" that limine-snapper-restore prints next.
 MESSAGE
   exit 100
 }

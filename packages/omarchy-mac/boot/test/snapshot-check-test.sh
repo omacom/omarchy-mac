@@ -39,7 +39,12 @@ cat >"$tmp/detector/omarchy-hw-platform" <<'SH'
 [[ ${TEST_PLATFORM:-apple-silicon} != error ]] || exit 1
 echo "${TEST_PLATFORM:-apple-silicon}"
 SH
-printf '#!/bin/bash\n[[ ${TEST_PLATFORM:-apple-silicon} == apple-silicon ]]\n' >"$fake/omarchy-hw-apple-silicon"
+# TEST_APPLE_STATUS: an exit status other than a clear answer, such as 127.
+cat >"$fake/omarchy-hw-apple-silicon" <<'SH'
+#!/bin/bash
+[[ -z ${TEST_APPLE_STATUS:-} ]] || exit "$TEST_APPLE_STATUS"
+[[ ${TEST_PLATFORM:-apple-silicon} == apple-silicon ]]
+SH
 printf '#!/bin/bash\nexit 0\n' >"$fake/limine-update"
 # pacman -Q lists the snapshot's packages; everything else is the fixture's.
 cat >"$fake/pacman" <<SH
@@ -88,7 +93,8 @@ run_check() {
     export CHECK_RAN="$tmp/check-ran" HOOK_CMDLINE="$hook_cmdline" OMARCHY_CMDLINE="$tmp/cmdline"
     export OMARCHY_LIMINE_GATE="$mac_root/var/lib/omarchy/limine.enabled" OMARCHY_LIMINE_DEFAULT="$mac_root/etc/default/limine"
     export OMARCHY_BOOT_DIR="$mac_root/boot" OMARCHY_SNAPSHOTS_DIR="$tmp/snapshots"
-    export OMARCHY_SNAPSHOT_TOP="$tmp/top" OMARCHY_SNAPSHOT_RESTORE_LOCK="$tmp/restore.lock"
+    export OMARCHY_SNAPSHOT_TOP="$tmp/top" OMARCHY_SNAPSHOT_RESTORE_LOCK="$tmp/restore.lock" OMARCHY_SNAPSHOT_CHECK_STATE="$tmp/state"
+    [[ -z ${TEST_NO_TOP:-} ]] || unset OMARCHY_SNAPSHOT_TOP
     bash "${TEST_HOOK:-$tmp/hooks/pre.d/04-omarchy-mac-snapshot-check}" "$@" </dev/null
   ) >"$tmp/out" 2>"$tmp/err"
   status=$?
@@ -133,7 +139,9 @@ TEST_NO_DETECTOR=1 TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mut
 expect_refused "a restore from the running system of a root without the platform detector" "open Snapshots"
 TEST_NO_DETECTOR=1 TEST_PLATFORM=generic TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$snapshot_cmdline"
 (( status == 0 )) && [[ ! -s $tmp/err && ! -s $tmp/check-ran ]] || fail "a root without the detector and not a Mac is not this hook's to check"
-pass "a root from before the platform detector asks omarchy-hw-apple-silicon"
+TEST_NO_DETECTOR=1 TEST_APPLE_STATUS=127 TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$snapshot_cmdline"
+expect_refused "a restore where omarchy-hw-apple-silicon is missing" "Cannot tell which platform this is"
+pass "a root from before the platform detector asks omarchy-hw-apple-silicon, and only a clear answer counts"
 
 # The snapshot booted from the Limine menu matches the boot files: restored.
 limine_mac
@@ -211,8 +219,8 @@ limine_mac
 TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$live_cmdline"
 expect_refused "a restore from the running system" \
   "open Snapshots" "run omarchy-snapshot restore once it" \
-  "Snapshots taken before Limine was activated on this Mac are not in that menu" \
-  "cannot be booted or restored"
+  "Snapshots taken before Limine was activated on this Mac cannot be restored" \
+  "that is gets refused"
 rm "$mac_root/var/lib/omarchy/limine.enabled"
 TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$live_cmdline"
 expect_refused "limine-snapper-restore on a Mac that boots GRUB" \
@@ -276,12 +284,19 @@ pass "a snapshot root is checked for the kernel on /boot"
 # After the restore: @ is whatever limine-snapper-sync put back, the booted
 # snapshot or one picked from its own list. $1 is its kernel image; the rest of
 # its boot files are the running root's. Snapshot 12 is the backup of the
-# previous root the restore made.
+# previous root the restore wrote after the pre hook let it through; 20 is
+# older, from before it.
 restored_root() {
-  local restored=$tmp/top/@
-  rm -rf "$tmp/top"
-  mkdir -p "$tmp/top" "$restored/.snapshots/7" "$restored/.snapshots/12"
-  cp -a "$mac_root/usr" "$restored/usr"
+  local restored=$tmp/top/@ number
+  rm -rf "$tmp/top" "$tmp/state"
+  mkdir -p "$tmp/state"
+  for number in 7 12 20; do
+    mkdir -p "$restored/.snapshots/$number"
+    printf '<snapshot><num>%s</num></snapshot>\n' "$number" >"$restored/.snapshots/$number/info.xml"
+  done
+  touch -d '-2 minutes' "$restored/.snapshots/7/info.xml" "$restored/.snapshots/20/info.xml"
+  touch -d '-1 minute' "$tmp/state/started"
+  cp -a "$mac_root/usr" "$mac_root/etc" "$restored/"
   printf '%s\n' "$1" >"$restored/usr/lib/modules/$mac_kver/vmlinuz"
   printf 'linux-aurora\n' >"$restored/usr/lib/modules/$mac_kver/pkgbase"
   : >"$restored/usr/lib/modules/$mac_kver/modules.dep"
@@ -294,7 +309,9 @@ expect_undo() {
   local description=$1
   shift
   expect_refused "$description" "The restore put back a root this Mac's boot files do not match" \
-    "Do not reboot yet" "pick snapshot 12, the backup this restore just made" "$@"
+    "Do not reboot yet" "pick snapshot 12, the backup this restore just made" \
+    'Ignore the "Please reboot manually"' "$@"
+  [[ $(cat "$tmp/state/undo") == 12 ]] || fail "$description leaves the backup to undo to"
 }
 
 limine_mac
@@ -330,7 +347,54 @@ restored_root "linux-aurora kernel $mac_kver"
 printf 'LIMINE earlier\n' >"$tmp/top/@/usr/share/limine/BOOTAA64.EFI"
 run_post "--restore --no-mutex" "$snapshot_cmdline"
 expect_undo "a snapshot picked from the list with another Limine" "Limine is not the one on the ESP"
+restored_root "linux-aurora kernel $mac_kver"
+printf 'root UUID=luks none luks\n' >"$mac_root/etc/crypttab"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot picked from the list from before encryption" "/etc/crypttab is not the one the Limine command line unlocks"
+rm "$mac_root/etc/crypttab"
+restored_root "linux-aurora kernel $mac_kver"
+printf 'UUID=r / btrfs rw,subvol=/@old 0 0\n' >"$tmp/top/@/etc/fstab"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot picked from the list that mounts another root" "mounts / differently"
 pass "the post hook refuses a restored root with other boot files, and says how to undo it"
+
+# A snapshot boot's overlay comments out the running root's fstab row; the
+# restored root's own row is the same mount.
+limine_mac
+restored_root "linux-aurora kernel $mac_kver"
+sed -i 's|^UUID=r|# omarchy-mac-snapshot-overlay: UUID=r|' "$mac_root/etc/fstab"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_allowed "a restored root whose fstab row the snapshot boot commented out"
+pass "the post hook reads the running root's fstab row through the snapshot overlay"
+
+# Undoing a refused restore: the ESP now holds the refused root's UKI, so the
+# pre hook lets the next restore through and the post hook checks its result.
+limine_mac
+restored_root "linux-aurora kernel from another build"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_undo "a snapshot picked from the list with another kernel"
+{ printf 'linux-aurora kernel from another build\n'; printf 'initrd\n'; } >"$mac_esp/EFI/Linux/omarchy_linux-aurora.efi"
+TEST_PATH_FIRST=$tmp/check-stub run_check "--restore --no-mutex" "$snapshot_cmdline"
+(( status == 0 )) && [[ ! -s $tmp/check-ran ]] && grep -Fq "Press l and pick snapshot 12, the backup that restore made." "$tmp/out" ||
+  fail "the restore that undoes a refused one is let through (status $status: $(cat "$tmp/out" "$tmp/err"))"
+limine_mac
+cp "$tmp/state/undo" "$tmp/undo"
+restored_root "linux-aurora kernel $mac_kver"
+cp "$tmp/undo" "$tmp/state/undo"
+run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_allowed "the previous root put back"
+[[ ! -e $tmp/state/undo ]] || fail "a restored root that matches ends the undo"
+pass "a refused restore can be undone through the hooks"
+
+# The post hook reads the restored root off the top level it mounts; when that
+# fails nothing was checked, and it says so.
+limine_mac
+restored_root "linux-aurora kernel $mac_kver"
+TEST_NO_TOP=1 run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_refused "a restored root that cannot be read" "Cannot read the restored root" "Do not reboot yet"
+TEST_NO_DETECTOR=1 TEST_APPLE_STATUS=127 run_post "--restore --no-mutex" "$snapshot_cmdline"
+expect_refused "a restore where the platform cannot be told" "Cannot tell which platform this is, so the restored root was not checked"
+pass "the post hook refuses what it cannot check"
 
 # The UKI the restore put back must carry the restored kernel.
 limine_mac
