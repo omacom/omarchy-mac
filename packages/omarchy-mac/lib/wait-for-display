@@ -1,0 +1,21 @@
+#!/bin/bash
+# simpledrm registers a DRM card about 0.1 s into boot and Apple's display
+# controller replaces it about 3 s later. A greeter compositor that starts in
+# between binds to simpledrm's connector and keeps drawing to an output that no
+# longer scans out: the password field never fills in, though typing still
+# reaches it and Enter still logs in. Wait for the controller's card, at most
+# 10 s, and never fail the greeter.
+omarchy-hw-apple-silicon || exit 0
+proc=/proc
+dev=/dev
+if (( EUID != 0 )); then
+  proc=${OMARCHY_PROC_ROOT:-/proc}
+  dev=${OMARCHY_DEV_ROOT:-/dev}
+fi
+# Connectors are no test: simpledrm has one, and so does the GPU's own card.
+[[ -e $proc/device-tree/soc/display-subsystem ]] || exit 0
+for _ in {1..200}; do
+  [[ -e $dev/dri/by-path/platform-soc:display-subsystem-card ]] && break
+  sleep 0.05
+done
+exit 0

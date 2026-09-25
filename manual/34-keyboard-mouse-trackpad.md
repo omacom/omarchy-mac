@@ -67,7 +67,7 @@ On Dell XPS laptops with a haptic touchpad, you can also set the click strength 
 
 ### Keyboard backlight
 
-Laptops with a keyboard backlight LED and an ambient light sensor light the keys in the dark and dim them as the room brightens. Dedicated keyboard-brightness keys still set the level by hand; automatic control resumes when the ambient light changes enough that the old choice no longer fits. Automatic control pauses while the screen is locked or the lid is closed.
+Laptops with a keyboard backlight LED and an ambient light sensor light the keys in the dark and dim them as the room brightens. Dedicated keyboard-brightness keys still set the level by hand; automatic control resumes when the ambient light changes enough that the old choice no longer fits. Automatic control pauses while the screen is locked or the lid is closed. Keys turned off with the brightness keys stay off the same way; keys left off by anything else, such as the lock screen, light up again with the room.
 
 ### Typing in Chinese, Japanese, and other languages
 

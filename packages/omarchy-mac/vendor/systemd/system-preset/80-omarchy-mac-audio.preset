@@ -1,0 +1,2 @@
+# The kernel keeps Apple Silicon speakers muted until speakersafetyd runs.
+enable speakersafetyd.service
