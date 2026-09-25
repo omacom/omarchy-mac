@@ -345,7 +345,20 @@ echo 'ok - a runtime without omarchy-provision-hardware keeps first boot pending
 new_case supported-deferred-contract
 write_esp 'format=1' 'encrypt=0'
 printf '%s\n' 'install/hardware/apple/limine-boot.sh' >"$root/var/lib/omarchy/mac-first-boot/deferred-steps"
+mkdir -p "$root/var/lib/omarchy/image"
+printf 'format=1\nplatform=apple-silicon\n' >"$root/var/lib/omarchy/image/target"
 expect_handoff "a supported deferred-steps contract"
+new_case retried-deferred-contract
+write_esp 'format=1' 'encrypt=0'
+printf '%s\n' 'install/hardware/apple/limine-boot.sh' >"$root/var/lib/omarchy/mac-first-boot/deferred-steps"
+mkdir -p "$root/var/lib/omarchy/image"
+printf 'format=1\nplatform=apple-silicon\n' >"$root/var/lib/omarchy/image/target.booted"
+expect_handoff "a fresh image whose manifest an earlier attempt retired"
+new_case deferred-contract-without-manifest
+write_esp 'format=1' 'encrypt=0'
+printf '%s\n' 'install/hardware/apple/limine-boot.sh' >"$root/var/lib/omarchy/mac-first-boot/deferred-steps"
+expect_stop "a fresh image without a build manifest" 'the image has no deferred hardware setup (/var/lib/omarchy/image/target is missing)'
+[[ ! -s $case_dir/deferred.log ]] || fail "a fresh image without a build manifest runs no hardware setup"
 for kind in other extra missing-newline symlink dangling-symlink directory; do
   new_case "unsupported-deferred-$kind"
   write_esp 'format=1' 'encrypt=0'
@@ -361,7 +374,7 @@ for kind in other extra missing-newline symlink dangling-symlink directory; do
   expect_stop "an unsupported deferred-steps contract ($kind)" 'deferred-steps'
   [[ ! -s $case_dir/deferred.log ]] || fail "invalid deferred-steps must not execute the activation leaf"
 done
-echo 'ok - first boot accepts only the fixed fresh-image contract and permits marker-free reset'
+echo 'ok - first boot accepts only the fixed fresh-image contract with its build manifest, and permits marker-free reset'
 
 # ── durable persist before ESP deletion ────────────────────────────────────
 new_case persist-sync-fails

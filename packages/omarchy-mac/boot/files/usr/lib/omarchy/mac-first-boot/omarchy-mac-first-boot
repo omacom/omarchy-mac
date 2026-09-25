@@ -22,6 +22,7 @@ esp_conf=$root/boot/efi/omarchy/install.conf
 keyring_dir=$root/etc/pacman.d/gnupg
 keyring_record=$state_dir/keyring
 keyring_import_dir=$root/usr/share/pacman/keyrings
+image_target=$root/var/lib/omarchy/image/target
 
 
 say() { printf '%s\n' "$*"; }
@@ -138,10 +139,15 @@ run_deferred_steps() {
     [[ -f $steps && ! -L $steps ]] || fail "deferred-steps is not a regular file"
     cmp -s "$steps" <(printf '%s\n' 'install/hardware/apple/limine-boot.sh') ||
       fail "deferred-steps does not match the supported image contract"
+    # A fresh image defers its hardware setup through the build manifest, which
+    # the first run retires to target.booted. Without either, nothing would set
+    # this Mac up and Limine would never be activated.
+    [[ -e $image_target || -e $image_target.booted ]] ||
+      fail "the image has no deferred hardware setup (${image_target#"$root"} is missing)"
   fi
-  # The image build queued its hardware setup for this machine. Run it now that
-  # the keyring exists, before owner setup; a failed step stays queued and the
-  # retry resumes there. omarchy-provision-hardware.service then finds nothing.
+  # Run the image's deferred hardware setup now that the keyring exists, before
+  # owner setup; a failed step stays queued and the retry resumes there. Its
+  # service is ordered after first boot, so the two never run at once.
   "$root/usr/bin/omarchy-provision-hardware" >>"$log_file" 2>&1 ||
     fail "the deferred hardware steps failed"
 }
