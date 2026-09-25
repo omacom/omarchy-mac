@@ -126,6 +126,10 @@ The recovery passphrase is core code; whether setup creates one is the platform 
 - **The owner's password:** the owner's slot is the re-key's own step, so a retry may still choose a new password while the staged key opens the disk, as on x86, even after the boot step: the re-key then retires the old password's slot and records the final slots with `luks-slots`. The recovery key is refused as the password.
 - **Temporary key:** setup finishes only after the re-key proved the staged key opens nothing, the boot package's `provision-verify` found no boot-time copy, and `luks-slots` recorded the kept slots.
 
+## Snapshots
+
+Snapshot restore is not a dispatch operation. A Limine Mac restores through `limine-snapper-restore`, as x86 does: limine-snapper-sync swaps the root and puts the snapshot's saved UKI and menu entry back itself, so nothing is rebuilt afterwards. `omarchy-mac-boot` checks the restore through limine-snapper-sync's own hook interface, the one its Limine activation gate already uses. Its pre hook (`/etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check`) runs the boot check `update-verify` runs (`--boot-chain`) on the booted snapshot, with no reboot pending, and stops a restore the boot files do not match. Its post hook (`post.d/99-omarchy-mac-snapshot-check`) checks the root the restore put back, which limine-snapper-restore's own list can make a different snapshot, and keeps the reboot from being offered when it does not match. `omarchy-snapshot restore` sends a Mac that still boots GRUB to `omarchy-system-snapshot-restore`, which refuses a Limine Mac and asks `omarchy-mac-snapshot-check` about the chosen snapshot on a GRUB one.
+
 ## Qualcomm
 
 Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualcomm` is unregistered. Every operation is a no-op there, and provisioning uses the Limine UKI callbacks, so Dragon behaves exactly as before. To plug in a Qualcomm implementation:
