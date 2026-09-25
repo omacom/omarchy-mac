@@ -272,9 +272,9 @@ root=$(new_root resume)
 write_manifest "$root"
 build "$root" >/dev/null || fail "the fixture image builds"
 touch "$FAIL_B"
-if output=$(first_boot "$root" 2>&1); then
-  fail "the first boot reports a failed step"
-fi
+status=0
+output=$(first_boot "$root" 2>&1) || status=$?
+(( status == 75 )) || fail "a failed step exits 75, so a platform first boot can tell it from a refusal" "status $status: $output"
 [[ $output == *"Deferred hardware step failed: install/hardware/apple/b.sh"* ]] ||
   fail "the first boot names the failed step" "$output"
 [[ $(cat "$RUNS") == "a user= path=$fixture" ]] || fail "the first boot stops at the failed step" "$(cat "$RUNS")"
@@ -330,9 +330,9 @@ for entry in /etc/passwd install/hardware/../../bin/x.sh install/login/sddm.sh; 
   write_manifest "$root"
   build "$root" >/dev/null || fail "the fixture image builds"
   printf '%s\n' "$entry" install/hardware/c.sh >"$root/var/lib/omarchy/image/deferred-steps"
-  if first_boot "$root" >/dev/null 2>&1; then
-    fail "the first boot refuses the queue entry $entry"
-  fi
+  status=0
+  first_boot "$root" >/dev/null 2>&1 || status=$?
+  (( status == 1 )) || fail "the first boot refuses the queue entry $entry with status 1, not a step failure's 75" "status $status"
   [[ ! -e $RUNS && $(head -n 1 "$root/var/lib/omarchy/image/deferred-steps") == "$entry" ]] ||
     fail "the first boot refuses the queue entry $entry before running anything"
 done
