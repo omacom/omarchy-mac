@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Sourced by guest/install. The release state below is a VM fixture, not a
+# published channel. Its runtime bytes must match an explicitly pinned signed
+# manifest from the already verified immutable package candidate.
+manifest_sha=${OMARCHY_VM_RUNTIME_MANIFEST_SHA256:?Missing runtime manifest checksum}
+expected_source=${OMARCHY_VM_RUNTIME_SOURCE:?Missing runtime source commit}
+[[ $manifest_sha =~ ^[0-9a-f]{64}$ && $expected_source =~ ^[0-9a-f]{40}$ ]]
+candidate=/var/lib/omarchy/vm-package-candidate
+[[ $(sha256sum "$candidate" | cut -d' ' -f1) == "$(< /var/lib/omarchy/vm-package-candidate.sha256)" ]]
+candidate_tag=$(sed -n 's/^release_tag=//p' "$candidate")
+[[ $candidate_tag =~ ^asahi-packages-candidate-[0-9a-f]{40}$ ]]
+signer=$(sed -n 's/^signing_fingerprint=//p' "$candidate")
+[[ $signer =~ ^[A-F0-9]{40}$ ]]
+verified_dir="$work/verified/asahi-quattro.candidate"
+mkdir -p "$verified_dir/bundle"
+repository="https://github.com/maralcbr/omarchy-pkgs/releases/download/$candidate_tag"
+fetch_runtime() {
+  curl --fail --location --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors \
+    "$repository/$1" --output "$verified_dir/bundle/$1"
+}
+verify_runtime_signature() {
+  local status
+  status=$(gpg --batch --homedir /root/omarchy-package-candidate/gnupg --status-fd 1 \
+    --verify "$1.sig" "$1" 2>/dev/null)
+  [[ $(awk '$2 == "VALIDSIG" { print $3; exit }' <<<"$status") == "$signer" ]]
+}
+manifest="$verified_dir/bundle/asahi-quattro-bundle.manifest"
+fetch_runtime asahi-quattro-bundle.manifest
+fetch_runtime asahi-quattro-bundle.manifest.sig
+[[ $(sha256sum "$manifest" | cut -d' ' -f1) == "$manifest_sha" ]]
+verify_runtime_signature "$manifest"
+grep -Fxq 'format=2' "$manifest"
+grep -Fxq 'bundle=asahi-quattro' "$manifest"
+grep -Fxq "source_commit=$expected_source" "$manifest"
+grep -Fxq 'package_count=6' "$manifest"
+[[ $(grep -c '^package=' "$manifest") == 6 ]]
+while IFS='|' read -r index name version arch file digest; do
+  [[ $index =~ ^[1-6]$ && $name =~ ^[a-z0-9-]+$ && $file =~ ^[a-zA-Z0-9.+_-]+\.pkg\.tar\.(xz|zst)$ && $digest =~ ^[0-9a-f]{64}$ ]]
+  fetch_runtime "$file"
+  fetch_runtime "$file.sig"
+  [[ $(sha256sum "$verified_dir/bundle/$file" | cut -d' ' -f1) == "$digest" ]]
+  verify_runtime_signature "$verified_dir/bundle/$file"
+  [[ $(pacman -Qp "$verified_dir/bundle/$file") == "$name $version" ]]
+  if [[ $name == omarchy-dev ]]; then
+    [[ $(bsdtar -xOf "$verified_dir/bundle/$file" usr/share/omarchy/version) == "$OMARCHY_VM_STABLE_VERSION" ]]
+    bsdtar -xOf "$verified_dir/bundle/$file" usr/bin/omarchy-install-asahi-fresh \
+      >"$verified_dir/omarchy-install-asahi-fresh"
+  fi
+done < <(sed -n 's/^package=//p' "$manifest")
+# Bind the source installer used by the harness to the signed runtime package.
+cmp "$verified_dir/omarchy-install-asahi-fresh" /root/omarchy-install-asahi-fresh.candidate
+cat >"$verified_dir/asahi-quattro-release" <<RELEASE
+sequence=1
+release_tag=asahi-quattro-vm-candidate-${candidate_tag#asahi-packages-candidate-}
+source_commit=$expected_source
+package_source_commit=${candidate_tag#asahi-packages-candidate-}
+RELEASE
+printf 'version=%s\n' "$OMARCHY_VM_STABLE_VERSION" >omarchy-mx-mac-release
+printf 'VM-only candidate release fixture; no published channel tested\n' >vm-adapter.log
+sha256sum "$candidate" "$manifest" >>vm-adapter.log
+install -Dm644 "$manifest" /var/lib/omarchy/vm-runtime-candidate.manifest

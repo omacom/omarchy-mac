@@ -1,0 +1,63 @@
+<svg viewBox="0 0 900 520" role="img" aria-label="What signs each artefact, and what checks the signature" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/></marker><marker id="arrow-brand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow brand"/></marker></defs>
+<rect class="lane" x="16" y="16" width="420" height="460"/>
+<text class="lane-title" x="30" y="40">Signed by</text>
+<text class="lane-sub" x="30" y="58">keys held by the project and its maintainers</text>
+<rect class="lane" x="456" y="16" width="428" height="460"/>
+<text class="lane-title" x="470" y="40">Checked by</text>
+<text class="lane-sub" x="470" y="58">on the user's Mac, before anything is trusted</text>
+<path class="edge brand" d="M 416 98.5 C 446.0 98.5 446.0 107.0 476 107.0" marker-end="url(#arrow-brand)"/>
+<path class="edge brand" d="M 416 207.0 C 446.0 207.0 446.0 207.0 476 207.0" marker-end="url(#arrow-brand)"/>
+<path class="edge" d="M 416 318.5 C 446.0 318.5 446.0 327.0 476 327.0" marker-end="url(#arrow)"/>
+<path class="edge" d="M 416 427.0 C 446.0 427.0 446.0 427.0 476 427.0" marker-end="url(#arrow)"/>
+<g class="node tone-brand">
+<rect x="36" y="70" width="380" height="57"/>
+<text class="n-title" x="48" y="91">Apple Developer ID</text>
+<text class="n-sub" x="48" y="110">notarized installer .pkg and app</text>
+</g>
+<g class="node">
+<rect x="476" y="70" width="380" height="74"/>
+<text class="n-title" x="488" y="91">Gatekeeper</text>
+<text class="n-sub" x="488" y="110">macOS refuses an unsigned or</text>
+<text class="n-sub" x="488" y="127">un-notarized installer</text>
+</g>
+<g class="node tone-brand">
+<rect x="36" y="170" width="380" height="74"/>
+<text class="n-title" x="48" y="191">Ed25519 catalog key</text>
+<text class="n-sub" x="48" y="210">held in a maintainer's Keychain,</text>
+<text class="n-sub" x="48" y="227">signs each channel catalog</text>
+</g>
+<g class="node">
+<rect x="476" y="170" width="380" height="74"/>
+<text class="n-title" x="488" y="191">Trust root in the app bundle</text>
+<text class="n-sub" x="488" y="210">catalog signature, and a sequence</text>
+<text class="n-sub" x="488" y="227">that may not go backwards</text>
+</g>
+<g class="node tone-blue">
+<rect x="36" y="290" width="380" height="57"/>
+<text class="n-title" x="48" y="311">Per-file SHA-256 in the catalog</text>
+<text class="n-sub" x="48" y="330">image parts, engine overlay</text>
+</g>
+<g class="node">
+<rect x="476" y="290" width="380" height="74"/>
+<text class="n-title" x="488" y="311">The installer app</text>
+<text class="n-sub" x="488" y="330">hashes every file it downloads,</text>
+<text class="n-sub" x="488" y="347">reuses a cached file only on a match</text>
+</g>
+<g class="node tone-blue">
+<rect x="36" y="390" width="380" height="74"/>
+<text class="n-title" x="48" y="411">Omarchy package signing key</text>
+<text class="n-sub" x="48" y="430">every package in [omarchy],</text>
+<text class="n-sub" x="48" y="447">the Mac packages included</text>
+</g>
+<g class="node">
+<rect x="476" y="390" width="380" height="74"/>
+<text class="n-title" x="488" y="411">pacman and omarchy-keyring</text>
+<text class="n-sub" x="488" y="430">SigLevel Required: refuses</text>
+<text class="n-sub" x="488" y="447">an unsigned package</text>
+</g>
+<g class="node tone-brand"><rect x="16" y="495" width="14" height="14"/></g>
+<text class="legend" x="36" y="506">maintainer or Apple key</text>
+<g class="node tone-blue"><rect x="236.5" y="495" width="14" height="14"/></g>
+<text class="legend" x="256.5" y="506">project key or digest</text>
+</svg>
