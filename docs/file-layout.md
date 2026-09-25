@@ -325,7 +325,7 @@ The package lists the ISO pacstraps live at `install/omarchy-base.packages`
 and `install/omarchy-other.packages`; the ISO builder also reads them when
 constructing its offline mirror.
 
-A platform's default package set is the base list plus its architecture's and its platform's additions: `install/omarchy-aarch64.packages` on every aarch64 platform, then `install/omarchy-apple.packages` on Apple Silicon or `install/omarchy-qualcomm.packages` on Qualcomm. `omarchy-pkg-defaults [platform]` prints the composed set (for the running machine by default, via `omarchy-hw-platform`), and `omarchy-reinstall-pkgs` installs it.
+A platform's default package set is the base list plus its architecture's and its platform's additions: `install/omarchy-aarch64.packages` on every aarch64 platform, then `install/omarchy-apple.packages` on Apple Silicon or `install/omarchy-qualcomm.packages` on Qualcomm. `omarchy-pkg-defaults [platform]` prints the composed set (for the running machine by default, via `omarchy-hw-platform`), and `omarchy-reinstall-pkgs` installs it. The pacman repositories follow the platform the same way: `default/pacman/` on x86_64, `default/pacman/aarch64/` on other aarch64 platforms, and `default/pacman/apple-silicon/`, the only one with the Asahi repository, on Apple Silicon.
 
 ## Explicit resync (`omarchy-reinstall-configs`)
 
