@@ -75,6 +75,7 @@ cat >"$stub_bin/omarchy-setup-mac" <<'SH'
 printf 'omarchy-setup-mac' >>"$TEST_LOG"
 printf '\t%s' "$@" >>"$TEST_LOG"
 printf '\n' >>"$TEST_LOG"
+exit "${SETUP_MAC_STATUS:-0}"
 SH
 
 cat >"$stub_bin/omarchy-state" <<'SH'
@@ -170,3 +171,10 @@ grep -Fxq $'omarchy-setup-mac\t--system' "$calls" ||
 ! grep -q $'^systemctl\t.*speakersafetyd' "$calls" ||
   fail "the desktop leaf leaves speakersafetyd enablement to omarchy-mac" "$(cat "$calls")"
 pass "speakersafetyd enablement belongs to omarchy-mac"
+
+: >"$errors"
+SETUP_MAC_STATUS=1 run_audio_setup "$leaf" aarch64 apple,j413 2>"$errors" ||
+  fail "a failed omarchy-mac setup does not abort hardware setup" "$(cat "$errors")"
+grep -Fq 'speakers stay muted' "$errors" ||
+  fail "a failed omarchy-mac setup is reported" "$(cat "$errors")"
+pass "a failed omarchy-mac setup warns instead of aborting"

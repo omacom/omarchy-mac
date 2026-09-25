@@ -49,8 +49,9 @@ if "$root/usr/lib/omarchy-mac/wifi-supported" && [[ ! -f $marker ]]; then
 fi
 
 # The kernel keeps the speakers muted until speakersafetyd runs. This package is
-# its only enabler: apply the vendor preset once, so /etc presets, masks and
-# later explicit disables stay the administrator's choice.
+# its only enabler: apply the vendor preset once, so earlier-sorting or
+# same-name /etc presets, masks and later explicit disables stay the
+# administrator's choice.
 safety=speakersafetyd.service
 safety_marker="$root/var/lib/omarchy-mac/speaker-safety-configured"
 if [[ ! -f $safety_marker ]]; then

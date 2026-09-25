@@ -48,7 +48,8 @@ fi
 
 # omarchy-mac is the only enabler of speakersafetyd, and restarts one a bad
 # IV-sense sample left dead. Its setup may have run before the daemon existed.
-omarchy-setup-mac --system
+omarchy-setup-mac --system ||
+  echo "Warning: Apple Silicon setup failed; speakersafetyd may not run and the speakers stay muted." >&2
 
 # pipewire-pulse is socket-activated per user, so enabling it system-wide is not
 # the job; the user units are enabled at first run.
