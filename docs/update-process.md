@@ -157,7 +157,7 @@ Important behavior:
   `omarchy-migrate` after pacman finishes.
 - A failure should leave enough output in `/tmp/omarchy-update.log` and the
   terminal transcript to debug.
-- Both boot checks are [lifecycle dispatch](lifecycle-dispatch.md) operations (`update-preflight`, `update-verify`), no-ops on platforms whose boot chain needs no handling of its own, x86 included. A refused preflight stops the update like any failed step. A failed verification lets the update finish its remaining reporting steps, then it exits non-zero without `omarchy-update-restart`: the update is not finished and offers no reboot. On Apple Silicon, `omarchy-mac-boot` verifies the kernel and initramfs in `/boot`, m1n1 stage 2 with the kernel's device trees and U-Boot on the system ESP, and Limine's loader, menu and UKI on that ESP.
+- Both boot checks are [lifecycle dispatch](lifecycle-dispatch.md) operations (`update-preflight`, `update-verify`), no-ops on platforms whose boot chain needs no handling of its own, x86 included. A refused preflight stops the update like any failed step. A failed verification lets the update finish its remaining reporting steps, then it exits non-zero without `omarchy-update-restart`: the update is not finished and offers no reboot. On Apple Silicon, `omarchy-mac-boot` verifies what the next boot reads: the kernel, initramfs and unlock settings, m1n1 stage 2 with the kernel's device trees and U-Boot on the system ESP, and Limine's loader, menu and UKI on that ESP. A Mac without `omarchy-mac-boot` at all predates it: the update warns that its boot files were not verified and finishes.
 
 ## Path 2: direct `sudo pacman -Syu` attempt
 

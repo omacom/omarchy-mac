@@ -15,7 +15,8 @@ The first form runs the operation. `--resolve` prints the entrypoint the operati
 | --- | --- | --- |
 | The platform registers no boot package (`generic`, `generic-aarch64`, and `qualcomm` today) | no-op, exit 0 | prints nothing, exit 0 |
 | The entrypoint exists and passes the trust rules | execs it; its exit status is the result | prints its path |
-| A required operation has no entrypoint | exit 1: `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
+| A required operation has no entrypoint, and the package is not installed | exit 3: `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
+| A required operation has no entrypoint, but the package is installed (its pacman record says so) | exit 1: `Error: <operation> on <platform> needs <path>, which <package> <version> does not provide; update <package>` | same error |
 | An optional operation has no entrypoint | no-op, exit 0 | prints nothing, exit 0 |
 | The entrypoint fails the trust rules | exit 1: `Error: refusing <path>: ...` (optional operations too) | same error |
 | `omarchy-hw-platform` can't settle the platform | exit 1 | exit 1 |
@@ -73,7 +74,7 @@ A dispatch point takes one of two shapes:
 
 - `omarchy-update-boot preflight` runs after the dev checkout update and before the keyring and system packages change. A refusal stops the update like any failed step.
 - `omarchy-update-boot verify` runs after the last package step. When it fails, the update still checks its log, refreshes the update indicator and releases Stay Awake, then says the update is not finished and exits 1 without `omarchy-update-restart`, so no reboot is offered.
-- `omarchy-update-boot` resolves the operation as the user first and runs it with `sudo` only when it resolves to an entrypoint, so an update with nothing to run never asks for root. A failed resolution, such as a Mac without `omarchy-mac-boot`, fails the step with the dispatcher's message.
+- `omarchy-update-boot` resolves the operation as the user first and runs it with `sudo` only when it resolves to an entrypoint, so an update with nothing to run never asks for root. A failed resolution fails the step with the dispatcher's message, except one: `update-verify` on a machine without its platform's boot package at all (exit 3) warns that the boot files were not verified and lets the update finish. Such a machine predates the package and boots a chain it does not manage; its migration installs the package, and from then on a failed verification blocks. A package too old to ship `update-verify` blocks, since the fix is one package update away.
 - The update path rebuilds no boot file itself: package hooks do, and `update-verify` catches what they missed.
 
 ## Apple implementation
@@ -89,7 +90,7 @@ A dispatch point takes one of two shapes:
 | `rebuild_next_boot_apple` (factory-kernel coherence refusal, rebuild in the factory root, `verify_limine_hashes`) | `reset-prepare`, `reset-verify` | Ticket 34 |
 | mx-mac's reset rollback, not yet in #503 | `reset-rollback` | Ticket 34 |
 | `omarchy-mac-boot-update` | `boot-rebuild` | Thin entrypoint around the existing command. Provisioning uses it now. |
-| `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` runs the check with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. On failure it says not to reboot and how to rebuild the boot files. |
+| `omarchy-apple-silicon-boot-check` | `update-verify` | `entrypoints/update-verify` runs the check limited to the boot chain (`--boot-chain`), with the new kernel's reboot allowed to be pending: the kernel and initramfs in `/boot`, the device-tree set, m1n1 stage 2 and U-Boot on the system ESP, and Limine's loader, menu and UKI on that same ESP. It leaves out what the next boot does not read: package file drift, a second installed kernel, LUKS keyslots and provisioning leftovers, and an m1n1 image its owner took over with `M1N1_UPDATE_DISABLED`. On failure it says not to reboot and how to rebuild the boot files. |
 
 - **Packaging:** `packages/omarchy-mac/boot/install` gains one loop that installs `entrypoints/*` as `/usr/lib/omarchy/mac-boot/<operation>`, mode 755. The modules stay where #503 put them and are sourced by absolute path.
 - **Owner and recovery slots:** #503's `rekey_luks_apple` sequence folds into the shared journal. Its owner and recovery slot steps are core (`luks-rekey.sh`, `luks-recovery.sh`). Only its boot step is `provision-commit`.

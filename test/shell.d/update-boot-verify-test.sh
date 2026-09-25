@@ -189,12 +189,21 @@ rm "$mac_esp/EFI/Linux/omarchy_linux-aurora.efi"
 blocked "a missing UKI" "/boot/efi/EFI/Linux/omarchy_linux-aurora.efi (the Limine UKI) is missing"
 pass "apple: a wrong device tree, a stale m1n1 or a missing UKI fails the update, explained, with no reboot offered"
 
-# A Mac without omarchy-mac-boot cannot prove its boot chain: preflight is
-# optional, verify is not.
+# A Mac without omarchy-mac-boot at all predates it and boots a chain it does
+# not manage: preflight is optional, and verify warns instead of blocking.
 mkdir -p "$tmp/no-package"
 run_update apple-silicon "$tmp/no-package"
-(( status == 1 )) && ! ran omarchy-update-restart || fail "apple: without omarchy-mac-boot the update fails and offers no reboot" "status $status"
-ran omarchy-update-system-pkgs || fail "apple: without omarchy-mac-boot the optional preflight is a no-op"
-grep -Fq "update-verify on apple-silicon needs omarchy-mac-boot" "$tmp/err" && grep -Fq "The update is not finished" "$tmp/err" ||
-  fail "apple: without omarchy-mac-boot the update names the package" "$(cat "$tmp/err")"
-pass "apple: without omarchy-mac-boot the update is not finished and names the missing package"
+(( status == 0 )) && ran omarchy-update-system-pkgs && ran omarchy-update-restart ||
+  fail "apple: without omarchy-mac-boot the update finishes and offers the reboot" "status $status: $(cat "$tmp/err")"
+grep -Fq "update-verify on apple-silicon needs omarchy-mac-boot" "$tmp/err" && grep -Fq "The boot files were not verified" "$tmp/err" ||
+  fail "apple: without omarchy-mac-boot the update says the boot files were not verified" "$(cat "$tmp/err")"
+[[ ! -s $tmp/sudo ]] || fail "apple: without omarchy-mac-boot nothing asks for root" "$(cat "$tmp/sudo")"
+pass "apple: without omarchy-mac-boot the update warns that the boot files were not verified"
+
+# An omarchy-mac-boot from before update-verify is one package update away.
+mkdir -p "$tmp/older/usr/lib/omarchy/mac-boot" "$tmp/older/var/lib/pacman/local/omarchy-mac-boot-20260921-10"
+run_update apple-silicon "$tmp/older"
+(( status == 1 )) && ! ran omarchy-update-restart || fail "apple: an omarchy-mac-boot without update-verify fails the update and offers no reboot" "status $status"
+grep -Fq "update-verify on apple-silicon needs /usr/lib/omarchy/mac-boot/update-verify, which omarchy-mac-boot 20260921-10 does not provide; update omarchy-mac-boot" "$tmp/err" &&
+  grep -Fq "The update is not finished" "$tmp/err" || fail "apple: an omarchy-mac-boot without update-verify is named with its version" "$(cat "$tmp/err")"
+pass "apple: an omarchy-mac-boot without update-verify fails the update and asks for its update"
