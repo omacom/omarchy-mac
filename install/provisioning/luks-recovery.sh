@@ -85,7 +85,7 @@ prepare_luks_recovery() {
   fi
 
   recovery_key=$(generate_recovery_passphrase) || return 1
-  cryptsetup luksAddKey --key-slot "$slot" --key-file "$PROVISIONING_DIR/luks-key" "$device" <(printf '%s' "$recovery_key") 2>>"$LOG_FILE" || return 1
+  cryptsetup luksAddKey --key-slot "$slot" --key-file "$PROVISIONING_DIR/luks-key" "$device" <(printf '%s' "$recovery_key") >>"$LOG_FILE" 2>&1 || return 1
   [[ $(luks_slot_for "$recovery_key" "$device") == "$slot" ]] || return 1
   rekey_state_put recovery_shown 0 || return 1
   show_recovery_key "$recovery_key" || return 1
