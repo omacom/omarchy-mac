@@ -1,0 +1,12 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = *
+
+[Action]
+Description = Checking packages against this machine's platform...
+When = PreTransaction
+Exec = /usr/share/libalpm/scripts/omarchy-platform-guard
+NeedsTargets
+AbortOnFail
