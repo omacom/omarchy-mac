@@ -45,6 +45,19 @@ for operation in provision-prepare provision-commit provision-verify luks-slots;
 done
 pass "the provisioning entrypoints are staged where omarchy-lifecycle-dispatch looks for them"
 
+# Speaker protection is omarchy-mac's alone: these presets enable their own units
+# and leave speakersafetyd to Arch's catch-all disable.
+require_command systemctl
+for unit in speakersafetyd NetworkManager; do
+  install -Dm644 /dev/stdin "$stage/usr/lib/systemd/system/$unit.service" <<<$'[Service]\nExecStart=/usr/bin/true\n[Install]\nWantedBy=multi-user.target'
+done
+echo 'disable *' >"$stage/usr/lib/systemd/system-preset/99-default.preset"
+systemctl --root="$stage" preset speakersafetyd.service NetworkManager.service >/dev/null 2>&1
+[[ -L $stage/etc/systemd/system/multi-user.target.wants/NetworkManager.service ]] || fail "the boot presets enable their own units"
+[[ $(systemctl --root="$stage" is-enabled speakersafetyd.service 2>/dev/null) == disabled ]] ||
+  fail "the boot presets leave speakersafetyd to omarchy-mac"
+pass "the boot presets leave speakersafetyd to omarchy-mac"
+
 # Every shipped mkinitcpio drop-in rebuilds the initramfs when it changes.
 hook=$ROOT/files/usr/share/libalpm/hooks/91-omarchy-mac-boot-initramfs.hook
 for dropin in "$ROOT"/files/etc/mkinitcpio.conf.d/*.conf; do
