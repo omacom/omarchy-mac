@@ -53,12 +53,13 @@ apple_compatible=(apple,j314s apple,t6000 apple,arm-platform)
 apple_model="Apple MacBook Pro (14-inch, M1 Pro, 2021)"
 owner_user=owner
 
-scenarios=(first-boot conversion second-boot password-change update snapshot-restore factory-reset)
+scenarios=(first-boot conversion second-boot password-change recovery-reset update snapshot-restore factory-reset)
 declare -A about=(
   [first-boot]="plain install (encrypt=0): first boot, owner setup, console login; Plymouth theme, /.snapshots, default sink"
   [conversion]="encrypted install: LUKS2 conversion in the initrd, first boot, owner setup re-keys to the owner password and a recovery key"
   [second-boot]="the re-keyed disk boots Limine's command line: a wrong password is refused, the owner's unlocks"
   [password-change]="omarchy-drive-password moves the disk, login and root to a new password; the next boot unlocks with it"
+  [recovery-reset]="an owner with only the recovery key unlocks with it and sets a new disk, login and root password before the login screen, through a power loss mid-reset (needs omarchy-drive-recover, ticket 70)"
   [update]="omarchy update -y on the re-keyed disk: packages upgrade, boot files verify, the updated disk boots (needs update-verify, omacom/omarchy-mac#543)"
   [snapshot-restore]="snapshot boot and restore (needs the snapshot boot check, ticket 36)"
   [factory-reset]="factory reset through lifecycle dispatch (needs reset-prepare, ticket 34)"
@@ -380,6 +381,7 @@ build_generic_kernel() {
     fail "$pkg is not signed by an Arch Linux ARM key"
   local path
   for path in update:/usr/lib/omarchy/mac-boot/update-verify \
+      recovery-reset:/usr/bin/omarchy-drive-recover \
       snapshot-restore:/etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check \
       factory-reset:/usr/lib/omarchy/mac-boot/reset-prepare; do
     ! sudo -n test -e "$lower${path#*:}" || image_ships[${path%%:*}]=${path#*:}
@@ -497,12 +499,14 @@ disk_cmdline() {
 }
 
 # ── the guest ────────────────────────────────────────────────────────────────
-# Owner setup asks on tty1; the guest has no display, so a credential drop-in
-# moves it to the serial console, and the serial login waits for it.
+# Owner setup and the password reset with the recovery key ask on tty1; the
+# guest has no display, so credential drop-ins move them to the serial console,
+# and the serial login waits for them.
 provision_dropin=$'[Service]\nTTYPath=/dev/ttyAMA0\nTTYRows=40\nTTYColumns=120\n'
-getty_dropin=$'[Unit]\nAfter=omarchy-provision-owner.service\n'
+getty_dropin=$'[Unit]\nAfter=omarchy-provision-owner.service omarchy-drive-recover.service\n'
 vm_append="console=ttyAMA0,115200 loglevel=7 systemd.show_status=true systemd.journald.forward_to_console=1 plymouth.enable=0"
 vm_append+=" systemd.set_credential_binary=systemd.unit-dropin.omarchy-provision-owner.service:$(printf '%s' "$provision_dropin" | base64 -w0)"
+vm_append+=" systemd.set_credential_binary=systemd.unit-dropin.omarchy-drive-recover.service:$(printf '%s' "$provision_dropin" | base64 -w0)"
 vm_append+=" systemd.set_credential_binary=systemd.unit-dropin.serial-getty@ttyAMA0.service:$(printf '%s' "$getty_dropin" | base64 -w0)"
 
 serial_log=""
@@ -936,6 +940,91 @@ scenario_password_change() {
   fi
   no_emergency password-change
   stop_guest
+}
+
+# The owner forgot the password and has only the recovery key. Unlocked with it,
+# the disk offers a new password before the login screen. The guest is killed
+# as the disk starts to change, like a power loss; the next boot, unlocked with
+# the recovery key again, finishes the reset with a password chosen again.
+# Afterwards the new password and the recovery key are the disk's only keys,
+# encrypt.state records their slots, and the new password unlocks the next
+# boot and logs in the owner and root.
+scenario_recovery_reset() {
+  if [[ -z ${image_ships[recovery-reset]:-} ]]; then
+    skip "recovery-reset: the image has no /usr/bin/omarchy-drive-recover (password reset with the recovery key, ticket 70)"
+    return 0
+  fi
+  need_conversion recovery-reset
+  local disk=$work/recovery-reset.img log=$evidence_dir/recovery-reset-serial.log dev first_password new_password new_slot recovery_slot
+  first_password=$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)
+  new_password=$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)
+  secrets+=("$first_password" "$new_password")
+  copy_disk "$conversion_disk" "$disk"
+  disk_cmdline "$disk"
+  say "recovery-reset: unlock with the recovery key and set a new password, with a power loss part way"
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt recovery-reset
+  serial_type "$recovery_key"
+  serial_expect 'unlocked with its recovery key' "recovery-reset: the reset offered before the login screen"
+  serial_expect 'Not now' "recovery-reset: the reset confirmation" 60
+  serial_send $'\r'
+  serial_expect 'New password for the disk' "recovery-reset: the new password prompt" 60
+  serial_type "$first_password"
+  serial_expect 'Confirm the new password' "recovery-reset: the confirmation prompt" 60
+  serial_type "$first_password"
+  serial_expect 'Adding the new password to the disk' "recovery-reset: the disk starts to change" 120
+  stop_guest
+  ok "recovery-reset: unlocked with the recovery key, the disk offers a new password before the login screen; the guest lost power as the disk started to change"
+
+  log=$evidence_dir/recovery-reset-resume-serial.log
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt recovery-reset
+  serial_type "$recovery_key"
+  serial_expect 'Choose the new password again' "recovery-reset: the interrupted reset resumes"
+  serial_expect 'New password for the disk' "recovery-reset: the new password prompt after the power loss" 60
+  serial_type "$new_password"
+  serial_expect 'Confirm the new password' "recovery-reset: the confirmation prompt after the power loss" 60
+  serial_type "$new_password"
+  serial_expect 'Done\. The disk|The password reset stopped' "recovery-reset: the reset finishes" 300
+  [[ $serial_match == Done* ]] || fail "recovery-reset: the resumed reset stopped (see ${log##*/})"
+  serial_expect 'login: ' "recovery-reset: the login prompt after the reset"
+  no_emergency recovery-reset
+  settle_guest
+  stop_guest
+
+  attach -P "$disk"; dev=$ATTACHED
+  luks_slot "${dev}p3" "$(passphrase_file new "$new_password")"; new_slot=$SLOT
+  [[ -n $new_slot ]] || fail "recovery-reset: the new password does not open the disk"
+  luks_slot "${dev}p3" "$(passphrase_file recovery "$recovery_key")"; recovery_slot=$SLOT
+  [[ -n $recovery_slot ]] || fail "recovery-reset: the recovery key no longer opens the disk"
+  luks_slot "${dev}p3" "$(passphrase_file owner "$owner_password")"
+  [[ -z $SLOT ]] || fail "recovery-reset: the forgotten password still opens the disk (slot $SLOT)"
+  luks_slot "${dev}p3" "$(passphrase_file first "$first_password")"
+  [[ -z $SLOT ]] || fail "recovery-reset: the password chosen before the power loss still opens the disk (slot $SLOT)"
+  [[ $(luks_slot_count "${dev}p3") == 2 ]] || fail "recovery-reset: $(luks_slot_count "${dev}p3") key slots after the reset, not 2"
+  mkdir -p "$work/boot"
+  mount_tracked -o ro "${dev}p2" "$work/boot"
+  sudo -n grep -Fxq "owner_slot=$new_slot" "$work/boot/omarchy/encrypt.state" &&
+    sudo -n grep -Fxq "recovery_slot=$recovery_slot" "$work/boot/omarchy/encrypt.state" ||
+    fail "recovery-reset: encrypt.state does not record the new password's slot $new_slot and the recovery slot $recovery_slot"
+  umount_last
+  mount_root "${dev}p3" "$(passphrase_file new "$new_password")"
+  sudo -n test ! -e "$work/mnt/var/lib/omarchy/drive-recover.state" || fail "recovery-reset: the reset left its journal"
+  umount_root "${dev}p3"
+  detach_last
+  ok "recovery-reset: the new password (slot $new_slot) and the recovery key (slot $recovery_slot) are the disk's only keys, encrypt.state records them, and the journal is gone"
+
+  log=$evidence_dir/recovery-reset-reboot-serial.log
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt recovery-reset
+  serial_type "$new_password"
+  console_login recovery-reset "$new_password" || fail "recovery-reset: $owner_user does not log in with the new password"
+  guest_run "recovery-reset: su to root" "su -c 'echo __root_\$((6*7))__' root" "Password: ?=$new_password"
+  grep -aq '__root_42__' "$log" || fail "recovery-reset: root does not take the new password"
+  ! grep -aq 'unlocked with its recovery key' "$log" || fail "recovery-reset: a boot unlocked with the new password offered a reset"
+  no_emergency recovery-reset
+  stop_guest
+  ok "recovery-reset: the next boot unlocks with the new password, offers no reset, and the new password logs in $owner_user and root"
 }
 
 # Cases whose lifecycle entrypoints no image ships yet. Each is named and runs
