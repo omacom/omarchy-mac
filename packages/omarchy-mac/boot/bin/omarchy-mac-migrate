@@ -1,0 +1,44 @@
+#!/bin/bash -p
+
+# omarchy:summary=Move this Mac onto its target package set through a journaled, resumable transition
+# omarchy:args=status | run [--target FILE] | verify
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# The upstream migration reaches this through omarchy-lifecycle-dispatch
+# migrate. Without a target (/etc/omarchy-mac/migration-target, or the one the
+# package ships once migrations are activated) it does nothing. The engine is
+# /usr/lib/omarchy-mac/boot/migrate-engine.sh; the tester and legacy
+# omarchy-mac adapters are migrate-tester.sh and migrate-legacy.sh beside it.
+#
+# Root starts over in an empty environment with a fixed PATH and reads only the
+# live system. Unprivileged tests name a fixture root in
+# OMARCHY_MAC_MIGRATE_ROOT, where the package is staged.
+
+if (( EUID == 0 )) && [[ ${1:-} != "--clean-environment" ]]; then
+  exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin HOME=/root /bin/bash -p -- "${BASH_SOURCE[0]}" --clean-environment "$@"
+fi
+[[ ${1:-} != "--clean-environment" ]] || shift
+
+set -euo pipefail
+
+# shellcheck disable=SC2034 # R, fixture and boot_lib are the engine's inputs
+if (( EUID == 0 )); then
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+  R=""
+  fixture=0
+else
+  R=${OMARCHY_MAC_MIGRATE_ROOT:-}
+  if [[ $R != /?* ]]; then
+    echo "omarchy-mac-migrate: run it as root: sudo omarchy-mac-migrate ${*:-status}" >&2
+    exit 1
+  fi
+  R=${R%/}
+  fixture=1
+fi
+boot_lib=$R/usr/lib/omarchy-mac/boot
+
+source "$boot_lib/migrate-engine.sh"
+source "$boot_lib/migrate-tester.sh"
+source "$boot_lib/migrate-legacy.sh"
+migrate_main "$@"

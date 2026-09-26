@@ -1,0 +1,18 @@
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = etc/mkinitcpio.conf.d/90-omarchy-mac.conf
+Target = etc/mkinitcpio.conf.d/91-omarchy-mac-encrypt.conf
+Target = etc/mkinitcpio.conf.d/92-omarchy-mac-hid.conf
+Target = etc/mkinitcpio.conf.d/93-omarchy-mac-plymouth.conf
+Target = etc/mkinitcpio.conf.d/94-omarchy-mac-vconsole.conf
+Target = etc/initcpio/install/*
+Target = usr/lib/initcpio/install/*
+Target = usr/lib/omarchy/initcpio/*
+
+[Action]
+Description = Updating linux initcpios for Omarchy Mac boot...
+When = PostTransaction
+Exec = /usr/share/libalpm/scripts/mkinitcpio install
+NeedsTargets

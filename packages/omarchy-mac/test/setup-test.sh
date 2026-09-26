@@ -196,3 +196,72 @@ rm "$wants"
 "$setup" "$stage"
 [[ ! -s $CALLS ]] || fail 'repeat setup does not reenable disabled Wi-Fi recovery'
 pass 'explicit disables survive repeated setup'
+
+# mx-mac copied either revision of its speaker no-suspend policy into each
+# user's configuration. The vendor policy replaces exact copies only.
+for original in asahi-audio-no-suspend.conf asahi-audio-no-suspend-overlay.conf; do
+  export HOME="$work/mx-${original%.conf}"
+  speaker="$HOME/.config/wireplumber/wireplumber.conf.d/asahi-audio-no-suspend.conf"
+  mkdir -p "${speaker%/*}"
+  cp "$ROOT/legacy/$original" "$speaker"
+  "$user_setup" "$stage"
+  [[ ! -e $speaker && -f $speaker.omarchy-mac-retired ]] || fail "generated $original retires"
+  printf 'custom speaker policy\n' >"$speaker"
+  "$user_setup" "$stage"
+  [[ $(cat "$speaker") == 'custom speaker policy' ]] || fail 'custom speaker policy survives'
+done
+[[ -f $stage/usr/share/wireplumber/wireplumber.conf.d/asahi-audio-no-suspend.conf ]] || fail 'the vendor speaker policy ships'
+pass 'the vendor speaker no-suspend policy replaces exact mx-mac user copies'
+
+# sudo -i clears XDG_RUNTIME_DIR while the owner's session bus still exists at
+# /run/user/UID. systemctl --user cannot reach it then, so setup must not try.
+python3 - "$user_setup" "$stage" "$work" <<'PY'
+import os, socket, subprocess, sys
+from pathlib import Path
+setup, stage, work = sys.argv[1:]
+runtime = Path(work)/'run-user'
+runtime.mkdir()
+script = Path(work)/'resume-setup'
+text = Path(setup).read_text().replace('$root/usr/', stage+'/usr/').replace('$root/etc/', stage+'/etc/').replace('$root/run/', stage+'/run/')
+script.write_text(text.replace('/run/user/$UID', str(runtime)))
+script.chmod(0o755)
+env = {k: v for k, v in os.environ.items() if k != 'XDG_RUNTIME_DIR'}
+env['HOME'] = work+'/resume'
+Path(env['CALLS']).write_text('')
+with socket.socket(socket.AF_UNIX) as bus:
+    bus.bind(str(runtime/'bus'))
+    subprocess.run([str(script)], env=env, check=True)
+    assert '--user' not in Path(env['CALLS']).read_text(), 'no user-bus call without XDG_RUNTIME_DIR'
+    assert (Path(env['HOME'])/'.config/systemd/user/graphical-session.target.wants/omarchy-asahi-mic.service').is_symlink()
+PY
+pass 'user setup skips the user bus when sudo cleared XDG_RUNTIME_DIR'
+
+# Live setup restarts a speakersafetyd left dead by a start-limit, and leaves a
+# running or disabled one alone.
+mkdir -p "$work/live" "$work/live-bin" "$stage/usr/lib/systemd/system"
+touch "$stage/usr/lib/systemd/system/speakersafetyd.service"
+sed -e "s|\$root/|$stage/|g" -e "s|-d /run/systemd/system|-d $work/live|" "$setup" >"$work/live-setup"
+chmod +x "$work/live-setup"
+cat >"$work/live-bin/systemctl" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >>"$CALLS"
+case "$*" in
+  "is-enabled --quiet speakersafetyd.service") exit "${SAFETY_ENABLED:-0}" ;;
+  "is-active --quiet speakersafetyd.service") exit "${SAFETY_ACTIVE:-0}" ;;
+  "start speakersafetyd.service") exit "${SAFETY_START:-0}" ;;
+esac
+STUB
+printf '#!/bin/bash\n' >"$work/live-bin/NetworkManager"
+printf '#!/bin/bash\n' >"$work/live-bin/modprobe"
+chmod +x "$work/live-bin/"*
+live() { : >"$CALLS"; PATH="$work/live-bin:$PATH" "$work/live-setup" 2>"$work/live-errors"; }
+SAFETY_ACTIVE=3 live
+grep -Fxq 'reset-failed speakersafetyd.service' "$CALLS" && grep -Fxq 'start speakersafetyd.service' "$CALLS" ||
+  fail 'a dead speakersafetyd is reset and started' "$(cat "$CALLS")"
+live
+! grep -Eq '^(reset-failed|start) speakersafetyd' "$CALLS" || fail 'a running speakersafetyd is left alone'
+SAFETY_ENABLED=1 SAFETY_ACTIVE=3 live
+! grep -Eq '^(reset-failed|start) speakersafetyd' "$CALLS" || fail 'a disabled speakersafetyd is not started'
+SAFETY_ACTIVE=3 SAFETY_START=1 live || fail 'a failed start does not fail setup'
+grep -Fq 'speakers stay muted' "$work/live-errors" || fail 'a failed start is reported'
+pass 'live setup recovers speakersafetyd from a start-limit'

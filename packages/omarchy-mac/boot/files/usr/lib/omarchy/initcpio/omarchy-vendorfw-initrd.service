@@ -1,0 +1,16 @@
+[Unit]
+Description=Load Apple vendor firmware from the EFI system partition before disk unlock
+DefaultDependencies=no
+After=systemd-modules-load.service systemd-udevd.service dev-disk-by\x2duuid-4F4D\x2d5801.device
+Wants=dev-disk-by\x2duuid-4F4D\x2d5801.device cryptsetup-pre.target
+Before=cryptsetup-pre.target initrd-root-device.target
+JobTimeoutSec=15s
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.sh
+
+[Install]
+WantedBy=initrd-root-device.target sysinit.target

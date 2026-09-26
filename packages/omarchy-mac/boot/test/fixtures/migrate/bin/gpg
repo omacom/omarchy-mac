@@ -1,0 +1,14 @@
+#!/bin/bash
+# Answers key listings for the fixture's pacman keyring from its keys file and
+# runs the real gpg for everything else (candidate set verification).
+set -euo pipefail
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+if [[ " $* " == *" --homedir $root/etc/pacman.d/gnupg "* ]]; then
+  fpr=${!#}
+  line=$(grep "^$fpr " "$root/etc/pacman.d/gnupg/keys") || exit 2
+  echo "pub:${line#* }:255:22:${fpr:24}:::::::scESC:"
+  echo "fpr:::::::::$fpr:"
+  exit 0
+fi
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+exec env PATH="$(tr ':' '\n' <<<"$PATH" | grep -vx "$here" | paste -sd:)" gpg "$@"

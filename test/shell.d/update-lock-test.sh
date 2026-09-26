@@ -35,6 +35,7 @@ for command in \
   omarchy-toggle-idle \
   pkexec \
   systemd-inhibit \
+  omarchy-update-requires-free-space \
   omarchy-update-pkg-prune \
   omarchy-update-dev \
   omarchy-update-keyring \
@@ -43,6 +44,7 @@ for command in \
   omarchy-update-aur-pkgs \
   omarchy-update-mise \
   omarchy-update-orphan-pkgs \
+  omarchy-update-boot \
   omarchy-hook \
   omarchy-update-analyze-logs \
   omarchy-shell \

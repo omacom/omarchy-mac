@@ -1,0 +1,10 @@
+[Unit]
+Description=Load Apple vendor firmware from the EFI system partition
+DefaultDependencies=no
+ConditionPathExists=/proc/device-tree/chosen/asahi,efi-system-partition
+After=sysroot.mount
+Before=initrd-fs.target initrd-switch-root.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/omarchy/initcpio/omarchy-vendorfw.sh

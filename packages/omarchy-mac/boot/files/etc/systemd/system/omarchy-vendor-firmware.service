@@ -1,0 +1,16 @@
+[Unit]
+Description=Install Apple vendor firmware into /lib/firmware
+After=local-fs.target
+# Reloading brcmfmac while NetworkManager or iwd already drives wlan0 drops the
+# first connection attempt, so networking waits for this unit.
+Before=NetworkManager.service iwd.service
+ConditionPathExists=/boot/efi/vendorfw/firmware.tar
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/sh -c 'set -e; src=/boot/efi/vendorfw/firmware.tar; stamp=/var/lib/omarchy/vendor-firmware.stamp; changed=/run/omarchy-vendor-firmware.changed; rm -f "$changed"; if [ ! -f "$stamp" ] || [ "$src" -nt "$stamp" ]; then install -d -m 0755 /lib/firmware /var/lib/omarchy; tar -xf "$src" -C /lib/firmware; touch -r "$src" "$stamp"; : >"$changed"; echo "vendor firmware changed: extracted $src"; else echo "vendor firmware unchanged"; fi'
+ExecStartPost=-/usr/bin/sh -c 'changed=/run/omarchy-vendor-firmware.changed; [ -e "$changed" ] || exit 0; rm -f "$changed"; if mountpoint -q /lib/firmware/vendor; then echo "vendor firmware is mounted; no driver reload"; exit 0; fi; for m in brcmfmac hci_bcm4377; do echo "reloading $m"; modprobe -r "$m" 2>/dev/null || echo "$m was not loaded"; modprobe "$m" 2>/dev/null && echo "reloaded $m" || echo "could not load $m"; done'
+
+[Install]
+WantedBy=multi-user.target

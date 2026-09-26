@@ -1,0 +1,656 @@
+#!/bin/bash
+
+# omarchy:summary=Check that the boot files match the installed Apple Silicon kernel and m1n1
+# omarchy:args=[--boot-chain] [linux-aurora|linux-asahi]
+# omarchy:hidden=true
+# omarchy:requires-sudo=true
+
+# Compare the installed kernel, initramfs, boot menu, LUKS state and stage-two
+# m1n1 image with the installed package files. Read the ESP through a private
+# read-only mount; never regenerate boot files or mutate a release channel.
+# An explicit pending-reboot override checks installed boot files only.
+#
+# --boot-chain checks only what the next boot reads, for omarchy update's
+# update-verify: the kernel, initramfs, unlock settings, device trees, m1n1
+# stage 2, U-Boot and Limine. It holds only the kernel image, device trees and
+# m1n1 against their package mtree, checks the kernel the boot menu starts
+# first when both kernels are installed, and leaves out LUKS keyslots and
+# provisioning leftovers and an m1n1 image its owner took over with
+# M1N1_UPDATE_DISABLED.
+
+set -euo pipefail
+
+root=${OMARCHY_BOOT_CHECK_ROOT:-}
+declare -A bootloaders=([linux-aurora]=m1n1-aurora [linux-asahi]=m1n1)
+
+fail() {
+  echo "Apple Silicon boot check: $*" >&2
+  exit 1
+}
+
+path() {
+  printf '%s%s\n' "$root" "$1"
+}
+
+case "${1:-}" in
+  -h | --help)
+    echo "Usage: omarchy-apple-silicon-boot-check [--boot-chain] [linux-aurora|linux-asahi]"
+    exit 0
+    ;;
+esac
+boot_chain=0
+if [[ ${1:-} == "--boot-chain" ]]; then
+  boot_chain=1
+  shift
+fi
+(( $# <= 1 )) || fail "takes at most one kernel"
+
+workdir=$(mktemp -d)
+mountpoint=""
+cleanup() {
+  if [[ -n $mountpoint ]]; then
+    sudo umount "$mountpoint" 2>/dev/null || true
+    sudo rmdir "$mountpoint" 2>/dev/null || true
+  fi
+  rm -rf "$workdir"
+}
+trap cleanup EXIT
+
+# Exact installed names: linux-aurora provides linux-asahi.
+installed=$(pacman -Qq) || fail "cannot list the installed packages"
+is_installed() {
+  grep -Fxq -- "$1" <<<"$installed"
+}
+# The ESP Limine's tooling writes to: ESP_PATH, /boot/efi or on older
+# installs /boot.
+limine_esp_path() {
+  sudo sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$(path /etc/default/limine)" | tail -n 1
+}
+
+# The kernel the boot menu starts: the first kernel entry in Limine's menu,
+# where the tool writes the Omarchy block first and Omarchy's default_entry
+# points, else GRUB's first entry. A default_entry or GRUB_DEFAULT pointed
+# elsewhere is not followed.
+menu_kernel() {
+  if [[ -e $(path /var/lib/omarchy/limine.enabled) && -f $(path /etc/default/limine) ]]; then
+    sudo awk '{ sub(/^[[:space:]]+/, "") } /^\/\/linux-(aurora|asahi)$/ { print substr($0, 3); exit }' \
+      "$(path "$(limine_esp_path)/limine.conf")" 2>/dev/null
+  else
+    sudo grep -Eo 'vmlinuz-linux-(aurora|asahi)' "$(path /boot/grub/grub.cfg)" 2>/dev/null | sed -n '1s/^vmlinuz-//p'
+  fi
+}
+
+kernel=${1:-}
+if [[ -z $kernel ]]; then
+  kernels=()
+  for candidate in linux-aurora linux-asahi; do
+    ! is_installed "$candidate" || kernels+=("$candidate")
+  done
+  if (( boot_chain && ${#kernels[@]} == 2 )); then
+    kernel=$(menu_kernel || true)
+    [[ -n $kernel ]] ||
+      fail "cannot tell which kernel boots: linux-aurora and linux-asahi are installed, and the boot menu starts neither"
+  else
+    (( ${#kernels[@]} == 1 )) ||
+      fail "cannot tell which kernel boots: ${kernels[*]:-neither linux-aurora nor linux-asahi} installed"
+    kernel=${kernels[0]}
+  fi
+fi
+[[ -n ${bootloaders[$kernel]:-} ]] ||
+  fail "$kernel is not a kernel this check knows; it checks linux-aurora with m1n1-aurora and linux-asahi with m1n1"
+bootloader=${bootloaders[$kernel]}
+for package in "$kernel" "$bootloader"; do
+  is_installed "$package" || fail "$kernel boots with $bootloader, but $package is not installed"
+done
+rivals=(linux-aurora m1n1-aurora linux-asahi m1n1)
+(( ! boot_chain )) || rivals=()
+for package in "${rivals[@]}"; do
+  [[ $package == "$kernel" || $package == "$bootloader" ]] || ! is_installed "$package" ||
+    fail "$kernel boots with $bootloader, but $package is installed too"
+done
+# The mtree check, minus the depmod outputs: the kernel package ships
+# modules.* and the depmod hook rewrites them on every install, so their
+# modification times never match. Anything else altered or missing fails.
+for package in "$kernel" "$bootloader"; do
+  set +e
+  mtree_output=$(LC_ALL=C pacman -Qkk "$package" 2>&1)
+  mtree_status=$?
+  set -e
+  # A fresh image ships no sync databases; pacman warns about each on stderr.
+  altered=$(grep -Ev ' altered files$' <<<"$mtree_output" |
+    grep -Ev "^warning: database file for '[^']+' does not exist" |
+    grep -Ev '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \(Modification time mismatch\)$' || true)
+  # --boot-chain holds only the files the boot files are built from against
+  # the mtree: the kernel image, its device trees and m1n1. Drift in any other
+  # file of the package is left out; everything else pacman reports counts.
+  if (( boot_chain )); then
+    altered=$(awk '!/^warning: [^:]+: \// || /^warning: [^:]+: \/usr\/lib\/(modules\/[^\/]+\/(vmlinuz|dtbs\/)|asahi-boot\/)/' <<<"$altered")
+  fi
+  [[ -z $altered ]] || fail "installed $package files do not match the package mtree: $(head -n 1 <<<"$altered")"
+  # pacman exits 1 for the depmod lines alone, and with --boot-chain for the
+  # file drift it leaves out; any other failure is one.
+  (( mtree_status == 0 )) || grep -Fq '(Modification time mismatch)' <<<"$mtree_output" ||
+    { (( boot_chain )) && grep -Eq '^warning: [^:]+: /' <<<"$mtree_output"; } ||
+    fail "pacman -Qkk $package failed"
+done
+
+pacman -Qlq "$kernel" >"$workdir/kernel-files" 2>/dev/null || fail "cannot list the files of $kernel"
+pacman -Qlq "$bootloader" >"$workdir/bootloader-files" 2>/dev/null || fail "cannot list the files of $bootloader"
+mapfile -t images < <(grep -E '^/usr/lib/modules/[^/]+/vmlinuz$' "$workdir/kernel-files" || true)
+(( ${#images[@]} == 1 )) || fail "$kernel does not install exactly one kernel"
+kver=${images[0]#/usr/lib/modules/}
+kver=${kver%/vmlinuz}
+
+sudo cmp -s "$(path "/boot/vmlinuz-$kernel")" "$(path "${images[0]}")" ||
+  fail "/boot/vmlinuz-$kernel is not the $kver kernel $kernel installed"
+boot_sha=$(sudo sha256sum "$(path "/boot/vmlinuz-$kernel")" | cut -d' ' -f1)
+image_sha=$(sudo sha256sum "$(path "${images[0]}")" | cut -d' ' -f1)
+[[ $boot_sha == "$image_sha" ]] ||
+  fail "/boot/vmlinuz-$kernel is not the $kver kernel $kernel installed"
+
+running_kver=${OMARCHY_BOOT_CHECK_UNAME:-$(uname -r)}
+pending_reboot=0
+if [[ $running_kver != "$kver" ]]; then
+  if [[ ${OMARCHY_BOOT_CHECK_ALLOW_PENDING_REBOOT:-0} == "1" ]]; then
+    pending_reboot=1
+  else
+    fail "running kernel is $running_kver, not the installed $kernel $kver"
+  fi
+fi
+
+sudo lsinitcpio -l "$(path "/boot/initramfs-$kernel.img")" >"$workdir/initramfs" 2>/dev/null ||
+  fail "/boot/initramfs-$kernel.img cannot be listed"
+awk -v prefix="usr/lib/modules/$kver/" '{ sub(/^\.\//, "") } index($0, prefix) == 1 { found = 1 } END { exit !found }' \
+  "$workdir/initramfs" || fail "/boot/initramfs-$kernel.img does not hold the $kver modules"
+
+# A Limine Mac (install/hardware/apple/limine-boot.sh) boots the UKI from
+# Limine's menu and GRUB is not part of its boot; a GRUB Mac boots grub.cfg.
+limine_mac=0
+[[ -e $(path /var/lib/omarchy/limine.enabled) && -f $(path /etc/default/limine) ]] && limine_mac=1
+grub_cfg=$(path /boot/grub/grub.cfg)
+if (( ! limine_mac )); then
+  sudo grep -Fq "vmlinuz-$kernel" "$grub_cfg" && sudo grep -Fq "initramfs-$kernel.img" "$grub_cfg" ||
+    fail "/boot/grub/grub.cfg does not boot vmlinuz-$kernel with initramfs-$kernel.img"
+fi
+
+# Encrypted Apple Silicon roots (GRUB + sd-encrypt). A mapper or crypto_LUKS
+# root with no crypttab is a failure, not an unencrypted opt-out.
+root_block_device() {
+  local src=""
+  if [[ -n $root ]]; then
+    src=$(awk '$1 !~ /^#/ && $2 == "/" { print $1; exit }' "$(path /etc/fstab)" 2>/dev/null || true)
+  else
+    src=$(findmnt -no SOURCE / 2>/dev/null || true)
+  fi
+  src=${src%%[*}
+  src=${src%%[[:space:]]*}
+  printf '%s' "$src"
+}
+
+root_on_luks() {
+  local src part
+  src=$(root_block_device)
+  [[ $src == /dev/mapper/* ]] && return 0
+  [[ -n $src ]] || return 1
+  part=$(lsblk -nsrpo NAME,FSTYPE "$src" 2>/dev/null | awk '$2=="crypto_LUKS"{print $1; exit}')
+  [[ -n $part ]]
+}
+
+sd_encrypt_in_initramfs() {
+  local image analyze
+  image=$(path "/boot/initramfs-$kernel.img")
+  analyze=$(sudo lsinitcpio -a "$image" 2>/dev/null) || return 1
+  grep -Eq '(^|[[:space:]"=])sd-encrypt([[:space:]"]|$)' <<<"$analyze" && return 0
+  grep -Eq '(^|/)(usr/lib/initcpio/)?hooks/sd-encrypt(/|$)' "$workdir/initramfs" && return 0
+  # A systemd initramfs has no runtime hook named sd-encrypt and lsinitcpio -a
+  # lists no hooks for it: what the install hook leaves behind is the
+  # cryptsetup generator and its binary.
+  grep -Eq '(^|/)usr/lib/systemd/system-generators/systemd-cryptsetup-generator$' "$workdir/initramfs" &&
+    grep -Eq '(^|/)usr/bin/systemd-cryptsetup$' "$workdir/initramfs"
+}
+
+crypttab=$(path /etc/crypttab)
+has_crypttab_root=0
+if [[ -f $crypttab ]] && sudo grep -Eq '^[[:space:]]*root[[:space:]]' "$crypttab"; then
+  has_crypttab_root=1
+fi
+if (( has_crypttab_root )); then
+  crypttab_uuid=$(sudo awk '/^[[:space:]]*root[[:space:]]/ {
+    if ($2 ~ /^UUID=/) { sub(/^UUID=/, "", $2); print $2; exit }
+  }' "$crypttab")
+  [[ -n $crypttab_uuid ]] || fail "cannot read the LUKS UUID from crypttab"
+  if (( ! limine_mac )); then
+    sudo grep -Fq "rd.luks.name=" "$grub_cfg" ||
+      fail "/boot/grub/grub.cfg does not set rd.luks.name= for the encrypted root"
+    sudo grep -Eq "rd\\.luks\\.name=${crypttab_uuid}=" "$grub_cfg" ||
+      fail "/boot/grub/grub.cfg rd.luks.name= UUID does not match crypttab"
+    # update-grub emits root=UUID=<filesystem inside the mapper> unless
+    # GRUB_DISABLE_LINUX_UUID is set; both name the opened root.
+    # Only the kernel lines: grub's own `set root=` and other entries do not
+    # count. The kernel honours the last root= on its line, so does this.
+    root_arg=$(sudo grep -E '^[[:space:]]*linux[[:space:]]' "$grub_cfg" | grep -Eo 'root=[^[:space:]]+' | tail -n 1 || true)
+    case $root_arg in
+      root=/dev/mapper/root) ;;
+      root=UUID=*)
+        mapper_uuid=$(sudo blkid -o value -s UUID /dev/mapper/root 2>/dev/null || true)
+        [[ -n $mapper_uuid && ${root_arg#root=UUID=} == "$mapper_uuid" ]] ||
+          fail "/boot/grub/grub.cfg root=UUID= does not name the filesystem on /dev/mapper/root"
+        ;;
+      *)
+        fail "/boot/grub/grub.cfg does not set root=/dev/mapper/root (or root=UUID= of its filesystem) for the encrypted root"
+        ;;
+    esac
+  fi
+  sd_encrypt_in_initramfs ||
+    fail "/boot/initramfs-$kernel.img does not contain sd-encrypt"
+
+  # First-boot window: throwaway keyfile and rd.luks.key= are allowed until
+  # owner provisioning finishes (v3 item 1e). After that both must be gone,
+  # the throwaway keyslot retired, and encrypt.state phase=finished.
+  if (( ! boot_chain )) && [[ ! -f $(path /var/lib/omarchy/provisioning/luks-key) && ! -f $(path /var/lib/omarchy/mac-first-boot/pending) ]]; then
+    (( limine_mac )) || ! sudo grep -q 'rd.luks.key=' "$grub_cfg" ||
+      fail "/boot/grub/grub.cfg still has rd.luks.key= after provisioning"
+    [[ ! -e $(path /boot/omarchy/luks-key) ]] ||
+      fail "/boot/omarchy/luks-key still exists after provisioning"
+
+    spec=$(sudo awk '/^[[:space:]]*root[[:space:]]/ { print $2; exit }' "$crypttab")
+    case $spec in
+      UUID=*) luks_dev=$(path "/dev/disk/by-uuid/${spec#UUID=}") ;;
+      PARTUUID=*) luks_dev=$(path "/dev/disk/by-partuuid/${spec#PARTUUID=}") ;;
+      /dev/*) luks_dev=$(path "$spec") ;;
+      *) fail "cannot locate the LUKS device from crypttab after provisioning" ;;
+    esac
+    luks_dump=$(sudo cryptsetup luksDump "$luks_dev" 2>/dev/null) ||
+      fail "cannot read LUKS keyslots on $luks_dev after provisioning"
+
+    encrypt_state=$(path /boot/omarchy/encrypt.state)
+    [[ -f $encrypt_state ]] || fail "/boot/omarchy/encrypt.state is missing after provisioning"
+    grep -Fxq 'format=1' "$encrypt_state" ||
+      fail "/boot/omarchy/encrypt.state is not format=1"
+    grep -Fxq 'phase=finished' "$encrypt_state" ||
+      fail "/boot/omarchy/encrypt.state is not phase=finished after provisioning"
+    owner_slot=$(awk -F= '$1 == "owner_slot" { print $2; exit }' "$encrypt_state")
+    recovery_slot=$(awk -F= '$1 == "recovery_slot" { print $2; exit }' "$encrypt_state")
+    [[ -n $owner_slot && -n $recovery_slot ]] ||
+      fail "/boot/omarchy/encrypt.state does not record owner_slot and recovery_slot after provisioning"
+    [[ $owner_slot != "$recovery_slot" ]] ||
+      fail "/boot/omarchy/encrypt.state records the same slot for owner and recovery"
+
+    # Only the keyslot section: a luks2-keyring token under "Tokens:" looks the same.
+    mapfile -t luks_slots < <(awk '
+      /^[^[:space:]]/ { keyslots = ($0 == "Keyslots:") }
+      keyslots && /^[[:space:]]+[0-9]+:[[:space:]]+luks2/ { sub(":", "", $1); print $1 }' <<<"$luks_dump")
+    (( ${#luks_slots[@]} == 2 )) ||
+      fail "throwaway LUKS keyslot still present after provisioning (${#luks_slots[@]} keyslots, expected 2)"
+    [[ " ${luks_slots[*]} " == *" $owner_slot "* && " ${luks_slots[*]} " == *" $recovery_slot "* ]] ||
+      fail "LUKS header does not contain the recorded owner and recovery slots"
+  fi
+elif root_on_luks; then
+  fail "encrypted root has no crypttab"
+fi
+
+# A Limine Mac: the menu must name the kernel's UKI and pass the root (and
+# the LUKS mapping) the system needs, and the U-Boot slot must hold the
+# installed Limine.
+if (( limine_mac )); then
+  limine_esp=$(limine_esp_path)
+  [[ $limine_esp == /* ]] || fail "/etc/default/limine names no ESP_PATH"
+  limine_cfg=$(path "$limine_esp/limine.conf")
+  limine_uki=$(path "$limine_esp/EFI/Linux/omarchy_$kernel.efi")
+  limine_efi=$(path /usr/share/limine/BOOTAA64.EFI)
+  sudo test -f "$limine_uki" || fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi (the Limine UKI) is missing"
+  sudo test -f "$limine_cfg" || fail "$limine_esp/limine.conf is missing on a Limine Mac"
+  sudo grep -Fq "/EFI/Linux/omarchy_$kernel.efi" "$limine_cfg" ||
+    fail "$limine_esp/limine.conf does not boot the $kernel UKI"
+  sudo cmp -s "$limine_efi" "$(path "$limine_esp/EFI/BOOT/BOOTAA64.EFI")" ||
+    fail "$limine_esp/EFI/BOOT/BOOTAA64.EFI is not the installed Limine"
+  # The first kernel entry's cmdline: the tool writes the Omarchy block first.
+  limine_cmdline=$(sudo awk -v entry="//$kernel" '
+    { line = $0; sub(/^[[:space:]]+/, "", line) }
+    line == entry { inside = 1; next }
+    inside && $1 == "cmdline:" { sub(/^[[:space:]]*cmdline:[[:space:]]*/, ""); print; exit }
+  ' "$limine_cfg")
+  [[ -n $limine_cmdline ]] || fail "$limine_esp/limine.conf has no cmdline for the $kernel entry"
+  # The entry's hash must be the UKI's, and the UKI must carry the installed
+  # kernel: limine-entry-tool can keep going after one UKI fails to build.
+  limine_path=$(sudo awk -v entry="//$kernel" '
+    { line = $0; sub(/^[[:space:]]+/, "", line) }
+    line == entry { inside = 1; next }
+    inside && $1 == "path:" { sub(/^[[:space:]]*path:[[:space:]]*/, ""); print; exit }
+  ' "$limine_cfg")
+  [[ $limine_path == "boot():/EFI/Linux/omarchy_$kernel.efi#"* ]] ||
+    fail "the Limine $kernel entry does not name a hash-verified omarchy_$kernel.efi"
+  [[ $(sudo b2sum "$limine_uki" | cut -d' ' -f1) == "${limine_path##*#}" ]] ||
+    fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi does not match the hash in limine.conf"
+  if command -v objcopy >/dev/null 2>&1; then
+    uki_kernel=$workdir/uki.linux
+    sudo objcopy -O binary --only-section=.linux "$limine_uki" "$uki_kernel" 2>/dev/null ||
+      fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi has no kernel section"
+    kernel_size=$(sudo stat -c %s "$(path "${images[0]}")")
+    (( $(sudo stat -c %s "$uki_kernel") >= kernel_size )) && sudo cmp -s -n "$kernel_size" "$(path "${images[0]}")" "$uki_kernel" ||
+      fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi does not carry the installed $kver kernel"
+  else
+    echo "Apple Silicon boot check: objcopy (binutils) is not installed; not checking the kernel inside the UKI" >&2
+  fi
+  limine_root=$(grep -Eo 'root=[^[:space:]]+' <<<"$limine_cmdline" | tail -n 1 || true)
+  [[ $limine_root == root=UUID=* ]] || fail "the Limine $kernel entry does not set root=UUID="
+  # The root filesystem as omarchy-mac-limine-cmdline reads it: fstab's row,
+  # else the mounted root, and a snapshot boot's overlay (no fstab row) is
+  # Omarchy's btrfs @. btrfs boots the subvolume fstab mounts; any other
+  # filesystem refuses subvol= and drops to the emergency shell.
+  root_fstype="" root_options=""
+  read -r root_fstype root_options < <(awk '$1 !~ /^#/ && $2 == "/" { print $3, $4; exit }' "$(path /etc/fstab)" 2>/dev/null) || true
+  if [[ -z $root_fstype && -z $root ]]; then
+    read -r root_fstype root_options < <(findmnt -no FSTYPE,OPTIONS / 2>/dev/null) || true
+  fi
+  case $root_fstype in
+    '' | overlay | tmpfs) root_fstype=btrfs root_options=subvol=@ ;;
+  esac
+  # The subvolume selector, subvol= (leading slashes dropped) or subvolid=.
+  subvolume_selector() {
+    local selector
+    selector=$(tr ',' '\n' <<<"$1" | sed -n -E 's/^subvol=\/*([^/].*)$/subvol=\1/p; s/^subvol=\/*$/subvol=\//p' | tail -n 1)
+    [[ -n $selector ]] || selector=$(tr ',' '\n' <<<"$1" | grep -E '^subvolid=[0-9]+$' | tail -n 1 || true)
+    printf '%s' "$selector"
+  }
+  want_selector=""
+  [[ $root_fstype != btrfs ]] || want_selector=$(subvolume_selector "$root_options")
+  limine_rootflags=$(grep -Eo '(^|[[:space:]])rootflags=[^[:space:]]+' <<<"$limine_cmdline" | tail -n 1 || true)
+  limine_selector=$(subvolume_selector "${limine_rootflags#*rootflags=}")
+  if [[ $limine_selector != "$want_selector" ]]; then
+    if [[ -n $want_selector ]]; then
+      fail "the Limine $kernel entry does not select rootflags=$want_selector"
+    elif [[ $root_fstype == btrfs ]]; then
+      fail "the Limine $kernel entry selects rootflags=$limine_selector, but fstab mounts the btrfs root's default subvolume"
+    else
+      fail "the Limine $kernel entry selects rootflags=$limine_selector, but the root filesystem is $root_fstype"
+    fi
+  fi
+  if (( has_crypttab_root )); then
+    grep -Eq "rd\\.luks\\.name=${crypttab_uuid}=" <<<"$limine_cmdline" ||
+      fail "the Limine $kernel entry does not set rd.luks.name= for the encrypted root"
+    mapper_uuid=$(sudo blkid -o value -s UUID /dev/mapper/root 2>/dev/null || true)
+    [[ -z $mapper_uuid || ${limine_root#root=UUID=} == "$mapper_uuid" ]] ||
+      fail "the Limine $kernel entry root=UUID= does not name the filesystem on /dev/mapper/root"
+    if (( ! boot_chain )) && [[ ! -f $(path /var/lib/omarchy/provisioning/luks-key) && ! -f $(path /var/lib/omarchy/mac-first-boot/pending) ]]; then
+      grep -q 'rd.luks.key=' <<<"$limine_cmdline" &&
+        fail "the Limine $kernel entry still has rd.luks.key= after provisioning"
+    fi
+  fi
+fi
+
+# m1n1 stage 2, built the way this update-m1n1 builds it.
+script=$(path /usr/bin/update-m1n1)
+[[ -r $script ]] || fail "/usr/bin/update-m1n1 is not installed"
+for step in 'cat "$M1N1" $DTBS >"${TARGET}.new"' 'gzip -c "$U_BOOT" >>"${TARGET}.new"' 'chosen.*=*|display=*|mitigations=*)'; do
+  grep -Fq -- "$step" "$script" || fail "/usr/bin/update-m1n1 does not build m1n1/boot.bin the way this check rebuilds it"
+done
+# Newer asahi-scripts expand a DTBS that is one directory; anything else that
+# looks at a directory is not something this check can reproduce.
+expands_directory=0
+if grep -Fq -- '-d "$DTBS"' "$script"; then
+  grep -Fq -- 'DTBS="${DTBS}/apple/t6*.dtb ${DTBS}/apple/t81*.dtb"' "$script" ||
+    fail "/usr/bin/update-m1n1 expands a DTBS directory in a way this check does not recognise"
+  expands_directory=1
+fi
+
+default_line='^[[:space:]]*:[[:space:]]+\$\{([A-Z0-9_]+):=(.*)\}[[:space:]]*$'
+defaults=()
+declare -A seen=()
+while IFS= read -r line; do
+  [[ $line =~ $default_line ]] || continue
+  name=${BASH_REMATCH[1]}
+  case "$name" in
+    SOURCE | M1N1 | U_BOOT | CONFIG | DTBS) ;;
+    *) continue ;;
+  esac
+  [[ -z ${seen[$name]:-} ]] || fail "/usr/bin/update-m1n1 sets a $name default twice"
+  seen[$name]=1
+  defaults+=("$name=${BASH_REMATCH[2]}")
+done <"$script"
+for name in SOURCE M1N1 U_BOOT CONFIG; do
+  [[ -n ${seen[$name]:-} ]] || fail "/usr/bin/update-m1n1 has no $name default this check recognises"
+done
+
+# Only what update-m1n1 takes from its configuration, read in a clean shell.
+SOURCE="" M1N1="" U_BOOT="" CONFIG="" DTBS="" disabled=""
+config_file=$(path /etc/default/update-m1n1)
+if [[ -e $config_file ]]; then
+  env -i PATH=/usr/bin:/bin bash --noprofile --norc -c '
+    unset DTBS SOURCE M1N1 U_BOOT CONFIG M1N1_UPDATE_DISABLED
+    . "$1" >/dev/null 2>&1 || exit 1
+    for name in DTBS SOURCE M1N1 U_BOOT CONFIG M1N1_UPDATE_DISABLED; do
+      printf "%s=%s\0" "$name" "${!name-}"
+    done
+  ' _ "$config_file" >"$workdir/config" || fail "/etc/default/update-m1n1 cannot be read"
+  while IFS= read -r -d '' entry; do
+    value=${entry#*=}
+    case "${entry%%=*}" in
+      SOURCE) SOURCE=$value ;;
+      M1N1) M1N1=$value ;;
+      U_BOOT) U_BOOT=$value ;;
+      CONFIG) CONFIG=$value ;;
+      DTBS) DTBS=$value ;;
+      M1N1_UPDATE_DISABLED) disabled=$value ;;
+    esac
+  done <"$workdir/config"
+fi
+[[ -z $disabled ]] || (( boot_chain )) ||
+  fail "M1N1_UPDATE_DISABLED is set in /etc/default/update-m1n1, so m1n1 does not follow the kernel and its device trees cannot be vouched for; remove it, run sudo update-m1n1, then omarchy update"
+
+# ls -d prints what matches, and nothing at all when nothing does.
+newest_match() {
+  local match
+  for match in "$root"$1; do
+    if [[ -e $match || -L $match ]]; then
+      printf '%s\n' "${match#"$root"}"
+    fi
+  done | sort -rV | sed -n 1p
+}
+
+simple_path='^/[A-Za-z0-9._/+-]*$'
+source_path='^\$SOURCE(/[A-Za-z0-9._/+-]*)$'
+newest_dtbs='^\$\((/usr)?(/bin/)?ls -d (/[A-Za-z0-9._/*+-]+) \| sort -rV \| head -1\)(/[A-Za-z0-9._/*+-]*)$'
+for entry in "${defaults[@]}"; do
+  name=${entry%%=*}
+  value=${entry#*=}
+  # := fills a setting that is unset or empty alike.
+  [[ -z ${!name} ]] || continue
+  [[ ! $value =~ ^\"(.*)\"$ ]] || value=${BASH_REMATCH[1]}
+  expanded=""
+  case "$name" in
+    SOURCE | CONFIG)
+      [[ $value =~ $simple_path ]] && expanded=$value
+      ;;
+    M1N1 | U_BOOT)
+      if [[ $value =~ $source_path ]]; then
+        expanded=$SOURCE${BASH_REMATCH[1]}
+      elif [[ $value =~ $simple_path ]]; then
+        expanded=$value
+      fi
+      ;;
+    DTBS)
+      if [[ $value =~ $newest_dtbs ]]; then
+        suffix=${BASH_REMATCH[4]}
+        expanded=$(newest_match "${BASH_REMATCH[3]}")$suffix
+      fi
+      ;;
+  esac
+  [[ -n $expanded ]] || fail "/usr/bin/update-m1n1 has a $name default this check does not recognise: $value"
+  printf -v "$name" '%s' "$expanded"
+done
+[[ -n $DTBS ]] || fail "DTBS is unset or empty, and update-m1n1 would refuse to run; see /etc/default/update-m1n1"
+if [[ -d $root$DTBS ]]; then
+  (( expands_directory )) ||
+    fail "DTBS names the directory $DTBS, which this update-m1n1 does not expand; name the device tree files instead"
+  DTBS="$DTBS/apple/t6*.dtb $DTBS/apple/t81*.dtb"
+fi
+
+for part in M1N1 U_BOOT; do
+  [[ -f $root${!part} ]] || fail "$part ${!part} does not exist"
+done
+m1n1_file=$(realpath -e "$root$M1N1")
+root_real=$(realpath -m "${root:-/}")
+[[ $root_real == / ]] || m1n1_file=${m1n1_file#"$root_real"}
+grep -Fxq -- "$m1n1_file" "$workdir/bootloader-files" || fail "M1N1 $M1N1 is not owned by $bootloader"
+
+# Split and globbed the way update-m1n1's unquoted $DTBS is, in the C collation
+# /etc/default/update-m1n1 pins.
+dtb_list() {
+  local LC_ALL=$1 words word matches
+  set -f
+  read -r -d '' -a words <<<"$DTBS" || true
+  set +f
+  for word in "${words[@]}"; do
+    matches=("$root"$word)
+    printf '%s\n' "${matches[@]#"$root"}"
+  done
+}
+mapfile -t dtbs < <(dtb_list C)
+(( ${#dtbs[@]} )) || fail "DTBS names no device tree"
+for dtb in "${dtbs[@]}"; do
+  [[ -f $root$dtb ]] || fail "device tree $dtb does not exist"
+  owned=$(realpath -e "$root$dtb")
+  [[ $root_real == / ]] || owned=${owned#"$root_real"}
+  [[ $owned == /usr/lib/modules/$kver/* ]] || fail "device tree $dtb is not one of $kernel $kver's"
+  grep -Fxq -- "$owned" "$workdir/kernel-files" || fail "device tree $dtb is not owned by $kernel"
+done
+
+m1n1_options() {
+  local line
+  [[ -e $root$CONFIG ]] || return 0
+  # read without -r, like update-m1n1.
+  while read line; do
+    case "$line" in
+      "") ;;
+      \#*) ;;
+      chosen.*=* | display=* | mitigations=*) printf '%s\n' "$line" ;;
+    esac
+  done <"$root$CONFIG"
+}
+
+build_image() {
+  local image=$1 dtb paths=()
+  shift
+  for dtb; do
+    paths+=("$root$dtb")
+  done
+  {
+    cat "$root$M1N1" "${paths[@]}"
+    gzip -c "$root$U_BOOT"
+    m1n1_options
+  } >"$image"
+}
+
+build_image "$workdir/boot.bin" "${dtbs[@]}"
+
+# The device trees in IMAGE from byte OFFSET on, one per flattened device tree
+# header (magic, then its big-endian total size), named by the expected device
+# tree with the same bytes. Fails unless they are exactly the expected ones,
+# each as often, in whatever order.
+dtb_order() {
+  local image=$1 offset=$2 end magic size hash dtb
+  local -A by_hash=() left=()
+  for dtb in "${dtbs[@]}"; do
+    hash=$(sha256sum <"$root$dtb")
+    hash=${hash%% *}
+    by_hash[$hash]=$dtb
+    left[$hash]=$(( ${left[$hash]:-0} + 1 ))
+  done
+  end=$(stat -c %s "$image")
+  while (( offset + 8 <= end )); do
+    magic=$(od -An -tx1 -j "$offset" -N4 "$image" | tr -d ' \n')
+    [[ $magic == d00dfeed ]] || break
+    size=$(od -An -tu4 --endian=big -j $(( offset + 4 )) -N4 "$image" | tr -d ' \n')
+    (( size >= 8 && offset + size <= end )) || return 1
+    hash=$(dd if="$image" iflag=skip_bytes,count_bytes skip="$offset" count="$size" bs=64K status=none | sha256sum)
+    hash=${hash%% *}
+    (( ${left[$hash]:-0} > 0 )) || return 1
+    left[$hash]=$(( left[$hash] - 1 ))
+    printf '%s\n' "${by_hash[$hash]}"
+    offset=$(( offset + size ))
+  done
+  for hash in "${!left[@]}"; do
+    (( left[$hash] == 0 )) || return 1
+  done
+}
+
+# The system ESP, found the way asahi-scripts' mount_sys_esp finds it. It is
+# only ever read through a mount that is read-only from the start: a fresh one
+# when the ESP is not mounted, else a read-only bind of the mount it already has.
+mountpoint=$(sudo mktemp -d "$(path /run)/omarchy-esp.XXXXXX") || fail "cannot make a private mountpoint"
+
+mounted_read_only() {
+  local options
+  options=$(findmnt -n -o VFS-OPTIONS --mountpoint "$mountpoint" 2>/dev/null) || return 1
+  [[ ,$options, == *,ro,* ]]
+}
+
+bind_read_only() {
+  sudo mount --bind -o ro "$1" "$mountpoint" || return 1
+  mounted_read_only && return 0
+  sudo mount -o remount,bind,ro "$mountpoint" && mounted_read_only
+}
+
+esp_uuid=""
+esp_node=$(path /proc/device-tree/chosen/asahi,efi-system-partition)
+[[ ! -r $esp_node ]] || esp_uuid=$(tr -d '\0' <"$esp_node")
+if [[ -e $(path /boot/efi/.builder) || -e $(path /boot/.builder) || -z $esp_uuid ]]; then
+  if [[ -e $(path /boot/efi/m1n1) ]]; then
+    esp=/boot/efi
+  elif [[ -e $(path /boot/m1n1) ]]; then
+    esp=/boot
+  else
+    fail "the system ESP is not named in the device tree and there is no m1n1 in /boot/efi or /boot"
+  fi
+  bind_read_only "$(path "$esp")" || fail "cannot mount $esp read-only"
+else
+  esp="PARTUUID=$esp_uuid"
+  existing=$(findmnt -n -r -o TARGET,FSROOT --source "$esp" 2>/dev/null | awk '$2 == "/" { print $1; exit }' || true)
+  if [[ -n $existing ]]; then
+    [[ -d $existing ]] || fail "the system ESP ($esp) is mounted at $existing, which cannot be read"
+    bind_read_only "$existing" || fail "cannot bind the system ESP ($esp) read-only from $existing"
+  else
+    sudo mount -o ro "$esp" "$mountpoint" && mounted_read_only || fail "cannot mount the system ESP ($esp) read-only"
+  fi
+fi
+
+sudo test -f "$mountpoint/m1n1/boot.bin" || fail "the system ESP ($esp) has no m1n1/boot.bin"
+# U-Boot starts the loader on the system ESP, so the Limine, menu and UKI
+# checked above must be the ones there.
+if (( limine_mac )); then
+  for file in EFI/BOOT/BOOTAA64.EFI limine.conf "EFI/Linux/omarchy_$kernel.efi"; do
+    sudo cmp -s "$(path "$limine_esp/$file")" "$mountpoint/$file" ||
+      fail "$limine_esp/$file is not the one on the system ESP ($esp), which U-Boot boots; point ESP_PATH in /etc/default/limine at that ESP's mountpoint, then run sudo omarchy-mac-boot-update and omarchy update"
+  done
+fi
+report_running_release() {
+  if (( pending_reboot )); then
+    echo "Apple Silicon boot check: installed $kernel $kver boot files match; running $running_kver, reboot pending"
+  else
+    echo "Apple Silicon boot check: running $kernel $kver; installed boot files match"
+  fi
+}
+if [[ -n $disabled ]]; then
+  echo "Apple Silicon boot check: M1N1_UPDATE_DISABLED is set in /etc/default/update-m1n1, so m1n1/boot.bin is its owner's and is not checked"
+  report_running_release
+  exit 0
+fi
+if sudo cmp -s "$workdir/boot.bin" "$mountpoint/m1n1/boot.bin"; then
+  report_running_release
+  exit 0
+fi
+# An image update-m1n1 wrote before the C locale was pinned holds the same
+# device trees in its caller's collation: rebuild it in the order it holds
+# them and compare again.
+sudo cat "$mountpoint/m1n1/boot.bin" >"$workdir/esp-boot.bin" ||
+  fail "cannot read m1n1/boot.bin on the system ESP ($esp)"
+if esp_order=$(dtb_order "$workdir/esp-boot.bin" "$(stat -L -c %s "$root$M1N1")") && [[ -n $esp_order ]]; then
+  mapfile -t esp_dtbs <<<"$esp_order"
+  build_image "$workdir/boot-esp-order.bin" "${esp_dtbs[@]}"
+  if cmp -s "$workdir/boot-esp-order.bin" "$workdir/esp-boot.bin"; then
+    report_running_release
+    exit 0
+  fi
+fi
+fail "m1n1/boot.bin on the system ESP ($esp) is not m1n1, $kernel $kver's device trees, U-Boot and $CONFIG as installed; run sudo update-m1n1, then omarchy update"

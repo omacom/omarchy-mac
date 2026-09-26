@@ -1,0 +1,11 @@
+[Unit]
+Description=Finish the Omarchy Mac migration after its reboot
+ConditionPathExists=/var/lib/omarchy-mac/migration/reboot-pending
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/omarchy-mac-migrate verify
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch migrate. The upstream migration runs this on every
+# Apple Silicon Mac: it moves the Mac onto its target package set when one is
+# set, and does nothing otherwise. omarchy-mac-migrate re-checks the platform.
+
+set -euo pipefail
+
+if (( EUID == 0 )); then
+  exec /usr/bin/omarchy-mac-migrate run
+fi
+exec "${OMARCHY_MAC_MIGRATE_ROOT:-}/usr/bin/omarchy-mac-migrate" run

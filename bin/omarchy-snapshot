@@ -17,6 +17,16 @@ if omarchy-cmd-missing snapper; then
   exit 127 # omarchy-update can use this to just ignore if snapper is not available
 fi
 
+# A snapshot boot came from Limine's menu, even when the snapshot's own root
+# predates Limine; Limine's restore hook then says why it cannot be restored.
+apple_grub() {
+  omarchy-hw-apple-silicon || return 1
+  if grep -Eq '(^|[[:space:]])rootflags=([^[:space:]]*,)?subvol=[^[:space:],]*/\.snapshots/[0-9]+/snapshot' "${OMARCHY_CMDLINE:-/proc/cmdline}" 2>/dev/null; then
+    return 1
+  fi
+  ! { omarchy-cmd-present omarchy-mac-limine-active && omarchy-mac-limine-active; }
+}
+
 case "$COMMAND" in
 create)
   # The description is just a label, so never let it abort the snapshot.
@@ -44,9 +54,12 @@ create)
   echo "Snapshots can be selected during boot."
   ;;
 restore)
-  # limine-snapper-restore ships with limine-snapper-sync, which Apple Silicon
-  # never installs because Limine cannot boot a Mac.
-  if omarchy-cmd-missing limine-snapper-restore; then
+  # Limine Macs use the same restore tool as other Limine installations; its
+  # pre hook from omarchy-mac-boot refuses a snapshot the Mac's boot files do
+  # not match. A Mac that still boots GRUB has limine-snapper-restore installed
+  # but not in use, so it restores by swapping the root subvolume, as do
+  # images without that package.
+  if omarchy-cmd-missing limine-snapper-restore || apple_grub; then
     sudo omarchy-system-snapshot-restore
   else
     sudo limine-snapper-restore
