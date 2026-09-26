@@ -31,9 +31,9 @@ pass 'an upgraded install gets the mpv default beside its scripts'
 
 "$ROOT"/install "$work/admin"
 mkdir -p "$work/admin/etc/mpv"
-printf 'hwdec=no\nprofile=gpu-hq\n' >"$work/admin/etc/mpv/mpv.conf"
+printf 'hwdec=no\nprofile=high-quality\n' >"$work/admin/etc/mpv/mpv.conf"
 tmpfiles "$work/admin"
-[[ $(<"$work/admin/etc/mpv/mpv.conf") == $'hwdec=no\nprofile=gpu-hq' ]] ||
+[[ $(<"$work/admin/etc/mpv/mpv.conf") == $'hwdec=no\nprofile=high-quality' ]] ||
   fail 'an administrator mpv.conf stays' "$(<"$work/admin/etc/mpv/mpv.conf")"
 printf 'hwdec=no\n' >"$work/fresh/etc/mpv/mpv.conf"
 tmpfiles "$work/fresh"
