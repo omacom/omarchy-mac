@@ -450,7 +450,6 @@ detect_cohort() {
 
 cohort_refusal() {
   case $1 in
-    mx-mac) echo "this is an mx-mac install (omarchy-dev): its adapter (ticket 43) is not available yet" ;;
     *) echo "no adapter handles the $1 cohort" ;;
   esac
 }
@@ -651,7 +650,7 @@ preflight() {
   resolved=$work/resolved
   # shellcheck disable=SC2046
   if ! pacman_run --config "$transaction" --dbpath "$work/db" --logfile "$work/pacman.log" -Sup --noconfirm --ask 4 \
-    --print-format '%r/%n %v' $(cat "$targets_file") >"$resolved" 2>"$work/resolve.log"; then
+    --print-format '%r/%n %v' $(plan_ignores "$work/removals") $(cat "$targets_file") >"$resolved" 2>"$work/resolve.log"; then
     refuse "the target set does not resolve on this Mac: $(tail -n 1 "$work/resolve.log")"
   fi
   if [[ $target_type == "candidate-set" ]]; then
@@ -806,14 +805,24 @@ step_keyring() {
   key_trusted "$target_keyring" || die "the Omarchy key $target_keyring is not trusted after the bootstrap"
 }
 
+# The planned removals stay out of the upgrade: an official build of the same
+# name that provides a target (omacom's omarchy-dev provides omarchy) would
+# otherwise join the transaction, and pacman drops the target it conflicts with.
+plan_ignores() {
+  local removals=${1:-$plan/removals}
+  [[ -s $removals ]] && printf -- '--ignore=%s\n' "$(paste -sd, "$removals")"
+  return 0
+}
+
 # Packages the transaction removes by name once it has installed the targets,
-# as far as DB still has them.
+# as far as DB still has them. By exact name: pacman -Q NAME also answers with
+# a package that provides NAME (mise-bin for mise), which pacman -R refuses.
 plan_removals() {
-  local db=$1 name
+  local db=$1 name installed
   [[ -f $plan/removals ]] || return 0
+  installed=$(LC_ALL=C pacman --config "$pacman_conf" --dbpath "$db" -Qq) || return 1
   while read -r name; do
-    [[ -n $name ]] && LC_ALL=C pacman --config "$pacman_conf" --dbpath "$db" -Qq "$name" >/dev/null 2>&1 &&
-      printf '%s\n' "$name"
+    [[ -n $name ]] && grep -Fxq -- "$name" <<<"$installed" && printf '%s\n' "$name"
   done <"$plan/removals"
   return 0
 }
@@ -844,12 +853,12 @@ step_prefetch() {
   transaction_conf "$plan/pacman.conf" "${target_set:+$cache/candidate}" >"$conf"
   # shellcheck disable=SC2046
   pacman_run --config "$conf" --dbpath "$db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" --logfile "$cache/pacman.log" \
-    -Syuw --noconfirm --ask 4 $(plan_targets) || die "cannot download and verify the target set"
+    -Syuw --noconfirm --ask 4 $(plan_ignores) $(plan_targets) || die "cannot download and verify the target set"
   interrupt_for_test mid prefetch
   cp -a "$db" "$rehearsal"
   # shellcheck disable=SC2046
   pacman_run --config "$conf" --dbpath "$rehearsal" --cachedir "$cache/pkg" --cachedir "$pacman_cache" --logfile "$cache/pacman.log" \
-    --dbonly -Su --noconfirm --ask 4 $(plan_targets) >"$cache/rehearsal.log" 2>&1 ||
+    --dbonly -Su --noconfirm --ask 4 $(plan_ignores) $(plan_targets) >"$cache/rehearsal.log" 2>&1 ||
     die "the rehearsed transaction failed: $(tail -n 1 "$cache/rehearsal.log")"
   removals=$(plan_removals "$rehearsal" | xargs)
   if [[ -n $removals ]]; then
@@ -865,6 +874,12 @@ step_prefetch() {
     grep -Fxq "$name" "$plan/allowed-removals" || bad+=("$name")
   done
   (( ${#bad[@]} == 0 )) || die "the transaction would also remove ${bad[*]}; nothing was changed"
+  # pacman can drop a named target that conflicts with another package of the
+  # transaction; every target must end installed.
+  while read -r name; do
+    [[ -n $(installed_version "${name#*/}" "$cache/expected") ]] ||
+      die "the rehearsed transaction would not install ${name#*/}; nothing was changed"
+  done < <(plan_targets)
   if [[ $target_type == "candidate-set" ]]; then
     while read -r name; do
       [[ $name == "$candidate_repo/"* ]] || continue
@@ -887,8 +902,8 @@ system_moved() {
 
 restart_from_prefetch() {
   local step
-  (( ++restarts <= 3 )) || die "the installed packages keep changing; run the migration again when nothing else updates"
-  say "The installed packages changed since the transaction was rehearsed ($1); rehearsing it again"
+  (( ++restarts <= 3 )) || die "the system keeps changing under the migration ($1); run it again when nothing else updates"
+  say "The system changed since the transaction was rehearsed ($1); rehearsing it again"
   for step in prefetch repositories transaction; do
     journal_write "$step" "reset" "$1"
   done
@@ -896,11 +911,17 @@ restart_from_prefetch() {
 }
 
 # The sync databases the rehearsal resolved against, over any a later sync left.
+# A signature the rehearsal has none of belongs to the database it replaces
+# (a fork's signed [omarchy]), and pacman rejects a database beside a
+# signature that does not match it.
 install_rehearsed_databases() {
   local repo extension
   for repo in $(repositories_in "$cache/transaction.conf"); do
     for extension in db db.sig; do
-      [[ -f $cache/db/sync/$repo.$extension ]] || continue
+      if [[ ! -f $cache/db/sync/$repo.$extension ]]; then
+        [[ $extension != "db.sig" || ! -f $cache/db/sync/$repo.db ]] || rm -f "$pacman_db/sync/$repo.db.sig"
+        continue
+      fi
       cmp -s "$cache/db/sync/$repo.$extension" "$pacman_db/sync/$repo.$extension" && continue
       durable_write "$pacman_db/sync/$repo.$extension" 644 <"$cache/db/sync/$repo.$extension" ||
         die "cannot install the $repo database"
@@ -944,6 +965,18 @@ step_repositories() {
   done
 }
 
+# Something rewrote pacman.conf or trusted a retired key again since the
+# switch: on an mx-mac Mac, the fork's own omarchy update, whose channel
+# updaters stay until the transaction removes them.
+switch_undone() {
+  local fpr
+  cmp -s "$plan/pacman.conf" "$pacman_conf" || return 0
+  for fpr in "${retired_keys[@]}"; do
+    ! key_present "$fpr" || return 0
+  done
+  return 1
+}
+
 # The installed packages with the planned removals left out.
 without_removals() {
   awk 'NR == FNR { drop[$1]; next } !($1 in drop)' "$plan/removals" "$1"
@@ -980,6 +1013,10 @@ step_transaction() {
   fi
   # Kept across a new rehearsal until a transaction has run to its end.
   [[ ! -e $interrupted_marker ]] || interrupted=1
+  if switch_undone; then
+    restart_from_prefetch "pacman.conf or a retired key came back after the repository switch"
+    return 0
+  fi
   if system_moved && ! cmp -s "$state/installed.now" "$expected" && ! removals_pending; then
     restart_from_prefetch "before the transaction"
     return 0
@@ -999,7 +1036,7 @@ step_transaction() {
       fi
       # shellcheck disable=SC2046
       if ! pacman_run --config "$cache/transaction.conf" --dbpath "$pacman_db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" \
-        -Su --noconfirm --ask 4 "${overwrite[@]}" $(plan_targets); then
+        -Su --noconfirm --ask 4 "${overwrite[@]}" $(plan_ignores) $(plan_targets); then
         adapter_hook restore
         die "the package transaction failed"
       fi
@@ -1048,6 +1085,7 @@ step_loader() {
   if [[ $(<"$plan/boot") == "limine" ]]; then
     [[ -s $uki ]] && grep -Fq "boot():/EFI/Linux/omarchy_linux-aurora.efi" "$R$esp/limine.conf" ||
       die "Limine has no linux-aurora UKI entry; the active loader was left alone"
+    interrupt_for_test mid loader
     omarchy-mac-limine-deploy || die "cannot put Limine on the ESP"
   else
     install -D -m 644 /dev/null "$limine_gate" || die "cannot mark this Mac for Limine"
