@@ -134,6 +134,17 @@ for state in configured unconfigured; do
 done
 pass 'an upgrade from omarchy-mac-boot -3/-4 keeps speakersafetyd enabled once, even through preset-all'
 
+# A Mac whose omarchy-mac predates its preset (edge 0.1.0-5), or an mx-mac Mac
+# without omarchy-mac, keeps the link through the boot upgrade. Only a preset
+# reapplied before omarchy-mac catches up could drop it, so omarchy-mac
+# publishes first.
+root=$work/upgrade-unowned
+old_mac "$root" unconfigured
+rm "$root/usr/lib/systemd/system-preset/80-omarchy-mac-audio.preset"
+"$boot/install" "$root"
+enabled_once "$root" || fail 'a boot upgrade keeps the link while omarchy-mac has no preset'
+pass 'a boot upgrade keeps the link on a Mac whose omarchy-mac has no preset yet'
+
 # An administrator's disable before the upgrade stays.
 root=$work/upgrade-disabled
 old_mac "$root" configured

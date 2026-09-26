@@ -13,6 +13,7 @@
 # through sudo -n when the user cannot read it.
 
 set -u
+shopt -s nullglob
 sound=1
 [[ ${1:-} == "--no-sound" ]] && sound=0
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
@@ -30,8 +31,10 @@ check() {
 }
 
 safety_presets() {
-  grep -lE '^[[:space:]]*enable[[:space:]]+speakersafetyd' \
-    /usr/lib/systemd/system-preset/*.preset /etc/systemd/system-preset/*.preset 2>/dev/null
+  local presets
+  presets=(/usr/lib/systemd/system-preset/*.preset /etc/systemd/system-preset/*.preset)
+  (( ${#presets[@]} )) || return 1
+  grep -lE '^[[:space:]]*enable[[:space:]]+speakersafetyd' "${presets[@]}" 2>/dev/null
 }
 
 safety_links() {
@@ -40,7 +43,8 @@ safety_links() {
 
 only_omarchy_mac_presets() {
   local presets
-  presets=$(safety_presets) || return 1
+  presets=$(safety_presets)
+  [[ -n $presets ]] || return 1
   # shellcheck disable=SC2086
   [[ $(pacman -Qqo $presets | sort -u) == omarchy-mac ]]
 }
