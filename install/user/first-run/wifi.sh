@@ -8,6 +8,25 @@ notify_wifi() {
     --exec omarchy-shell shell toggle omarchy.network
 }
 
+# nm-online counts a link-local-only link as connected. NetworkManager brings
+# Thunderbolt networking (a Mac cabled to another computer) up that way, with no
+# route out, so only a connection that holds a default route counts as online.
+routable() {
+  case "$(LC_ALL=C nmcli -t -f STATE general 2>/dev/null)" in
+    "connected" | "connected (site only)") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_for_routable() {
+  local deadline=$((SECONDS + 3600))
+
+  until routable; do
+    ((SECONDS < deadline)) || return 1
+    sleep 5
+  done
+}
+
 announce_network() {
   # Ethernet is still negotiating DHCP when the session starts, so probing
   # right away calls a working machine offline. NetworkManager reports startup
@@ -17,10 +36,10 @@ announce_network() {
 
   # -x takes that answer as it stands rather than waiting out the timeout, so
   # a laptop with nothing to connect to gets prompted immediately.
-  if ! nm-online -q -x -t 30; then
+  if ! nm-online -q -x -t 30 || ! routable; then
     notify_wifi
     # Nothing to update against until a link lands, so hold that prompt.
-    nm-online -q -t 3600 || return
+    wait_for_routable || return
   fi
 
   notify_update
