@@ -226,7 +226,10 @@ Item {
   // read gives it up too, as a panel coming back always did.
   function settleScreenDpms(text) {
     if (!displaysBlank) return
-    if (!applyMonitorDpms(text) || !anyMonitorDark(monitorDpms)) displaysBlank = false
+    var read = applyMonitorDpms(text)
+    var dark = read && anyMonitorDark(monitorDpms)
+    logEvent("blank-settled: " + (!read ? "unreadable" : dark ? "panel-dark" : "all-lit"))
+    if (!dark) displaysBlank = false
   }
 
   function submitPassword(value) {

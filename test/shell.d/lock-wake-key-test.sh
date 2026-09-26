@@ -50,7 +50,7 @@ const makeService = new Function('state', `with (state) {
 }`)
 
 function blankedLock() {
-  const state = { displaysBlank: true, monitorDpms: {}, monitorDpmsKnown: false }
+  const state = { displaysBlank: true, monitorDpms: {}, monitorDpmsKnown: false, logEvent() {} }
   return { state, service: makeService(state) }
 }
 
