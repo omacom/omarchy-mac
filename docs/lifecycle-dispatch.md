@@ -1,6 +1,6 @@
 # Lifecycle dispatch
 
-Omarchy owns the boot lifecycle flows: the owner wizard, account creation, LUKS discovery, retry journals, snapshots and the update flow. Some platforms boot through a chain those flows can't drive generically. Apple Silicon Macs boot m1n1 → U-Boot → Limine, keep the install key on an ext4 boot partition and name it on the kernel command line. For those platforms, the flows call a small fixed set of operations through `bin/omarchy-lifecycle-dispatch`, and a platform boot package implements them as root-owned entrypoints. Every other platform keeps the generic path, and each dispatch call is a no-op there.
+Omarchy owns the boot lifecycle flows: the owner wizard, account creation, LUKS discovery, retry journals, snapshots, the migration runner and the update flow. Some platforms boot through a chain those flows can't drive generically. Apple Silicon Macs boot m1n1 → U-Boot → Limine, keep the install key on an ext4 boot partition and name it on the kernel command line. For those platforms, the flows call a small fixed set of operations through `bin/omarchy-lifecycle-dispatch`, and a platform boot package implements them as root-owned entrypoints. Every other platform keeps the generic path, and each dispatch call is a no-op there.
 
 ## The command
 
@@ -39,6 +39,7 @@ The set is fixed in the dispatcher; adding one is a change to Omarchy. The `prov
 | `update-verify` | Update, after the last package step: the transaction, migrations, orphan removal and AUR packages | Read-only. Verifies the boot chain boots the updated system, whose new kernel may still wait for its reboot. A failure leaves the update unfinished: it exits non-zero and offers no reboot. | required | `omarchy-update-boot verify` (`omarchy update`) |
 | `boot-rebuild` | Owner provisioning, when a factory reset left boot entries for another machine identity | Rebuilds the platform's boot files, after Omarchy has started the Limine menu over where there is one | optional | `omarchy-provision-owner` |
 | `luks-slots` | Owner provisioning, once the re-key keeps only the owner's slot and the acknowledged recovery slot, before it destroys the staged key; the disk password change, once the owner's new key is confirmed | `luks-slots owner=<slot> [recovery=<slot>]` records the root volume's kept slots wherever the platform's boot checks look for them. Without `recovery=` the recorded recovery slot stays; an empty one records none. Idempotent. It fails when a slot is not in the LUKS header, and the caller then retries. A platform that implements it also has owner provisioning create a recovery passphrase (see [Recovery passphrase](#recovery-passphrase)). | required | `omarchy-provision-owner`, `omarchy-drive-password` |
+| `migrate` | The platform migration (`migrations/1790347292.sh`), when `omarchy-migrate` runs it | Moves the machine onto the platform's official package set in place, or does nothing when the platform has no target set yet. Idempotent and resumable: a machine already on the target, or one whose migration waits for a reboot, exits 0. A refusal or failure exits non-zero and leaves the migration pending. | optional | `migrations/1790347292.sh` |
 
 Snapshot restore is not an operation: a Limine machine restores through `limine-snapper-restore`, and a platform boot package that checks a restore does so through limine-snapper-sync's own hooks.
 
@@ -48,12 +49,12 @@ Registration is code in `bin/omarchy-lifecycle-dispatch`, not configuration. No 
 
 | Platform | Implementation directory | Package | Required operations |
 | --- | --- | --- | --- |
-| `apple-silicon` | `/usr/lib/omarchy/mac-boot` | `omarchy-mac-boot` | all except `update-preflight` and `boot-rebuild` |
+| `apple-silicon` | `/usr/lib/omarchy/mac-boot` | `omarchy-mac-boot` | all except `update-preflight`, `boot-rebuild` and `migrate` |
 | `generic`, `generic-aarch64`, `qualcomm` | none | none | none: every operation is a no-op, and callers keep their generic path |
 
 The entrypoint for an operation is `<implementation directory>/<operation>`. A registered platform's required operations must be shipped. Its optional operations may be left out, and then they are no-ops.
 
-On a Mac, owner provisioning and factory reset have no other path, so their operations are required: a Mac without `omarchy-mac-boot`'s entrypoints stops before the owner form or before the reset is confirmed, with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key behind or rebuild a UKI the Mac does not boot. `luks-slots` is required because the Mac's boot checks prove the owner's and the recovery slot. `update-verify` is required because nothing else checks what an update left in a Mac's boot chain. `boot-rebuild` stays optional until a platform ships it: without it, the stale-entry refresh runs `limine-update`.
+On a Mac, owner provisioning and factory reset have no other path, so their operations are required: a Mac without `omarchy-mac-boot`'s entrypoints stops before the owner form or before the reset is confirmed, with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key behind or rebuild a UKI the Mac does not boot. `luks-slots` is required because the Mac's boot checks prove the owner's and the recovery slot. `update-verify` is required because nothing else checks what an update left in a Mac's boot chain. `boot-rebuild` stays optional until a platform ships it: without it, the stale-entry refresh runs `limine-update`. `migrate` is optional: a Mac without it has nothing to move to yet.
 
 ## Trust rules
 
@@ -98,6 +99,13 @@ Failing closed holds on every platform: where `omarchy-hw-platform` can't settle
 - After the system disk's key changed and the login and root passwords follow it, `record_owner_slot` resolves `luks-slots` as the user and, when it resolves, runs `sudo omarchy-lifecycle-dispatch luks-slots owner=<slot>`, so no other platform sees an extra `sudo`. Until that succeeds the journal stays, and the next run finishes the change and records the slot. The new key can land in another slot (cryptsetup 2.8's `luksChangeKey` moves a LUKS1 key to the first free slot, and keeps a LUKS2 one in place), and the boot check would then find a slot the platform did not record.
 - The recovery key stays as it is: the system disk refuses it as the current password, and a new password in its form.
 
+### Platform migration (`migrations/1790347292.sh`)
+
+- One line of dispatch: the migration resolves `migrate` as the user and, when it resolves, runs `sudo omarchy-lifecycle-dispatch migrate`. The entrypoint's status is the migration's: a refusal or failure leaves it pending, so the next `omarchy-migrate` runs it again and the entrypoint resumes where it stopped.
+- The work is machine-wide, but migrations complete per user. Once the entrypoint succeeds, a root-owned marker (`/var/lib/omarchy/migrations/1790347292`) spares every other account the migration and its root prompt.
+- Where nothing resolves (every platform but one whose boot package ships `migrate`, including a Mac without its boot package) the migration completes. Like any finished migration it never runs again, and neither does it after an entrypoint exits 0, so a boot package ships `migrate`, and the target it moves machines to, before an Omarchy release carrying this migration reaches them.
+- A platform the detector can't settle fails the resolve, so the migration stays pending instead of being skipped.
+
 ## Recovery passphrase
 
 The recovery passphrase is core code (`install/provisioning/luks-recovery.sh`); whether setup creates one is the platform boot package's call. A boot package that implements `luks-slots` records a recovery slot for its boot checks, so owner provisioning gives it one to record. Every other platform keeps today's first boot: the owner's password alone, no extra screen. Leaving the decision to the boot package keeps the platform check out of the owner wizard, and turning it on elsewhere is a matter of that platform recording the slots.
@@ -138,3 +146,4 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
 - `test/shell.d/factory-reset-dispatch-test.sh` runs the reset through the real dispatcher: on x86 with Mac entrypoints on disk that must not run (generic path unchanged), and on Apple into a fake boot package, covering a finished reset, a failed verification and a failed switch that roll back, an unconfirmed throwaway slot found by its key and revoked, a failed commit after the switch, and a missing or partial package.
 - `test/shell.d/update-boot-verify-test.sh` runs `omarchy update` through the real `omarchy-update-boot` and dispatcher inside the sudo boundary fixture: no-ops and no root on x86, generic aarch64 and Qualcomm; on Apple, preflight before the keyring under the update's authorization, verify after AUR through the no-update wrapper, a refused preflight, a failed verification that offers no reboot, and a Mac without the package or with one too old.
 - `test/shell.d/drive-password-test.sh` checks that an Apple password change records the owner's new slot through `luks-slots`, including after an interruption, and that x86 never calls it.
+- `test/shell.d/platform-migration-test.sh` covers the migration: with a stub dispatcher, a refusal and an undetermined platform leaving it pending and a second account skipping it once it ran; through the real dispatcher, a no-op on x86, generic aarch64, Qualcomm and a Mac without its boot package, and the entrypoint run as root on a Mac with one.

@@ -5,11 +5,11 @@
 # omarchy:requires-sudo=true
 # omarchy:hidden=true
 
-# Provisioning, factory reset, update and boot rebuild call a fixed set of
-# operations here. A platform whose boot chain needs its own handling registers
-# a directory of root-owned entrypoints below; on every other platform each
-# operation is a no-op and the caller keeps its generic path. The contract is
-# docs/lifecycle-dispatch.md.
+# Provisioning, factory reset, update, boot rebuild and the platform migration
+# call a fixed set of operations here. A platform whose boot chain needs its
+# own handling registers a directory of root-owned entrypoints below; on every
+# other platform each operation is a no-op and the caller keeps its generic
+# path. The contract is docs/lifecycle-dispatch.md.
 #
 # --resolve prints the entrypoint an operation would run, or nothing when it is
 # a no-op here, so a caller can choose between a platform implementation and
@@ -32,6 +32,7 @@ operations=(
   update-preflight update-verify
   boot-rebuild
   luks-slots
+  migrate
 )
 
 usage() {
@@ -88,7 +89,8 @@ fi
 # factory reset have no other path on a Mac, only update-verify checks what an
 # update left in its boot chain, and its boot checks prove the kept LUKS slots
 # that luks-slots records, so those operations are required. update-preflight
-# is optional, and boot-rebuild stays optional until a platform ships it.
+# and migrate are optional, and boot-rebuild stays optional until a platform
+# ships it.
 # Moving an operation to required also changes apple_optional in
 # test/shell.d/lifecycle-dispatch-test.sh and the Apple column and registration
 # table in docs/lifecycle-dispatch.md.
