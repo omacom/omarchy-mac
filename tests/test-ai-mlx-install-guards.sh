@@ -1,15 +1,18 @@
 #!/bin/bash
-# Checks the failure contracts of the MLX menu entry: it must not install over an
-# existing installation, and when an install fails it must say what it actually
-# cleaned up.
+# Checks the contracts of the MLX menu entry: the SoC gate must let through
+# exactly the chips mlx-omarchy supports, it must not install over an
+# existing installation, and when an install fails it must say what it
+# actually cleaned up.
 #
 # The entry's failure path runs the upstream installer's --uninstall, which
 # deletes every artifact unconditionally. Without the guard, a failed install
 # over a working one removes the working one.
 #
-# Everything here runs against a disposable HOME with stub commands on PATH, so
-# it needs no Apple hardware and installs nothing. The two cases that need the
-# real pinned installer skip themselves when there is no network.
+# Everything here runs against a disposable HOME with stub commands on PATH,
+# so it needs no Apple hardware and installs nothing. Every stub is executable
+# and proven to shadow the real command before anything runs, so no host -- a
+# real M1 included -- can reach a real package transaction. The cases that
+# need the real pinned installer skip themselves when there is no network.
 
 set -euo pipefail
 
@@ -41,7 +44,18 @@ mkdir -p "$stub_dir"
 # The entry gates on Apple hardware first; say yes, and present an M1 device
 # tree, so the paths under test are the ones that run on a real M1.
 printf '#!/bin/bash\nexit 0\n' >"$stub_dir/omarchy-hw-apple"
-chmod +x "$stub_dir/omarchy-hw-apple"
+# The real pinned installer reaches omarchy-pkg-add on Apple hardware; stub
+# it so a passing gate can never trigger a system-wide pacman transaction.
+# Embed the log path because $work is not exported to the stub.
+pkg_log="$work/pkg-add.log"
+printf '#!/bin/bash\nprintf "%%s\\n" "omarchy-pkg-add $*" >>%q\nexit 0\n' "$pkg_log" >"$stub_dir/omarchy-pkg-add"
+# Fail closed if the installer falls back to sudo pacman.
+sudo_log="$work/sudo.log"
+printf '#!/bin/bash\nprintf "%%s\\n" "sudo $*" >>%q\nexit 1\n' "$sudo_log" >"$stub_dir/sudo"
+# Reach the package step on every host without building a real venv.
+printf '#!/bin/bash\nif [[ ${1:-} == -m ]]; then echo aarch64; else exec /usr/bin/uname "$@"; fi\n' >"$stub_dir/uname"
+printf '#!/bin/bash\nexit 0\n' >"$stub_dir/python3"
+chmod +x "$stub_dir/omarchy-hw-apple" "$stub_dir/omarchy-pkg-add" "$stub_dir/sudo" "$stub_dir/uname" "$stub_dir/python3"
 printf 'apple,j313\0apple,t8103\0' >"$work/compatible"
 
 curl_log="$work/curl.log"
@@ -61,16 +75,28 @@ make_curl_stub() {
 }
 make_curl_stub
 
+# A non-executable stub would silently fall through to the real command.
+for cmd in omarchy-hw-apple omarchy-pkg-add curl sudo uname python3; do
+  [[ -x $stub_dir/$cmd ]] || fail "the $cmd stub is not executable"
+  resolved="$(PATH="$stub_dir:$PATH" command -v "$cmd")" &&
+    [[ $resolved == "$stub_dir/$cmd" ]] ||
+    fail "$cmd would run '${resolved:-nothing}', not the stub"
+done
+pass "every stub is executable and shadows the real command on PATH"
+
 # Runs the entry against the disposable HOME. Echoes its exit status; output is
-# left in $work/out for the caller to inspect.
+# left in $work/out for the caller to inspect. The third argument overrides the
+# device-tree compatible file, for the SoC gate cases.
 run_entry() {
-  local home="$1" prefix="$2"
+  local home="$1" prefix="$2" compat="${3:-$work/compatible}"
   local status=0
   : >"$curl_log"
+  : >"$pkg_log"
+  : >"$sudo_log"
   PATH="$stub_dir:$PATH" \
     HOME="$home" \
     MLX_OMARCHY_HOME="$prefix" \
-    OMARCHY_APPLE_COMPATIBLE="$work/compatible" \
+    OMARCHY_APPLE_COMPATIBLE="$compat" \
     CURL_LOG="$curl_log" \
     INSTALLER_FIXTURE="${INSTALLER_FIXTURE:-}" \
     bash "$INSTALL" >"$work/out" 2>&1 || status=$?
@@ -78,12 +104,48 @@ run_entry() {
 }
 
 echo
+echo "=== the SoC gate follows mlx-omarchy's supported chips ==="
+
+# The pinned installer accepts the M1 (t8103), the M1 Max (t6001), and the
+# M2 Max (t6021); the entry must let exactly those through and skip anything
+# else before it touches the network or the package manager.
+for chips in 'apple,t8103' 'apple,t6001' 'apple,t6021' 'apple,t8112'; do
+  printf 'apple,j313\0%s\0' "$chips" >"$work/compatible-gate"
+  home="$work/home-gate-${chips/,/-}"
+  prefix="$home/.local/share/mlx-omarchy"
+  mkdir -p "$home/.local/bin" "$home/.local/share/applications"
+
+  got="$(run_entry "$home" "$prefix" "$work/compatible-gate")"
+  if [[ $chips == apple,t8112 ]]; then
+    [[ $got == 0 ]] || fail "$chips: an unsupported SoC should skip cleanly, it exited $got"
+    grep -q "Skipping: mlx-omarchy supports" "$work/out" ||
+      fail "$chips: no skip message: $(cat "$work/out")"
+    grep -q "$chips" "$work/out" ||
+      fail "$chips: the skip should report the machine's SoC: $(cat "$work/out")"
+    [[ ! -s $curl_log ]] ||
+      fail "$chips: skipped only after fetching the installer: $(cat "$curl_log")"
+    [[ ! -s $pkg_log ]] ||
+      fail "$chips: skipped but omarchy-pkg-add ran: $(cat "$pkg_log")"
+    pass "$chips: skips before any fetch or package work"
+  else
+    grep -q "Fetching the mlx-omarchy installer" "$work/out" ||
+      fail "$chips: a supported SoC should install, it refused: $(cat "$work/out")"
+    grep -q "raw.githubusercontent.com" "$curl_log" ||
+      fail "$chips: the gate passed but no installer was fetched: $(cat "$curl_log")"
+    [[ ! -s $pkg_log ]] ||
+      fail "$chips: packages were installed before the installer was verified: $(cat "$pkg_log")"
+    pass "$chips: passes the gate and fetches the pinned installer"
+  fi
+done
+
+echo
 echo "=== it refuses when an installation already exists ==="
 
-# Each artifact on its own, because the installer's --uninstall deletes all four
-# and any one of them means something is already there.
+# Each artifact on its own, because the installer's --uninstall deletes all
+# seven and any one of them means something is already there. bin-info is the
+# installed-state key the menu keys on, so it guards like the rest.
 i=0
-for artifact in prefix bin-launcher bin-demo desktop-entry; do
+for artifact in prefix bin-launcher bin-demo bin-info bin-serve bin-omarchy-mlx-serve desktop-entry; do
   i=$((i + 1))
   home="$work/home$i"
   prefix="$home/.local/share/mlx-omarchy"
@@ -92,6 +154,9 @@ for artifact in prefix bin-launcher bin-demo desktop-entry; do
     prefix) mkdir -p "$prefix" && echo keep >"$prefix/marker" ;;
     bin-launcher) echo keep >"$home/.local/bin/mlx-omarchy" ;;
     bin-demo) echo keep >"$home/.local/bin/mlx-omarchy-demo" ;;
+    bin-info) echo keep >"$home/.local/bin/mlx-omarchy-info" ;;
+    bin-serve) echo keep >"$home/.local/bin/mlx-omarchy-serve" ;;
+    bin-omarchy-mlx-serve) echo keep >"$home/.local/bin/omarchy-mlx-serve" ;;
     desktop-entry) echo keep >"$home/.local/share/applications/mlx-omarchy-demo.desktop" ;;
   esac
 
@@ -103,12 +168,17 @@ for artifact in prefix bin-launcher bin-demo desktop-entry; do
     fail "$artifact present: refusal should name how to remove it"
   [[ ! -s $curl_log ]] ||
     fail "$artifact present: refused only after fetching the installer: $(cat "$curl_log")"
+  [[ ! -s $pkg_log ]] ||
+    fail "$artifact present: refused but omarchy-pkg-add ran: $(cat "$pkg_log")"
 
   # The point of the guard: what was there is still there.
   case $artifact in
     prefix) [[ -f "$prefix/marker" ]] || fail "the existing installation was deleted" ;;
     bin-launcher) [[ -f "$home/.local/bin/mlx-omarchy" ]] || fail "the existing launcher was deleted" ;;
     bin-demo) [[ -f "$home/.local/bin/mlx-omarchy-demo" ]] || fail "the existing demo launcher was deleted" ;;
+    bin-info) [[ -f "$home/.local/bin/mlx-omarchy-info" ]] || fail "the existing info launcher was deleted" ;;
+    bin-serve) [[ -f "$home/.local/bin/mlx-omarchy-serve" ]] || fail "the existing serve launcher was deleted" ;;
+    bin-omarchy-mlx-serve) [[ -f "$home/.local/bin/omarchy-mlx-serve" ]] || fail "the existing omarchy-mlx-serve fallback was deleted" ;;
     desktop-entry) [[ -f "$home/.local/share/applications/mlx-omarchy-demo.desktop" ]] || fail "the existing desktop entry was deleted" ;;
   esac
   pass "$artifact present: refuses before any change, and keeps it"
@@ -125,10 +195,13 @@ if command -v curl >/dev/null &&
   /usr/bin/env curl -fsSL --max-time 20 \
     "https://raw.githubusercontent.com/$repo/$ref/install.sh" -o "$fixture" 2>/dev/null; then
   pass "fetched the pinned installer (${ref:0:12}) as a fixture"
+  sha="$(grep -m1 '^INSTALLER_SHA256=' "$INSTALL" | cut -d'"' -f2)"
+  echo "$sha  $fixture" | sha256sum -c --quiet - ||
+    fail "the downloaded installer does not match the pinned checksum"
+  pass "the fixture matches the pinned checksum"
   export INSTALLER_FIXTURE="$fixture"
 
-  # The real installer, failing early on its own hardware/interpreter checks
-  # before it writes anything: a partial fresh install.
+  # The fixture served as SHA256SUMS contains no wheel, forcing failure.
   home="$work/home-fail"
   prefix="$home/.local/share/mlx-omarchy"
   mkdir -p "$home/.local/bin" "$home/.local/share/applications"
@@ -141,6 +214,12 @@ if command -v curl >/dev/null &&
     fail "the old bug is back: a real failure reported as exit 0"
   fi
   pass "a failing install exits $got and names that status"
+
+  [[ $(cat "$pkg_log") == "omarchy-pkg-add lapack blas openblas" ]] ||
+    fail "expected exactly 'omarchy-pkg-add lapack blas openblas', got: $(cat "$pkg_log")"
+  pass "the runtime packages are requested through omarchy-pkg-add"
+  [[ ! -s $sudo_log ]] || fail "the pacman fallback was reached: $(cat "$sudo_log")"
+  pass "the pacman fallback was never reached"
 
   grep -q "Nothing from mlx-omarchy is left installed" "$work/out" ||
     fail "a successful cleanup should say so: $(cat "$work/out")"
