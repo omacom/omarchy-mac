@@ -1,0 +1,7 @@
+# The Apple display card: hold its external connectors off while the boot
+# splash runs on the built-in screen. udev hands the card to Plymouth only
+# after this runs. See /usr/lib/omarchy/mac-boot/external-displays.
+ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{DEVTYPE}=="drm_minor", DRIVERS=="apple-drm", RUN+="/usr/lib/omarchy/mac-boot/external-displays hold %k"
+# Its release turns them back on and sends this synthetic change; the display
+# manager and compositor rescan outputs on a hotplug only.
+ACTION=="change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{SYNTH_ARG_OMARCHYMACDISPLAYS}=="1", ENV{HOTPLUG}="1"

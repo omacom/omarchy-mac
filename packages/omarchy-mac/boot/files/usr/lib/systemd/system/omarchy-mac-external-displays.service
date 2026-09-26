@@ -1,0 +1,12 @@
+# Turns on the external displays a Mac held off while its boot splash ran on
+# the built-in screen: after the splash quits, which first boot holds until
+# it hands over, and before the display manager starts. Static: pulled in by
+# multi-user.target, so an upgraded Mac needs no enable step.
+[Unit]
+Description=Turn external displays on for the desktop
+After=plymouth-quit.service plymouth-quit-wait.service
+Before=display-manager.service sddm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/omarchy/mac-boot/external-displays release
