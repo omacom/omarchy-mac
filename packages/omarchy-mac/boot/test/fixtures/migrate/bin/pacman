@@ -27,7 +27,7 @@ root=${OMARCHY_MAC_MIGRATE_ROOT:?}
 config=$root/etc/pacman.conf
 dbpath=$root/var/lib/pacman
 gpgdir=$root/etc/pacman.d/gnupg
-cachedirs=() overwrites=() dbonly=0 ask="" format="" op="" flags="" args=()
+cachedirs=() overwrites=() ignored=() dbonly=0 ask="" format="" op="" flags="" args=()
 while (( $# )); do
   case $1 in
     --config) config=$2; shift 2 ;;
@@ -35,6 +35,7 @@ while (( $# )); do
     --cachedir) cachedirs+=("$2"); shift 2 ;;
     --gpgdir) gpgdir=$2; shift 2 ;;
     --overwrite) overwrites+=("$2"); shift 2 ;;
+    --ignore=*) IFS=, read -ra more <<<"${1#--ignore=}"; ignored+=("${more[@]}"); shift ;;
     --logfile) shift 2 ;;
     --noconfirm) shift ;;
     --ask) ask=$2; shift 2 ;;
@@ -132,6 +133,13 @@ fi
 if [[ $op == "Q" ]]; then
   if (( ${#args[@]} )); then
     for name in "${args[@]}"; do
+      # Like pacman, a name no package has is answered by an installed provider
+      # ($MIGRATE_FIXTURE/provides lists "package provided-name...").
+      if [[ -z ${version[$name]:-} && -f $fixture/provides ]]; then
+        provider=$(awk -v wanted="$name" '{ for (i = 2; i <= NF; i++) if ($i == wanted) print $1 }' "$fixture/provides" |
+          while read -r candidate; do [[ -z ${version[$candidate]:-} ]] || { echo "$candidate"; break; }; done)
+        name=${provider:-$name}
+      fi
       [[ -n ${version[$name]:-} ]] || { echo "error: package '$name' was not found" >&2; exit 1; }
       [[ $flags == *q* ]] && echo "$name" || echo "$name ${version[$name]}"
     done
@@ -150,9 +158,22 @@ if [[ $flags == *y* ]]; then
     source_db=${server#file://}/$repo.db
     [[ $server == file://* && -f $source_db ]] || { echo "error: failed to synchronize all databases ($repo)" >&2; exit 1; }
     cp "$source_db" "$dbpath/sync/$repo.db"
+    if [[ -f $source_db.sig ]]; then
+      cp "$source_db.sig" "$dbpath/sync/$repo.db.sig"
+    else
+      rm -f "$dbpath/sync/$repo.db.sig"
+    fi
   done < <(repositories)
   [[ $flags == *u* || ${#args[@]} -gt 0 ]] || exit 0
 fi
+
+# A database signature reads "signed <sha256 of the database>"; pacman rejects a
+# database beside one that does not match it.
+while read -r repo server; do
+  sig=$dbpath/sync/$repo.db.sig
+  [[ ! -f $sig || $(<"$sig") == "signed $(sha256sum "$dbpath/sync/$repo.db" | cut -d' ' -f1)" ]] ||
+    { echo "error: database '$repo' is not valid (invalid or corrupted database (PGP signature))" >&2; exit 1; }
+done < <(repositories)
 
 lookup() { # name [repo] -> "repo version"
   local name=$1 wanted=${2:-} repo server
@@ -200,9 +221,13 @@ verify_signatures() {
   done
 }
 
-declare -A changed=()
+declare -A changed=() original=()
+for name in "${!version[@]}"; do
+  original[$name]=${version[$name]}
+done
 if [[ $flags == *u* ]]; then
   for name in "${!version[@]}"; do
+    [[ " ${ignored[*]} " != *" $name "* ]] || continue
     found=$(lookup "$name") || continue
     if newer "${found#* }" "${version[$name]}"; then
       version[$name]=${found#* }
@@ -217,10 +242,28 @@ for target in "${args[@]}"; do
   version[$name]=${found#* }
   changed[$name]=${found% *}
 done
+provides() { # package name: $MIGRATE_FIXTURE/provides lists "package provided-name..."
+  [[ -f $fixture/provides ]] && awk -v p="$1" -v n="$2" '$1 == p { for (i = 2; i <= NF; i++) if ($i == n) found = 1 } END { exit !found }' "$fixture/provides"
+}
+# Two packages of the transaction in conflict: like pacman, keep the one that
+# provides the other and drop the other from the targets.
+drop() { # package kept
+  echo "warning: removing '$1' from target list because it conflicts with '$2'" >&2
+  if [[ -n ${original[$1]:-} ]]; then version[$1]=${original[$1]}; else unset "version[$1]"; fi
+  unset "changed[$1]"
+}
 if [[ -f $fixture/conflicts ]]; then
   while read -r name conflicting; do
     [[ -n ${changed[$name]:-} ]] || continue
     for other in $conflicting; do
+      if [[ -n ${changed[$other]:-} ]]; then
+        if provides "$other" "$name"; then
+          drop "$name" "$other"
+        elif provides "$name" "$other"; then
+          drop "$other" "$name"
+        fi
+        continue
+      fi
       [[ -n ${version[$other]:-} && -z ${changed[$other]:-} ]] || continue
       [[ $ask == "4" ]] || { echo "error: unresolvable package conflicts detected" >&2; exit 1; }
       unset "version[$other]"

@@ -199,3 +199,56 @@ limine_mac_menu
 verify
 expect_refused "an encrypted Mac whose Limine entry does not unlock the root" "does not set rd.luks.name= for the encrypted root"
 pass "update-verify still refuses an encrypted Mac whose next boot cannot unlock its root"
+
+# A Mac installed before Omarchy's images unlocks its root in the busybox
+# init, through the encrypt hook and GRUB's cryptdevice=, with /boot on the ESP.
+limine_mac
+limine_mac_busybox
+verify
+expect_verified "a busybox encrypt Mac booting GRUB from the ESP at /boot"
+grep -Fq "running linux-aurora $mac_kver; installed boot files match" "$tmp/out" || fail "update-verify reports what it verified" "$(cat "$tmp/out")"
+verify 6.16.0-aurora9-ARCH
+expect_verified "a busybox encrypt Mac whose update installed a new kernel"
+sed -i 's/ cryptdevice=[^ ]*//' "$mac_root/boot/grub/grub.cfg"
+verify
+expect_refused "a busybox encrypt Mac whose GRUB entry lost cryptdevice=" "/boot/grub/grub.cfg does not set cryptdevice= for the root the encrypt hook unlocks"
+limine_mac
+limine_mac_busybox
+sed -i 's/ quiet$/ rootflags=x-systemd.device-timeout=0 quiet/' "$mac_root/boot/grub/grub.cfg"
+verify
+expect_refused "a busybox encrypt Mac with a second rootflags=" "passes more than one rootflags="
+limine_mac
+limine_mac_busybox
+sed -i 's/UUID=0422663f/UUID=1111663f/' "$mac_root/boot/grub/grub.cfg"
+verify
+expect_refused "a busybox encrypt Mac whose cryptdevice= names another partition" "cryptdevice= does not name the LUKS partition of the root"
+pass "update-verify passes a busybox encrypt Mac and refuses one whose GRUB entry cannot unlock or mount its root"
+
+# The disk passphrase prompt types with the layout the boot image carries.
+danish=(KEYMAP=dk-latin1 XKBLAYOUT=dk XKBMODEL=pc105)
+limine_mac
+limine_mac_luks
+limine_mac_keyboard "${danish[@]}"
+verify
+expect_verified "an encrypted Limine Mac whose UKI carries its Danish layout"
+rm "$mac_state/initrd-tree/usr/share/kbd/keymaps/i386/qwerty/dk-latin1.map.gz"
+verify
+expect_refused "an encrypted Limine Mac whose UKI lacks the keymap" "missing the dk-latin1 keymap"
+limine_mac_keyboard "${danish[@]}"
+printf 'KEYMAP=us\nXKBLAYOUT=us\n' >"$mac_state/initrd-tree/etc/vconsole.conf"
+verify
+expect_refused "an encrypted Limine Mac whose UKI was built before the layout changed" "does not carry the keyboard layout of /etc/vconsole.conf (KEYMAP=dk-latin1 XKBLAYOUT=dk)"
+limine_mac
+limine_mac_busybox
+limine_mac_keyboard "${danish[@]}"
+verify
+expect_verified "a busybox encrypt Mac whose initramfs carries its Danish layout"
+rm "$mac_state/initrd-tree/keymap.bin"
+verify
+expect_refused "a busybox encrypt Mac whose initramfs lacks the compiled keymap" "missing the keymap hook's keymap.bin"
+limine_mac
+limine_mac_keyboard "${danish[@]}"
+rm -rf "$mac_state/initrd-tree"
+verify
+expect_verified "an unencrypted Mac, which has no passphrase prompt"
+pass "update-verify refuses an encrypted Mac whose boot image does not carry its keyboard layout"

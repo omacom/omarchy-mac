@@ -418,9 +418,6 @@ refused() { # description reason-pattern
 }
 
 new_fixture refusals
-sed -i 's/^omarchy 4.0.2-2$/omarchy-dev 4.0.3.r1-1/' "$R/var/lib/pacman/local/packages"
-refused "mx-mac" "mx-mac install (omarchy-dev): its adapter (ticket 43)"
-new_fixture refusals
 sed -i '/^omarchy /d' "$R/var/lib/pacman/local/packages"
 refused "Omarchy 3.x" "upgrade the 3.x install with omarchy-upgrade-to-quattro-mac first"
 new_fixture refusals
@@ -706,7 +703,7 @@ pass "a repository target (omacom stable later) replaces the same names from [om
 [[ -x $R/usr/lib/omarchy/mac-boot/migrate && $(stat -c %a "$R/usr/lib/omarchy/mac-boot/migrate") == 755 ]] ||
   fail "the migrate entrypoint is staged for omarchy-lifecycle-dispatch"
 [[ -f $R/usr/lib/systemd/system/omarchy-mac-migrate-verify.service ]] || fail "the post-reboot unit is staged"
-for file in migrate-engine.sh migrate-tester.sh; do
+for file in migrate-engine.sh migrate-tester.sh migrate-legacy.sh migrate-mx-mac.sh; do
   [[ -f $R/usr/lib/omarchy-mac/boot/$file ]] || fail "$file is staged"
 done
 new_fixture entrypoint
