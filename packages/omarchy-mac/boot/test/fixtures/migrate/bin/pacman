@@ -129,6 +129,13 @@ fi
 if [[ $op == "Q" ]]; then
   if (( ${#args[@]} )); then
     for name in "${args[@]}"; do
+      # Like pacman, a name no package has is answered by an installed provider
+      # ($MIGRATE_FIXTURE/provides lists "package provided-name...").
+      if [[ -z ${version[$name]:-} && -f $fixture/provides ]]; then
+        provider=$(awk -v wanted="$name" '{ for (i = 2; i <= NF; i++) if ($i == wanted) print $1 }' "$fixture/provides" |
+          while read -r candidate; do [[ -z ${version[$candidate]:-} ]] || { echo "$candidate"; break; }; done)
+        name=${provider:-$name}
+      fi
       [[ -n ${version[$name]:-} ]] || { echo "error: package '$name' was not found" >&2; exit 1; }
       [[ $flags == *q* ]] && echo "$name" || echo "$name ${version[$name]}"
     done

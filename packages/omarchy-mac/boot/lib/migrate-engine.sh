@@ -806,13 +806,14 @@ step_keyring() {
 }
 
 # Packages the transaction removes by name once it has installed the targets,
-# as far as DB still has them.
+# as far as DB still has them. By exact name: pacman -Q NAME also answers with
+# a package that provides NAME (mise-bin for mise), which pacman -R refuses.
 plan_removals() {
-  local db=$1 name
+  local db=$1 name installed
   [[ -f $plan/removals ]] || return 0
+  installed=$(LC_ALL=C pacman --config "$pacman_conf" --dbpath "$db" -Qq) || return 1
   while read -r name; do
-    [[ -n $name ]] && LC_ALL=C pacman --config "$pacman_conf" --dbpath "$db" -Qq "$name" >/dev/null 2>&1 &&
-      printf '%s\n' "$name"
+    [[ -n $name ]] && grep -Fxq -- "$name" <<<"$installed" && printf '%s\n' "$name"
   done <"$plan/removals"
   return 0
 }

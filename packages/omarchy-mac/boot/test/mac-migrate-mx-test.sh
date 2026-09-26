@@ -217,6 +217,7 @@ EDGE
     cp "$F/repos/$name.db" "$R/var/lib/pacman/sync/"
   done
   fork_update
+  printf 'mise-bin mise\ndotnet-runtime-bin dotnet-runtime-10.0\n' >"$F/provides"
   cat >"$F/conflicts" <<'CONFLICTS'
 omarchy omarchy-dev
 omarchy-settings omarchy-settings-dev
