@@ -734,6 +734,18 @@ finish
 [[ $(grep -c '^transaction avd-fw$' "$F/pacman.log") == 1 ]] || fail "the retry installs nothing twice" "$(cat "$F/pacman.log")"
 pass "a failed defaults step stops before the reboot and is retried"
 
+new_fixture defaults-old-plan
+printf 'tester:x:1000:1000::/home/tester:/bin/bash\n' >"$R/etc/passwd"
+home=$R/home/tester
+mkdir -p "$home/.local/state/omarchy"
+kill_after preflight
+rm "$(state_dir)/plan/user-units"
+user_unit omarchy-brightness-keyboard-auto.service graphical-session.target
+finish
+[[ ! -e $home/.config ]] || fail "a plan that predates the unit record enables no user unit" "$(find "$home/.config")"
+grep -q "^omarchy-mac-setup-user HOME=$home$" "$F/boot.log" || fail "the Mac user setup still runs"
+pass "a plan frozen before the unit record enables no user unit"
+
 first_run_units=$(sed -n '/systemctl --user enable --now/,/[^\\]$/p' "$ROOT/../../../install/user/first-run/enable-user-units.sh" | grep -o '[a-z0-9-]*\.service' | xargs)
 engine_units=$(sed -n 's/^fresh_user_units="\(.*\)"$/\1/p' "$ROOT/lib/migrate-engine.sh")
 [[ -n $first_run_units && $first_run_units == "$engine_units" ]] ||

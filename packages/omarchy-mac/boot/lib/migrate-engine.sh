@@ -1160,8 +1160,8 @@ omarchy_users() {
     done
 }
 
-# Enables a user unit as systemctl --user enable would, by the links its
-# [Install] WantedBy names. A mask, an override or any enablement, the user's
+# Enables a user unit by the links its [Install] WantedBy names, as
+# systemctl --user enable writes them for these units. A mask, an override or any enablement, the user's
 # or the administrator's, stays as it is.
 enable_user_unit() {
   local user=$1 home=$2 unit=$3 config=$R$2/.config/systemd/user target path
@@ -1175,14 +1175,16 @@ enable_user_unit() {
   done
 }
 
-# A migrated Mac ends as a fresh install does: with the default packages the
-# aarch64 and Apple lists add (the base list's applications stay the owner's
-# choice), the Mac services the image's hardware setup enables and, for every
-# Omarchy user, the units first run enables. A unit that was already installed
-# before the migration and is off was turned off, and stays off. The reboot
-# that follows brings up what probes only at boot, such as the video decoder.
-step_defaults() {
-  local generic apple available name missing=() absent=() user home unit output
+# The default packages the aarch64 and Apple lists add, where they are missing
+# and a repository carries them (the base list's applications stay the owner's
+# choice). Firmware among them rebuilds the initramfs and the UKI through
+# pacman's hooks, so the boot files are checked again.
+install_defaults() {
+  local generic apple available name missing=() absent=() output
+  if ! command -v omarchy-pkg-defaults >/dev/null; then
+    say "This Omarchy has no omarchy-pkg-defaults: the default packages were not checked"
+    return 0
+  fi
   generic=$(env OMARCHY_PATH="$R/usr/share/omarchy" omarchy-pkg-defaults generic) &&
     apple=$(env OMARCHY_PATH="$R/usr/share/omarchy" omarchy-pkg-defaults apple-silicon) ||
     die "cannot read the Apple Silicon default packages"
@@ -1198,21 +1200,32 @@ step_defaults() {
     fi
   done <<<"$apple"
   (( ${#absent[@]} == 0 )) || say "No repository carries these default packages, so they stay missing: ${absent[*]}"
-  if (( ${#missing[@]} )); then
-    say "Installing the default packages a fresh install has: ${missing[*]}"
-    pacman_run --config "$pacman_conf" --dbpath "$pacman_db" -S --noconfirm "${missing[@]}" ||
-      die "cannot install the default packages: ${missing[*]}"
-    # Firmware rebuilds the initramfs and the UKI through pacman's hooks.
-    output=$(boot_check_pending linux-aurora 2>&1) || die "the boot files do not check after the default packages: $(tail -n 1 <<<"$output")"
-  fi
+  (( ${#missing[@]} )) || return 0
+  say "Installing the default packages a fresh install has: ${missing[*]}"
+  pacman_run --config "$pacman_conf" --dbpath "$pacman_db" -S --noconfirm "${missing[@]}" ||
+    die "cannot install the default packages: ${missing[*]}"
+  output=$(boot_check_pending linux-aurora 2>&1) || die "the boot files do not check after the default packages: $(tail -n 1 <<<"$output")"
+}
+
+# A migrated Mac ends as a fresh install does: with its default packages, the
+# Mac services the image's hardware setup enables and, for every Omarchy user,
+# the units first run enables and the Mac user setup. A unit the Mac already
+# had before the migration is taken to be off by choice and stays off; a plan
+# frozen before that was recorded enables none. The reboot that follows brings
+# up what probes only at boot, such as the video decoder.
+step_defaults() {
+  local user home unit
+  install_defaults
   interrupt_for_test mid defaults
   omarchy-mac-setup-system >/dev/null || die "omarchy-mac-setup-system could not set up the Mac's services"
   while read -r user home; do
     [[ -n $user ]] || continue
-    for unit in $fresh_user_units; do
-      grep -Fxq "$unit" "$plan/user-units" 2>/dev/null && continue
-      enable_user_unit "$user" "$home" "$unit" || say "Could not enable $unit for $user"
-    done
+    if [[ -f $plan/user-units ]]; then
+      for unit in $fresh_user_units; do
+        grep -Fxq "$unit" "$plan/user-units" && continue
+        enable_user_unit "$user" "$home" "$unit" || say "Could not enable $unit for $user"
+      done
+    fi
     as_user "$user" "$R$home" omarchy-mac-setup-user >/dev/null || say "Could not apply the Mac user setup for $user"
   done < <(omarchy_users)
 }
