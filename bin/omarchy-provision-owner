@@ -9,7 +9,10 @@
 # behind. Asks for the user (the configurator's Step 2), creates it with the
 # groups system setup recorded, finalizes it offline from the stashed Node
 # tarball, re-keys LUKS from the throwaway install passphrase to the user's
-# password, and hands off to SDDM.
+# password, and hands off to SDDM. A platform whose boot package owns its boot
+# chain prepares it, drops the install key's unlock from it and records the
+# kept key slots through omarchy-lifecycle-dispatch; where it records them,
+# setup also adds a recovery key, shown once.
 
 set -euo pipefail
 
@@ -34,7 +37,9 @@ fi
 export PATH="$OMARCHY_PATH/bin:$PATH"
 
 REKEY_STATE=$PROVISIONING_DIR/luks-rekey.state
+RECOVERY_ACK_PHRASE="I wrote it down"
 source "$OMARCHY_PATH/install/provisioning/luks-rekey.sh"
+source "$OMARCHY_PATH/install/provisioning/luks-recovery.sh"
 
 # The shared setup form — the same questions, prompts, and validation the ISO
 # configurator's user step asks. The ISO vendors this very file out of the
@@ -696,6 +701,15 @@ user_groups() {
   echo "$groups"
 }
 
+# The platform's boot package decides: one that records the owner's and the
+# recovery slot for its boot checks (luks-slots) gets a recovery key. Elsewhere
+# setup keeps the owner's password alone. Returns 2 when dispatch cannot tell.
+recovery_key_offered() {
+  local record
+  record=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" --resolve luks-slots) || return 2
+  [[ -n $record ]]
+}
+
 # Resolve the crypto_LUKS partition backing the root, or return non-zero if
 # the root is not on LUKS. Prefers the cmdline cryptdevice= spec (archinstall
 # writes PARTUUID=, the pre-mounted path UUID=), and falls back to walking the
@@ -862,7 +876,7 @@ PROVISIONING_UNLOCK_FILES=(
   /etc/mkinitcpio.conf.d/99-omarchy-provisioning-key.conf
 )
 
-luks_auto_unlock_present() {
+limine_auto_unlock_present() {
   local file
   for file in "${PROVISIONING_UNLOCK_FILES[@]}"; do
     [[ -e $file ]] && return 0
@@ -872,7 +886,7 @@ luks_auto_unlock_present() {
 
 # Rebuild the UKI without the embedded keyfile. A failed rebuild restores the
 # auto-unlock, so the retry still boots unattended.
-luks_auto_unlock_drop() {
+limine_auto_unlock_drop() {
   rm -f "${PROVISIONING_UNLOCK_FILES[@]}"
   reset_limine_config
   if limine-update >>"$LOG_FILE" 2>&1; then
@@ -888,10 +902,89 @@ luks_auto_unlock_drop() {
   return 1
 }
 
+# A platform whose boot package implements provision-commit and provision-verify
+# stages the unlock in its own boot chain and owns it; everywhere else it rides
+# in the Limine UKI above. Deciding fails closed: the unlock then counts as
+# present and cannot be dropped.
+UNLOCK_OWNER=""
+
+unlock_owner() {
+  [[ -z ${UNLOCK_OWNER:-} ]] || return 0
+
+  local commit verify
+  commit=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" --resolve provision-commit) || return 1
+  verify=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" --resolve provision-verify) || return 1
+  if [[ -n $commit && -n $verify ]]; then
+    UNLOCK_OWNER=platform
+  elif [[ -z $commit && -z $verify ]]; then
+    UNLOCK_OWNER=limine
+  else
+    log_step "the platform implements only one of provision-commit and provision-verify"
+    return 1
+  fi
+}
+
+luks_auto_unlock_present() {
+  unlock_owner || return 0
+  if [[ $UNLOCK_OWNER == "platform" ]]; then
+    ! "$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" provision-verify >>"$LOG_FILE" 2>&1
+  else
+    limine_auto_unlock_present
+  fi
+}
+
+luks_auto_unlock_drop() {
+  unlock_owner || return 1
+  if [[ $UNLOCK_OWNER == "platform" ]]; then
+    "$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" provision-commit >>"$LOG_FILE" 2>&1
+  else
+    limine_auto_unlock_drop
+  fi
+}
+
+# The platform records the slots the re-key keeps; a no-op where nothing does.
+luks_record_slots() {
+  "$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" luks-slots "owner=$1" "recovery=$2" >>"$LOG_FILE" 2>&1
+}
+
+# Show the recovery key once, full-screen, until the owner types the
+# acknowledgement phrase. It is never written to disk or put in a process's
+# arguments, and the screen and its scrollback are cleared afterwards.
+show_recovery_key() {
+  local key=$1 typed=""
+  [[ -n $key ]] || return 0
+  # Never from the background worker: its output is the persistent log.
+  if [[ -n ${OMARCHY_PROVISION_WORKER:-} ]]; then
+    log_step "the recovery key can only be shown on the setup terminal"
+    return 1
+  fi
+  printf '%s' "$SHOW_CURSOR"
+  clear_logo
+  echo
+  if [[ ${RECOVERY_REPLACED:-0} == 1 ]]; then
+    say "Setup was interrupted before the recovery key was confirmed."
+    say "Replace any earlier copy with the new recovery key shown below."
+    echo
+  fi
+  say "This is your disk recovery key. Write it down and keep it somewhere safe."
+  say "It will not be shown again, and it is not stored on this machine."
+  echo
+  printf '%s' "$key" | gum style --bold --foreground 3 --padding "1 0 1 $PADDING_LEFT"
+  echo
+  say "Type '$RECOVERY_ACK_PHRASE' to continue."
+  while true; do
+    typed=$(gum input --placeholder "$RECOVERY_ACK_PHRASE" --prompt "> ") || true
+    [[ $typed == "$RECOVERY_ACK_PHRASE" ]] && break
+    say --foreground 1 "Type exactly: $RECOVERY_ACK_PHRASE"
+  done
+  printf '\e[3J\e[2J\e[H'
+  clear_logo
+}
+
 # Move the LUKS volume from the throwaway install passphrase to the user's
 # password and retire every other slot (throwaway + any seller keys a reset
-# left behind). luks_rekey journals each step, so an interrupted attempt
-# resumes where it stopped.
+# left behind) but an acknowledged recovery key. luks_rekey journals each step,
+# so an interrupted attempt resumes where it stopped.
 rekey_luks() {
   luks_rekey_pending || return 0
 
@@ -906,8 +999,10 @@ rekey_luks() {
 }
 
 # A re-key interrupted after the staged key was retired can only finish with
-# the password the disk already holds.
+# the password the disk already holds, and never with the recovery key.
 rekey_accepts_password() {
+  local -
+  set +x
   local device
   [[ -f $REKEY_STATE ]] || return 0
   if ! device=$(luks_device) || [[ ! -e $device ]]; then
@@ -977,6 +1072,20 @@ reset_limine_config() {
   done
 }
 
+# The menu starts over from the template; a platform whose boot package
+# implements boot-rebuild rebuilds its own boot files, elsewhere limine-update
+# rebuilds the UKI and entries.
+refresh_boot_entries() {
+  local rebuild
+  rebuild=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" --resolve boot-rebuild) || return 1
+  reset_limine_config
+  if [[ -n $rebuild ]]; then
+    "$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" boot-rebuild
+  else
+    limine-update
+  fi
+}
+
 cleanup_oem_state() {
   # Keep groups + packages: omarchy-system-factory-reset stages the bundled Node
   # tarball from these live copies when the factory snapshot predates it.
@@ -1020,8 +1129,7 @@ run_provisioning() {
   if limine_entries_stale; then
     log_step "refreshing boot entries for the new machine identity"
     echo boot >"$STATE_FILE"
-    reset_limine_config
-    limine-update
+    refresh_boot_entries
   fi
 
   if luks_staged_unlock_remains; then
@@ -1034,8 +1142,29 @@ run_provisioning() {
   log_step "first-boot setup complete"
 }
 
+# Where the platform's boot package owns the boot chain, it must be ready to
+# finish setup, and say whether setup adds a recovery key, before the owner is
+# asked anything.
+platform_ready() {
+  local error
+  if error=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" provision-prepare 2>&1 >>"$LOG_FILE") &&
+    error=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" --resolve luks-slots 2>&1 >/dev/null); then
+    return 0
+  fi
+  error=${error:-"The boot package could not prepare this machine for setup."}
+
+  log_step "the boot package is not ready for setup: $error"
+  clear_logo
+  echo
+  say --foreground 1 "$error"
+  sleep 5
+  return 1
+}
+
 run_setup() {
   local status
+
+  platform_ready || return 1
 
   while true; do
     keyboard_form
@@ -1048,7 +1177,11 @@ run_setup() {
     fi
     confirm_form || continue
     if ! rekey_accepts_password; then
-      notice "Setup already set the disk password. Enter that same password." 4
+      if luks_recovery_passphrase "$password"; then
+        notice "That is the disk recovery key. Choose a password of your own." 4
+      else
+        notice "Setup already set the disk password. Enter that same password." 4
+      fi
       continue
     fi
     break
@@ -1060,7 +1193,28 @@ run_setup() {
   rm -f "$FINALIZE_WARNING_FLAG"
   echo account >"$STATE_FILE"
 
-  run_provisioning >>"$LOG_FILE" 2>&1 &
+  # The recovery key is shown here, in the foreground, before the worker can
+  # retire the slots it does not keep.
+  recovery_key=""
+  local offered=0 rekey_device
+  recovery_key_offered || offered=$?
+  if (( offered == 2 )); then
+    say --foreground 1 "Could not tell whether setup adds a disk recovery key; will retry."
+    return 1
+  fi
+  if (( offered == 0 )) && [[ -f $PROVISIONING_DIR/luks-key ]]; then
+    if ! rekey_device=$(luks_device) || [[ ! -e $rekey_device ]]; then
+      say --foreground 1 "Could not locate the LUKS device to re-key."
+      return 1
+    fi
+    if ! prepare_luks_recovery "$rekey_device"; then
+      say --foreground 1 "Could not prepare and confirm a disk recovery key; will retry."
+      return 1
+    fi
+  fi
+  recovery_key=""
+
+  OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$LOG_FILE" 2>&1 &
   local worker=$!
 
   set_now
