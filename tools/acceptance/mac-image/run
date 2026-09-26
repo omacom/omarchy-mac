@@ -46,7 +46,8 @@ vm_cpus=${OMARCHY_VM_CPUS:-8}
 boot_timeout=${OMARCHY_VM_IMAGE_BOOT_TIMEOUT:-900}
 update_timeout=${OMARCHY_VM_IMAGE_UPDATE_TIMEOUT:-3600}
 disk_gib=${OMARCHY_VM_IMAGE_DISK_GIB:-35}
-first_boot_offline=${OMARCHY_VM_FIRST_BOOT_OFFLINE:-}
+first_boot_offline=""
+[[ ${OMARCHY_VM_FIRST_BOOT_OFFLINE:-} != 1 ]] || first_boot_offline=1
 ESP_UUID=4F4D-5801
 BOOT_UUID=4f4d5801-424f-4f54-8000-000000000001
 ROOT_UUID=4f4d5801-524f-4f54-8000-000000000001
@@ -1186,7 +1187,7 @@ scenario_snapshot_restore() {
   grep -aq '__marker_absent_42__' "$log" || fail "snapshot-restore: the snapshot boot still shows the change made after the snapshot"
   ok "snapshot-restore: the snapshot's Limine entry boots (unlock, login) into the snapshot, without the later change"
   guest_wait=900 guest_run "snapshot-restore: omarchy-snapshot restore" "omarchy-snapshot restore" "$sudo_reply" \
-    "[Rr]eboot[^\r\n]*\?[^\r\n]*=n" "\([yY]/[nN]\)=y" "\[[yY]/[nN]\]=y" "Press Enter to close\.="
+    "[Rr]eboot[^?[:cntrl:]]*\?[^[:cntrl:]]*=n" "\([yY]/[nN]\)=y" "\[[yY]/[nN]\]=y" "Press Enter to close\.="
   echo "$guest_output" | tr -d '\r' | sed -E $'s/\x1b\\[[0-9;?]*[[:alpha:]]//g' | tail -n 40 >"$evidence_dir/snapshot-restore-restore-output.txt"
   if ((guest_status != 0)) && grep -aqE 'running kernel is [^ ]+-aarch64-ARCH, not the installed linux-aurora' <<<"$guest_output"; then
     stop_guest
