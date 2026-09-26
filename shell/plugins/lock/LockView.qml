@@ -18,6 +18,8 @@ Item {
   // visible from then until the user wakes it, so a video must not keep
   // decoding through what is usually the longest part of a lock.
   property bool displaysBlank: false
+  // Any panel is dark, not only this one: the key that lights it is not typed.
+  property bool anyDisplayBlank: false
   property bool powerSaverActive: false
   property string passwordText: ""
   property bool syncingPasswordText: false
@@ -59,9 +61,9 @@ Item {
   }
 
   // A key pressed at a dark panel is there to wake it, not to type. Judge it
-  // before asking for the wake, which clears displaysBlank.
+  // before asking for the wake, which clears anyDisplayBlank.
   function isWakeKey(key, autoRepeat) {
-    if (displaysBlank) {
+    if (anyDisplayBlank) {
       heldWakeKey = key
       return true
     }
@@ -189,7 +191,7 @@ Item {
 
         onTextChanged: {
           // Text committed by an input method never passes Keys.onPressed.
-          if (!root.syncingPasswordText && root.displaysBlank) {
+          if (!root.syncingPasswordText && root.anyDisplayBlank) {
             root.wakeRequested()
             root.syncPasswordText()
             return

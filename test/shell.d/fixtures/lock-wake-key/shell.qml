@@ -65,23 +65,32 @@ ShellRoot {
 
         // Stand in for the lock service: a wake lights the panel, edits become the password.
         var wakes = 0
-        view.wakeRequested.connect(function() { wakes += 1; view.displaysBlank = false })
+        view.wakeRequested.connect(function() { wakes += 1; view.anyDisplayBlank = false })
         view.passwordTextEdited.connect(function(password) { view.passwordText = password })
 
         root.assertTrue(!view.isWakeKey(Qt.Key_A, false), "a lit lock types its first key")
 
-        view.displaysBlank = true
+        view.anyDisplayBlank = true
         root.assertTrue(view.isWakeKey(Qt.Key_A, false), "the key that wakes a blank lock is not typed")
-        view.displaysBlank = false
+        view.anyDisplayBlank = false
         root.assertTrue(view.isWakeKey(Qt.Key_A, true), "auto-repeats of a held wake key are not typed")
         root.assertTrue(!view.isWakeKey(Qt.Key_B, false), "the next key after the wake is typed")
         root.assertTrue(!view.isWakeKey(Qt.Key_A, true), "a new key ends the wake key hold")
         root.assertTrue(!view.isWakeKey(Qt.Key_A, false), "pressing the wake key again types it")
 
+        // Keyboard focus can sit on a panel that stayed lit while another went dark.
+        view.displaysBlank = false
+        view.anyDisplayBlank = true
+        root.assertTrue(view.isWakeKey(Qt.Key_C, false), "a lit panel's lock does not type the key that wakes another panel")
+        view.anyDisplayBlank = false
+        view.displaysBlank = true
+        root.assertTrue(!view.isWakeKey(Qt.Key_D, false), "the blank flag alone, once every panel is lit, does not swallow a key")
+        view.displaysBlank = false
+
         var input = root.findByObjectName(view, "passwordInput")
         root.assertTrue(input !== null, "the password field is reachable")
         if (input) {
-          view.displaysBlank = true
+          view.anyDisplayBlank = true
           input.insert(0, "x")
           root.assertTrue(wakes === 1, "input method text at a blank lock wakes it, got " + wakes + " wakes")
           root.assertTrue(input.text === "" && view.passwordText === "", "input method text at a blank lock is dropped, got '" + input.text + "'")

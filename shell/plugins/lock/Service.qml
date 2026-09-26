@@ -38,6 +38,9 @@ Item {
   // (a resume that kept the same outputs) resumes instead of freezing.
   property var monitorDpms: ({})
   property bool monitorDpmsKnown: false
+  // Hyprland lights every panel for a key when any one is dark, so the key that
+  // does it is a wake key whichever panel's lock surface holds keyboard focus.
+  readonly property bool anyDisplayBlank: displaysBlank && (!monitorDpmsKnown || anyMonitorDark(monitorDpms))
   readonly property bool videoBackground: Util.isVideoPath(backgroundPath)
   property bool strandedLock: false
   property bool strandedLockResolved: false
@@ -193,14 +196,21 @@ Item {
     return !monitorDpms[name]
   }
 
+  function anyMonitorDark(dpms) {
+    for (var name in dpms) {
+      if (!dpms[name]) return true
+    }
+    return false
+  }
+
   function applyMonitorDpms(text) {
     var monitors
     try {
       monitors = JSON.parse(String(text || ""))
     } catch (error) {
-      return
+      return false
     }
-    if (!Array.isArray(monitors)) return
+    if (!Array.isArray(monitors)) return false
 
     var dpms = {}
     for (var i = 0; i < monitors.length; i++) {
@@ -209,6 +219,14 @@ Item {
     }
     monitorDpms = dpms
     monitorDpmsKnown = true
+    return true
+  }
+
+  // Give up the blank state only once no panel is dark. An answer that cannot be
+  // read gives it up too, as a panel coming back always did.
+  function settleScreenDpms(text) {
+    if (!displaysBlank) return
+    if (!applyMonitorDpms(text) || !anyMonitorDark(monitorDpms)) displaysBlank = false
   }
 
   function submitPassword(value) {
@@ -315,6 +333,7 @@ Item {
         inputEnabled: root.lockRequested
         loadBackground: root.locked
         displaysBlank: root.screenBlank(lockSurface.screen ? lockSurface.screen.name : "")
+        anyDisplayBlank: root.anyDisplayBlank
         powerSaverActive: root.powerSaverActive
         passwordText: root.enteredPassword
         onPasswordTextEdited: function(password) { root.enteredPassword = password }
@@ -477,6 +496,29 @@ Item {
     }
   }
 
+  // Some display heads drop off the bus when DPMS turns them off and come
+  // straight back lit (Asahi's USB-C outputs, many DisplayPort monitors), so a
+  // panel coming back does not mean every panel is lit. Ask Hyprland once the
+  // outputs settle.
+  Timer {
+    id: screenDpmsSettleTimer
+    interval: 500
+    repeat: false
+    onTriggered: {
+      if (!root.displaysBlank) return
+      if (screenDpmsProcess.running) restart()
+      else screenDpmsProcess.running = true
+    }
+  }
+
+  Process {
+    id: screenDpmsProcess
+    command: ["hyprctl", "monitors", "-j"]
+    stdout: StdioCollector {
+      onStreamFinished: root.settleScreenDpms(text)
+    }
+  }
+
   Timer {
     id: idleBlankTimer
     interval: 5000
@@ -555,9 +597,9 @@ Item {
     target: Quickshell
     function onScreensChanged() {
       // A panel coming back is a display turning on that runWake did not ask
-      // for, so the blank state has to be given up here or a visible lock
-      // wallpaper stays frozen until the next keypress.
-      root.displaysBlank = false
+      // for, so the blank state is given up once no panel is dark, or a visible
+      // lock wallpaper stays frozen until the next keypress.
+      if (root.displaysBlank) screenDpmsSettleTimer.restart()
       root.requestSessionLock()
 
       // A monitor still coming up has no workspace, so cannot answer yet.
