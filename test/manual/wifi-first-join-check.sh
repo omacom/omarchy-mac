@@ -48,6 +48,25 @@ has_brcmfmac() { brcmfmac_iface >/dev/null; }
 apple_silicon() { [[ $(omarchy-hw-platform) == "apple-silicon" ]]; }
 iwd_backend() { NetworkManager --print-config | grep -Fx 'wifi.backend=iwd' >/dev/null; }
 active_wifi() { nmcli -t -f NAME,TYPE connection show --active | awk -F: '$2 == "802-11-wireless" { print $1; exit }'; }
+autoconnects() { [[ $(nmcli -g connection.autoconnect connection show "$connection") == "yes" ]]; }
+# FRESH makes iwd forget the network, so NetworkManager must hold the password
+# to join again. A connection mirrored from iwd has none.
+stores_password() {
+  [[ $(nmcli -g 802-11-wireless-security.psk-flags connection show "$connection") == 0* ]] &&
+    [[ -n $(sudo -n nmcli -s -g 802-11-wireless-security.psk connection show "$connection") ]]
+}
+iwd_knows() { sudo -n iwctl known-networks list | sed 's/\x1b\[[0-9;]*m//g' | grep -F "  $1  " >/dev/null; }
+forgotten() { ! iwd_knows "$ssid"; }
+
+# The iwd running now has to have loaded the Apple default: a package upgrade
+# reaches iwd only when it next starts.
+runs_apple_default() {
+  local invocation
+  [[ -f /usr/lib/omarchy-mac/iwd/main.conf && ! -e /etc/iwd/main.conf ]] || return 0
+  invocation=$(systemctl show -P InvocationID iwd.service)
+  journalctl -q -u iwd.service _SYSTEMD_INVOCATION_ID="$invocation" -o cat |
+    grep -Fx 'Loaded configuration from /usr/lib/omarchy-mac/iwd/main.conf' >/dev/null
+}
 
 leased() {
   local iface
@@ -71,11 +90,15 @@ band() {
 }
 
 cleanup() {
+  # An abort between unload and load would leave the Mac without Wi-Fi.
+  lsmod | grep -q '^brcmfmac ' || sudo -n modprobe brcmfmac || true
   if [[ ${FRESH:-0} == 1 && -n ${connection:-} ]]; then
     nmcli connection delete omarchy-first-join-check >/dev/null 2>&1 || true
     nmcli connection modify "$connection" connection.autoconnect "$autoconnect" || true
-    nmcli connection up "$connection" >/dev/null 2>&1 ||
-      echo "note - join $connection from the network panel; it may ask for the password again" >&2
+    if [[ $(nmcli -g GENERAL.STATE connection show "$connection") != "activated" ]]; then
+      nmcli connection up "$connection" >/dev/null 2>&1 ||
+        echo "note - join $connection from the network panel; it may ask for the password again" >&2
+    fi
   fi
 }
 
@@ -86,7 +109,12 @@ check "sudo works without a password" sudo -n true
 connection=${1:-$(active_wifi)}
 trials=${2:-10}
 check "a saved Wi-Fi connection is named" test -n "$connection"
-journalctl -q -b -u iwd --grep 'Loaded configuration' -o cat | tail -n 1 || echo "iwd runs with its built-in defaults"
+check "iwd runs the Apple default (restart iwd or reboot after an upgrade)" runs_apple_default
+if [[ ${FRESH:-0} == 1 ]]; then
+  check "NetworkManager stores the password for $connection" stores_password
+else
+  check "$connection connects automatically" autoconnects
+fi
 
 autoconnect=$(nmcli -g connection.autoconnect connection show "$connection")
 trap cleanup EXIT
@@ -97,7 +125,8 @@ for ((trial = 1; trial <= trials; trial++)); do
     nmcli connection delete omarchy-first-join-check >/dev/null 2>&1 || true
     nmcli connection modify "$connection" connection.autoconnect no
     ssid=$(nmcli -g 802-11-wireless.ssid connection show "$connection")
-    iwctl known-networks "$ssid" forget >/dev/null 2>&1 || true
+    sudo -n iwctl known-networks "$ssid" forget >/dev/null 2>&1 || true
+    check "iwd forgot $ssid" forgotten
     nmcli connection clone "$connection" omarchy-first-join-check >/dev/null
     joining=omarchy-first-join-check
   fi
