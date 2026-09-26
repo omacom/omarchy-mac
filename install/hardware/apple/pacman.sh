@@ -1,19 +1,27 @@
-# Apple Silicon has no Omarchy repository in pacman.conf by default: the
-# post-install restore deliberately skips the x86 pacman.conf and mirrorlist,
-# and Arch Linux ARM carries none of Omarchy's own packages. The aarch64 builds
-# of those live in [omarchy-aarch64], published from omarchy-pkgs-aarch64. The
-# video decode, 1Password, Cursor, voxtype, Widevine and share-picker installs
-# all pkg-add from it, so this runs before every other Apple leaf.
-#
-# Unsigned, so SigLevel matches what that repository documents. Sourced by
-# install/hardware/all.sh as root during setup, and by the migration as a
-# user, hence the sudo fallback.
+# Legacy only: sourced by migration 1788200000 on Apple Silicon installs made
+# before the signed [omarchy] repository carried Omarchy's aarch64 packages.
+# Their pacman.conf had no Omarchy repository (the post-install restore skips
+# the x86 pacman.conf and mirrorlist), so it adds the unsigned [omarchy-aarch64]
+# that omarchy-pkgs-aarch64 publishes, with the SigLevel that repository
+# documents. Fresh installs and images never run it: install/hardware/all.sh
+# does not list it, and an image-built Mac takes every package signed from
+# [omarchy], asahi-alarm and Arch Linux ARM, so it returns before touching
+# anything there, including a queue an older image deferred. Runs as a user
+# from the migration, hence the sudo fallback.
 #
 # Adding the stanza is not enough: pacman refuses to install from a repository
 # whose database it has never fetched. The pending marker records a sync still
 # owed, so a fetch that failed (no network yet) is retried on the next run
 # instead of leaving a configured repository nothing can install from.
 omarchy-hw-apple-silicon || return 0
+
+image_dir=/var/lib/omarchy/image
+if (( ${EUID:-$(id -u)} != 0 )); then
+  image_dir=${OMARCHY_IMAGE_ROOT:-}$image_dir
+fi
+if [[ -e $image_dir/target || -e $image_dir/target.booted ]]; then
+  return 0
+fi
 
 pacman_conf="${OMARCHY_PACMAN_CONF:-/etc/pacman.conf}"
 sync_pending="${OMARCHY_AARCH64_REPO_PENDING:-/var/lib/omarchy/migrations/omarchy-aarch64-sync-pending}"
