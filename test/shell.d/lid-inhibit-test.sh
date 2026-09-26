@@ -4,6 +4,9 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
+# The watcher half opens its event stream with {fd}> redirection.
+(( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] >= 401 )) || fail "this test runs under bash 4.1 or newer" "$BASH_VERSION"
+
 lid_inhibit="$ROOT/bin/omarchy-system-lid-inhibit"
 
 test_tmp=$(mktemp -d)
@@ -49,6 +52,8 @@ unit_state="$test_tmp/unit-active"
 call_log="$test_tmp/calls"
 monitors="$test_tmp/monitors.json"
 hyprctl_fail="$test_tmp/hyprctl-fails"
+busctl_fail="$test_tmp/busctl-fails"
+cgroup="$test_tmp/cgroup"
 events="$test_tmp/events"
 mkdir -p "$fake_bin"
 
@@ -88,6 +93,7 @@ cat >"$fake_bin/busctl" <<'SH'
 #!/bin/bash
 
 [[ $* == *" HandleLidSwitchDocked" ]] || exit 1
+[[ -f $OMARCHY_TEST_BUSCTL_FAIL ]] && exit 1
 printf 's "%s"\n' "$OMARCHY_TEST_DOCKED_ACTION"
 SH
 
@@ -112,6 +118,8 @@ export OMARCHY_TEST_UNIT_STATE="$unit_state"
 export OMARCHY_TEST_CALL_LOG="$call_log"
 export OMARCHY_TEST_MONITORS="$monitors"
 export OMARCHY_TEST_HYPRCTL_FAIL="$hyprctl_fail"
+export OMARCHY_TEST_BUSCTL_FAIL="$busctl_fail"
+export OMARCHY_CGROUP_PATH="$cgroup"
 export OMARCHY_TEST_DOCKED_ACTION=ignore
 export OMARCHY_TEST_LAPTOP=1
 
@@ -134,9 +142,12 @@ write_monitors() {
 }
 
 reset_unit() {
-  rm -f "$unit_state" "$hyprctl_fail"
+  rm -f "$unit_state" "$hyprctl_fail" "$busctl_fail"
   : >"$call_log"
 }
+
+# Where the caller runs: an SSH login's session scope, outside the user manager.
+printf '0::/user.slice/user-1000.slice/session-3.scope\n' >"$cgroup"
 
 clamshell='[{"name":"eDP-1","disabled":true,"dpmsStatus":true},{"name":"USB-2","disabled":false,"dpmsStatus":true}]'
 
@@ -166,6 +177,20 @@ for arg in --no-ask-password --what=handle-lid-switch --mode=block PartOf=graphi
 done
 pass "a USB-C display on a USB connector takes a blocking lid inhibitor without prompting"
 
+[[ $start != *BindsTo=* ]] || fail "a caller outside the user manager binds the inhibitor to nothing" "$start"
+pass "a caller outside the user manager binds the inhibitor to nothing"
+
+# The watcher runs in a scope of the user manager; the inhibitor stops with it.
+reset_unit
+watcher_scope='app-Hyprland-omarchy\x2dhyprland\x2dmonitor\x2dwatch-f1fda151.scope'
+printf '0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-graphical.slice/%s\n' "$watcher_scope" >"$cgroup"
+sync_inhibit
+start=$(grep '^start' "$call_log")
+[[ $start == *"--property=BindsTo=$watcher_scope --property=After=$watcher_scope"* ]] ||
+  fail "the inhibitor is bound to the watcher's unit" "$start"
+printf '0::/user.slice/user-1000.slice/session-3.scope\n' >"$cgroup"
+pass "the inhibitor is bound to the watcher's unit, so it cannot outlive it"
+
 sync_inhibit
 sync_inhibit
 (( $(count_calls start) == 1 && $(count_calls stop) == 0 && $(count_calls refused) == 0 )) ||
@@ -183,14 +208,24 @@ pass "a USB-C display blanked by DPMS keeps the inhibitor"
 # Hyprland misses queries while it reconfigures outputs, which is exactly what
 # a lid close sets off. Releasing on a missed answer would suspend the machine.
 touch "$hyprctl_fail"
-sync_inhibit
+sync_inhibit || fail "an unanswered compositor query is not an error"
 held || fail "an unanswered compositor query keeps the inhibitor"
-write_monitors ''
 rm -f "$hyprctl_fail"
-sync_inhibit
+write_monitors ''
+sync_inhibit || fail "an empty compositor answer is not an error"
 held || fail "an empty compositor answer keeps the inhibitor"
+write_monitors 'HYPRLAND_INSTANCE_SIGNATURE not set!'
+sync_inhibit || fail "a compositor answer that is not JSON is not an error"
+held || fail "a compositor answer that is not JSON keeps the inhibitor"
 write_monitors "$clamshell"
 pass "a compositor that does not answer changes nothing"
+
+# logind can miss a query too, and the release would suspend the machine just the same.
+touch "$busctl_fail"
+sync_inhibit || fail "an unanswered logind query is not an error"
+held || fail "an unanswered logind query keeps the inhibitor"
+rm -f "$busctl_fail"
+pass "logind not answering changes nothing"
 
 # Unplugging is read from the connector, so it releases even when the compositor
 # cannot be asked.
@@ -209,9 +244,12 @@ pass "a sync with nothing held changes nothing"
 reset_unit
 write_connectors card2-eDP-1 connected card2-USB-2 connected
 touch "$hyprctl_fail"
-sync_inhibit
-[[ ! -s $call_log ]] || fail "an unanswered compositor query takes no inhibitor" "$(<"$call_log")"
-pass "an unanswered compositor query takes no inhibitor either"
+sync_inhibit || fail "an unanswered compositor query is not an error"
+touch "$busctl_fail"
+rm -f "$hyprctl_fail"
+sync_inhibit || fail "an unanswered logind query is not an error"
+[[ ! -s $call_log ]] || fail "an unanswered query takes no inhibitor" "$(<"$call_log")"
+pass "an unanswered query takes no inhibitor either"
 
 # A display left plugged in but switched off in the monitor config is not in use,
 # and a closed lid should suspend as it would with that display on HDMI.
