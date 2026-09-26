@@ -270,7 +270,9 @@ was already applying in the visible update terminal.
 
 `omarchy-migrate` waits for any active pacman transaction to finish, then runs
 pending migrations. It does not need `--force`; migrations happen when state
-files are missing. `omarchy update` runs `omarchy-migrate` after the package
+files are missing. A migration that exits 75 is deferred: it stays pending with
+its login notification while the later migrations and the rest of the update
+run; any other failure stops the queue. `omarchy update` runs `omarchy-migrate` after the package
 transaction in the already-visible update terminal, then runs
 `omarchy-hook post-update`.
 

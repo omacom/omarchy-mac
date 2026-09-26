@@ -48,6 +48,10 @@ echo /usr/lib/omarchy/mac-boot/migrate >"$tmp/resolves"
 echo 2 >"$tmp/status"
 if run_migration >/dev/null 2>&1; then fail "a refused platform migration leaves the migration pending"; fi
 [[ ! -e $marker ]] || fail "a refused platform migration writes no marker"
+echo 75 >"$tmp/status"
+status=0
+run_migration >/dev/null 2>&1 || status=$?
+[[ $status == 75 && ! -e $marker ]] || fail "a deferred platform migration exits 75 for omarchy-migrate and writes no marker" "status $status"
 echo 0 >"$tmp/status"
 run_migration >/dev/null || fail "an entrypoint: the migration completes"
 [[ $(sed -n 1,2p "$tmp/ran") == $'sudo omarchy-lifecycle-dispatch migrate\ndispatch migrate' && -e $marker ]] ||
@@ -55,7 +59,7 @@ run_migration >/dev/null || fail "an entrypoint: the migration completes"
 run_migration >/dev/null || fail "another account: the migration completes"
 [[ ! -e $tmp/ran ]] || fail "another account: nothing runs once the machine migrated" "$(cat "$tmp/ran")"
 rm "$marker"
-pass "a platform migration runs through the dispatcher as root, its refusal keeps the migration pending, and other accounts skip it once it ran"
+pass "a platform migration runs through the dispatcher as root, its refusal or deferral keeps the migration pending, and other accounts skip it once it ran"
 
 : >"$tmp/undetermined"
 if run_migration >/dev/null 2>&1; then fail "an undetermined platform leaves the migration pending"; fi

@@ -85,16 +85,35 @@ wait_for_pacman_transaction
 mkdir -p "$STATE_DIR"
 [[ -d $MIGRATIONS_DIR ]] || exit 0
 
+# A migration that exits 75 (EX_TEMPFAIL) is deferred: it left nothing half
+# done, stays pending with its login notification, and nothing later depends on
+# it, so the rest of the migrations and of the update go ahead. Any other
+# failure stops here, as before.
+deferred=()
+
 while IFS=$'\t' read -r name file marker <&3; do
   [[ -n $name ]] || continue
 
   if [[ ! -f $marker ]]; then
     echo -e "\e[32m\nRunning migration (${name%.sh})\e[0m"
-    OMARCHY_PATH="$OMARCHY_PATH" bash -euo pipefail "$file" 3<&-
+    status=0
+    OMARCHY_PATH="$OMARCHY_PATH" bash -euo pipefail "$file" 3<&- || status=$?
+    if (( status == 75 )); then
+      deferred+=("${name%.sh}")
+      echo -e "\e[33mMigration ${name%.sh} deferred; it stays pending and runs again with the next update or omarchy-migrate\e[0m"
+      continue
+    elif (( status != 0 )); then
+      exit "$status"
+    fi
     mkdir -p "$(dirname "$marker")"
     touch "$marker"
   fi
 done 3< <(migration_entries)
+
+if (( ${#deferred[@]} > 0 )); then
+  echo -e "\e[33m\nDeferred migrations still pending: ${deferred[*]}\e[0m"
+  exit 0
+fi
 
 # Clear a login-time notification the user left sitting there and then resolved
 # by running migrations some other way. The substring matches both the current
