@@ -1,0 +1,118 @@
+#!/bin/bash
+# Keeps a Mac's external displays dark while the boot splash runs on its
+# built-in screen, and turns them on for the desktop.
+#
+#   hold cardN  udev, as the Apple display card appears and before Plymouth
+#               can see it: forces every connector but the built-in panel off,
+#               only while the splash runs, on a laptop whose lid is open
+#               (a shut lid, a desktop Mac or an unknown lid keeps them all)
+#   release     omarchy-mac-external-displays.service, after the splash quits
+#               and before the display manager: turns them back on
+#
+# "off" and "detect" in a connector's status set and clear the kernel's force;
+# neither sends a uevent, so release sends each card a synthetic change that
+# the udev rule makes a hotplug (HOTPLUG=1) for the display manager and
+# compositor. The kernel console keeps the heads it lit when the card came up,
+# so an external display may wake to a black console instead of staying
+# asleep. A boot that never reaches multi-user.target (emergency, rescue)
+# keeps the held displays off for that session.
+
+set -uo pipefail
+
+sysfs=${OMARCHY_SYSFS:-/sys}
+state=${OMARCHY_MAC_DISPLAYS_STATE:-/run/omarchy-mac}
+plymouth=${OMARCHY_PLYMOUTH:-/usr/bin/plymouth}
+busctl=${OMARCHY_BUSCTL:-/usr/bin/busctl}
+held=$state/external-displays-held
+released=$state/external-displays-released
+
+lock() {
+  mkdir -p "$state" && exec 9>"$state/external-displays.lock" && flock -w 10 9
+}
+
+splash_running() {
+  [[ -x $plymouth ]] && "$plymouth" --ping
+}
+
+laptop() {
+  local chassis=""
+  [[ -r $sysfs/firmware/devicetree/base/chassis-type ]] &&
+    read -r -d '' chassis <"$sysfs/firmware/devicetree/base/chassis-type"
+  [[ $chassis == laptop ]]
+}
+
+lid_open() {
+  [[ -x $busctl ]] &&
+    [[ $("$busctl" --timeout=2 get-property org.freedesktop.login1 /org/freedesktop/login1 \
+      org.freedesktop.login1.Manager LidClosed 2>/dev/null) == "b false" ]]
+}
+
+# The card's connectors register right after it; the built-in panel is one.
+panel_registered() {
+  local card=$1 tries
+  for ((tries = 0; tries < 100; tries++)); do
+    compgen -G "$sysfs/class/drm/$card-eDP-*" >/dev/null && return 0
+    sleep 0.02
+  done
+  return 1
+}
+
+hold() {
+  local card=$1 path connector
+  [[ $card =~ ^card[0-9]+$ ]] || return 0
+  lock || return 0
+  [[ ! -e $released ]] && splash_running && laptop && lid_open && panel_registered "$card" || return 0
+  for path in "$sysfs/class/drm/$card"-*; do
+    connector=${path##*/}
+    [[ $connector == "$card"-eDP-* || ! -w $path/status ]] && continue
+    grep -Fxq "$connector" "$held" 2>/dev/null && continue
+    printf '%s\n' "$connector" >>"$held" || continue
+    printf 'off\n' >"$path/status" ||
+      echo "omarchy-mac-external-displays: could not hold $connector off" >&2
+  done
+  return 0
+}
+
+# A connector that cannot be turned on stays in the list for a restart.
+release() {
+  local connector card cards=() still=() uuid status=0
+  lock || echo "omarchy-mac-external-displays: releasing without the lock" >&2
+  : >"$released" || status=1
+  [[ -f $held ]] || return "$status"
+  while IFS= read -r connector; do
+    [[ $connector =~ ^card[0-9]+-[A-Za-z0-9-]+$ ]] || continue
+    if ! printf 'detect\n' >"$sysfs/class/drm/$connector/status"; then
+      echo "omarchy-mac-external-displays: could not turn $connector back on" >&2
+      still+=("$connector")
+      status=1
+      continue
+    fi
+    card=${connector%%-*}
+    [[ " ${cards[*]-} " == *" $card "* ]] || cards+=("$card")
+  done <"$held"
+  if (( ${#still[@]} )); then
+    printf '%s\n' "${still[@]}" >"$held"
+  else
+    rm -f "$held"
+  fi
+  # A synthetic uevent's arguments must be alphanumeric (lib/kobject_uevent.c).
+  for card in "${cards[@]}"; do
+    if read -r uuid <"${OMARCHY_UUID_SOURCE:-/proc/sys/kernel/random/uuid}" &&
+      printf 'change %s OMARCHYMACDISPLAYS=1\n' "$uuid" >"$sysfs/class/drm/$card/uevent"; then
+      echo "omarchy-mac-external-displays: turned the external displays on $card back on"
+    else
+      echo "omarchy-mac-external-displays: could not signal $card; its displays come on at the next hotplug" >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
+case ${1:-} in
+  hold) hold "${2:-}" ;;
+  release) release ;;
+  *)
+    echo "Usage: ${0##*/} hold cardN | release" >&2
+    exit 2
+    ;;
+esac
