@@ -46,6 +46,8 @@ vm_cpus=${OMARCHY_VM_CPUS:-8}
 boot_timeout=${OMARCHY_VM_IMAGE_BOOT_TIMEOUT:-900}
 update_timeout=${OMARCHY_VM_IMAGE_UPDATE_TIMEOUT:-3600}
 disk_gib=${OMARCHY_VM_IMAGE_DISK_GIB:-35}
+first_boot_offline=""
+[[ ${OMARCHY_VM_FIRST_BOOT_OFFLINE:-} != 1 ]] || first_boot_offline=1
 ESP_UUID=4F4D-5801
 BOOT_UUID=4f4d5801-424f-4f54-8000-000000000001
 ROOT_UUID=4f4d5801-524f-4f54-8000-000000000001
@@ -55,14 +57,14 @@ owner_user=owner
 
 scenarios=(first-boot conversion second-boot password-change recovery-reset update snapshot-restore factory-reset)
 declare -A about=(
-  [first-boot]="plain install (encrypt=0): first boot, owner setup, console login; Plymouth theme, /.snapshots, default sink"
+  [first-boot]="plain install (encrypt=0): first boot runs every deferred hardware step, owner setup, console login; Plymouth theme, /.snapshots, default sink"
   [conversion]="encrypted install: LUKS2 conversion in the initrd, first boot, owner setup re-keys to the owner password and a recovery key"
   [second-boot]="the re-keyed disk boots Limine's command line: a wrong password is refused, the owner's unlocks"
   [password-change]="omarchy-drive-password moves the disk, login and root to a new password; the next boot unlocks with it"
   [recovery-reset]="an owner with only the recovery key unlocks with it and sets a new disk, login and root password before the login screen, through a power loss mid-reset (needs omarchy-drive-recover, ticket 70)"
   [update]="omarchy update -y on the re-keyed disk: packages upgrade, boot files verify, the updated disk boots (needs update-verify, omacom/omarchy-mac#543)"
-  [snapshot-restore]="snapshot boot and restore (needs the snapshot boot check, ticket 36)"
-  [factory-reset]="factory reset through lifecycle dispatch (needs reset-prepare, ticket 34)"
+  [snapshot-restore]="omarchy-snapshot create adds a Limine entry that boots the snapshot; omarchy-snapshot restore puts it back (needs the snapshot boot check, ticket 36)"
+  [factory-reset]="omarchy-system-factory-reset wipes the owner, /etc drift and the old keys; owner setup runs again (needs reset-prepare, ticket 34)"
 )
 
 while (($#)); do
@@ -513,15 +515,18 @@ serial_log=""
 serial_pos=0
 serial_match=""
 
+# Boots a disk with the command line given; "offline" as the fourth argument
+# gives the guest no network device.
 boot_guest() {
-  local disk=$1 log=$2 cmdline=$3
+  local disk=$1 log=$2 cmdline=$3 net=(-netdev user,id=n0 -device virtio-net-pci,netdev=n0,romfile=)
+  [[ ${4:-} != offline ]] || net=(-nic none)
   rm -f "$log" "$serial_sock"
   echo "$cmdline" >"${log%.log}.cmdline"
   qemu-system-aarch64 -M "$machine" -cpu host -m "$vm_memory_mb" -smp "$vm_cpus" \
     -bios "$work/generic/QEMU_EFI.fd" -dtb "$work/apple.dtb" -kernel "$work/generic/Image-generic" -initrd "$work/generic/initramfs-generic.img" \
     -append "$cmdline $vm_append" \
     -drive "file=$disk,format=raw,if=none,id=d0,cache=writeback" -device virtio-blk-pci,drive=d0,romfile= \
-    -netdev user,id=n0 -device virtio-net-pci,netdev=n0,romfile= \
+    "${net[@]}" \
     -device virtio-rng-pci -device qemu-xhci -device usb-kbd \
     -display none -monitor none \
     -chardev "socket,id=ser0,path=$serial_sock,server=on,wait=off,logfile=$log" -serial chardev:ser0 &
@@ -786,8 +791,8 @@ check_regdom() {
 scenario_first_boot() {
   local disk=$work/first-boot.img log=$evidence_dir/first-boot-serial.log dev
   make_disk "$disk" $'format=1\nencrypt=0\nlane='"$lane"$'\n'
-  say "first-boot: plain install (install.conf encrypt=0)"
-  boot_guest "$disk" "$log" "$(limine_cmdline "$work/payload/esp/limine.conf")"
+  say "first-boot: plain install (install.conf encrypt=0)${first_boot_offline:+, no network}"
+  boot_guest "$disk" "$log" "$(limine_cmdline "$work/payload/esp/limine.conf")" ${first_boot_offline:+offline}
   serial_expect 'install.conf sets encrypt=0' "first-boot: the encrypt unit read install.conf"
   first_boot_finished first-boot
   owner_setup first-boot 0
@@ -799,6 +804,11 @@ scenario_first_boot() {
   mount_root "${dev}p3"
   keep_guest_logs first-boot
   owner_state first-boot
+  if sudo -n test -e "$work/mnt/var/lib/omarchy/image/deferred-steps"; then
+    not_ok "first-boot: deferred hardware steps still queued: $(sudo -n cat "$work/mnt/var/lib/omarchy/image/deferred-steps" | tr '\n' ' ')"
+  else
+    ok "first-boot: every deferred hardware step completed${first_boot_offline:+ with no network device}"
+  fi
   sudo -n grep -qx 'encrypt=0' "$work/mnt/var/lib/omarchy/mac-first-boot/install.conf" || fail "first-boot: install.conf was not persisted"
   mkdir -p "$work/esp"
   mount_tracked -o ro "${dev}p1" "$work/esp"
@@ -1048,18 +1058,6 @@ scenario_recovery_reset() {
   ok "recovery-reset: the next boot unlocks with the new password, offers no reset, and the new password logs in $owner_user and root"
 }
 
-# Cases whose lifecycle entrypoints no image ships yet. Each is named and runs
-# on its own; it skips while the image lacks the entrypoint, and fails once an
-# image ships it, so the case gets automated before anything relies on it.
-entrypoint_case() {
-  local name=$1 why=$2
-  if [[ -n ${image_ships[$name]:-} ]]; then
-    not_ok "$name: the image ships ${image_ships[$name]}; automate this case"
-  else
-    skip "$name: $why"
-  fi
-}
-
 # The runtime packages pacman -Q printed on the console, as "name version"
 # lines: line ends and the console's escape sequences removed, both CSI (a
 # hidden cursor) and OSC (the shell's systemd context markers).
@@ -1136,12 +1134,149 @@ scenario_update() {
   ok "update: the updated disk unlocks with the owner's password and reaches the login prompt"
 }
 
-scenario_snapshot_restore() {
-  entrypoint_case snapshot-restore "the image has no /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check (snapshot boot and restore, ticket 36)"
+# Mounts a disk's ESP read-only, keeps its limine.conf as evidence and sets
+# SNAP_CMDLINE to the command line of its first snapshot entry (empty if none).
+snapshot_cmdline() {
+  local dev
+  attach -P -r "$1"; dev=$ATTACHED
+  mkdir -p "$work/mnt"
+  mount_tracked -o ro "${dev}p1" "$work/mnt"
+  sudo -n cat "$work/mnt/limine.conf" >"$evidence_dir/$2-limine.conf"
+  SNAP_CMDLINE=$(sudo -n awk '/^[[:space:]]*cmdline:.*\.snapshots\/[0-9]+\/snapshot/ { sub(/^[[:space:]]*cmdline:[[:space:]]*/, ""); print; exit }' "$work/mnt/limine.conf")
+  umount_last
+  detach_last
 }
 
+# The owner snapshots the re-keyed disk and changes /etc. The snapshot's Limine
+# entry boots the snapshot without the change; omarchy-snapshot restore from
+# there, through the Mac's snapshot check, puts it back, and the normal entry
+# then boots the restored root. The check compares the running kernel with the
+# installed linux-aurora, which the guest's generic kernel never is: a refusal
+# for that reason alone is recorded as a skip, and the restore is qualified on
+# a Mac.
+scenario_snapshot_restore() {
+  if [[ -z ${image_ships[snapshot-restore]:-} ]]; then
+    skip "snapshot-restore: the image has no /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check (snapshot boot and restore, ticket 36)"
+    return 0
+  fi
+  need_conversion snapshot-restore
+  local disk=$work/snapshot-restore.img log=$evidence_dir/snapshot-restore-serial.log sudo_reply
+  sudo_reply="\[sudo\] password for [a-z]+:=$owner_password"
+  copy_disk "$conversion_disk" "$disk"
+  disk_cmdline "$disk"
+  say "snapshot-restore: snapshot, change, boot the snapshot from its Limine entry, restore"
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt snapshot-restore
+  serial_type "$owner_password"
+  console_login snapshot-restore "$owner_password" || fail "snapshot-restore: $owner_user could not log in"
+  guest_run "snapshot-restore: omarchy-snapshot create" "omarchy-snapshot create" "$sudo_reply"
+  ((guest_status == 0)) || fail "snapshot-restore: omarchy-snapshot create exited $guest_status (see ${log##*/})"
+  guest_wait=300 guest_run "snapshot-restore: limine-snapper-sync" "sudo limine-snapper-sync; sleep 5; sudo touch /etc/omarchy-vm-after-snapshot; sync" "$sudo_reply"
+  settle_guest
+  stop_guest
+  snapshot_cmdline "$disk" snapshot-restore
+  [[ -n $SNAP_CMDLINE ]] || fail "snapshot-restore: limine.conf has no snapshot entry after omarchy-snapshot create"
+  ok "snapshot-restore: omarchy-snapshot create added a Limine snapshot entry ($(grep -oE 'subvol=[^ ,]+' <<<"$SNAP_CMDLINE" | head -1))"
+  log=$evidence_dir/snapshot-restore-snapshot-serial.log
+  boot_guest "$disk" "$log" "$SNAP_CMDLINE"
+  unlock_prompt snapshot-restore
+  serial_type "$owner_password"
+  console_login snapshot-restore "$owner_password" || fail "snapshot-restore: no login on the snapshot boot"
+  no_emergency snapshot-restore
+  guest_run "snapshot-restore: snapshot root" "test ! -e /etc/omarchy-vm-after-snapshot && echo __marker_absent_\$((40+2))__; findmnt -no FSTYPE /"
+  grep -aq '__marker_absent_42__' "$log" || fail "snapshot-restore: the snapshot boot still shows the change made after the snapshot"
+  ok "snapshot-restore: the snapshot's Limine entry boots (unlock, login) into the snapshot, without the later change"
+  guest_wait=900 guest_run "snapshot-restore: omarchy-snapshot restore" "omarchy-snapshot restore" "$sudo_reply" \
+    "[Rr]eboot[^?[:cntrl:]]*\?[^[:cntrl:]]*=n" "\([yY]/[nN]\)=y" "\[[yY]/[nN]\]=y" "Press Enter to close\.="
+  echo "$guest_output" | tr -d '\r' | sed -E $'s/\x1b\\[[0-9;?]*[[:alpha:]]//g' | tail -n 40 >"$evidence_dir/snapshot-restore-restore-output.txt"
+  if ((guest_status != 0)) && grep -aqE 'running kernel is [^ ]+-aarch64-ARCH, not the installed linux-aurora' <<<"$guest_output"; then
+    stop_guest
+    skip "snapshot-restore: restore: the Mac's snapshot check refused it because the guest runs the generic kernel, not linux-aurora; a Mac qualifies the restore"
+    return 0
+  fi
+  ((guest_status == 0)) || fail "snapshot-restore: omarchy-snapshot restore exited $guest_status (see snapshot-restore-restore-output.txt)"
+  ok "snapshot-restore: omarchy-snapshot restore (limine-snapper-restore with the Mac's snapshot check) finished"
+  settle_guest
+  stop_guest
+  disk_cmdline "$disk"
+  log=$evidence_dir/snapshot-restore-restored-serial.log
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt snapshot-restore
+  serial_type "$owner_password"
+  console_login snapshot-restore "$owner_password" || fail "snapshot-restore: no login after the restore"
+  no_emergency snapshot-restore
+  guest_run "snapshot-restore: restored root" "test ! -e /etc/omarchy-vm-after-snapshot && echo __restored_\$((40+2))__; findmnt -no OPTIONS / | grep -o 'subvol=[^,]*'"
+  grep -aq '__restored_42__' "$log" || fail "snapshot-restore: after the restore the normal boot still has the change made after the snapshot"
+  stop_guest
+  ok "snapshot-restore: the normal Limine entry boots the restored root: unlock, login, the post-snapshot change gone"
+}
+
+# The owner runs omarchy-system-factory-reset at the console of the re-keyed
+# disk, confirming with the disk password and "reset". The next boot finishes
+# the reset without asking for the old password and runs owner setup again:
+# afterwards only the new owner's password and a new recovery key open the
+# disk, /etc drift and the old owner's files are gone, and the next boot
+# unlocks with the new password.
 scenario_factory_reset() {
-  entrypoint_case factory-reset "the image has no /usr/lib/omarchy/mac-boot/reset-prepare (factory reset through lifecycle dispatch, ticket 34)"
+  if [[ -z ${image_ships[factory-reset]:-} ]]; then
+    skip "factory-reset: the image has no /usr/lib/omarchy/mac-boot/reset-prepare (factory reset through lifecycle dispatch, ticket 34)"
+    return 0
+  fi
+  need_conversion factory-reset
+  local disk=$work/factory-reset.img log=$evidence_dir/factory-reset-serial.log dev old_recovery new_owner_key recovery_file sudo_reply
+  sudo_reply="\[sudo\] password for [a-z]+:=$owner_password"
+  copy_disk "$conversion_disk" "$disk"
+  disk_cmdline "$disk"
+  say "factory-reset: omarchy-system-factory-reset from the owner's console"
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt factory-reset
+  serial_type "$owner_password"
+  console_login factory-reset "$owner_password" || fail "factory-reset: $owner_user could not log in"
+  guest_run "factory-reset: owner file" "touch ~/omarchy-vm-owner-file; sudo touch /etc/omarchy-vm-drift" "$sudo_reply"
+  guest_wait=900 guest_run "factory-reset: omarchy-system-factory-reset" "omarchy-system-factory-reset" "$sudo_reply" \
+    "Passphrase> =$owner_password" "ype 'reset' to continue=reset" "Reboot to complete the reset\?=n"
+  echo "$guest_output" | tr -d '\r' | sed -E $'s/\x1b\\[[0-9;?]*[[:alpha:]]//g' | tail -n 40 >"$evidence_dir/factory-reset-output.txt"
+  ((guest_status == 0)) || fail "factory-reset: omarchy-system-factory-reset exited $guest_status (see factory-reset-output.txt)"
+  grep -aq 'Reset staged' "$log" || fail "factory-reset: the reset was not staged (see factory-reset-output.txt)"
+  ok "factory-reset: omarchy-system-factory-reset staged the reset through lifecycle dispatch"
+  settle_guest
+  stop_guest
+  disk_cmdline "$disk"
+  old_recovery=$recovery_key
+  log=$evidence_dir/factory-reset-reboot-serial.log
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  owner_setup factory-reset 1
+  no_emergency factory-reset
+  ok "factory-reset: the next boot finished the reset without the old password and ran owner setup again, with a new recovery key"
+  settle_guest
+  stop_guest
+  attach -P "$disk"; dev=$ATTACHED
+  new_owner_key=$(passphrase_file owner "$owner_password")
+  recovery_file=$(passphrase_file recovery "$recovery_key")
+  luks_slot "${dev}p3" "$new_owner_key"; [[ -n $SLOT ]] || fail "factory-reset: the owner password setup set does not open the disk"
+  luks_slot "${dev}p3" "$recovery_file"; [[ -n $SLOT ]] || fail "factory-reset: the new recovery key does not open the disk"
+  if [[ $old_recovery != "$recovery_key" ]]; then
+    luks_slot "${dev}p3" "$(passphrase_file oldrecovery "$old_recovery")"
+    [[ -z $SLOT ]] || fail "factory-reset: the old recovery key still opens the disk (slot $SLOT)"
+  fi
+  [[ $(luks_slot_count "${dev}p3") == 2 ]] || fail "factory-reset: $(luks_slot_count "${dev}p3") key slots after the reset, not 2"
+  mount_root "${dev}p3" "$new_owner_key"
+  keep_guest_logs factory-reset
+  owner_state factory-reset
+  sudo -n test ! -e "$work/mnt/etc/omarchy-vm-drift" || fail "factory-reset: /etc drift survived the reset"
+  sudo -n test ! -e "$work/mnt/home/$owner_user/omarchy-vm-owner-file" || fail "factory-reset: the old owner's file survived the reset"
+  umount_root "${dev}p3"
+  detach_last
+  ok "factory-reset: owner password and new recovery key only (old key gone), /etc drift and the old owner's files gone, owner setup complete"
+  disk_cmdline "$disk"
+  log=$evidence_dir/factory-reset-second-boot-serial.log
+  boot_guest "$disk" "$log" "$DISK_CMDLINE"
+  unlock_prompt factory-reset
+  serial_type "$owner_password"
+  serial_expect 'login: ' "factory-reset: login prompt on the boot after the reset"
+  no_emergency factory-reset
+  stop_guest
+  ok "factory-reset: the reset disk unlocks with the new owner's password and reaches the login prompt"
 }
 
 # ── the run ──────────────────────────────────────────────────────────────────
@@ -1151,6 +1286,7 @@ recovery_key=""
 guest_status=""
 guest_output=""
 DISK_CMDLINE=""
+SNAP_CMDLINE=""
 OPENED=""
 SLOT=""
 
