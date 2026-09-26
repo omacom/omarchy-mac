@@ -235,6 +235,8 @@ if (( ! limine_mac )) && root_on_luks && busybox_encrypt_in_initramfs; then
   luks_uuid=""
   [[ -z $luks_part ]] || luks_uuid=$(lsblk -ndo UUID "$luks_part" 2>/dev/null || true)
   # Each entry that boots this kernel is checked on its own; there must be one.
+  # grub-mkconfig puts this root's entries in the 10_linux section; os-prober's
+  # entries for other installs are not this Mac's.
   kernel_entries=0
   while read -r kernel_line; do
     [[ -n $kernel_line ]] || continue
@@ -249,7 +251,12 @@ if (( ! limine_mac )) && root_on_luks && busybox_encrypt_in_initramfs; then
     fi
     (( $(grep -Eo '(^|[[:space:]])rootflags=' <<<"$kernel_line" | wc -l) <= 1 )) ||
       fail "/boot/grub/grub.cfg passes more than one rootflags=, and the busybox initramfs keeps only the last"
-  done < <(sudo grep -E '^[[:space:]]*linux[[:space:]]' "$grub_cfg" | grep -F "vmlinuz-$kernel" || true)
+  done < <(sudo awk '
+      /^### BEGIN \/etc\/grub\.d\/10_linux ###/ { sections = 1; inside = 1; next }
+      /^### END \/etc\/grub\.d\/10_linux ###/ { inside = 0; next }
+      { line[++n] = $0; linux[n] = inside }
+      END { for (i = 1; i <= n; i++) if (!sections || linux[i]) print line[i] }
+    ' "$grub_cfg" | grep -E '^[[:space:]]*linux[[:space:]]' | grep -F "vmlinuz-$kernel" || true)
   (( kernel_entries > 0 )) || fail "/boot/grub/grub.cfg has no linux entry for vmlinuz-$kernel"
 fi
 
@@ -441,9 +448,13 @@ fi
 # so they are not checked. On a live systemd Mac a failed
 # systemd-vconsole-setup this boot is reported as a warning: the image was
 # right, yet the prompt typed with the kernel's US map.
+# One setting of a vconsole.conf, read in a clean shell.
 vconsole_value() {
-  # shellcheck disable=SC1090 # the host vconsole.conf, under the check root
-  (set +eu; unset "$1"; . "$2" >/dev/null 2>&1; printf '%s' "${!1:-}")
+  env -i PATH=/usr/bin:/bin bash --noprofile --norc -c '
+    unset "$1"
+    . "$2" >/dev/null 2>&1
+    printf "%s" "${!1:-}"
+  ' _ "$1" "$2"
 }
 vconsole_keyboard() {
   local key

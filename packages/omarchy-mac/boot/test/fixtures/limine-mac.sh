@@ -232,7 +232,7 @@ limine_mac_busybox() {
   local uuid=0422663f-9969-4953-900f-b342703b7e84
   rm -rf "$mac_root/var/lib/omarchy/limine.enabled" "$mac_root/etc/default/limine" "$mac_esp/EFI" "$mac_esp/limine.conf"
   mv "$mac_esp/m1n1" "$mac_root/boot/m1n1"
-  rmdir "$mac_esp"
+  rm -rf "$mac_esp"
   mkdir -p "$mac_root/boot/grub"
   printf 'linux /vmlinuz-linux-aurora root=UUID=r rw rootflags=subvol=@ cryptdevice=UUID=%s:root:allow-discards quiet\ninitrd /initramfs-linux-aurora.img\n' \
     "$uuid" >"$mac_root/boot/grub/grub.cfg"

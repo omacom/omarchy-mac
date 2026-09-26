@@ -391,6 +391,18 @@ expect_fail "a busybox encrypt entry without cryptdevice= beside one with it" "d
 printf '#linux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@\n#initrd /initramfs-linux-asahi.img\n' >"$root/boot/grub/grub.cfg"
 run_check
 expect_fail "a busybox encrypt root with only commented kernel lines" "has no linux entry for vmlinuz-linux-asahi"
+# grub-mkconfig's sections: only 10_linux's entries boot this root; os-prober
+# lists other installs, whose command lines are theirs.
+grub_sections() {
+  printf '### BEGIN /etc/grub.d/10_linux ###\nmenuentry Omarchy {\n  linux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@ %s quiet\n  initrd /initramfs-linux-asahi.img\n}\n### END /etc/grub.d/10_linux ###\n' "$1"
+  printf '### BEGIN /etc/grub.d/30_os-prober ###\nmenuentry Other {\n  linux /vmlinuz-linux-asahi root=UUID=y rw rootflags=subvol=@ rootflags=subvol=@home\n}\n### END /etc/grub.d/30_os-prober ###\n'
+}
+grub_sections cryptdevice=UUID=0422663f-9969-4953-900f-b342703b7e84:root >"$root/boot/grub/grub.cfg"
+run_check --boot-chain
+expect_pass "a busybox encrypt root beside another install os-prober found"
+grub_sections "" >"$root/boot/grub/grub.cfg"
+run_check --boot-chain
+expect_fail "a busybox encrypt root whose own section lacks cryptdevice=" "does not set cryptdevice="
 # An image with the encrypt hook and a systemd init runs systemd: the
 # sd-encrypt and crypttab checks still apply.
 printf 'linux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@ cryptdevice=UUID=0422663f-9969-4953-900f-b342703b7e84:root quiet\ninitrd /initramfs-linux-asahi.img\n' >"$root/boot/grub/grub.cfg"
@@ -403,7 +415,7 @@ run_check
 expect_fail "an encrypted root with neither crypttab nor the encrypt hook" "encrypted root has no crypttab"
 unset TEST_LSBLK_CHAIN TEST_LUKS_UUID
 printf '==> Image: initramfs\n==> Early hook run order:\n  asahi\n==> Late hook run order:\n  asahi\n' >"$test_tmp/initramfs.analyze"
-pass "a busybox encrypt root is checked for cryptdevice= and one rootflags= on every entry, and only a busybox image counts"
+pass "a busybox encrypt root is checked for cryptdevice= and one rootflags= on every one of its own entries, and only a busybox image counts"
 system linux-asahi
 run_check
 expect_pass "linux-asahi with m1n1, detected"
