@@ -39,10 +39,10 @@ o.bind("SUPER + SHIFT + ALT + RIGHT", "Move workspace to right monitor", hl.dsp.
 o.bind("SUPER + SHIFT + ALT + UP", "Move workspace to up monitor", hl.dsp.workspace.move({ monitor = "u" }))
 o.bind("SUPER + SHIFT + ALT + DOWN", "Move workspace to down monitor", hl.dsp.workspace.move({ monitor = "d" }))
 
-o.bind("SUPER + CTRL + SHIFT + LEFT", "Move window to left monitor", hl.dsp.window.move({ monitor = "l" }))
-o.bind("SUPER + CTRL + SHIFT + RIGHT", "Move window to right monitor", hl.dsp.window.move({ monitor = "r" }))
-o.bind("SUPER + CTRL + SHIFT + UP", "Move window to up monitor", hl.dsp.window.move({ monitor = "u" }))
-o.bind("SUPER + CTRL + SHIFT + DOWN", "Move window to down monitor", hl.dsp.window.move({ monitor = "d" }))
+o.bind("SUPER + CTRL + ALT + LEFT", "Move window to left monitor", hl.dsp.window.move({ monitor = "l" }))
+o.bind("SUPER + CTRL + ALT + RIGHT", "Move window to right monitor", hl.dsp.window.move({ monitor = "r" }))
+o.bind("SUPER + CTRL + ALT + UP", "Move window to up monitor", hl.dsp.window.move({ monitor = "u" }))
+o.bind("SUPER + CTRL + ALT + DOWN", "Move window to down monitor", hl.dsp.window.move({ monitor = "d" }))
 
 o.bind("SUPER + SHIFT + LEFT", "Swap window to the left", hl.dsp.window.swap({ direction = "l" }))
 o.bind("SUPER + SHIFT + RIGHT", "Swap window to the right", hl.dsp.window.swap({ direction = "r" }))

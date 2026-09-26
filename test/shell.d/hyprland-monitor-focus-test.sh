@@ -1,5 +1,5 @@
 #!/bin/bash
-
+set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/base-test.sh"
 
 require_command lua
@@ -20,8 +20,8 @@ hl = {
 }
 o = { window = function() end }
 dofile(root .. "/default/hypr/input.lua")
-assert(config.misc.mouse_move_focuses_monitor == false)
-assert(config.input.follow_mouse == 1)
+assert(config.misc.mouse_move_focuses_monitor == false, "pointer motion does not focus another monitor")
+assert(config.input.follow_mouse == 1, "focus still follows the pointer between windows")
 LUA
 pass "pointer crossing screens leaves monitor focus alone"
 
@@ -55,9 +55,6 @@ dofile(root .. "/default/hypr/bindings/tiling.lua")
 LUA
 ) || fail "tiling bindings load"
 
-expected=$'SUPER + CTRL + SHIFT + LEFT\tl\tnil\tMove window to left monitor
-SUPER + CTRL + SHIFT + RIGHT\tr\tnil\tMove window to right monitor
-SUPER + CTRL + SHIFT + UP\tu\tnil\tMove window to up monitor
-SUPER + CTRL + SHIFT + DOWN\td\tnil\tMove window to down monitor'
-[[ $bindings == "$expected" ]] || fail "move-window-to-monitor bindings take focus with the window" "$bindings"
+[[ $bindings == $'SUPER + CTRL + ALT + LEFT\tl\tnil\tMove window to left monitor\nSUPER + CTRL + ALT + RIGHT\tr\tnil\tMove window to right monitor\nSUPER + CTRL + ALT + UP\tu\tnil\tMove window to up monitor\nSUPER + CTRL + ALT + DOWN\td\tnil\tMove window to down monitor' ]] ||
+  fail "move-window-to-monitor bindings take focus with the window" "$bindings"
 pass "move-window-to-monitor bindings take focus with the window"
