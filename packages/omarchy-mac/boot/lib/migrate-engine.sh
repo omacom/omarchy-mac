@@ -597,6 +597,12 @@ preflight() {
   while IFS= read -r problem; do
     [[ -z $problem ]] || reasons+=("$problem")
   done < <(pacman_trust_problems <(pacman_conf_flat "$pacman_conf"))
+  # The switch rewrites only pacman.conf itself: a repository it drops that an
+  # Include file defines would stay.
+  for problem in $(comm -13 <(repositories_in "$pacman_conf" | LC_ALL=C sort -u) <(repositories_in <(pacman_conf_flat "$pacman_conf") | LC_ALL=C sort -u)); do
+    [[ $problem != "omarchy" && " ${retired_repos[*]} " != *" $problem "* ]] ||
+      reasons+=("[$problem] is configured through an Include, which the repository switch cannot rewrite; move it into $pacman_conf first")
+  done
 
   if low_battery; then
     reasons+=("the battery is below 30% and no charger is connected")

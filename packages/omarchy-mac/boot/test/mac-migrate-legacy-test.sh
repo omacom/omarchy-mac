@@ -500,7 +500,12 @@ new_fixture refusals checkout
 printf '\n[custom]\nInclude = /etc/pacman.d/custom.conf\n' >>"$R/etc/pacman.conf"
 printf 'SigLevel = Optional TrustAll\nServer = file:///custom\n' >"$R/etc/pacman.d/custom.conf"
 refused "a TrustAll repository an Include configures" "\[custom\] accepts untrusted packages"
-pass "preflight refuses encrypted, pre-Quattro and mid-channel-switch legacy Macs, unknown fork keys and included TrustAll, changing nothing"
+new_fixture refusals checkout
+sed -i '/^\[omarchy-aarch64\]$/,/^Server/d' "$R/etc/pacman.conf"
+printf '\nInclude = /etc/pacman.d/fork.conf\n' >>"$R/etc/pacman.conf"
+printf '[omarchy-aarch64]\nSigLevel = Optional TrustAll\nServer = file://%s/repos/omarchy-aarch64\n' "$F" >"$R/etc/pacman.d/fork.conf"
+refused "the fork repository an Include configures" "\[omarchy-aarch64\] is configured through an Include"
+pass "preflight refuses encrypted, pre-Quattro and mid-channel-switch legacy Macs, unknown fork keys and included repositories, changing nothing"
 
 # --- Failures that change nothing, or put things back ------------------------------
 
