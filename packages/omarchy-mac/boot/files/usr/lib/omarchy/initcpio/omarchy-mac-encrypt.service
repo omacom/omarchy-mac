@@ -6,6 +6,8 @@ DefaultDependencies=no
 # omarchy-vendorfw-initrd.service (pre-unlock firmware) is wanted when present.
 Wants=systemd-udevd.service systemd-udev-trigger.service omarchy-vendorfw-initrd.service
 After=systemd-udevd.service systemd-udev-trigger.service systemd-udev-settle.service omarchy-vendorfw-initrd.service
+# The splash is up before the unit shows its progress there.
+After=plymouth-start.service
 Before=cryptsetup-pre.target sysroot.mount initrd-root-device.target
 Conflicts=shutdown.target emergency.target
 Before=shutdown.target
@@ -18,11 +20,12 @@ Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=infinity
 ExecStart=/usr/lib/omarchy/initcpio/omarchy-mac-encrypt
-# Progress goes to the journal and on to the kernel log (kmsg), never straight
-# to the console: on a Mac loglevel=0 keeps the splash clean, while a serial
-# console without "quiet" (the VM harness) still sees every line. journald
-# passes only notice and above to kmsg (MaxLevelKMsg=). A failure is shown
-# through Plymouth and left in /run/omarchy-mac-encrypt.failed.
+# Log lines go to the journal and on to the kernel log (kmsg), never straight
+# to the console: notice is above the console loglevel of "quiet" (and a Mac's
+# loglevel=0), while a serial console without "quiet" (the VM harness) still
+# sees every line. journald passes only notice and above to kmsg
+# (MaxLevelKMsg=). Progress and a failure are shown through Plymouth; a
+# failure is also left in /run/omarchy-mac-encrypt.failed.
 StandardOutput=kmsg
 StandardError=kmsg
 SyslogLevel=notice
