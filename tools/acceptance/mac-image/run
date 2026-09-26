@@ -996,7 +996,7 @@ scenario_recovery_reset() {
   boot_guest "$disk" "$log" "$DISK_CMDLINE"
   unlock_prompt recovery-reset
   serial_type "$recovery_key"
-  serial_expect 'unlocked with its recovery key' "recovery-reset: the reset offered before the login screen"
+  serial_expect 'This disk was unlocked with its recovery key' "recovery-reset: the reset offered before the login screen"
   serial_expect 'Not now' "recovery-reset: the reset confirmation" 60
   serial_send $'\r'
   serial_expect 'New password for the disk' "recovery-reset: the new password prompt" 60
@@ -1052,7 +1052,7 @@ scenario_recovery_reset() {
   console_login recovery-reset "$new_password" || fail "recovery-reset: $owner_user does not log in with the new password"
   guest_run "recovery-reset: su to root" "su -c 'echo __root_\$((6*7))__' root" "Password: ?=$new_password"
   grep -aq '__root_42__' "$log" || fail "recovery-reset: root does not take the new password"
-  ! grep -aq 'unlocked with its recovery key' "$log" || fail "recovery-reset: a boot unlocked with the new password offered a reset"
+  ! grep -aq 'This disk was unlocked with its recovery key' "$log" || fail "recovery-reset: a boot unlocked with the new password offered a reset"
   no_emergency recovery-reset
   stop_guest
   ok "recovery-reset: the next boot unlocks with the new password, offers no reset, and the new password logs in $owner_user and root"
