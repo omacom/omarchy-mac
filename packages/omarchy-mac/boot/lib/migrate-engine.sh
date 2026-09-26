@@ -604,6 +604,9 @@ preflight() {
       reasons+=("[$problem] is configured through an Include, which the repository switch cannot rewrite; move it into $pacman_conf first")
   done
 
+  if [[ $target_type == "candidate-set" ]] && ! command -v gpgv >/dev/null; then
+    reasons+=("gpgv is not installed (gnupg), so the candidate set's signatures cannot be checked")
+  fi
   if low_battery; then
     reasons+=("the battery is below 30% and no charger is connected")
   fi
