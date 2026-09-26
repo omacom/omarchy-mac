@@ -222,12 +222,23 @@ Plymouth.SetBootProgressFunction(progress_callback);
 # plymouth system-update --progress=N (0 to 100) turns the splash into a progress
 # screen for work that runs before the desktop: the bar shows N and the text of
 # plymouth display-message sits centered under it. A normal boot never sends it.
+# Sizes follow the installer's progress screen, relative to the logo: the logo
+# is ten text rows high, the bar is 34 of its 81 columns wide and one row high,
+# and the text is one row high, one row under the bar.
 fun system_update_callback(progress) {
   if (global.system_update == 0) {
     global.system_update = 1;
     stop_fake_progress();
+
+    global.update_row = Math.Int(logo.image.GetHeight() / 10);
+    update_width = Math.Int(logo.image.GetWidth() * 34 / 81);
+    progress_box.image = progress_box.image.Scale(update_width, global.update_row);
+    progress_box.sprite.SetImage(progress_box.image);
+    progress_bar.original_image = progress_bar.original_image.Scale(update_width, global.update_row);
     global.max_progress = -1;
-    layout_message();
+
+    layout();
+    if (global.message_text) render_message();
   }
 
   if (lock.sprite.GetOpacity() == 0) {
@@ -281,16 +292,25 @@ message_sprite.SetPosition(10, 10, 10000);
 fun layout_message() {
   if (global.system_update == 1 && global.message_image) {
     message_sprite.SetX(global.layout_width / 2 - global.message_image.GetWidth() / 2);
-    message_sprite.SetY(progress_box.y + progress_box.image.GetHeight() + 24);
+    message_sprite.SetY(progress_box.y + progress_box.image.GetHeight() + global.update_row);
   } else {
     message_sprite.SetPosition(10, 10, 10000);
   }
 }
 
-fun display_message_callback(text) {
-  global.message_image = Image.Text(text, 1, 1, 1);
+fun render_message() {
+  if (global.system_update == 1) {
+    global.message_image = Image.Text(global.message_text, 1, 1, 1, 1, "Cantarell " + global.update_row + "px");
+  } else {
+    global.message_image = Image.Text(global.message_text, 1, 1, 1);
+  }
   message_sprite.SetImage(global.message_image);
   layout_message();
+}
+
+fun display_message_callback(text) {
+  global.message_text = text;
+  render_message();
   message_sprite.SetOpacity(1);
 }
 

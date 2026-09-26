@@ -61,20 +61,22 @@ omarchy_mac_encrypt_progress_creep_stop() {
     PROGRESS_CREEP=""
 }
 
-# cryptsetup --progress-json prints a JSON line about once a second; anything
-# else it prints goes on to the journal. A subshell that never stops reading:
-# a closed pipe would interrupt the reencryption.
+# cryptsetup --progress-json prints a JSON line about once a second: the bar
+# follows it, and the line under it keeps naming the step (a percentage there
+# would disagree with a bar that spans the whole first boot). Anything else
+# cryptsetup prints goes on to the journal. A subshell that never stops
+# reading: a closed pipe would interrupt the reencryption.
 omarchy_mac_encrypt_follow_reencrypt() (
     set +e
-    local line percent shown=-1
+    local line bar shown=-1
     while IFS= read -r line; do
         if [[ $line =~ \"device_bytes\":\"([0-9]+)\".*\"device_size\":\"([0-9]+)\" ]] &&
            (( BASH_REMATCH[2] > 0 )); then
-            percent=$(( BASH_REMATCH[1] * 100 / BASH_REMATCH[2] ))
-            (( percent <= 100 )) || percent=100
-            if (( percent != shown )); then
-                shown=$percent
-                omarchy_mac_encrypt_progress $(( percent * 40 / 100 )) "Encrypting your drive... ${percent}%"
+            bar=$(( BASH_REMATCH[1] * 40 / BASH_REMATCH[2] ))
+            (( bar <= 40 )) || bar=40
+            if (( bar != shown )); then
+                shown=$bar
+                omarchy_mac_encrypt_progress "$bar"
             fi
         else
             printf '%s\n' "$line"
@@ -506,7 +508,7 @@ omarchy_mac_encrypt_require_key() {
 omarchy_mac_encrypt_reencrypt() {
     local mode=${1:-encrypt} start now elapsed
     omarchy_mac_encrypt_ensure_key
-    omarchy_mac_encrypt_progress 0 "Encrypting your drive... 0%"
+    omarchy_mac_encrypt_progress 0 "Encrypting your drive..."
     if [[ $mode == resume ]]; then
         omarchy_mac_encrypt_say "resuming interrupted LUKS2 reencrypt"
         start=$(date +%s)

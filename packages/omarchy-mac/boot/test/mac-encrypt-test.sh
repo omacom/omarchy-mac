@@ -190,12 +190,12 @@ with_splash() {
 json() {
   printf '{"device":"/dev/nvme0n1p6","device_bytes":"%s","device_size":"%s","speed":"659554304","eta_ms":"1","time_ms":"2"}\n' "$1" "$2"
 }
-follow_out=$( { json 0 1000; json 424 1000; json 425 1000; echo 'a line that is not progress'; json 1000 1000; } |
+follow_out=$( { json 0 1000; json 424 1000; json 425 1000; json 430 1000; echo 'a line that is not progress'; json 1000 1000; } |
   with_splash omarchy_mac_encrypt_follow_reencrypt) || fail "the progress follower never fails the pipeline"
 [[ $follow_out == 'a line that is not progress' ]] ||
   fail "JSON progress is consumed and other cryptsetup output passes through: $follow_out"
-[[ $(cat "$progress_tmp/plymouth.log") == $'system-update --progress=0\ndisplay-message --text=Encrypting your drive... 0%\nsystem-update --progress=16\ndisplay-message --text=Encrypting your drive... 42%\nsystem-update --progress=40\ndisplay-message --text=Encrypting your drive... 100%' ]] ||
-  fail "each new percentage moves the bar (0-40%) and names the percentage: $(cat "$progress_tmp/plymouth.log")"
+[[ $(cat "$progress_tmp/plymouth.log") == $'system-update --progress=0\nsystem-update --progress=16\nsystem-update --progress=17\nsystem-update --progress=40' ]] ||
+  fail "the encryption moves the bar across 0-40% and leaves the line alone: $(cat "$progress_tmp/plymouth.log")"
 [[ $(<"$progress_tmp/progress") == 40 ]] || fail "the progress file keeps the last value for first boot"
 rm -f "$progress_tmp/plymouth.log"
 : >"$progress_tmp/no-splash"
@@ -910,9 +910,8 @@ progress=$(sed -n 's/^system-update --progress=//p' "$tmp/plymouth.log" | tr '\n
 [[ $progress == "$(tr ' ' '\n' <<<"$progress" | sed '/^$/d' | sort -n | tr '\n' ' ')" ]] ||
   fail "the bar never moves back: $progress"
 messages=$(sed -n 's/^display-message --text=//p' "$tmp/plymouth.log")
-[[ $(head -n 1 <<<"$messages") == 'Encrypting your drive... 0%' && $(tail -n 1 <<<"$messages") == 'Preparing your Mac for first boot...' ]] &&
-  grep -Fxq 'Encrypting your drive... 100%' <<<"$messages" ||
-  fail "the line gives the encryption percentage, then says the Mac is being prepared: $messages"
+[[ $messages == $'Encrypting your drive...\nPreparing your Mac for first boot...' ]] ||
+  fail "the line names the encryption, then says the Mac is being prepared: $messages"
 [[ $(<"$tmp/progress") == 54 ]] || fail "first boot carries the bar on from 54%"
 ! grep -Fq 'device_bytes' "$case_dir/out" || fail "cryptsetup's JSON progress stays out of the journal"
 grep -Fq 'x-systemd.growfs' "$tmp/mnt-mapped/etc/fstab" || fail "x-systemd.growfs stays on the root fstab"
