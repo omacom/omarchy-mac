@@ -36,6 +36,7 @@ mx_mac_counterpart() {
     omarchy-dev) echo omarchy ;;
     omarchy-settings-dev) echo omarchy-settings ;;
     quickshell-git) echo quickshell ;;
+    mise | dotnet-host | dotnet-runtime) echo "$1-bin" ;;
     *) echo "$1" ;;
   esac
 }

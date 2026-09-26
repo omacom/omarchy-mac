@@ -167,6 +167,7 @@ limine-mkinitcpio-hook 1.36.0-3
 linux-aurora 7.1.12.aurora2-7
 linux-aurora-headers 7.1.12.aurora2-7
 m1n1-aurora 1.6.1.aurora1-2
+mise 2026.9.4-1
 obs-studio 32.2.2-1
 omarchy-dev 4.0.4.r7081.gca187b0-1
 omarchy-keyring 20251027-1
@@ -186,7 +187,7 @@ LOCAL
   repo core <<<"pacman 7.0.0-1"
   printf 'hyprland 0.51-1\nlimine 12.9.0-1\nquickshell 0.3.1-1\n' | repo extra
   repo asahi-alarm <<<"asahi-scripts 20260127.1-1"
-  printf 'hyprland 0.50-1\nlimine-mkinitcpio-hook 1.36.0-3\nobs-studio 32.2.2-1\npinta 3.1.2-2\nuboot-asahi 2026.07.asahi2-3\n' |
+  printf 'hyprland 0.50-1\nlimine-mkinitcpio-hook 1.36.0-3\nmise 2026.9.4-1\nobs-studio 32.2.2-1\npinta 3.1.2-2\nuboot-asahi 2026.07.asahi2-3\n' |
     repo omarchy-fork omarchy
   printf 'linux-aurora 7.1.12.aurora2-7\nlinux-aurora-headers 7.1.12.aurora2-7\nm1n1-aurora 1.6.1.aurora1-2\n' | repo omarchy-aurora
   sign_repo omarchy-fork omarchy
@@ -201,6 +202,7 @@ linux-aurora-headers 7.1.12.aurora2-10
 m1n1-aurora 1.6.1.aurora1-3
 uboot-asahi 2026.07.asahi2-4
 limine-mkinitcpio-hook 1.39.0-2
+mise-bin 2026.9.12-1
 omarchy-keyring 20251027-1
 omarchy-nvim 2026.9.21-1
 pinta 3.1.2-1
@@ -214,6 +216,7 @@ EDGE
 omarchy omarchy-dev
 omarchy-settings omarchy-settings-dev
 quickshell quickshell-git
+mise-bin mise
 linux-aurora linux-asahi
 m1n1-aurora m1n1
 linux-aurora-headers linux-asahi-headers
@@ -303,6 +306,7 @@ limine-mkinitcpio-hook 1.39.0-2
 linux-aurora 7.1.12.aurora2-10
 linux-aurora-headers 7.1.12.aurora2-10
 m1n1-aurora 1.6.1.aurora1-3
+mise-bin 2026.9.12-1
 obs-studio 32.2.2-1
 omarchy 4.0.0.alpha.quattro.r1.gabc-1.1
 omarchy-keyring 20251027-1
@@ -317,10 +321,10 @@ ttf-jetbrains-mono-nerd-basic 3.5.1-1
 uboot-asahi 2026.07.asahi2-4'
 [[ $(cat "$R/var/lib/pacman/local/packages") == "$expected_packages" ]] ||
   fail "one transaction swaps the dev pair and the bundle for official builds and moves Aurora to the target" "$(cat "$R/var/lib/pacman/local/packages")"
-grep -qx "transaction omarchy-mac-candidate/omarchy omarchy-mac-candidate/omarchy-settings omarchy-mac-candidate/omarchy-mac omarchy-mac-candidate/omarchy-mac-boot omarchy-mac-candidate/linux-aurora omarchy-mac-candidate/linux-aurora-headers omarchy-mac-candidate/m1n1-aurora omarchy-mac-candidate/uboot-asahi omarchy-mac-candidate/limine-mkinitcpio-hook hyprland omarchy-keyring omarchy-nvim pinta quickshell ttf-jetbrains-mono-nerd-basic" "$F/pacman.log" ||
+grep -qx "transaction omarchy-mac-candidate/omarchy omarchy-mac-candidate/omarchy-settings omarchy-mac-candidate/omarchy-mac omarchy-mac-candidate/omarchy-mac-boot omarchy-mac-candidate/linux-aurora omarchy-mac-candidate/linux-aurora-headers omarchy-mac-candidate/m1n1-aurora omarchy-mac-candidate/uboot-asahi omarchy-mac-candidate/limine-mkinitcpio-hook hyprland mise-bin omarchy-keyring omarchy-nvim pinta quickshell ttf-jetbrains-mono-nerd-basic" "$F/pacman.log" ||
   fail "the Mac packages come from the target and each fork build an official repository carries is named" "$(grep transaction "$F/pacman.log")"
 [[ $(grep -c '^transaction ' "$F/pacman.log") == 1 ]] || fail "one package transaction"
-[[ $(cat "$state/plan/allowed-removals") == $'omarchy-dev\nomarchy-settings-dev\nquickshell-git' ]] ||
+[[ $(cat "$state/plan/allowed-removals") == $'mise\nomarchy-dev\nomarchy-settings-dev\nquickshell-git' ]] ||
   fail "only the fork builds official ones of another name replace may be removed" "$(cat "$state/plan/allowed-removals")"
 grep -qx "obs-studio 32.2.2-1" "$state/plan/kept" || fail "a fork build with no official one is kept and listed" "$(cat "$state/plan/kept")"
 pass "one transaction replaces omarchy-dev, its settings and the bundle, downgrades a higher fork build and keeps what has no official build"
@@ -516,7 +520,7 @@ pass "an mx-mac Mac that still boots GRUB is switched to Limine"
 new_fixture repository
 printf 'format=1\ntype=repository\nchannel=stable\nserver=file://%s/repos/omarchy\n' "$F" >"$R/etc/omarchy-mac/migration-target"
 finish
-grep -qx "transaction omarchy/omarchy omarchy/omarchy-settings omarchy/omarchy-mac omarchy/omarchy-mac-boot omarchy/linux-aurora omarchy/linux-aurora-headers omarchy/m1n1-aurora omarchy/uboot-asahi omarchy/limine-mkinitcpio-hook hyprland omarchy-keyring omarchy-nvim pinta quickshell ttf-jetbrains-mono-nerd-basic" "$F/pacman.log" ||
+grep -qx "transaction omarchy/omarchy omarchy/omarchy-settings omarchy/omarchy-mac omarchy/omarchy-mac-boot omarchy/linux-aurora omarchy/linux-aurora-headers omarchy/m1n1-aurora omarchy/uboot-asahi omarchy/limine-mkinitcpio-hook hyprland mise-bin omarchy-keyring omarchy-nvim pinta quickshell ttf-jetbrains-mono-nerd-basic" "$F/pacman.log" ||
   fail "a repository target names the Mac packages in the official [omarchy], not the fork's" "$(grep transaction "$F/pacman.log")"
 grep -q "^omarchy 4.0.2-1$" "$R/var/lib/pacman/local/packages" && ! grep -q "^omarchy-dev " "$R/var/lib/pacman/local/packages" ||
   fail "the official runtime replaces the fork's" "$(cat "$R/var/lib/pacman/local/packages")"
