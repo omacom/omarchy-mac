@@ -9,21 +9,22 @@ printf 'Omarchy\n' >"$work/runtime/logo.txt"
 printf '#!/bin/bash\nexit 0\n' >"$work/bin/omarchy-hw-apple-silicon"
 chmod +x "$work/bin/omarchy-hw-apple-silicon"
 export PATH="$work/bin:$PATH" OMARCHY_PATH="$work/runtime"
-export OMARCHY_PROVISION_OWNER_SOURCE=1 OMARCHY_FACTORY_RESET_SOURCE=1
+export OMARCHY_PROVISION_OWNER_SOURCE=1
 grep -Fxq omarchy-mac-boot "$ROOT/install/omarchy-apple.packages" || fail "Apple fresh-install inputs carry the boot package"
 pass "Apple installs carry the boot package their lifecycles dispatch to"
 bash "$ROOT/packages/omarchy-mac/boot/install" "$work/stage"
-for entry in omarchy-provision-owner omarchy-system-factory-reset; do
-  bash -c 'source "$1"' _ "$ROOT/bin/$entry"
-done
+bash -c 'source "$1"' _ "$ROOT/bin/omarchy-provision-owner"
+# Factory reset is upstream's script, which elevates when run: it only parses.
+bash -n "$ROOT/bin/omarchy-system-factory-reset"
 pass "Apple lifecycles load the separately staged package"
 
 # Owner provisioning and factory reset reach the Mac's boot chain only through
 # omarchy-lifecycle-dispatch; the boot package owns the files below.
-# Factory reset has no Apple step of its own left either.
+# Factory reset has no Apple step of its own left either, the Mac's first-boot
+# state included.
 patterns=(/boot/omarchy encrypt.state rd.luks.key /etc/default/grub omarchy-mac-boot omarchy-mac/boot update-grub)
 for entry in omarchy-provision-owner omarchy-system-factory-reset; do
-  [[ $entry != omarchy-system-factory-reset ]] || patterns+=(omarchy-hw-apple-silicon)
+  [[ $entry != omarchy-system-factory-reset ]] || patterns+=(omarchy-hw-apple-silicon mac-first-boot efi/omarchy)
   for pattern in "${patterns[@]}"; do
     ! grep -Fq -- "$pattern" "$ROOT/bin/$entry" ||
       fail "$entry leaves $pattern to the boot package" "$(grep -Fn -- "$pattern" "$ROOT/bin/$entry")"
