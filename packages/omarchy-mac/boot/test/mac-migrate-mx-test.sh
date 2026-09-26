@@ -52,6 +52,8 @@ linux-aurora-headers 7.1.12.aurora2-10
 m1n1-aurora 1.6.1.aurora1-3
 uboot-asahi 2026.07.asahi2-4
 limine-mkinitcpio-hook 1.39.0-2
+pinta 3.1.2-1.1
+avd-fw 0.1-1
 SET
   printf '%s\n' "${entries[@]}" | jq -s '{schema: 1, set: "apple-test-fixture", packages: .}' >"$dir/manifest.json.new"
   jq --arg digest "$(jq -r '.packages[] | "\(.name) \(.version) \(.filename) \(.sha256)"' "$dir/manifest.json.new" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)" \
@@ -146,6 +148,7 @@ new_fixture() {
   echo "GRUB_CMDLINE_LINUX=\"rd.luks.name=abc=root\"" >"$R/etc/default/grub"
   echo "root UUID=abc none luks" >"$R/etc/crypttab"
   printf 'format=1\nsequence=57\ntag=asahi-quattro-ca187b0a\n' >"$R/var/lib/omarchy/asahi-quattro-release"
+  printf 'format=1\nsequence=58\ntag=asahi-quattro-0123abcd\n' >"$R/var/lib/omarchy/asahi-quattro-release.pending"
   printf 'format=1\ntag=asahi-packages-stable-2949b88c\n' >"$R/var/lib/omarchy/asahi-package-repository"
   printf 'format=1\nchannel=aurora\nrelease_tag=aurora-packages-3caea469\n' >"$R/var/lib/omarchy/aurora-target.descriptor"
   printf 'format=1\nchannel=rc\nkernel=linux-aurora\n' >"$R/var/lib/omarchy/apple-silicon-channel"
@@ -315,19 +318,20 @@ omarchy-mac-boot 20260926-1.43
 omarchy-nvim 2026.9.21-1
 omarchy-settings 4.0.0.alpha.quattro.r1.gabc-1.1
 pacman 7.0.0-1
-pinta 3.1.2-1
+pinta 3.1.2-1.1
 quickshell 0.3.1-1
 ttf-jetbrains-mono-nerd-basic 3.5.1-1
 uboot-asahi 2026.07.asahi2-4'
 [[ $(cat "$R/var/lib/pacman/local/packages") == "$expected_packages" ]] ||
   fail "one transaction swaps the dev pair and the bundle for official builds and moves Aurora to the target" "$(cat "$R/var/lib/pacman/local/packages")"
-grep -qx "transaction omarchy-mac-candidate/omarchy omarchy-mac-candidate/omarchy-settings omarchy-mac-candidate/omarchy-mac omarchy-mac-candidate/omarchy-mac-boot omarchy-mac-candidate/linux-aurora omarchy-mac-candidate/linux-aurora-headers omarchy-mac-candidate/m1n1-aurora omarchy-mac-candidate/uboot-asahi omarchy-mac-candidate/limine-mkinitcpio-hook hyprland mise-bin omarchy-keyring omarchy-nvim pinta quickshell ttf-jetbrains-mono-nerd-basic" "$F/pacman.log" ||
-  fail "the Mac packages come from the target and each fork build an official repository carries is named" "$(grep transaction "$F/pacman.log")"
+grep -qx "transaction omarchy-mac-candidate/omarchy omarchy-mac-candidate/omarchy-settings omarchy-mac-candidate/omarchy-mac omarchy-mac-candidate/omarchy-mac-boot omarchy-mac-candidate/linux-aurora omarchy-mac-candidate/linux-aurora-headers omarchy-mac-candidate/m1n1-aurora omarchy-mac-candidate/uboot-asahi omarchy-mac-candidate/limine-mkinitcpio-hook omarchy-mac-candidate/pinta hyprland mise-bin omarchy-keyring omarchy-nvim quickshell ttf-jetbrains-mono-nerd-basic" "$F/pacman.log" ||
+  fail "the target's packages the Mac has come from the target, and each other fork build an official repository carries is named" "$(grep transaction "$F/pacman.log")"
 [[ $(grep -c '^transaction ' "$F/pacman.log") == 1 ]] || fail "one package transaction"
 [[ $(cat "$state/plan/allowed-removals") == $'mise\nomarchy-dev\nomarchy-settings-dev\nquickshell-git' ]] ||
   fail "only the fork builds official ones of another name replace may be removed" "$(cat "$state/plan/allowed-removals")"
 grep -qx "obs-studio 32.2.2-1" "$state/plan/kept" || fail "a fork build with no official one is kept and listed" "$(cat "$state/plan/kept")"
-pass "one transaction replaces omarchy-dev, its settings and the bundle, downgrades a higher fork build and keeps what has no official build"
+! grep -q "^avd-fw " "$R/var/lib/pacman/local/packages" || fail "a target package the Mac never had is not installed"
+pass "one transaction replaces omarchy-dev, its settings and the bundle, downgrades a higher fork build, keeps what has no official build and adds no package the Mac lacks"
 
 conf=$(sed "s|$F|FIXTURE|g" "$R/etc/pacman.conf")
 [[ $conf == "[options]
@@ -371,7 +375,7 @@ pass "encryption and Limine are kept: the UKI is rebuilt, the packaged loader de
 reboot_into_aurora
 output=$(migrate verify 2>&1) || fail "the post-reboot verification completes the migration" "$output"
 grep -q "Kept, with no official build: obs-studio" <<<"$output" || fail "completion names what was kept" "$output"
-for name in asahi-quattro-release asahi-package-repository aurora-target.descriptor apple-silicon-channel apple-silicon-aurora-lane; do
+for name in asahi-quattro-release asahi-quattro-release.pending asahi-package-repository aurora-target.descriptor apple-silicon-channel apple-silicon-aurora-lane; do
   [[ ! -e $R/var/lib/omarchy/$name && -f $state/backup/mx-mac-state/$name ]] || fail "the fork updaters' $name is moved into the backup"
 done
 [[ $(stat -c %a "$state/backup/mx-mac-state") == 700 ]] || fail "the retired state is readable by root only"
@@ -436,7 +440,7 @@ for step in repositories keyring; do
   finish
   [[ $(outcome) == "$baseline" ]] || fail "after the fork's update past $step, the migration ends where an uninterrupted one does" "$(diff <(echo "$baseline") <(outcome))"
   [[ $(grep -c '^transaction ' "$F/pacman.log") == 1 ]] || fail "after $step: one transaction"
-  [[ $step != "repositories" ]] || grep -q " prefetch reset the repository switch was undone" "$(state_dir)/journal" ||
+  [[ $step != "repositories" ]] || grep -q " prefetch reset pacman.conf or a retired key came back after the repository switch" "$(state_dir)/journal" ||
     fail "the fork's update after the switch sends the migration back to rehearse" "$(cat "$(state_dir)/journal")"
 done
 pass "the fork's own update between steps is undone: the switch runs again and no fork section survives"
@@ -445,9 +449,18 @@ new_fixture conf-only
 killed_run AFTER repositories run >/dev/null 2>&1 && fail "the run is killed after the switch"
 fork_pacman_conf >"$R/etc/pacman.conf"
 finish
-grep -q " prefetch reset the repository switch was undone" "$(state_dir)/journal" || fail "a rewritten pacman.conf alone is noticed" "$(cat "$(state_dir)/journal")"
+grep -q " prefetch reset pacman.conf or a retired key came back after the repository switch" "$(state_dir)/journal" || fail "a rewritten pacman.conf alone is noticed" "$(cat "$(state_dir)/journal")"
 [[ $(outcome) == "$baseline" ]] || fail "a rewritten pacman.conf is switched again" "$(diff <(echo "$baseline") <(outcome))"
 pass "a channel updater's rewrite of pacman.conf after the switch is switched back before the transaction"
+
+new_fixture key-only
+killed_run AFTER repositories run >/dev/null 2>&1 && fail "the run is killed after the switch"
+echo "$release_key f" >>"$R/etc/pacman.d/gnupg/keys"
+finish
+grep -q " prefetch reset pacman.conf or a retired key came back after the repository switch" "$(state_dir)/journal" ||
+  fail "a fork key trusted again alone is noticed" "$(cat "$(state_dir)/journal")"
+[[ $(outcome) == "$baseline" ]] || fail "a fork key trusted again is deleted again" "$(diff <(echo "$baseline") <(outcome))"
+pass "a fork key trusted again after the switch is deleted again before the transaction"
 
 # --- Refusals and failures -------------------------------------------------------
 
@@ -482,6 +495,13 @@ new_fixture refusals
 printf 'format=1\ntype=repository\nchannel=stable\nserver=file://%s/repos/omarchy\n' "$F" >"$R/etc/omarchy-mac/migration-target"
 sed -i '/^omarchy-mac /d' "$F/repos/omarchy/omarchy.db"
 refused "a target without omarchy-mac" "does not resolve on this Mac"
+new_fixture no-pair
+printf 'format=1\ntype=repository\nchannel=stable\nserver=file://%s/repos/omarchy\npackages=omarchy omarchy-mac omarchy-mac-boot linux-aurora\n' "$F" >"$R/etc/omarchy-mac/migration-target"
+digest=$(fixture_digest)
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 1 )) && grep -q "the target has no omarchy and omarchy-settings" <<<"$output" && [[ ! -e $(state_dir) && $(fixture_digest) == "$digest" ]] ||
+  fail "a target without the runtime pair stops the plan and changes nothing" "status $status: $output"
 pass "preflight refuses legacy unlock, untrusted repositories, an unfinished first boot, the fork's boot tools and an incomplete or unverifiable target, changing nothing"
 
 new_fixture weak-fork

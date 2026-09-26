@@ -21,10 +21,10 @@ retired_keys+=(5983B1CA32CB778F4D74D24ECFF35022CA5B5959)
 
 # What omarchy-update-asahi-bundle installs, so no repository lists it.
 mx_mac_bundle="omarchy-dev omarchy-settings-dev omarchy-keyring omarchy-nvim quickshell-git ttf-jetbrains-mono-nerd-basic"
-# The Mac packages every mx-mac Mac takes from the target.
+# The Mac packages every mx-mac Mac takes from the target when it carries them.
 mx_mac_targets="omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-aurora linux-aurora-headers m1n1-aurora uboot-asahi limine-mkinitcpio-hook"
 # What the target's packages replace, as on a tester.
-mx_mac_replaced="linux-asahi linux-asahi-headers m1n1 omarchy-apple-boot omarchy-first-boot"
+mx_mac_replaced="linux-asahi linux-asahi-headers m1n1 omarchy-apple-boot omarchy-first-boot omarchy-settings-asahi"
 # The records the bundle and channel updaters keep in /var/lib/omarchy.
 mx_mac_state="asahi-quattro-release asahi-quattro-release.pending asahi-package-repository aurora-target.descriptor apple-silicon-channel apple-silicon-aurora-lane"
 
@@ -45,24 +45,24 @@ mx_mac_counterpart() {
 # and writes WORK/allowed-removals and WORK/kept. WORK/db holds the target's
 # synced databases; the live ones are still the fork's.
 #
-# - The Mac packages are named as <target repository>/<name>, so a higher
-#   installed version is replaced. Kernel headers come only where headers are
-#   installed.
 # - A fork build is a bundle package, or a package installed at the exact
-#   version the fork's [omarchy] or [omarchy-aurora] lists. Each is named by
-#   its official name when an official repository carries it, so it moves to
-#   the official build even when that is older. One nothing official carries
-#   stays installed and is listed in WORK/kept.
+#   version the fork's [omarchy] or [omarchy-aurora] lists.
+# - The target's packages are named as <target repository>/<name>, so a higher
+#   installed version is replaced: the Mac packages always, kernel headers only
+#   where headers are installed, and every other one where it is installed or
+#   replaces a fork build. The target must carry the runtime pair.
+# - Every other fork build is named by its official name when an official
+#   repository carries it, so it moves to the official build even when that is
+#   older. One nothing official carries stays installed and is listed in
+#   WORK/kept.
 # - The transaction may remove the fork builds whose official counterpart has
 #   another name, and what the target's packages replace.
 mx_mac_plan() {
-  local installed=$1 work=$2 name version counterpart repo official=$2/official fork=$2/fork
-  for name in $mx_mac_targets; do
-    if [[ $name == *-headers ]]; then
-      grep -Eq '^linux-(asahi|aurora)-headers ' "$installed" || continue
-    fi
-    printf '%s/%s\n' "$target_repo" "$name"
-  done
+  local installed=$1 work=$2 name version counterpart repo official=$2/official fork=$2/fork present=$2/present named=$2/named
+  if [[ " $target_packages " != *" omarchy "* || " $target_packages " != *" omarchy-settings "* ]]; then
+    echo "the target has no omarchy and omarchy-settings to replace omarchy-dev and omarchy-settings-dev" >&2
+    return 1
+  fi
 
   LC_ALL=C pacman --config "$work/transaction.conf" --dbpath "$work/db" -Sl 2>/dev/null |
     awk -v candidate="$candidate_repo" '$1 != candidate { print $2 }' | LC_ALL=C sort -u >"$official"
@@ -79,12 +79,29 @@ mx_mac_plan() {
         done
     done
   } | LC_ALL=C sort -u >"$fork"
+  {
+    awk '{ print $1 }' "$installed"
+    while read -r name _; do
+      mx_mac_counterpart "$name"
+    done <"$fork"
+  } | LC_ALL=C sort -u >"$present"
+
+  : >"$named"
+  for name in $target_packages; do
+    if [[ $name == *-headers ]]; then
+      grep -Eq '^linux-(asahi|aurora)-headers ' "$installed" || continue
+    fi
+    if [[ " $mx_mac_targets " == *" $name "* ]] || grep -Fxq "$name" "$present"; then
+      printf '%s/%s\n' "$target_repo" "$name"
+      printf '%s\n' "$name" >>"$named"
+    fi
+  done
 
   : >"$work/kept"
   : >"$work/allowed-removals"
   while read -r name version; do
     counterpart=$(mx_mac_counterpart "$name")
-    if [[ " $mx_mac_targets " == *" $counterpart "* ]]; then
+    if grep -Fxq "$counterpart" "$named"; then
       :
     elif grep -Fxq "$counterpart" "$official"; then
       printf '%s\n' "$counterpart"

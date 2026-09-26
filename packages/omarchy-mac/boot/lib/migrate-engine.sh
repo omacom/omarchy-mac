@@ -810,8 +810,8 @@ system_moved() {
 
 restart_from_prefetch() {
   local step
-  (( ++restarts <= 3 )) || die "the installed packages keep changing; run the migration again when nothing else updates"
-  say "The installed packages changed since the transaction was rehearsed ($1); rehearsing it again"
+  (( ++restarts <= 3 )) || die "the system keeps changing under the migration ($1); run it again when nothing else updates"
+  say "The system changed since the transaction was rehearsed ($1); rehearsing it again"
   for step in prefetch repositories transaction; do
     journal_write "$step" "reset" "$1"
   done
@@ -903,7 +903,7 @@ step_transaction() {
   # Kept across a new rehearsal until a transaction has run to its end.
   [[ ! -e $interrupted_marker ]] || interrupted=1
   if switch_undone; then
-    restart_from_prefetch "the repository switch was undone"
+    restart_from_prefetch "pacman.conf or a retired key came back after the repository switch"
     return 0
   fi
   if system_moved && ! cmp -s "$state/installed.now" "$expected"; then
