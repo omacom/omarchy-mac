@@ -1,0 +1,130 @@
+#!/bin/bash
+#
+# Rehearse the scoped aarch64 promotion edge -> rc without touching the live
+# repository.
+#
+#   aarch64-promotion-rehearsal <omarchy-pkgs checkout with bin/promote-artifact>
+#
+# Part A plans against https://pkgs.omarchy.org, read-only: withdrawing the
+# stale linux-aurora, the refusal before widening, the promotion after it, and
+# the refusal of the pinned omarchy pair. Part B runs the same commands for
+# real against a sandbox remote seeded with copies of the live databases and
+# the set's files, signs with a throwaway key, then rolls back, and checks that
+# only rc/aarch64 changed. Run it in an Arch environment, for example:
+#
+#   docker run --rm -v "$PKGS:/pkgs:ro" -v "$PWD/tools/release/test:/t:ro" archlinux/archlinux:latest bash -lc \
+#     'pacman -Syu --noconfirm --needed rclone jq libarchive gnupg diffutils >/dev/null && /t/aarch64-promotion-rehearsal /pkgs'
+#
+# REHEARSAL_SET and REHEARSAL_CLOSURE override the packages.
+
+set -euo pipefail
+
+pkgs=${1:?usage: aarch64-promotion-rehearsal <omarchy-pkgs checkout>}
+[[ -x $pkgs/bin/promote-artifact ]] || { echo "$pkgs has no bin/promote-artifact" >&2; exit 1; }
+live=${REHEARSAL_LIVE:-https://pkgs.omarchy.org}
+read -r -a set <<<"${REHEARSAL_SET:-linux-aurora m1n1-aurora uboot-asahi omarchy-mac omarchy-mac-boot limine-mkinitcpio-hook aquamarine}"
+read -r -a closure <<<"${REHEARSAL_CLOSURE:-limine-snapper-sync omarchy-keyring ttf-jetbrains-mono-nerd-basic}"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+failed=0
+say() { printf '\n######## %s\n' "$*"; }
+check() { if eval "$2"; then echo "CHECK ok: $1"; else echo "CHECK FAILED: $1"; failed=1; fi; }
+export RCLONE_CONFIG=$work/rclone.conf
+: >"$RCLONE_CONFIG"
+
+# The widening pull request, applied to a copy: the same edit mac-release makes.
+widened=$work/widened
+cp -R "$pkgs" "$widened"
+for package in "${set[@]}"; do
+  file=$widened/pkgbuilds/$package/.omarchy/package.json
+  [[ -f $file ]] || continue
+  jq -e 'has("channels")' "$file" >/dev/null || continue
+  jq --arg to rc --argjson order '["edge","rc","stable"]' \
+    '.channels = ([(.channels // ["edge"])[], $to] | unique | sort_by(. as $c | $order | index($c)))' "$file" >"$file.new"
+  mv "$file.new" "$file"
+done
+
+say "A1 live: withdraw the stale linux-aurora from rc/aarch64 (dry run)"
+"$pkgs/bin/promote-artifact" --remote "$live" --withdraw --to rc --arch aarch64 --package linux-aurora --dry-run | tee "$work/a1" || true
+read -r -a stale_expect <<<"$(sed -n 's/.*Expect: --expect //p' "$work/a1")"
+
+say "A2 live: promote with master's recipes, before widening (dry run; a refusal is expected)"
+if "$pkgs/bin/promote-artifact" --remote "$live" --from edge --to rc --arch aarch64 --package "${set[@]}" --dry-run 2>&1 | tee "$work/a2"; then
+  echo "note: nothing refused; the set is already a member of rc"
+else
+  check "before widening, non-members are refused" 'grep -q "widen its channels first" "$work/a2"'
+fi
+
+say "A3 live: promote after widening, the set and its install closure (dry run)"
+"$widened/bin/promote-artifact" --remote "$live" --from edge --to rc --arch aarch64 --package "${set[@]}" "${closure[@]}" --dry-run | tee "$work/a3"
+digest=$(sed -n 's/.*Set sha256: \([0-9a-f]\{64\}\).*/\1/p' "$work/a3")
+[[ -n $digest ]] || { echo "the dry run printed no set digest" >&2; exit 1; }
+
+say "A4 live: the pinned omarchy pair (dry run; a refusal is expected)"
+"$widened/bin/promote-artifact" --remote "$live" --from edge --to rc --arch aarch64 --package omarchy omarchy-settings --dry-run >"$work/a4" 2>&1 || true
+cat "$work/a4"
+check "the pinned pair is refused" 'grep -q "built natively for rc" "$work/a4"'
+
+say "B0 sandbox: a remote holding copies of the live databases and the set's files"
+r2=$work/r2
+for channel in edge rc stable; do
+  for arch in x86_64 aarch64; do
+    mkdir -p "$r2/$channel/$arch"
+    curl -fsSL "$live/$channel/$arch/omarchy.db.tar.zst?$(date +%s)$RANDOM" -o "$r2/$channel/$arch/omarchy.db.tar.zst"
+  done
+done
+curl -fsSL "$live/rc/aarch64/omarchy.files.tar.zst?$(date +%s)" -o "$r2/rc/aarch64/omarchy.files.tar.zst"
+awk '/would publish:/ { print $3 }' "$work/a3" | while read -r file; do
+  curl -fsSL "$live/edge/aarch64/$file" -o "$r2/edge/aarch64/$file"
+done
+dbs() { (cd "$r2" && find . -name omarchy.db.tar.zst | sort | xargs sha256sum); }
+entries() { bsdtar -tf "$r2/$1/omarchy.db.tar.zst" | grep '/$' | LC_ALL=C sort; }
+sum_of() { bsdtar -xOf "$r2/$1/omarchy.db.tar.zst" "$2/desc" | sed -n '/%SHA256SUM%/{n;p}'; }
+dbs
+export GNUPGHOME=$work/gnupg
+mkdir -m 700 "$GNUPGHOME"
+gpg --batch --quiet --passphrase '' --quick-gen-key 'Rehearsal <rehearsal@localhost>' ed25519 sign 0 2>/dev/null
+GPG_PRIVATE_KEY=$(gpg --batch --armor --export-secret-keys 'Rehearsal <rehearsal@localhost>')
+export GPG_PRIVATE_KEY GPG_PASSPHRASE=''
+unset GNUPGHOME
+
+say "B1 sandbox: withdraw linux-aurora from rc/aarch64"
+entries rc/aarch64 >"$work/rc.0"
+"$pkgs/bin/promote-artifact" --remote "$r2" --withdraw --to rc --arch aarch64 --package linux-aurora --expect "${stale_expect[@]}"
+entries rc/aarch64 >"$work/rc.1"
+LC_ALL=C comm -23 "$work/rc.0" "$work/rc.1" | sed 's/^/  gone: /'
+
+say "B2 sandbox: promote the qualified set (--expect-sha256 from A3)"
+# shellcheck disable=SC2034 # both are read by check's eval
+x86_before=$(dbs | grep x86_64)
+# shellcheck disable=SC2034
+others_before=$(dbs | grep -v ' ./rc/aarch64/')
+"$widened/bin/promote-artifact" --remote "$r2" --from edge --to rc --arch aarch64 \
+  --package "${set[@]}" "${closure[@]}" --expect-sha256 "$digest"
+entries rc/aarch64 >"$work/rc.2"
+LC_ALL=C comm -13 "$work/rc.1" "$work/rc.2" >"$work/added"
+sed 's/^/  added: /' "$work/added"
+echo "rc/aarch64 entries: $(wc -l <"$work/rc.0") live, $(wc -l <"$work/rc.1") after the withdrawal, $(wc -l <"$work/rc.2") after the promotion"
+check "every earlier rc/aarch64 entry kept" '[[ -z $(LC_ALL=C comm -23 "$work/rc.1" "$work/rc.2") ]]'
+mismatch=""
+while read -r entry; do
+  edge_sum=$(sum_of edge/aarch64 "${entry%/}")
+  [[ -n $edge_sum && $edge_sum == "$(sum_of rc/aarch64 "${entry%/}")" ]] || mismatch+=" ${entry%/}"
+done <"$work/added"
+check "each promoted entry carries edge's sha256" '[[ -z $mismatch ]]'
+check "x86_64 databases byte-identical (edge, rc, stable)" '[[ $(dbs | grep x86_64) == "$x86_before" ]]'
+check "only rc/aarch64 changed" '[[ $(dbs | grep -v " ./rc/aarch64/") == "$others_before" ]]'
+
+say "B3 sandbox: the same promotion again is a no-op"
+"$widened/bin/promote-artifact" --remote "$r2" --from edge --to rc --arch aarch64 --package "${set[@]}" "${closure[@]}" | tee "$work/b3" | tail -n 1
+check "no change on the second run" 'grep -q "already serves the set" "$work/b3"'
+
+say "B4 sandbox: rollback, withdrawing what the promotion added"
+mapfile -t added < <(sed -E 's|-[^-]+-[^-]+/$||' "$work/added")
+mapfile -t added_expect < <(sed -E 's|^(.*)-([^-]+-[^-]+)/$|\1=\2|' "$work/added")
+"$pkgs/bin/promote-artifact" --remote "$r2" --withdraw --to rc --arch aarch64 --package "${added[@]}" --expect "${added_expect[@]}"
+entries rc/aarch64 >"$work/rc.3"
+check "rc/aarch64 entries back to the pre-promotion set" '[[ $(cat "$work/rc.1") == "$(cat "$work/rc.3")" ]]'
+check "x86_64 databases still byte-identical" '[[ $(dbs | grep x86_64) == "$x86_before" ]]'
+dbs
+exit "$failed"
