@@ -1,0 +1,25 @@
+# Password reset with the disk recovery key: asks on tty1 before SDDM starts,
+# armed for this boot by omarchy-drive-recover-check.service. Plymouth is
+# dismissed via ExecStartPre, as for omarchy-provision-owner.service.
+[Unit]
+Description=Omarchy password reset with the disk recovery key
+ConditionPathExists=/run/omarchy/drive-recover
+After=omarchy-drive-recover-check.service systemd-user-sessions.service
+Before=display-manager.service getty@tty1.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=oneshot
+KeyringMode=shared
+ExecStartPre=-/usr/bin/plymouth quit
+ExecStart=/usr/bin/omarchy-drive-recover
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+
+[Install]
+WantedBy=multi-user.target
