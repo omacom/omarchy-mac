@@ -149,8 +149,9 @@ assert(
   'theme changes disable both transition snapshots whenever either side is a video'
 )
 assert(
-  /function onScreensChanged\(\) \{[\s\S]*?root\.displaysBlank = false/.test(lockService),
-  'a display coming back gives up the blank state instead of freezing a visible wallpaper'
+  /function onScreensChanged\(\) \{[\s\S]*?if \(root\.displaysBlank\) screenDpmsSettleTimer\.restart\(\)/.test(lockService) &&
+    /function settleScreenDpms\(text\) \{[\s\S]*?applyMonitorDpms\(text\)[\s\S]*?if \(!dark\) displaysBlank = false/.test(lockService),
+  'a display coming back reads which panels are lit instead of freezing a visible wallpaper'
 )
 assert(
   lockService.includes('function screenBlank(screenName)') &&
