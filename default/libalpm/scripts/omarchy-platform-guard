@@ -1,0 +1,212 @@
+#!/bin/bash -p
+
+# Refuse to install packages built for another hardware platform.
+#
+# Pacman runs this before every install or upgrade, through
+# 00-omarchy-platform-guard.hook, with the transaction's package names on
+# stdin. A package declares its platform with groups=('omarchy-platform-<name>'),
+# <name> being what omarchy-hw-platform prints, so its tags are read from the
+# synced repository databases. With --installed it checks the installed packages
+# instead, from the local database, and --platform prints the platform it
+# checks against. docs/platform-guard.md has the contract.
+#
+# Only tagged packages depend on the platform: a transaction without one passes
+# without asking which machine this is, and a failure to read a database is
+# reported and skipped, so the guard never wedges pacman over untagged packages.
+
+# Pacman runs hooks as root, chrooted into the transaction's root, with its
+# caller's environment. Privileged mode (-p) keeps functions and shell options
+# from that environment out of this shell, and root starts over in an empty one
+# before reading anything, so no variable reaches the guard or what it runs.
+if (( EUID == 0 )) && [[ ${1:-} != --clean-environment ]]; then
+  exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin /bin/bash -p -- "$0" --clean-environment "$@"
+fi
+[[ ${1:-} != --clean-environment ]] || shift
+
+set -euo pipefail
+
+# A fresh root may have no locales yet, and the database text needs none.
+export LC_ALL=C
+
+mode=transaction
+case ${1:-} in
+  "") ;;
+  --installed) mode=installed ;;
+  --platform) mode=platform ;;
+  *)
+    echo "Usage: omarchy-platform-guard [--installed|--platform]" >&2
+    exit 2
+    ;;
+esac
+
+# The overrides below exist for unprivileged tests only. The detector is the
+# copy of omarchy-hw-platform shipped beside the guard, so it is there before
+# the omarchy runtime is.
+if (( EUID == 0 )); then
+  pacman_db=/var/lib/pacman
+  proc=/proc
+  image_root=""
+  detector=/usr/share/libalpm/scripts/omarchy-hw-platform
+else
+  pacman_db=${OMARCHY_PACMAN_DB:-/var/lib/pacman}
+  proc=${OMARCHY_PROC_ROOT:-/proc}
+  image_root=${OMARCHY_IMAGE_ROOT:-}
+  detector=omarchy-hw-platform
+fi
+image_dir=$image_root/var/lib/omarchy/image
+manifest=$image_dir/target
+
+# Prints "<package> <platform>" for each platform tag in the desc records read.
+platform_tags() {
+  awk '
+    /^%[A-Z0-9]+%$/ { section = $0; next }
+    $0 == "" { section = ""; next }
+    section == "%NAME%" { name = $0 }
+    section == "%GROUPS%" && index($0, "omarchy-platform-") == 1 { print name, substr($0, 18) }
+  ' "$@"
+}
+
+sync_records() {
+  local db
+
+  for db in "$pacman_db"/sync/*.db; do
+    [[ -f $db ]] || continue
+    bsdtar -xOf "$db" 2>/dev/null || echo "Warning: could not read $db; the platform guard skips its packages" >&2
+  done
+}
+
+# An image build installs into a chroot on whatever host builds it, or into a
+# root without /proc; there the root-owned image manifest names the platform.
+# Otherwise the detector decides, which also takes the manifest when PID 1 is
+# not systemd or the root has no /run/systemd/system, and asks the hardware on
+# a booted system.
+image_build() {
+  if [[ -e $proc/1/root ]]; then
+    [[ ! $proc/1/root -ef $image_root/ ]]
+  else
+    [[ ! -e $proc/1 && ! -L $proc/1 ]]
+  fi
+}
+
+# Owned by root (whoever runs this), not a symlink, writable by no one else.
+trusted() {
+  local owner perms
+
+  [[ -e $1 && ! -L $1 ]] || return 1
+  perms=$(stat -c '%u %a' -- "$1") || return 1
+  read -r owner perms <<<"$perms"
+  [[ $owner =~ ^[0-9]+$ && $perms =~ ^[0-7]+$ ]] && (( owner == EUID && (8#$perms & 8#022) == 0 ))
+}
+
+# The image manifest as omarchy-hw-platform reads it (docs/file-layout.md):
+# format=1 and platform=, unknown keys ignored, and any other line refused.
+image_target() {
+  local line key value format="" platform=""
+
+  if [[ ! -d $image_dir || ! -f $manifest ]] || ! trusted "$image_dir" || ! trusted "$manifest"; then
+    echo "Error: the image manifest $manifest is not a root-owned regular file" >&2
+    return 1
+  fi
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ -n $line && $line != \#* ]] || continue
+    if [[ $line != *=* ]]; then
+      echo "Error: the image manifest $manifest is malformed: $line" >&2
+      return 1
+    fi
+    key=${line%%=*}
+    value=${line#*=}
+    case $key in
+      format) format=$value ;;
+      platform) platform=$value ;;
+    esac
+  done <"$manifest"
+
+  if [[ $format != "1" ]]; then
+    echo "Error: the image manifest $manifest is not format=1" >&2
+    return 1
+  fi
+  if [[ ! $platform =~ ^(apple-silicon|qualcomm|generic-aarch64|generic)$ ]]; then
+    echo "Error: the image manifest $manifest names no known platform: ${platform:-none}" >&2
+    return 1
+  fi
+
+  echo "$platform"
+}
+
+this_platform() {
+  if image_build && [[ -e $manifest || -L $manifest ]]; then
+    image_target
+  else
+    "$detector"
+  fi
+}
+
+if [[ $mode == "platform" ]]; then
+  this_platform
+  exit
+fi
+
+declare -A wanted=() tags=()
+
+if [[ $mode == "installed" ]]; then
+  shopt -s nullglob
+  records=("$pacman_db"/local/*/desc)
+  shopt -u nullglob
+  (( ${#records[@]} > 0 )) || exit 0
+  if ! tag_lines=$(platform_tags "${records[@]}"); then
+    echo "Warning: could not read the local package database; the platform guard skips installed packages" >&2
+    exit 0
+  fi
+else
+  while IFS= read -r target; do
+    if [[ -n $target ]]; then
+      wanted[$target]=1
+    fi
+  done
+  (( ${#wanted[@]} > 0 )) || exit 0
+  if ! tag_lines=$(sync_records | platform_tags); then
+    echo "Warning: could not read the package databases; the platform guard skips this transaction" >&2
+    exit 0
+  fi
+fi
+
+while read -r name platform; do
+  [[ -n $name && -n $platform ]] || continue
+  [[ $mode == "installed" || -n ${wanted[$name]:-} ]] || continue
+  [[ " ${tags[$name]:-} " == *" $platform "* ]] || tags[$name]+=" $platform"
+done <<<"$tag_lines"
+
+(( ${#tags[@]} > 0 )) || exit 0
+
+# Builders get told where an image names its target.
+build_hint() {
+  if image_build && [[ ! -e $manifest && ! -L $manifest ]]; then
+    echo "This root is not the running system's and has no $manifest. An image built for other hardware names its target there; an install on this machine needs none." >&2
+  fi
+}
+
+if ! platform=$(this_platform); then
+  echo "Cannot tell which platform this machine is, so packages built for one platform are refused:" >&2
+  for name in "${!tags[@]}"; do
+    echo "  $name:${tags[$name]}"
+  done | sort >&2
+  build_hint
+  exit 1
+fi
+
+refused=()
+for name in "${!tags[@]}"; do
+  [[ " ${tags[$name]} " == *" $platform "* ]] || refused+=("  $name:${tags[$name]}")
+done
+
+(( ${#refused[@]} > 0 )) || exit 0
+
+if [[ $mode == "installed" ]]; then
+  echo "Installed packages are built for another platform. This machine is $platform:" >&2
+else
+  echo "Refusing to install packages built for another platform. This machine is $platform:" >&2
+fi
+printf '%s\n' "${refused[@]}" | sort >&2
+build_hint
+exit 1
