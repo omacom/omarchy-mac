@@ -58,10 +58,10 @@ mx_mac_preflight() {
 #   installed version is replaced: the Mac packages always, kernel headers only
 #   where headers are installed, and every other one where it is installed or
 #   replaces a fork build.
-# - Every other fork build is named by its official name when an official
-#   repository carries it, so it moves to the official build even when that is
-#   older. One nothing official carries stays installed and is listed in
-#   WORK/kept.
+# - Every other fork build is named when an official repository carries it,
+#   by its own name or else by its official counterpart's, so it moves to the
+#   official build even when that is older. One nothing official carries stays
+#   installed and is listed in WORK/kept.
 # - The fork builds whose official counterpart has another name are removed:
 #   by the counterpart's conflict where it has one, else by name after the
 #   install (a versioned conflict, such as dotnet-runtime-bin's, can miss the
@@ -107,15 +107,20 @@ mx_mac_plan() {
   : >"$work/removals"
   while read -r name version; do
     counterpart=$(mx_mac_counterpart "$name")
-    if grep -Fxq "$counterpart" "$named"; then
+    if grep -Fxq "$name" "$named"; then
+      continue
+    elif grep -Fxq "$counterpart" "$named"; then
       :
+    elif grep -Fxq "$name" "$official"; then
+      printf '%s\n' "$name"
+      continue
     elif grep -Fxq "$counterpart" "$official"; then
       printf '%s\n' "$counterpart"
     else
       printf '%s %s\n' "$name" "$version" >>"$work/kept"
       continue
     fi
-    [[ $counterpart == "$name" ]] || printf '%s\n' "$name" | tee -a "$work/allowed-removals" >>"$work/removals"
+    printf '%s\n' "$name" | tee -a "$work/allowed-removals" >>"$work/removals"
   done <"$fork"
   for name in $mx_mac_replaced; do
     [[ -z $(installed_version "$name" "$installed") ]] || printf '%s\n' "$name" >>"$work/allowed-removals"

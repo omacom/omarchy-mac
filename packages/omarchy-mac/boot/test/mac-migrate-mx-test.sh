@@ -525,6 +525,18 @@ pass "a rehearsal that would remove a kept fork build fails before the switch"
 
 # --- Other mx-mac Macs -------------------------------------------------------------
 
+# omacom edge carries quickshell-git itself (and an omarchy-dev of its own): a
+# fork build moves to the official build of its own name before a renamed one,
+# and the runtime pair still comes from the target.
+new_fixture same-name
+printf 'quickshell-git 0.3.0.r20.g28771c7-3\nomarchy-dev 4.0.0.r2186.gee8ebf6-1\n' >>"$F/repos/omarchy/omarchy.db"
+finish
+grep -qx "quickshell-git 0.3.0.r20.g28771c7-3" "$R/var/lib/pacman/local/packages" && ! grep -q "^quickshell \|^omarchy-dev " "$R/var/lib/pacman/local/packages" ||
+  fail "a fork build an official repository carries by its own name moves to that build" "$(cat "$R/var/lib/pacman/local/packages")"
+! grep -qx "quickshell-git" "$(state_dir)/plan/allowed-removals" && grep -q "^transaction .* quickshell-git ttf-jetbrains-mono-nerd-basic$" "$F/pacman.log" ||
+  fail "the official build of the same name is named and nothing is removed for it" "$(cat "$(state_dir)/plan/allowed-removals" "$F/pacman.log")"
+pass "a fork build moves to the official build of its own name before a renamed counterpart"
+
 new_fixture grub
 rm "$R/var/lib/omarchy/limine.enabled" "$R/etc/default/limine" "$R/boot/efi/limine.conf" "$R/boot/efi/EFI/Linux/omarchy_linux-aurora.efi"
 echo grub >"$R/boot/efi/EFI/BOOT/BOOTAA64.EFI"
