@@ -90,13 +90,29 @@ set_tokyo_night_colors() {
   clear
 }
 
+# Rows under the logo on the tallest form screens (the keyboard list and the
+# confirm table), measured with gum 2. One height for every form screen keeps
+# the logo on the same row from step to step.
+FORM_BODY_HEIGHT=18
+
 measure_terminal() {
-  TERM_WIDTH=$( { stty size </dev/tty; } 2>/dev/null | awk '{print $2}' || true)
+  local size rows
+  size=$( { stty size </dev/tty; } 2>/dev/null || true)
+  rows=${size%% *}
+  TERM_WIDTH=${size##* }
   [[ $TERM_WIDTH =~ ^[0-9]+$ ]] && (( TERM_WIDTH > 0 )) || TERM_WIDTH=${COLUMNS:-80}
+  [[ $rows =~ ^[0-9]+$ ]] && (( rows > 0 )) || rows=${LINES:-24}
 
   PADDING_LEFT=$(((TERM_WIDTH - LOGO_WIDTH) / 2))
   (( PADDING_LEFT < 0 )) && PADDING_LEFT=0
   PADDING_LEFT_SPACES=$(printf "%*s" "$PADDING_LEFT" "")
+
+  # The ISO draws this form one row from the top of a ~48-row installer
+  # console, where it fills the screen. A HiDPI console (an Apple Silicon Mac
+  # at 60-70 rows) leaves it hanging off the top, so centre it vertically as
+  # the greeter and the progress screen around it are.
+  PADDING_TOP=$(((rows - LOGO_HEIGHT - FORM_BODY_HEIGHT) / 2))
+  (( PADDING_TOP < 1 )) && PADDING_TOP=1
 
   local padding="0 0 0 $PADDING_LEFT"
   export GUM_CHOOSE_PADDING="$padding"
@@ -110,7 +126,7 @@ measure_terminal() {
 clear_logo() {
   measure_terminal
   printf '\e[3J\e[2J\e[H'
-  gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
+  gum style --foreground 2 --padding "$PADDING_TOP 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
 }
 
 step() {
