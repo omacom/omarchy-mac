@@ -213,8 +213,9 @@ expect_handoff() {
   [[ -f $root/var/lib/omarchy/provisioning/pending ]] || fail "$1: T1's provisioning marker was dropped"
   [[ ! -e $root/var/lib/omarchy/provisioning/luks-key ]] || fail "$1: first boot must not touch luks-key"
   ! grep -Fq reboot "$case_dir/systemctl.log" || fail "$1: rebooted"
-  grep -Fxq 'systemctl enable speakersafetyd.service sddm.service' "$case_dir/systemctl.log" ||
+  grep -Fxq 'systemctl enable sddm.service' "$case_dir/systemctl.log" ||
     fail "$1: the display manager is not enabled"
+  ! grep -Fq speakersafetyd "$case_dir/systemctl.log" || fail "$1: speaker protection is omarchy-mac's to enable"
   [[ $(grep -E 'daemon-reload|^systemctl start' "$case_dir/systemctl.log") == \
     $'systemctl daemon-reload\nsystemctl start --no-block omarchy-provision-owner.service\nsystemctl start --no-block display-manager.service' ]] ||
     fail "$1: reload then queued starts, then pending is cleared"
