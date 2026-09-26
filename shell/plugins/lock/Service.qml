@@ -497,6 +497,27 @@ Item {
     }
   }
 
+  // Suspend freezes the shell, so the first tick after resume sees the clock
+  // jump. The panel is usually lit again by then while displaysBlank still says
+  // otherwise, which would swallow the first password key as a wake key.
+  Timer {
+    id: resumeWatchTimer
+    interval: 1000
+    repeat: true
+    running: root.lockRequested
+    property double lastTick: 0
+    onRunningChanged: lastTick = 0
+    onTriggered: {
+      var now = Date.now()
+      var resumed = lastTick > 0 && now - lastTick > interval + 2000
+      lastTick = now
+      if (resumed) {
+        root.logEvent("resume-detected")
+        root.runWake()
+      }
+    }
+  }
+
   Timer {
     id: sessionLockStabilizeTimer
     interval: 500

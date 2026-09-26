@@ -14,6 +14,12 @@ assert(
   /Keys\.onPressed: function\(event\) \{\s*var wakeKey = root\.isWakeKey\(event\.key, event\.isAutoRepeat\)\s*root\.wakeRequested\(\)\s*if \(wakeKey\) \{\s*event\.accepted = true\s*return\s*\}/.test(lockView),
   'the password field swallows the key that wakes a blank lock'
 )
+
+const service = fs.readFileSync(path.join(root, 'shell/plugins/lock/Service.qml'), 'utf8')
+assert(
+  /id: resumeWatchTimer[\s\S]*?running: root\.lockRequested[\s\S]*?now - lastTick > interval \+ 2000[\s\S]*?if \(resumed\) \{[\s\S]*?root\.runWake\(\)/.test(service),
+  'a resume clears the blank state, so the first key at a lit lock is typed'
+)
 JS
 
 TMPDIR=""
