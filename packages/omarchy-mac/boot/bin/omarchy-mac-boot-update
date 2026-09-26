@@ -19,8 +19,10 @@ fi
 # A Limine Mac that still carries GRUB keeps its (unused) image current, so a
 # rollback to GRUB has something to boot; an image without GRUB has none.
 # update-grub ships with asahi-scripts even where GRUB itself does not, and
-# fails without grub-probe, so GRUB's own tools are the test.
-if omarchy-cmd-present grub-probe && omarchy-cmd-present grub-mkconfig; then
+# fails without grub-probe, so GRUB's own tools are the test. A fresh image's
+# first boot (OMARCHY_MAC_BOOT_UPDATE_GRUB=0) never booted GRUB and skips it.
+if [[ ${OMARCHY_MAC_BOOT_UPDATE_GRUB:-1} != 0 ]] &&
+  omarchy-cmd-present grub-probe && omarchy-cmd-present grub-mkconfig; then
   update-grub >/dev/null || echo "omarchy-mac-boot-update: update-grub failed; Limine is unaffected" >&2
 fi
 omarchy-mac-limine-cmdline || { echo "omarchy-mac-boot-update: could not derive the Limine command line" >&2; exit 1; }

@@ -10,7 +10,7 @@ build() {
     local binary
     for binary in cryptsetup btrfs blkid lsblk awk findmnt mount umount bash \
         chroot dd install sed grep mv cat mkdir chmod readlink stat sync date \
-        udevadm systemctl; do
+        sleep udevadm systemctl; do
         add_binary "$binary"
     done
 

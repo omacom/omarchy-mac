@@ -148,6 +148,10 @@ esac
 SH
 cat >"$stub_bin/lsblk" <<'SH'
 #!/bin/bash
+case "$*" in
+  "-nsrpo NAME,FSTYPE "*) [[ -z ${TEST_LSBLK_CHAIN:-} ]] || printf '%b' "$TEST_LSBLK_CHAIN" ;;
+  "-ndo UUID "*) [[ -z ${TEST_LUKS_UUID:-} ]] || echo "$TEST_LUKS_UUID" ;;
+esac
 exit 0
 SH
 chmod +x "$stub_bin"/*
@@ -355,6 +359,63 @@ expect_pass "an encrypted root whose systemd initramfs carries the cryptsetup ge
 printf 'usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\nusr/bin/init\n' "$kver" >"$test_tmp/initramfs"
 run_check linux-aurora
 expect_fail "an encrypted root whose initramfs lacks sd-encrypt" "/boot/initramfs-linux-aurora.img does not contain sd-encrypt"
+# A Mac installed before Omarchy's images: the busybox init unlocks the root
+# through the encrypt hook and cryptdevice=, with no crypttab and none of
+# Omarchy's sd-encrypt provisioning. The busybox init keeps only the last
+# rootflags=, so a second one is a boot that loses subvol=@.
+system linux-asahi
+printf '/dev/mapper/root / btrfs subvol=@ 0 0\n' >"$root/etc/fstab"
+printf 'linux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@ cryptdevice=UUID=0422663f-9969-4953-900f-b342703b7e84:root:allow-discards quiet\ninitrd /initramfs-linux-asahi.img\n' >"$root/boot/grub/grub.cfg"
+printf 'usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\nusr/bin/init\ninit_functions\nhooks/encrypt\n' "$kver" >"$test_tmp/initramfs"
+printf '==> Image: initramfs\n==> Hook run order:\n  base\n  udev\n  encrypt\n' >"$test_tmp/initramfs.analyze"
+export TEST_LSBLK_CHAIN="/dev/mapper/root btrfs\n/dev/nvme0n1p5 crypto_LUKS\n/dev/nvme0n1 \n"
+export TEST_LUKS_UUID=0422663f-9969-4953-900f-b342703b7e84
+run_check
+expect_pass "a busybox encrypt root unlocked by cryptdevice="
+run_check --boot-chain
+expect_pass "a busybox encrypt root unlocked by cryptdevice=, checked for the next boot"
+sed -i 's/ quiet$/ rootflags=x-systemd.device-timeout=0 quiet/' "$root/boot/grub/grub.cfg"
+run_check
+expect_fail "a busybox encrypt root with a second rootflags=" "more than one rootflags="
+run_check --boot-chain
+expect_fail "a busybox encrypt root with a second rootflags=, checked for the next boot" "more than one rootflags="
+sed -i 's/ cryptdevice=[^ ]*//; s/ rootflags=x-systemd.device-timeout=0//' "$root/boot/grub/grub.cfg"
+run_check
+expect_fail "a busybox encrypt root without cryptdevice=" "does not set cryptdevice="
+sed -i 's| rw | rw cryptdevice=UUID=11111111-2222-3333-4444-555555555555:root |' "$root/boot/grub/grub.cfg"
+run_check
+expect_fail "a busybox encrypt root whose cryptdevice= names another partition" "does not name the LUKS partition"
+printf 'linux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@\nlinux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@ cryptdevice=UUID=0422663f-9969-4953-900f-b342703b7e84:root single\ninitrd /initramfs-linux-asahi.img\n' >"$root/boot/grub/grub.cfg"
+run_check
+expect_fail "a busybox encrypt entry without cryptdevice= beside one with it" "does not set cryptdevice="
+printf '#linux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@\n#initrd /initramfs-linux-asahi.img\n' >"$root/boot/grub/grub.cfg"
+run_check
+expect_fail "a busybox encrypt root with only commented kernel lines" "has no linux entry for vmlinuz-linux-asahi"
+# grub-mkconfig's sections: only 10_linux's entries boot this root; os-prober
+# lists other installs, whose command lines are theirs.
+grub_sections() {
+  printf '### BEGIN /etc/grub.d/10_linux ###\nmenuentry Omarchy {\n  linux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@ %s quiet\n  initrd /initramfs-linux-asahi.img\n}\n### END /etc/grub.d/10_linux ###\n' "$1"
+  printf '### BEGIN /etc/grub.d/30_os-prober ###\nmenuentry Other {\n  linux /vmlinuz-linux-asahi root=UUID=y rw rootflags=subvol=@ rootflags=subvol=@home\n}\n### END /etc/grub.d/30_os-prober ###\n'
+}
+grub_sections cryptdevice=UUID=0422663f-9969-4953-900f-b342703b7e84:root >"$root/boot/grub/grub.cfg"
+run_check --boot-chain
+expect_pass "a busybox encrypt root beside another install os-prober found"
+grub_sections "" >"$root/boot/grub/grub.cfg"
+run_check --boot-chain
+expect_fail "a busybox encrypt root whose own section lacks cryptdevice=" "does not set cryptdevice="
+# An image with the encrypt hook and a systemd init runs systemd: the
+# sd-encrypt and crypttab checks still apply.
+printf 'linux /vmlinuz-linux-asahi root=UUID=x rw rootflags=subvol=@ cryptdevice=UUID=0422663f-9969-4953-900f-b342703b7e84:root quiet\ninitrd /initramfs-linux-asahi.img\n' >"$root/boot/grub/grub.cfg"
+printf 'usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\nusr/bin/init\ninit_functions\nhooks/encrypt\nusr/lib/systemd/systemd\n' "$kver" >"$test_tmp/initramfs"
+run_check
+expect_fail "a systemd image carrying the encrypt hook" "encrypted root has no crypttab"
+printf 'usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\nusr/bin/init\n' "$kver" >"$test_tmp/initramfs"
+printf '==> Image: initramfs\n==> Hook run order:\n  base\n  udev\n' >"$test_tmp/initramfs.analyze"
+run_check
+expect_fail "an encrypted root with neither crypttab nor the encrypt hook" "encrypted root has no crypttab"
+unset TEST_LSBLK_CHAIN TEST_LUKS_UUID
+printf '==> Image: initramfs\n==> Early hook run order:\n  asahi\n==> Late hook run order:\n  asahi\n' >"$test_tmp/initramfs.analyze"
+pass "a busybox encrypt root is checked for cryptdevice= and one rootflags= on every one of its own entries, and only a busybox image counts"
 system linux-asahi
 run_check
 expect_pass "linux-asahi with m1n1, detected"

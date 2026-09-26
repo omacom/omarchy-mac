@@ -37,13 +37,13 @@ This is what the first release is qualified against on both reference Macs. <spa
 | Apple GPU | <span class="status ok">works</span> | Mesa `vulkan-asahi`, hardware acceleration. A desktop on `llvmpipe` means something is wrong. |
 | Internal display, brightness | <span class="status ok">works</span> | The panel includes the strip beside the notch |
 | Keyboard, backlight, trackpad | <span class="status ok">works</span> | Drivers loaded early, so they work at the passphrase prompt. The backlight follows the ambient light sensor. See [Keyboard and trackpad]({{page:keyboard}}). |
-| Wi-Fi, Bluetooth | <span class="status ok">works</span> | NetworkManager with the iwd backend. Wi-Fi on BCM4378 and BCM4387 chips recovers after resume. |
+| Wi-Fi, Bluetooth | <span class="status ok">works</span> | NetworkManager with the iwd backend. Wi-Fi on BCM4378 and BCM4387 chips recovers after resume. Wi-Fi 6E Macs join on 2.4 and 5 GHz: a 6 GHz join passes no traffic with the current firmware. |
 | Speakers, microphone, headphones | <span class="status ok">works</span> | Asahi's DSP chain with `speakersafetyd` protecting the speakers. The microphone array is mapped, and a headset microphone takes priority when plugged in. |
 | Suspend and resume | <span class="status ok">works</span> | |
 | Battery, lid, power profiles | <span class="status ok">works</span> | |
 | External displays | <span class="status ok">works</span> | HDMI on models that have it, USB4 and DisplayPort alt-mode through the Aurora kernel. Five displays on the M2 Max. A third and fourth display rely on an aquamarine fix carried until Hyprland releases it. |
 | Variable refresh rate, camera (ISP), always-on processor | <span class="status ok">works</span> | Aurora kernel |
-| Hardware video decode | <span class="status wip">in progress</span> | VA-API decoding of H.264, HEVC Main and Main10, and VP9 8 and 10-bit, tested on a 13" M1 MacBook Pro. Other models, the release kernel and browser acceleration are still open. No hardware encoding. |
+| Hardware video decode | <span class="status wip">in progress</span> | VA-API decoding of H.264, HEVC Main and Main10, and VP9 8 and 10-bit, tested on a 13" M1 MacBook Pro; 8-bit H.264, HEVC and VP9 also on a 16" M2 Max with the Aurora kernel. mpv uses it by default for H.264, HEVC and VP9, at about a quarter of the CPU of software decoding at 1080p; `hwdec=no` in `~/.config/mpv/mpv.conf` turns it off. To change the system default, edit `/etc/mpv/mpv.conf` rather than deleting it, since a deleted copy comes back at the next boot. Browser acceleration is still open. No hardware encoding. |
 | Screen recording | <span class="status ok">works</span> | Encoded on the CPU through `wf-recorder`, because the Apple GPU has no supported hardware video encoder |
 | Widevine DRM in browsers | <span class="status ok">works</span> | When the package is available from the Asahi repositories |
 | Steam | <span class="status ok">works</span> | Optional, through FEX (`omarchy-steam-fex`) |
