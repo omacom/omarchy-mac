@@ -21,6 +21,8 @@ Item {
   property bool powerSaverActive: false
   property string passwordText: ""
   property bool syncingPasswordText: false
+  // The key that woke a blanked lock, held so its auto-repeats stay out too.
+  property int heldWakeKey: -1
 
   readonly property string placeholderText: "Enter Password"
   readonly property int fieldWidth: 381
@@ -54,6 +56,18 @@ Item {
 
   function clearPassword() {
     passwordTextEdited("")
+  }
+
+  // A key pressed at a dark panel is there to wake it, not to type. Judge it
+  // before asking for the wake, which clears displaysBlank.
+  function isWakeKey(key, autoRepeat) {
+    if (displaysBlank) {
+      heldWakeKey = key
+      return true
+    }
+    if (autoRepeat && key === heldWakeKey) return true
+    heldWakeKey = -1
+    return false
   }
 
   function syncPasswordText() {
@@ -133,6 +147,7 @@ Item {
 
       TextInput {
         id: passwordInput
+        objectName: "passwordInput"
         anchors.fill: parent
         anchors.topMargin: inputField.borderTop
         // Reserve the fingerprint icon's width on both sides so the centered
@@ -172,6 +187,12 @@ Item {
         }
 
         onTextChanged: {
+          // Text committed by an input method never passes Keys.onPressed.
+          if (!root.syncingPasswordText && root.displaysBlank) {
+            root.wakeRequested()
+            root.syncPasswordText()
+            return
+          }
           if (!root.syncingPasswordText) root.passwordTextEdited(text)
           if (text.length > 0) {
             root.wakeRequested()
@@ -186,7 +207,12 @@ Item {
         }
 
         Keys.onPressed: function(event) {
+          var wakeKey = root.isWakeKey(event.key, event.isAutoRepeat)
           root.wakeRequested()
+          if (wakeKey) {
+            event.accepted = true
+            return
+          }
           if (event.key === Qt.Key_Escape || (event.modifiers & Qt.ControlModifier && event.key === Qt.Key_U)) {
             root.passwordTextEdited("")
             event.accepted = true
