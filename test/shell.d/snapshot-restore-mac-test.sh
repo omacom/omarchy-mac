@@ -12,6 +12,28 @@ require_command b2sum
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# The host's own limine-snapper-sync, snapper and Omarchy commands stay out of
+# reach: a restore that finds the real limine-snapper-restore runs it, and it
+# waits on the host's system. Everything else on PATH, first match wins.
+host=$tmp/host
+mkdir -p "$host"
+IFS=: read -ra host_path <<<"$PATH"
+for (( i = ${#host_path[@]} - 1; i >= 0; i-- )); do
+  dir=${host_path[i]}
+  [[ $dir == /* && -d $dir ]] || continue
+  shopt -s nullglob
+  commands=("$dir"/*)
+  shopt -u nullglob
+  (( ${#commands[@]} == 0 )) || ln -sf "${commands[@]}" "$host/"
+done
+rm -f "$host"/limine-* "$host"/snapper* "$host"/omarchy-*
+export PATH=$host
+
+# A restore that still reaches something it should not fails, never hangs.
+guarded() {
+  timeout --kill-after=5 60 "$@"
+}
+
 for platform in apple-silicon generic; do
   fake_platform "$tmp/$platform" "$platform"
 done
@@ -118,10 +140,11 @@ run_restore() {
     export OMARCHY_BOOT_DIR="$mac_root/boot" BOOTED="$tmp/booted"
     export OMARCHY_SNAPSHOT_TOP="$tmp/top" OMARCHY_SNAPSHOT_RESTORE_LOCK="$tmp/restore.lock" OMARCHY_SNAPSHOT_CHECK_STATE="$tmp/state"
     export MAC_UKI="$mac_esp/EFI/Linux/omarchy_linux-aurora.efi"
-    bash "$ROOT/bin/omarchy-snapshot" restore </dev/null
+    guarded bash "$ROOT/bin/omarchy-snapshot" restore </dev/null
   ) >"$tmp/out" 2>"$tmp/err"
   status=$?
   set -e
+  (( status != 124 && status != 137 )) || fail "the restore finishes within a minute" "$(cat "$tmp/out" "$tmp/err")"
 }
 
 # x86: exactly as before, and nothing asks whether a Mac boots Limine.
@@ -213,10 +236,11 @@ run_swap_restore() {
     export OMARCHY_LIMINE_GATE="$mac_root/var/lib/omarchy/limine.enabled" OMARCHY_LIMINE_DEFAULT="$mac_root/etc/default/limine"
     printf '%s\n' "${TEST_CMDLINE:-$live_cmdline}" >"$tmp/cmdline"
     export OMARCHY_CMDLINE="$tmp/cmdline"
-    bash "$ROOT/bin/omarchy-system-snapshot-restore" </dev/null
+    guarded bash "$ROOT/bin/omarchy-system-snapshot-restore" </dev/null
   ) >"$tmp/out" 2>"$tmp/err"
   status=$?
   set -e
+  (( status != 124 && status != 137 )) || fail "the restore finishes within a minute" "$(cat "$tmp/out" "$tmp/err")"
 }
 limine_mac
 run_swap_restore apple-silicon
@@ -250,10 +274,11 @@ swap_check() {
   (
     eval "$(limine_mac_env "$path")"
     export PATH="$path:$PATH" OMARCHY_PROC_ROOT="$tmp/apple-silicon/proc" OMARCHY_BOOT_DIR="$mac_root/boot"
-    bash -c 'source "$1"; apple_snapshot_matches_boot "$2"' _ "$ROOT/bin/omarchy-system-snapshot-restore" "$tmp/tree"
+    guarded bash -c 'source "$1"; apple_snapshot_matches_boot "$2"' _ "$ROOT/bin/omarchy-system-snapshot-restore" "$tmp/tree"
   ) >"$tmp/out" 2>"$tmp/err"
   status=$?
   set -e
+  (( status != 124 && status != 137 )) || fail "the restore finishes within a minute" "$(cat "$tmp/out" "$tmp/err")"
 }
 limine_mac
 with_boot=$tmp/apple-silicon/bin:$common:$ROOT/bin:$ROOT/packages/omarchy-mac/boot/bin
