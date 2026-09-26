@@ -41,29 +41,34 @@ mx_mac_counterpart() {
   esac
 }
 
+# mx_mac_preflight INSTALLED LUKS: prints the states this adapter refuses.
+mx_mac_preflight() {
+  if [[ " $target_packages " != *" omarchy "* || " $target_packages " != *" omarchy-settings "* ]]; then
+    echo "the target has no omarchy and omarchy-settings to replace omarchy-dev and omarchy-settings-dev"
+  fi
+}
+
 # mx_mac_plan INSTALLED WORK: prints the transaction's targets, one per line,
-# and writes WORK/allowed-removals and WORK/kept. WORK/db holds the target's
-# synced databases; the live ones are still the fork's.
+# and writes WORK/allowed-removals, WORK/removals and WORK/kept. WORK/db holds
+# the target's synced databases; the live ones are still the fork's.
 #
 # - A fork build is a bundle package, or a package installed at the exact
 #   version the fork's [omarchy] or [omarchy-aurora] lists.
 # - The target's packages are named as <target repository>/<name>, so a higher
 #   installed version is replaced: the Mac packages always, kernel headers only
 #   where headers are installed, and every other one where it is installed or
-#   replaces a fork build. The target must carry the runtime pair.
+#   replaces a fork build.
 # - Every other fork build is named by its official name when an official
 #   repository carries it, so it moves to the official build even when that is
 #   older. One nothing official carries stays installed and is listed in
 #   WORK/kept.
-# - The transaction may remove the fork builds whose official counterpart has
-#   another name, and what the target's packages replace.
+# - The fork builds whose official counterpart has another name are removed:
+#   by the counterpart's conflict where it has one, else by name after the
+#   install (a versioned conflict, such as dotnet-runtime-bin's, can miss the
+#   fork's build). The transaction may also remove what the target's packages
+#   replace.
 mx_mac_plan() {
   local installed=$1 work=$2 name version counterpart repo official=$2/official fork=$2/fork present=$2/present named=$2/named
-  if [[ " $target_packages " != *" omarchy "* || " $target_packages " != *" omarchy-settings "* ]]; then
-    echo "the target has no omarchy and omarchy-settings to replace omarchy-dev and omarchy-settings-dev" >&2
-    return 1
-  fi
-
   LC_ALL=C pacman --config "$work/transaction.conf" --dbpath "$work/db" -Sl 2>/dev/null |
     awk -v candidate="$candidate_repo" '$1 != candidate { print $2 }' | LC_ALL=C sort -u >"$official"
   {
@@ -99,6 +104,7 @@ mx_mac_plan() {
 
   : >"$work/kept"
   : >"$work/allowed-removals"
+  : >"$work/removals"
   while read -r name version; do
     counterpart=$(mx_mac_counterpart "$name")
     if grep -Fxq "$counterpart" "$named"; then
@@ -109,7 +115,7 @@ mx_mac_plan() {
       printf '%s %s\n' "$name" "$version" >>"$work/kept"
       continue
     fi
-    [[ $counterpart == "$name" ]] || printf '%s\n' "$name" >>"$work/allowed-removals"
+    [[ $counterpart == "$name" ]] || printf '%s\n' "$name" | tee -a "$work/allowed-removals" >>"$work/removals"
   done <"$fork"
   for name in $mx_mac_replaced; do
     [[ -z $(installed_version "$name" "$installed") ]] || printf '%s\n' "$name" >>"$work/allowed-removals"

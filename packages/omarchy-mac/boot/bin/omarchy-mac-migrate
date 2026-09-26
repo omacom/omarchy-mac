@@ -8,8 +8,9 @@
 # The upstream migration reaches this through omarchy-lifecycle-dispatch
 # migrate. Without a target (/etc/omarchy-mac/migration-target, or the one the
 # package ships once migrations are activated) it does nothing. The engine is
-# /usr/lib/omarchy-mac/boot/migrate-engine.sh; the tester and mx-mac adapters
-# are migrate-tester.sh and migrate-mx-mac.sh beside it.
+# /usr/lib/omarchy-mac/boot/migrate-engine.sh; the tester, legacy omarchy-mac
+# and mx-mac adapters are migrate-tester.sh, migrate-legacy.sh and
+# migrate-mx-mac.sh beside it.
 #
 # Root starts over in an empty environment with a fixed PATH and reads only the
 # live system. Unprivileged tests name a fixture root in
@@ -40,5 +41,6 @@ boot_lib=$R/usr/lib/omarchy-mac/boot
 
 source "$boot_lib/migrate-engine.sh"
 source "$boot_lib/migrate-tester.sh"
+source "$boot_lib/migrate-legacy.sh"
 source "$boot_lib/migrate-mx-mac.sh"
 migrate_main "$@"
