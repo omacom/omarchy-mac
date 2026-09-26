@@ -137,11 +137,26 @@ CONF
     printf 'timeout: 3\n' | sudo tee -a "$esp/limine.conf" >/dev/null || limine_boot_fail "cannot append the menu timeout"
   fi
 
-  echo "Building the Omarchy UKI and Limine entries"
-  sudo limine-update || limine_boot_fail "limine-update failed"
-  sudo test -s "$esp/EFI/Linux/omarchy_$kernel.efi" || limine_boot_fail "limine-update built no $kernel UKI"
-  sudo grep -Fq "//$kernel" "$esp/limine.conf" || limine_boot_fail "limine.conf has no $kernel entry"
-  sudo grep -Fq "boot():/EFI/Linux/omarchy_$kernel.efi" "$esp/limine.conf" || limine_boot_fail "limine.conf does not reference the $kernel UKI"
+  limine_boots_uki() {
+    sudo test -s "$esp/EFI/Linux/omarchy_$kernel.efi" && sudo grep -Fq "//$kernel" "$esp/limine.conf" &&
+      sudo grep -Fq "boot():/EFI/Linux/omarchy_$kernel.efi" "$esp/limine.conf"
+  }
+
+  # Deferred hardware setup (a fresh image's first boot) rebuilds the boot
+  # image after its last step. A menu that already boots the UKI keeps booting
+  # it until then, so the build is left to that rebuild: one per first boot.
+  rebuild_request=${OMARCHY_IMAGE_BOOT_REBUILD:-}
+  if [[ -n $rebuild_request ]] && (( menu_is_ours )) && limine_boots_uki; then
+    echo "Leaving the Omarchy UKI build to the end of the hardware setup"
+    sudo touch "$rebuild_request" && sudo sync "$rebuild_request" "$(dirname "$rebuild_request")" ||
+      limine_boot_fail "cannot request the UKI build"
+  else
+    echo "Building the Omarchy UKI and Limine entries"
+    sudo limine-update || limine_boot_fail "limine-update failed"
+    sudo test -s "$esp/EFI/Linux/omarchy_$kernel.efi" || limine_boot_fail "limine-update built no $kernel UKI"
+    sudo grep -Fq "//$kernel" "$esp/limine.conf" || limine_boot_fail "limine.conf has no $kernel entry"
+    sudo grep -Fq "boot():/EFI/Linux/omarchy_$kernel.efi" "$esp/limine.conf" || limine_boot_fail "limine.conf does not reference the $kernel UKI"
+  fi
 
   if sudo grep -Fq '/GRUB (recovery)' "$esp/limine.conf"; then
     sudo awk '

@@ -234,6 +234,31 @@ grep -q '^/+Omarchy$' "$esp/limine.conf" || fail "the menu is written without GR
 ! grep -q '^update-grub$' "$calls" || fail "no GRUB regeneration is attempted" "$(cat "$calls")"
 pass "an image without GRUB activates Limine on its own"
 
+# A fresh image's first boot: deferred hardware setup rebuilds the boot image
+# after its last step, so a menu that already boots the UKI keeps it and the
+# leaf only asks for that rebuild.
+request="$test_tmp/boot-rebuild"
+cp "$esp/EFI/Linux/omarchy_linux-aurora.efi" "$test_tmp/image-uki"
+cp "$esp/limine.conf" "$test_tmp/image-menu"
+: >"$calls"
+OMARCHY_IMAGE_BOOT_REBUILD="$request" OMARCHY_GRUB_PROBE=omarchy-test-absent-grub-probe run || fail "the leaf finishes under deferred hardware setup"
+[[ -f $request ]] || fail "the leaf asks for the rebuild after the last deferred step"
+! grep -Eq '^(limine-update|update-grub)$' "$calls" || fail "no UKI build and no GRUB step in the leaf" "$(cat "$calls")"
+cmp -s "$esp/EFI/Linux/omarchy_linux-aurora.efi" "$test_tmp/image-uki" && cmp -s "$esp/limine.conf" "$test_tmp/image-menu" ||
+  fail "the UKI and menu the Mac boots stay in place until the rebuild"
+grep -q '^KERNEL_CMDLINE\[default\]="root=UUID=root-uuid ' "$etc/limine" || fail "the rebuild's command line is derived" "$(cat "$etc/limine")"
+[[ $(cat "$esp/EFI/BOOT/BOOTAA64.EFI") == "LIMINE v2" ]] || fail "Limine keeps the U-Boot slot"
+pass "under deferred hardware setup the leaf leaves the one UKI build to the end"
+
+# A menu that does not boot the UKI yet is built at once, request or not.
+rm -f "$request"
+cp "$test_tmp/runtime/default/limine/limine.conf" "$esp/limine.conf"
+: >"$calls"
+OMARCHY_IMAGE_BOOT_REBUILD="$request" OMARCHY_GRUB_PROBE=omarchy-test-absent-grub-probe run || fail "the leaf builds a menu that boots nothing"
+grep -qx 'limine-update' "$calls" && [[ ! -e $request ]] || fail "a menu without the UKI is built by the leaf" "$(cat "$calls")"
+grep -q '^/+Omarchy$' "$esp/limine.conf" || fail "the built menu boots the UKI"
+pass "a menu that boots nothing is never left to a later rebuild"
+
 # A failed reactivation must restore an already-bootable Limine installation,
 # not leave an empty cmdline and a rewritten menu for the next reboot.
 cp "$etc/limine" "$test_tmp/prior-defaults"

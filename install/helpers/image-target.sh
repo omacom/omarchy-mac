@@ -40,6 +40,7 @@ omarchy_image_init() {
   omarchy_image_manifest=$omarchy_image_dir/target
   omarchy_image_queue=$omarchy_image_dir/deferred-steps
   omarchy_image_initramfs_baseline=$omarchy_image_dir/initramfs-inputs
+  omarchy_image_boot_rebuild=$omarchy_image_dir/boot-rebuild
   omarchy_image_unit=omarchy-provision-hardware.service
   omarchy_image_systemd_dir=$omarchy_image_root/etc/systemd/system
 }
