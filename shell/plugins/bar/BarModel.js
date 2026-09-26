@@ -264,8 +264,16 @@ function notchHeight(screenName, logicalWidth, logicalHeight, devicePixelRatio) 
   return Math.ceil(strip)
 }
 
+// The camera cutout covers the middle of a top bar on an Apple notched panel,
+// so that bar draws its center section beside the right one, as macOS does.
+function centerBesideRight(appleSiliconHost, position, screenName, logicalWidth, logicalHeight, devicePixelRatio) {
+  return appleSiliconHost === true && position === "top" &&
+    notchHeight(screenName, logicalWidth, logicalHeight, devicePixelRatio) > 0
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
+    centerBesideRight: centerBesideRight,
     isDrawnSlot: isDrawnSlot,
     notchHeight: notchHeight,
     pickDrawnSlot: pickDrawnSlot,
