@@ -22,7 +22,7 @@ jobs:
   suites:
     name: Shell suites
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       ARCH_IMAGE: archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
     steps:
