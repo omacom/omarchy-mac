@@ -539,22 +539,48 @@ echo 'ok - provisioning/pending is left to T1'
 new_case progress
 write_esp 'format=1' 'encrypt=0'
 expect_handoff "progress on the splash"
-[[ $(<"$case_dir/plymouth.log") == $'system-update --progress=20\ndisplay-message --text=Setting up secure updates...\nsystem-update --progress=50\ndisplay-message --text=Setting up your Mac\'s hardware...\nsystem-update --progress=90\ndisplay-message --text=Almost ready...\nsystem-update --progress=100' ]] ||
+[[ $(<"$case_dir/plymouth.log") == $'system-update --progress=5\ndisplay-message --text=Setting up secure updates...\nsystem-update --progress=10\ndisplay-message --text=Setting up your Mac\'s hardware...\nsystem-update --progress=95\ndisplay-message --text=Almost ready...\nsystem-update --progress=100' ]] ||
   fail "first boot names each step on the splash and fills the bar: $(cat "$case_dir/plymouth.log")"
 
 new_case progress-after-encrypt
 write_esp 'format=1' 'encrypt=1'
-printf '94\n' >"$case_dir/encrypt.progress"
+printf '54\n' >"$case_dir/encrypt.progress"
 expect_handoff "progress after the initramfs encrypted the root"
-[[ $(sed -n 's/^system-update --progress=//p' "$case_dir/plymouth.log" | tr '\n' ' ') == '95 97 99 100 ' ]] ||
-  fail "first boot carries the bar on from 94%: $(cat "$case_dir/plymouth.log")"
+[[ $(sed -n 's/^system-update --progress=//p' "$case_dir/plymouth.log" | tr '\n' ' ') == '56 58 97 100 ' ]] ||
+  fail "first boot carries the bar on from 54%: $(cat "$case_dir/plymouth.log")"
 
 new_case progress-bad-file
 write_esp 'format=1' 'encrypt=1'
 printf '0400\n' >"$case_dir/encrypt.progress"
 expect_handoff "an unreadable progress file"
-[[ $(sed -n 's/^system-update --progress=//p' "$case_dir/plymouth.log" | tr '\n' ' ') == '20 50 90 100 ' ]] ||
+[[ $(sed -n 's/^system-update --progress=//p' "$case_dir/plymouth.log" | tr '\n' ' ') == '5 10 95 100 ' ]] ||
   fail "a progress file that is not a percentage is ignored: $(cat "$case_dir/plymouth.log")"
+
+# The bar follows the hardware queue as omarchy-provision-hardware drains it.
+new_case progress-hardware
+write_esp 'format=1' 'encrypt=0'
+mkdir -p "$root/var/lib/omarchy/image"
+printf 'install/hardware/step-%s.sh\n' 1 2 3 4 >"$root/var/lib/omarchy/image/deferred-steps"
+cat >"$root/usr/bin/omarchy-provision-hardware" <<'STUB'
+#!/bin/bash
+queue=$OMARCHY_MAC_FIRST_BOOT_ROOT/var/lib/omarchy/image/deferred-steps
+for _ in 1 2 3 4; do
+  /usr/bin/sleep 0.3
+  sed -i 1d "$queue"
+done
+/usr/bin/sleep 0.3
+rm -f "$queue"
+STUB
+expect_handoff "progress through the hardware queue"
+progress=$(sed -n 's/^system-update --progress=//p' "$case_dir/plymouth.log" | tr '\n' ' ')
+[[ $progress == "5 10 "*" 95 100 " ]] || fail "the hardware steps sit between 10% and 95%: $progress"
+hardware=$(tr ' ' '\n' <<<"$progress" | sed '/^$/d' | sed '1,2d;$d' | sed '$d')
+[[ -n $hardware ]] || fail "the bar moves while the hardware queue drains: $progress"
+[[ $(sort -n <<<"$hardware") == "$hardware" && $(sort -un <<<"$hardware") == "$hardware" ]] ||
+  fail "the hardware progress only moves forward: $progress"
+(( $(tail -n 1 <<<"$hardware") <= 92 && $(head -n 1 <<<"$hardware") > 10 )) ||
+  fail "the hardware progress stays inside its band: $progress"
+(( $(grep -c . <<<"$hardware") >= 3 )) || fail "each drained step moves the bar: $progress"
 
 new_case progress-no-splash
 write_esp 'format=1' 'encrypt=0'

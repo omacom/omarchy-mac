@@ -23,9 +23,9 @@ omarchy_mac_encrypt_say() {
 
 # First-boot progress on the splash: plymouth's system-update channel moves the
 # theme's bar and display-message sets the line under it. The bar spans the
-# whole first boot: encryption takes it to 70%, the boot files to 94%, and
-# omarchy-mac-first-boot carries on from the value left in PROGRESS_FILE.
-# Without a running splash nothing is shown.
+# whole first boot: encryption takes it to 40%, the boot files to 54%, and
+# omarchy-mac-first-boot carries it on from the value left in PROGRESS_FILE
+# through the hardware setup. Without a running splash nothing is shown.
 omarchy_mac_encrypt_splash() {
     command -v plymouth >/dev/null 2>&1 && plymouth --ping 2>/dev/null
 }
@@ -74,7 +74,7 @@ omarchy_mac_encrypt_follow_reencrypt() (
             (( percent <= 100 )) || percent=100
             if (( percent != shown )); then
                 shown=$percent
-                omarchy_mac_encrypt_progress $(( percent * 70 / 100 )) "Encrypting your drive... ${percent}%"
+                omarchy_mac_encrypt_progress $(( percent * 40 / 100 )) "Encrypting your drive... ${percent}%"
             fi
         else
             printf '%s\n' "$line"
@@ -670,11 +670,11 @@ omarchy_mac_encrypt_finish() {
     uuid=$(cryptsetup luksUUID "$ROOT_DEV") || omarchy_mac_encrypt_fail "could not read the LUKS UUID"
     LUKS_UUID=$uuid
     omarchy_mac_encrypt_write_state encrypted
-    omarchy_mac_encrypt_progress 70 "Preparing your Mac for first boot..."
+    omarchy_mac_encrypt_progress 40 "Preparing your Mac for first boot..."
     omarchy_mac_encrypt_open
     omarchy_mac_encrypt_resize_luks
     omarchy_mac_encrypt_mount_opened
-    omarchy_mac_encrypt_progress 74
+    omarchy_mac_encrypt_progress 42
 
     # A Limine image must have its complete boot-update path before anything
     # rewrites the ESP. Missing runtime/defaults are an incomplete image.
@@ -697,7 +697,7 @@ omarchy_mac_encrypt_finish() {
     omarchy_mac_encrypt_set_grub_cmdline "$uuid"
     omarchy_mac_encrypt_esp_writable
     omarchy_mac_encrypt_bind_chroot
-    omarchy_mac_encrypt_progress_creep 74 92
+    omarchy_mac_encrypt_progress_creep 42 52
     if (( limine )); then
         # A Limine Mac boots the UKI, and building it is the one initramfs
         # build this needs. GRUB is not part of a Limine boot: nothing runs it.
@@ -716,7 +716,7 @@ omarchy_mac_encrypt_finish() {
     omarchy_mac_encrypt_umount_root
     omarchy_mac_encrypt_esp_readonly
     omarchy_mac_encrypt_write_state configured
-    omarchy_mac_encrypt_progress 94
+    omarchy_mac_encrypt_progress 54
 }
 
 omarchy_mac_encrypt_point_sysroot() {

@@ -194,14 +194,14 @@ follow_out=$( { json 0 1000; json 424 1000; json 425 1000; echo 'a line that is 
   with_splash omarchy_mac_encrypt_follow_reencrypt) || fail "the progress follower never fails the pipeline"
 [[ $follow_out == 'a line that is not progress' ]] ||
   fail "JSON progress is consumed and other cryptsetup output passes through: $follow_out"
-[[ $(cat "$progress_tmp/plymouth.log") == $'system-update --progress=0\ndisplay-message --text=Encrypting your drive... 0%\nsystem-update --progress=29\ndisplay-message --text=Encrypting your drive... 42%\nsystem-update --progress=70\ndisplay-message --text=Encrypting your drive... 100%' ]] ||
-  fail "each new percentage moves the bar (0-70%) and names the percentage: $(cat "$progress_tmp/plymouth.log")"
-[[ $(<"$progress_tmp/progress") == 70 ]] || fail "the progress file keeps the last value for first boot"
+[[ $(cat "$progress_tmp/plymouth.log") == $'system-update --progress=0\ndisplay-message --text=Encrypting your drive... 0%\nsystem-update --progress=16\ndisplay-message --text=Encrypting your drive... 42%\nsystem-update --progress=40\ndisplay-message --text=Encrypting your drive... 100%' ]] ||
+  fail "each new percentage moves the bar (0-40%) and names the percentage: $(cat "$progress_tmp/plymouth.log")"
+[[ $(<"$progress_tmp/progress") == 40 ]] || fail "the progress file keeps the last value for first boot"
 rm -f "$progress_tmp/plymouth.log"
 : >"$progress_tmp/no-splash"
 { json 500 1000; json 1000 1000; } | with_splash omarchy_mac_encrypt_follow_reencrypt >/dev/null ||
   fail "the follower runs without a splash"
-with_splash 'omarchy_mac_encrypt_progress_creep 74 92; omarchy_mac_encrypt_progress_creep_stop' ||
+with_splash 'omarchy_mac_encrypt_progress_creep 42 52; omarchy_mac_encrypt_progress_creep_stop' ||
   fail "the creep is a no-op without a splash"
 [[ ! -e $progress_tmp/plymouth.log ]] || fail "without a running splash nothing is sent to it"
 rm -f "$progress_tmp/no-splash"
@@ -213,9 +213,9 @@ rm -f "$progress_tmp/no-splash"
   for _ in $(seq 2000); do json 1 2; done
 } | with_splash omarchy_mac_encrypt_follow_reencrypt >/dev/null || fail "the follower reads to the end whatever it is given"
 rm -f "$progress_tmp/plymouth.log"
-with_splash 'omarchy_mac_encrypt_progress_creep 74 92; wait "$PROGRESS_CREEP"; omarchy_mac_encrypt_progress_creep_stop' ||
+with_splash 'omarchy_mac_encrypt_progress_creep 42 52; wait "$PROGRESS_CREEP"; omarchy_mac_encrypt_progress_creep_stop' ||
   fail "the creep runs and stops"
-[[ $(sed -n 's/^system-update --progress=//p' "$progress_tmp/plymouth.log" | tr '\n' ' ') == '79 83 86 88 89 90 91 92 ' ]] ||
+[[ $(sed -n 's/^system-update --progress=//p' "$progress_tmp/plymouth.log" | tr '\n' ' ') == '45 47 49 50 51 52 ' ]] ||
   fail "the creep eases the bar to the end of its band: $(tr '\n' ' ' <"$progress_tmp/plymouth.log")"
 rm -rf "$progress_tmp"
 echo 'ok - cryptsetup JSON progress drives the splash bar and its line; nothing is sent without a splash'
@@ -905,15 +905,15 @@ grep -Fq "rd.luks.name=${luks_uuid}=root" "$tmp/mnt-mapped/etc/default/grub" &&
 [[ $(cat "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log") == 'omarchy-mac-boot-update grub=0 ' ]] ||
   fail "a Limine Mac only rebuilds its UKI inside the opened root: no GRUB, no separate mkinitcpio -P ($(cat "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log"))"
 progress=$(sed -n 's/^system-update --progress=//p' "$tmp/plymouth.log" | tr '\n' ' ')
-[[ $progress == "0 "* && $progress == *" 70 74 "* && $progress == *" 94 " ]] ||
-  fail "the bar starts at 0, reaches 70 with the encryption, then 74 and 94 around the boot files: $progress"
+[[ $progress == "0 "* && $progress == *" 40 42 "* && $progress == *" 54 " ]] ||
+  fail "the bar starts at 0, reaches 40 with the encryption, then 42 and 54 around the boot files: $progress"
 [[ $progress == "$(tr ' ' '\n' <<<"$progress" | sed '/^$/d' | sort -n | tr '\n' ' ')" ]] ||
   fail "the bar never moves back: $progress"
 messages=$(sed -n 's/^display-message --text=//p' "$tmp/plymouth.log")
 [[ $(head -n 1 <<<"$messages") == 'Encrypting your drive... 0%' && $(tail -n 1 <<<"$messages") == 'Preparing your Mac for first boot...' ]] &&
   grep -Fxq 'Encrypting your drive... 100%' <<<"$messages" ||
   fail "the line gives the encryption percentage, then says the Mac is being prepared: $messages"
-[[ $(<"$tmp/progress") == 94 ]] || fail "first boot carries the bar on from 94%"
+[[ $(<"$tmp/progress") == 54 ]] || fail "first boot carries the bar on from 54%"
 ! grep -Fq 'device_bytes' "$case_dir/out" || fail "cryptsetup's JSON progress stays out of the journal"
 grep -Fq 'x-systemd.growfs' "$tmp/mnt-mapped/etc/fstab" || fail "x-systemd.growfs stays on the root fstab"
 grep -Fq 'phase=configured' "$boot_mnt/omarchy/encrypt.state" || fail "state ends at phase=configured"

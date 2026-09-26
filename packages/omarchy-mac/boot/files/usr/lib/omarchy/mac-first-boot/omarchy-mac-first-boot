@@ -58,6 +58,39 @@ splash_progress() {
   [[ -z $text ]] || plymouth display-message --text="$text" 2>/dev/null || true
 }
 
+# While omarchy-provision-hardware drains the image's hardware queue, the bar
+# follows the steps done (10-85%), easing toward the next one while a long
+# step runs, like the installer's bar; the initramfs rebuild after the last
+# step eases on to 92%.
+follow_hardware() (
+  set +e
+  local pid=$1 queue=$root/var/lib/omarchy/image/deferred-steps
+  local total left done=0 last=-1 since=$SECONDS t work next position shown=10
+  [[ -f $queue ]] || exit 0
+  total=$(grep -c . "$queue")
+  (( total > 0 )) || exit 0
+  while kill -0 "$pid" 2>/dev/null; do
+    left=0
+    [[ -f $queue ]] && left=$(grep -c . "$queue")
+    done=$(( total - left ))
+    (( done >= 0 )) || done=0
+    if (( done != last )); then
+      last=$done
+      since=$SECONDS
+    fi
+    work=$(( 10 + 75 * done / total ))
+    next=$(( done < total ? 10 + 75 * (done + 1) / total : 92 ))
+    t=$(( SECONDS - since ))
+    position=$(( work + (next - work) * t / (t + 3) ))
+    if (( position > shown )); then
+      shown=$position
+      splash_progress "$position"
+    fi
+    sleep 1
+  done
+  exit 0
+)
+
 # Writes bytes to a root-owned file in one rename, so a power loss leaves the old
 # file or the new one. The directory is fsynced after the rename so the dirent
 # is durable before the caller may delete a source copy.
@@ -139,7 +172,7 @@ make_keyring() {
     return 0
   fi
   say "Creating this Mac's package keyring..."
-  splash_progress 20 "Setting up secure updates..."
+  splash_progress 5 "Setting up secure updates..."
   rm -f "$keyring_record"
   rm -rf "$keyring_dir"
   local -a keyrings=(archlinuxarm asahi-alarm)
@@ -173,9 +206,12 @@ run_deferred_steps() {
   # an offline first boot) must not strand the owner here: it stays queued, and
   # the service retries it once first boot is done and on every later boot. Any
   # other failure (an untrusted manifest or queue) means no setup ran at all.
-  local status=0
-  splash_progress 50 "Setting up your Mac's hardware..."
-  "$provision" >>"$log_file" 2>&1 || status=$?
+  local status=0 provision_pid
+  splash_progress 10 "Setting up your Mac's hardware..."
+  "$provision" >>"$log_file" 2>&1 &
+  provision_pid=$!
+  follow_hardware "$provision_pid"
+  wait "$provision_pid" || status=$?
   case $status in
     0) ;;
     75)
@@ -240,7 +276,7 @@ attempt() {
   consume_install_conf
   make_keyring
   run_deferred_steps
-  splash_progress 90 "Almost ready..."
+  splash_progress 95 "Almost ready..."
   stage_provisioning
   say "Ready for account setup."
   splash_progress 100
