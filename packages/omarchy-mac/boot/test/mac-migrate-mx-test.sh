@@ -504,7 +504,10 @@ refused "a target without omarchy-mac" "does not resolve on this Mac"
 new_fixture refusals
 printf 'format=1\ntype=repository\nchannel=stable\nserver=file://%s/repos/omarchy\npackages=omarchy omarchy-mac omarchy-mac-boot linux-aurora\n' "$F" >"$R/etc/omarchy-mac/migration-target"
 refused "a target without the runtime pair" "the target has no omarchy and omarchy-settings"
-pass "preflight refuses legacy unlock, untrusted repositories, an unfinished first boot, the fork's boot tools and an incomplete or unverifiable target, changing nothing"
+new_fixture refusals
+rm "$R"/var/lib/omarchy/asahi-*
+refused "an omarchy-dev that is not the fork's" "not the omarchy-mx-mac fork's"
+pass "preflight refuses legacy unlock, untrusted repositories, an unfinished first boot, the fork's boot tools, an omarchy-dev that is not the fork's and an incomplete or unverifiable target, changing nothing"
 
 new_fixture weak-fork
 sed -i '/^\[omarchy-aurora\]/,/^$/s/^SigLevel = .*/SigLevel = Optional TrustAll/' "$R/etc/pacman.conf"

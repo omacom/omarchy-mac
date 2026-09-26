@@ -42,7 +42,15 @@ mx_mac_counterpart() {
 }
 
 # mx_mac_preflight INSTALLED LUKS: prints the states this adapter refuses.
+# omacom's repositories carry an omarchy-dev of their own, so the fork is told
+# by its updaters or their records, not by the package name alone.
 mx_mac_preflight() {
+  local marker fork=0
+  for marker in usr/share/omarchy/bin/omarchy-update-asahi-bundle usr/share/omarchy/bin/omarchy-update-asahi-repository \
+    usr/share/omarchy/bin/omarchy-update-aurora-repository var/lib/omarchy/asahi-quattro-release var/lib/omarchy/asahi-package-repository; do
+    [[ ! -e $R/$marker ]] || fork=1
+  done
+  (( fork )) || echo "omarchy-dev is installed, but not the omarchy-mx-mac fork's (none of its updaters or their records): no adapter handles it"
   if [[ " $target_packages " != *" omarchy "* || " $target_packages " != *" omarchy-settings "* ]]; then
     echo "the target has no omarchy and omarchy-settings to replace omarchy-dev and omarchy-settings-dev"
   fi
