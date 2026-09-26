@@ -17,7 +17,7 @@ assert(
 
 const service = fs.readFileSync(path.join(root, 'shell/plugins/lock/Service.qml'), 'utf8')
 assert(
-  /id: resumeWatchTimer[\s\S]*?running: root\.lockRequested[\s\S]*?now - lastTick > interval \+ 2000[\s\S]*?if \(resumed\) \{[\s\S]*?root\.runWake\(\)/.test(service),
+  /id: resumeWatchTimer[\s\S]*?running: root\.lockRequested[\s\S]*?now - lastTick > interval \+ 2000[\s\S]*?if \(resumed\) \{[\s\S]*?root\.runWake\(root\.wakeRunUp\)/.test(service),
   'a resume clears the blank state, so the first key at a lit lock is typed'
 )
 
