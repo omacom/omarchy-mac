@@ -18,8 +18,9 @@ calls="$test_tmp/calls.log"
 mkdir -p "$stub_bin" "$test_tmp/home" "$omarchy_path/install/helpers" "$omarchy_path/install/user/hardware/apple" "$omarchy_path/config"
 
 # The real policy helper writes under /etc without sudo when run as root, so
-# stand it and the Apple decode flag in; this test covers only the CDM link.
-printf 'browser_policy_setup_dir() { :; }\n' >"$omarchy_path/install/helpers/browser-policy.sh"
+# stand it and the Apple decode flag in; this test covers only the CDM link. Its
+# as_root goes through the sudo stub, which logs every link, whatever the test's EUID.
+printf 'browser_policy_setup_dir() { :; }\nas_root() { sudo "$@"; }\n' >"$omarchy_path/install/helpers/browser-policy.sh"
 : >"$omarchy_path/install/user/hardware/apple/browser-video-decode.sh"
 cp "$ROOT/config/chromium-flags.conf" "$omarchy_path/config/"
 

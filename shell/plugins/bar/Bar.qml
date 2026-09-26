@@ -1282,6 +1282,8 @@ Item {
           : BarModel.notchHeight(screen.name, screen.width, screen.height, screen.devicePixelRatio))
       : 0
 
+    readonly property bool centerBesideRight: BarModel.centerBesideRight(root.appleSiliconHost, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio)
+
     implicitWidth: root.vertical ? root.barSize : 0
     implicitHeight: root.vertical ? 0 : Math.max(root.barSize, notchFloor)
     color: root.transparent ? "transparent" : root.background
@@ -1374,7 +1376,10 @@ Item {
       Item {
         anchors.fill: parent
 
-        CenterModules { anchors.fill: parent }
+        CenterModules {
+          anchors.fill: parent
+          entries: barWindow.centerBesideRight ? [] : root.layoutEntries("center")
+        }
 
         LeftModules {
           anchors.left: parent.left
@@ -1383,8 +1388,20 @@ Item {
         }
 
         RightModules {
+          id: rightModules
           anchors.right: parent.right
           anchors.rightMargin: Style.space(8)
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        // Keeps the center region, so settings pushes, drag and drop, and panel
+        // routing still address it. The gap lets a drop at the seam land in
+        // the section the pointer is nearer to.
+        ModuleList {
+          entries: barWindow.centerBesideRight ? root.layoutEntries("center") : []
+          region: "center"
+          anchors.right: rightModules.left
+          anchors.rightMargin: Style.space(4)
           anchors.verticalCenter: parent.verticalCenter
         }
       }
@@ -1536,8 +1553,7 @@ Item {
     }
   }
 
-  function findCenterAnchorEntry() {
-    var entries = root.layoutEntries("center")
+  function findCenterAnchorEntry(entries) {
     var idx = root.entryIndex(entries, root.centerAnchor)
     return idx === -1 ? null : entries[idx]
   }
@@ -1557,7 +1573,7 @@ Item {
 
     property var entries: root.layoutEntries("center")
     readonly property bool hasAnchor: root.entryIndex(entries, root.centerAnchor) !== -1
-    readonly property var anchorEntry: root.findCenterAnchorEntry()
+    readonly property var anchorEntry: root.findCenterAnchorEntry(entries)
 
     Loader {
       anchors.fill: parent

@@ -180,8 +180,8 @@ stage_provisioning() {
   cp -p "$unit" "$root/etc/systemd/system/omarchy-provision-owner.service"
   ln -sfn /etc/systemd/system/omarchy-provision-owner.service \
     "$root/etc/systemd/system/multi-user.target.wants/omarchy-provision-owner.service"
-  systemctl enable speakersafetyd.service sddm.service >>"$log_file" 2>&1 ||
-    fail "could not enable speakersafetyd and the display manager"
+  systemctl enable sddm.service >>"$log_file" 2>&1 ||
+    fail "could not enable the display manager"
   # The unit copy, its data and every enable link must be on disk before pending goes.
   sync "$root/etc/systemd/system/omarchy-provision-owner.service" "$root/etc/systemd/system" \
     "$root/etc/systemd/system/multi-user.target.wants" "$provisioning_dir" || fail "could not persist the enabled units"

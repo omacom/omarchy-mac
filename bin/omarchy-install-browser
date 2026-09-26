@@ -26,7 +26,7 @@ link_widevine_cdm() {
   local install_dir="$opt_path/$1"
 
   if [[ -d $cdm && -d $install_dir && ! -e $install_dir/WidevineCdm ]]; then
-    sudo ln -sfn "$cdm" "$install_dir/WidevineCdm"
+    as_root ln -sfn "$cdm" "$install_dir/WidevineCdm"
   fi
 }
 
