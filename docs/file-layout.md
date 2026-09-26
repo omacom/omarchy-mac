@@ -20,7 +20,8 @@ separate `omarchy-pkgs` repository, under `pkgbuilds/`):
   `default/limine/` and `default/snapper/` trees, and the boot/snapshot
   story end-to-end). Also ships the three debug binaries
   (`omarchy-debug`, `omarchy-debug-idle`, `omarchy-upload-log`) needed by
-  the live ISO env.
+  the live ISO env, and the pacman platform guard with its own copy of
+  the `omarchy-hw-platform` detector.
 
 Two other packages live in `omarchy-pkgs` but stand alone:
 `omarchy-keyring` (GPG keys for pacman) and `omarchy-nvim` (the Neovim
@@ -77,6 +78,12 @@ bin/omarchy-upload-log         ──►  omarchy-settings    /usr/bin/  (needed
 
 default/libalpm/hooks/*.hook
                                 ──►  omarchy             /usr/share/libalpm/hooks/*.hook
+                                                        (except the platform guard below)
+default/libalpm/hooks/00-omarchy-platform-guard.hook,
+default/libalpm/scripts/omarchy-platform-guard,
+bin/omarchy-hw-platform (a copy)
+                                ──►  omarchy-settings    /usr/share/libalpm/{hooks,scripts}/
+                                                        (see platform-guard.md)
 
 install/**                     ──►  omarchy             /usr/share/omarchy/install/
 migrations/**                  ──►  omarchy             /usr/share/omarchy/migrations/

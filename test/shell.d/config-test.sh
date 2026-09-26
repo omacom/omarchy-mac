@@ -196,6 +196,22 @@ for hook in alpm_hooks:
   if source not in omarchy_pkgbuild or destination not in omarchy_pkgbuild:
     errors.append(f"omarchy PKGBUILD does not install {source} -> {destination}")
 
+# The platform guard must be resident before the runtime and hardware packages
+# install, so omarchy-settings ships the hook with the script it runs and a copy
+# of the platform detector beside it; the runtime keeps its own detector.
+platform_guard = [
+  ("default/libalpm/hooks/00-omarchy-platform-guard.hook", "/usr/share/libalpm/hooks/00-omarchy-platform-guard.hook"),
+  ("default/libalpm/scripts/omarchy-platform-guard", "/usr/share/libalpm/scripts/omarchy-platform-guard"),
+  ("bin/omarchy-hw-platform", "/usr/share/libalpm/scripts/omarchy-hw-platform"),
+]
+for source, destination in platform_guard:
+  if not (root / source).exists():
+    errors.append(f"missing package default source: {source}")
+  if source not in pkgbuild or destination not in pkgbuild:
+    errors.append(f"omarchy-settings PKGBUILD does not install {source} -> {destination}")
+  if destination in omarchy_pkgbuild:
+    errors.append(f"omarchy PKGBUILD must leave {destination} to omarchy-settings")
+
 if errors:
   print("\n".join(errors), file=sys.stderr)
   sys.exit(1)
