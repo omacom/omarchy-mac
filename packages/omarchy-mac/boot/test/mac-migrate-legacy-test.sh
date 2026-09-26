@@ -144,8 +144,8 @@ FORK
   : >"$F/verify-signatures"
 
   ships omarchy /usr/share/omarchy/bin/omarchy-update /usr/share/omarchy/default/bash/env-bootstrap /usr/bin/omarchy-update
-  ships omarchy-settings /etc/sddm.conf.d/10-theme.conf /etc/mkinitcpio.conf.d/omarchy_hooks.conf \
-    /etc/mkinitcpio.conf.d/00-omarchy-hooks.conf /etc/profile.d/omarchy.sh /usr/share/uwsm/env.d/10-omarchy
+  ships omarchy-settings /etc/sddm.conf.d/10-theme.conf /etc/profile.d/omarchy.sh /usr/share/uwsm/env.d/10-omarchy
+  echo /etc/sddm.conf.d/10-theme.conf >"$F/backups"
   ships omarchy-keyring /usr/share/pacman/keyrings/omarchy.gpg /usr/share/pacman/keyrings/omarchy-trusted
   ships ttf-jetbrains-mono-nerd-basic /usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf
   owns omarchy-mac-keyring /usr/share/pacman/keyrings/omarchy-mac.gpg /usr/share/pacman/keyrings/omarchy-mac-revoked
@@ -221,7 +221,7 @@ SigLevel = Optional TrustAll
 Server = file://$F/repos/omarchy-aarch64
 
 [asahi-alarm]
-Server = file://$F/repos/asahi-alarm
+Include = /etc/pacman.d/mirrorlist.asahi-alarm
 
 [core]
 Server = file://$F/repos/core
@@ -229,9 +229,15 @@ Server = file://$F/repos/core
 [extra]
 Server = file://$F/repos/extra
 CONF
+  echo "Server = file://$F/repos/asahi-alarm" >"$R/etc/pacman.d/mirrorlist.asahi-alarm"
   if [[ $layout == "channel" ]]; then
-    sed -i 's/^SigLevel = Optional TrustAll$/SigLevel = PackageRequired DatabaseRequired TrustedOnly/' "$R/etc/pacman.conf"
+    # rc5's strict fork repository, and [omarchy] as omarchy-upgrade-to-quattro writes it.
+    sed -i -e 's/^SigLevel = Optional TrustAll$/SigLevel = PackageRequired DatabaseRequired TrustedOnly/' -e '/^Usage = Sync$/d' \
+      -e '/^\[omarchy\]$/,/^Server/s/^SigLevel = Required DatabaseOptional$/SigLevel = Optional TrustAll/' "$R/etc/pacman.conf"
   fi
+  # Copies the fork's tools left: arm-package-sources' .bak, the Quattro upgrade's timestamped one.
+  printf '[omarchy-aarch64]\nSigLevel = Optional TrustAll\n' >"$R/etc/pacman.conf.bak"
+  printf '[omarchy]\nSigLevel = Optional TrustAll\n' >"$R/etc/pacman.conf.omarchy-upgrade-to-quattro.20260801000000.bak"
   printf 'format=1\ntype=repository\nchannel=edge\nserver=file://%s/repos/omarchy\n' "$F" >"$R/etc/omarchy-mac/migration-target"
   echo apple-silicon >"$F/platform"
   echo "base asahi udev plymouth keyboard autodetect microcode modconf kms keymap consolefont block encrypt filesystems fsck" >"$F/hooks"
@@ -259,6 +265,16 @@ checkout_digest() {
   (cd "$R$checkout" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) | sha256sum
 }
 
+# TrustAll anywhere pacman's configuration lives: pacman.conf, every file it
+# includes and every copy of it beside it.
+trustall_anywhere() {
+  local files=("$R/etc/pacman.conf" "$R"/etc/pacman.conf.*) path
+  while read -r path; do
+    files+=("$R$path")
+  done < <(sed -n 's/^Include = //p' "$R/etc/pacman.conf")
+  grep -l TrustAll "${files[@]}" 2>/dev/null
+}
+
 fixture_digest() {
   (cd "$R" && find . -path ./var/tmp -prune -o -path ./run/lock -prune -o \( -type f -o -type l \) -print0 | LC_ALL=C sort -z |
     xargs -0 -I{} sh -c 'if [ -L "$1" ]; then printf "%s -> %s\n" "$1" "$(readlink "$1")"; else sha256sum "$1"; fi' _ {}) | sha256sum
@@ -277,6 +293,7 @@ outcome() {
     if [[ -L $path ]]; then echo "$path -> $(readlink "$path" | sed "s|$R|ROOT|")"; else echo "$path: $(head -c 80 "$path")"; fi
   done)
   cat "$R/etc/omarchy.conf" "$R/boot/efi/EFI/BOOT/BOOTAA64.EFI"
+  (cd "$R/etc" && ls -d pacman.conf*)
   ls "$R/var/lib/pacman/sync"
   sed -n "s|^target=||; s|$F|FIXTURE|p" "$state/complete"
   (cd "$state/backup" && find . -type f | LC_ALL=C sort)
@@ -325,11 +342,15 @@ voxtype 1.0-1'
 [[ ! -e $R/usr/bin/omarchy-upgrade-to-quattro-mac && ! -e $R/usr/bin/omarchy-hw-apple ]] || fail "links to checkout commands no package ships are gone"
 [[ $(<"$R/etc/omarchy.conf") == 'export OMARCHY_PATH="/usr/share/omarchy"' ]] || fail "OMARCHY_PATH is the packaged tree" "$(cat "$R/etc/omarchy.conf")"
 [[ $(checkout_digest) == "$before" ]] || fail "the checkout itself is untouched"
-for path in /etc/sddm.conf.d/10-theme.conf /etc/mkinitcpio.conf.d/omarchy_hooks.conf /etc/profile.d/omarchy.sh /usr/share/uwsm/env.d/10-omarchy; do
+for path in /etc/profile.d/omarchy.sh /usr/share/uwsm/env.d/10-omarchy; do
   grep -qx "omarchy-settings $path" "$R/var/lib/pacman/local/files" || fail "omarchy-settings owns $path"
-  [[ -f $state/backup/converted/files$path ]] || fail "the setup's own $path is kept in the backup"
+  [[ $(<"$R$path") == "omarchy-settings 4.0.4-1" ]] || fail "the package's $path replaces the setup's"
+  [[ $(<"$state/backup/converted/files$path") == legacy* ]] || fail "the setup's own $path is kept in the backup"
 done
-grep -q "encrypt" "$state/backup/converted/files/etc/mkinitcpio.conf.d/omarchy_hooks.conf" || fail "the backup holds the file as it was"
+[[ $(<"$R/etc/sddm.conf.d/10-theme.conf") == "legacy theme" && -f $R/etc/sddm.conf.d/10-theme.conf.pacnew ]] &&
+  grep -qx "omarchy-settings /etc/sddm.conf.d/10-theme.conf" "$R/var/lib/pacman/local/files" ||
+  fail "a configuration file the package lists in backup= keeps its contents, and the package's lands as .pacnew"
+grep -q "encrypt" "$R/etc/mkinitcpio.conf.d/omarchy_hooks.conf" || fail "a file no new package brings is left alone"
 [[ $(sed "s|$R|ROOT|g" "$state/backup/converted/links") == "/usr/bin/omarchy-hw-apple	ROOT$checkout/bin/omarchy-hw-apple
 /usr/bin/omarchy-update	ROOT$checkout/bin/omarchy-update
 /usr/bin/omarchy-upgrade-to-quattro-mac	ROOT$checkout/bin/omarchy-upgrade-to-quattro-mac
@@ -354,7 +375,7 @@ LocalFileSigLevel = Optional
 Server = file://FIXTURE/repos/omarchy
 
 [asahi-alarm]
-Server = file://FIXTURE/repos/asahi-alarm
+Include = /etc/pacman.d/mirrorlist.asahi-alarm
 
 [core]
 Server = file://FIXTURE/repos/core
@@ -372,12 +393,16 @@ pass "official trust only: TrustAll, the fork repository, key and keyring are go
 reboot_into_aurora
 output=$(migrate verify 2>&1) || fail "the post-reboot verification completes the migration" "$output"
 grep -q "The checkout at $R$checkout is no longer used" <<<"$output" || fail "retire names the unused checkout" "$output"
-[[ ! -e $R/etc/sddm.conf.d/autologin.conf ]] || fail "an unencrypted root loses the fork's autologin"
+[[ -f $R/etc/sddm.conf.d/autologin.conf ]] || fail "an administrator's autologin is kept"
 [[ -z $(ls "$R/var/cache/omarchy/channels") ]] || fail "the fork's channel transactions are retired"
+[[ -z $(trustall_anywhere) ]] || fail "no TrustAll is left in pacman's configuration, its includes or copies of it" "$(trustall_anywhere)"
+for file in pacman.conf.bak pacman.conf.omarchy-upgrade-to-quattro.20260801000000.bak; do
+  grep -q TrustAll "$state/backup/converted/files/etc/$file" || fail "the fork's $file is kept in the backup"
+done
 baseline=$(outcome)
 output=$(migrate run 2>&1) || fail "a second run succeeds" "$output"
 [[ $(outcome) == "$baseline" ]] || fail "a second run changes nothing"
-pass "after the reboot the fork's channel state and autologin are retired, and a second run changes nothing"
+pass "after the reboot the fork's channel state and TrustAll copies are retired, and a second run changes nothing"
 
 # --- Interruption at every checkpoint -------------------------------------------
 
@@ -399,8 +424,12 @@ interrupt() { # when point step
     [[ $last == "$step begin"* ]] || fail "killed $when $point, the journal ends with $step begun" "$last"
   fi
   finish
-  [[ $(outcome) == "$baseline" ]] || fail "killed $when $point, the resumed migration ends where an uninterrupted one does" "$(diff <(echo "$baseline") <(outcome))"
-  [[ $when$point == "midtransaction" ]] && transactions=2
+  # pacman's own half-extracted files are backed up too, beside the originals.
+  partial='^\./converted/files/usr/share/omarchy/'
+  [[ $(outcome | grep -v "$partial") == "$(grep -v "$partial" <<<"$baseline")" ]] ||
+    fail "killed $when $point, the resumed migration ends where an uninterrupted one does" "$(diff <(echo "$baseline") <(outcome))"
+  [[ $point == "extraction" || $(outcome) == "$baseline" ]] || fail "killed $when $point, the backup matches an uninterrupted one"
+  [[ $when$point == "midtransaction" || $when$point == "midextraction" ]] && transactions=2
   [[ $(grep -c '^transaction ' "$F/pacman.log") == "$transactions" && $(grep -c '^remove ' "$F/pacman.log") == 1 ]] ||
     fail "killed $when $point: $transactions package transaction(s) and one removal" "$(cat "$F/pacman.log")"
   [[ $(grep '^transaction \|^remove \|^hooks' "$F/pacman.log" | tail -n 1) == "hooks" ]] || fail "killed $when $point: the last transaction's hooks ran"
@@ -413,7 +442,7 @@ done
 for step in backup keyring prefetch repositories boot-chain loader reboot retire; do
   interrupt mid "$step" "$step"
 done
-for point in unwire convert transaction removals; do
+for point in unwire convert extraction transaction removals; do
   interrupt mid "$point" transaction
 done
 pass "a kill -9 at every checkpoint, the conversion's own included, resumes to the same end"
@@ -428,7 +457,9 @@ grep -q "^omarchy 4.0.4-1$" "$R/var/lib/pacman/local/packages" && grep -q "^omar
 grep -q "^omarchy-keyring 20260920-1$" "$R/var/lib/pacman/local/packages" && grep -q "^ttf-jetbrains-mono-nerd-basic 3.4.0-2$" "$R/var/lib/pacman/local/packages" ||
   fail "the packages the checkout built move to their official builds" "$(cat "$R/var/lib/pacman/local/packages")"
 ! grep -q "omarchy-mac-keyring" "$R/var/lib/pacman/local/packages" || fail "the keyring the rc pair depended on is removed"
-! grep -q "omarchy-aarch64\|TrustedOnly\|TrustAll" "$R/etc/pacman.conf" || fail "the rc5-style fork repository is gone too"
+! grep -q "omarchy-aarch64\|TrustedOnly" "$R/etc/pacman.conf" || fail "the rc5-style fork repository is gone too"
+[[ -z $(trustall_anywhere) ]] || fail "the Quattro upgrade's TrustAll on [omarchy] is gone with every other" "$(trustall_anywhere)"
+grep -A2 '^\[omarchy\]$' "$R/etc/pacman.conf" | grep -q SigLevel && fail "[omarchy] inherits the global SigLevel"
 ! grep -q "^$fork " "$R/etc/pacman.d/gnupg/keys" || fail "the fork key is gone"
 [[ ! -e $R/etc/sudoers.d/omarchy-dev-path && $(<"$R/etc/omarchy.conf") == 'export OMARCHY_PATH="/usr/share/omarchy"' ]] ||
   fail "a dev link to a fork checkout no longer runs as root or as Omarchy"
@@ -465,7 +496,11 @@ refused "an unfinished channel switch" "owes its sync databases a restore"
 new_fixture refusals channel
 printf '%s:4:\n%s:4:\n' "$fork" 3333333333333333333333333333333333333333 >"$R/usr/share/pacman/keyrings/omarchy-mac-trusted"
 refused "a fork keyring with another key" "trusts 3333333333333333333333333333333333333333, a key this migration does not remove"
-pass "preflight refuses encrypted, pre-Quattro and mid-channel-switch legacy Macs and unknown fork keys, changing nothing"
+new_fixture refusals checkout
+printf '\n[custom]\nInclude = /etc/pacman.d/custom.conf\n' >>"$R/etc/pacman.conf"
+printf 'SigLevel = Optional TrustAll\nServer = file:///custom\n' >"$R/etc/pacman.d/custom.conf"
+refused "a TrustAll repository an Include configures" "\[custom\] accepts untrusted packages"
+pass "preflight refuses encrypted, pre-Quattro and mid-channel-switch legacy Macs, unknown fork keys and included TrustAll, changing nothing"
 
 # --- Failures that change nothing, or put things back ------------------------------
 
@@ -497,6 +532,44 @@ echo "voxtype 1.0-1 omarchy-mac-keyring" >>"$F/depends"
 stopped "a kept package that needs the fork keyring" "rehearsed removal of omarchy-mac-keyring failed"
 pass "the keyring's removal is rehearsed: a package still needing it stops the migration before any change"
 
+new_fixture prepare-fails checkout
+kill_after() {
+  local output
+  output=$(env OMARCHY_MAC_MIGRATE_KILL_AFTER="$1" OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+    "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "the run is killed after $1" "$output"
+  return 0
+}
+kill_after repositories
+mv "$(state_dir)/cache/pkg" "$F/pkg.moved"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 1 )) && grep -q "the archive of .* is not in the cache" <<<"$output" || fail "a missing archive stops the transaction" "$output"
+[[ -L $R/usr/share/omarchy && -L $R/usr/bin/omarchy-update && $(<"$R/etc/omarchy.conf") == "export OMARCHY_PATH=\"$checkout\"" ]] ||
+  fail "a conversion that cannot be prepared leaves the checkout wired"
+mv "$F/pkg.moved" "$(state_dir)/cache/pkg"
+finish
+[[ -d $R/usr/share/omarchy && ! -L $R/usr/share/omarchy ]] || fail "the retried transaction converts the checkout"
+pass "a conversion that cannot be prepared changes nothing, and the retry converts"
+
+new_fixture pinned checkout
+echo cached >"$R/var/cache/pacman/pkg/omarchy-mac-0.1.0-5-aarch64.pkg.tar.zst"
+kill_after prefetch
+[[ $(stat -c %i "$(state_dir)/cache/pkg/omarchy-mac-0.1.0-5-aarch64.pkg.tar.zst") == $(stat -c %i "$R/var/cache/pacman/pkg/omarchy-mac-0.1.0-5-aarch64.pkg.tar.zst") ]] ||
+  fail "an archive only pacman's cache holds is linked into the migration's"
+rm "$R/var/cache/pacman/pkg/omarchy-mac-0.1.0-5-aarch64.pkg.tar.zst"
+finish
+pass "the archives the conversion reads survive pacman's cache being pruned"
+
+new_fixture pacman-fails channel
+: >"$F/fail-transaction"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 1 )) && [[ -f $R/etc/sudoers.d/omarchy-dev-path && $(<"$R/etc/omarchy.conf") == "export OMARCHY_PATH=\"$checkout\"" ]] ||
+  fail "a failed transaction gives a dev link back its OMARCHY_PATH and sudo path" "$output"
+rm "$F/fail-transaction"
+finish
+[[ ! -e $R/etc/sudoers.d/omarchy-dev-path ]] || fail "the retry drops the dev link's sudo path"
+
 new_fixture pacman-fails checkout
 : >"$F/fail-transaction"
 status=0
@@ -507,7 +580,7 @@ output=$(migrate run 2>&1) || status=$?
 rm "$F/fail-transaction"
 finish
 [[ -d $R/usr/share/omarchy && ! -L $R/usr/share/omarchy ]] || fail "the retried transaction converts the checkout"
-pass "a failed transaction puts the checkout's links back, and the retry converts it"
+pass "a failed transaction puts the checkout's links and a dev link's paths back, and the retry converts"
 
 # --- Packaging --------------------------------------------------------------------
 

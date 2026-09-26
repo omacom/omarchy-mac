@@ -9,7 +9,10 @@
 # - $MIGRATE_FIXTURE/files/<name> lists the paths package <name> installs;
 #   <dbpath>/local/files records "package path" for what is installed. A
 #   transaction refuses to write over a path that exists unless a package it
-#   replaces owns it or --overwrite names it, then writes its files.
+#   replaces owns it or --overwrite names it, then writes its files. A path in
+#   $MIGRATE_FIXTURE/backups is a backup= file: one no package owns is never a
+#   conflict; one whose contents are not a package's own copy stays as it is,
+#   and when no package owned it the package's copy lands as .pacnew.
 # - With $MIGRATE_FIXTURE/verify-signatures, a sync database line may carry a
 #   third column, the key that signed the package; where the repository's
 #   SigLevel requires signatures, the key must be trusted in --gpgdir's keys.
@@ -53,17 +56,26 @@ may_overwrite() {
   return 1
 }
 
-remove_files() { # package
+remove_files() { # package [upgraded: an upgrade keeps backup= files for the new version]
   local path
   [[ -f $files_db ]] || return 0
   while read -r path; do
+    [[ -z ${2:-} ]] || ! grep -Fxq "$path" "$fixture/backups" 2>/dev/null || continue
     [[ -d $root$path && ! -L $root$path ]] || rm -f "$root$path"
   done < <(awk -v name="$1" '$1 == name { sub(/^[^ ]+ /, ""); print }' "$files_db")
   awk -v name="$1" '$1 != name' "$files_db" >"$files_db.new" && mv "$files_db.new" "$files_db"
 }
 
+# Repositories and their servers, Include files read under the fixture root.
 repositories() {
-  awk '/^\[/ { name = $0; gsub(/[][]/, "", name) } /^Server = / && name != "options" { sub(/^Server = /, ""); print name, $0 }' "$config"
+  awk -v root="$root" '
+    function scan(file,   line) { while ((getline line < file) > 0) handle(line); close(file) }
+    function handle(line,   value) {
+      if (line ~ /^\[/) { name = line; gsub(/[][]/, "", name) }
+      else if (line ~ /^Include = /) { value = line; sub(/^Include = /, "", value); scan(root value) }
+      else if (line ~ /^Server = / && name != "options") { value = line; sub(/^Server = /, "", value); print name, value }
+    }
+    { handle($0) }' "$config"
 }
 
 declare -A version=()
@@ -250,6 +262,7 @@ if (( ! dbonly )); then
         if [[ -n $holder && ( -n ${changed[$holder]:-} || -z ${version[$holder]:-} ) ]]; then
           continue
         fi
+        [[ -n $holder ]] || ! grep -Fxq "$path" "$fixture/backups" 2>/dev/null || continue
         may_overwrite "$path" && [[ -z $holder ]] && continue
         clashes+=("$name: $path exists in filesystem${holder:+ (owned by $holder)}")
       done <"$fixture/files/$name"
@@ -269,18 +282,30 @@ if (( ! dbonly )); then
   fi
 fi
 if (( ! dbonly )) && [[ -d $fixture/files ]]; then
+  cp "$files_db" "$files_db.before"
   for name in $(awk '{ print $1 }' "$files_db" | sort -u); do
-    [[ -n ${version[$name]:-} && -z ${changed[$name]:-} ]] || remove_files "$name"
+    [[ -n ${version[$name]:-} && -z ${changed[$name]:-} ]] || remove_files "$name" ${changed[$name]:+upgraded}
   done
   for name in "${!changed[@]}"; do
     [[ -f $fixture/files/$name ]] || continue
     while read -r path; do
       mkdir -p "$(dirname "$root$path")"
+      echo "$name $path" >>"$files_db"
+      if [[ -f $root$path && $(<"$root$path") != "$name "* ]] && grep -Fxq "$path" "$fixture/backups" 2>/dev/null; then
+        [[ -n ${owner[$path]:-} ]] || echo "$name ${version[$name]}" >"$root$path.pacnew"
+        continue
+      fi
       rm -f "$root$path"
       echo "$name ${version[$name]}" >"$root$path"
-      echo "$name $path" >>"$files_db"
+      # Killed part way through extraction: files on disk, none recorded yet.
+      if [[ ${OMARCHY_MAC_MIGRATE_KILL_MID:-} == "extraction" && ! -e $fixture/killed-in-extraction ]]; then
+        : >"$fixture/killed-in-extraction"
+        mv "$files_db.before" "$files_db"
+        kill -9 "$PPID" $$
+      fi
     done <"$fixture/files/$name"
   done
+  rm -f "$files_db.before"
 fi
 for name in "${!version[@]}"; do
   echo "$name ${version[$name]}"

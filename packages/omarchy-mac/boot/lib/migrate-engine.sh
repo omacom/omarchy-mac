@@ -508,6 +508,22 @@ low_battery() {
   (( on_battery && low ))
 }
 
+# The configuration pacman reads: FILE with each Include replaced by the files
+# it names, three levels deep.
+pacman_conf_flat() {
+  local file=$1 depth=${2:-0} line included
+  while IFS= read -r line || [[ -n $line ]]; do
+    if (( depth < 3 )) && [[ $line =~ ^[[:space:]]*Include[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$ ]]; then
+      # shellcheck disable=SC2086 # Include takes a glob
+      for included in $R${BASH_REMATCH[1]}; do
+        [[ ! -f $included ]] || pacman_conf_flat "$included" $(( depth + 1 ))
+      done
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$file"
+}
+
 pacman_trust_problems() {
   local conf=$1 retired
   retired=$(IFS=,; echo "${retired_repos[*]}")
@@ -580,7 +596,7 @@ preflight() {
 
   while IFS= read -r problem; do
     [[ -z $problem ]] || reasons+=("$problem")
-  done < <(pacman_trust_problems "$pacman_conf")
+  done < <(pacman_trust_problems <(pacman_conf_flat "$pacman_conf"))
 
   if low_battery; then
     reasons+=("the battery is below 30% and no charger is connected")
@@ -963,7 +979,10 @@ step_transaction() {
     install_rehearsed_databases
     if (( interrupted )) || ! removals_pending; then
       rm -f "$state/overwrite"
-      adapter_hook prepare || die "the $cohort adapter could not prepare the transaction"
+      if ! adapter_hook prepare; then
+        adapter_hook restore
+        die "the $cohort adapter could not prepare the transaction"
+      fi
       if [[ -f $state/overwrite ]]; then
         while IFS= read -r path; do
           [[ -z $path ]] || overwrite+=(--overwrite "$(overwrite_glob "$path")")
