@@ -108,9 +108,9 @@ measure_terminal() {
   PADDING_LEFT_SPACES=$(printf "%*s" "$PADDING_LEFT" "")
 
   # The ISO draws this form one row from the top of a ~48-row installer
-  # console, where it fills the screen. A HiDPI console (an Apple Silicon Mac
-  # at 60-70 rows) leaves it hanging off the top, so centre it vertically as
-  # the greeter and the progress screen around it are.
+  # console, where it takes most of the screen. A HiDPI console (an Apple
+  # Silicon Mac at 60-70 rows) leaves it hanging off the top, so centre it
+  # vertically as the greeter and the progress screen around it are.
   PADDING_TOP=$(((rows - LOGO_HEIGHT - FORM_BODY_HEIGHT) / 2))
   (( PADDING_TOP < 1 )) && PADDING_TOP=1
 
