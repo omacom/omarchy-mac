@@ -1,0 +1,4 @@
+#!/bin/bash
+# lsinitcpio -l IMAGE: the fixture image is its own listing.
+[[ ${1:-} == "-l" && -f ${2:-} ]] || exit 1
+grep -v '^kernel \|^HOOKS ' "$2"

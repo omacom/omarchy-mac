@@ -9,7 +9,8 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # entrypoints on disk that must not run, and on Apple Silicon into
 # omarchy-mac-boot's reset entrypoints, staged by its install script into a
 # fixture of the live Mac. Subvolumes are directories: btrfs, mount and chroot
-# are stubs, and cryptsetup is a slot-table fake.
+# are stubs, and cryptsetup is a slot-table fake. The Mac's first-boot state is
+# the boot package's: the reset itself arms only owner setup.
 require_platform_fixtures "factory reset through lifecycle dispatch"
 
 tmp=$(mktemp -d)
@@ -79,7 +80,9 @@ case "\$1" in
     done
     [[ -n \$token_type || ! -s "$tmp/token-slot" ]] || exit 0
     material=\$(cat "\$key_file") || exit 1
-    awk -v m="\$material" '\$2 == m { found = 1 } END { exit !found }' "$slots" || exit 2
+    slot=\$(awk -v m="\$material" '\$2 == m { print \$1; exit }' "$slots")
+    [[ -n \$slot ]] || exit 2
+    echo "Key slot \$slot unlocked."
     ;;
   luksAddKey)
     shift
@@ -135,7 +138,7 @@ cat >"$stub_bin/userdel" <<'SH'
 [[ $1 == --root ]] && sed -i "/^$3:/d" "$2/etc/passwd"
 SH
 printf '#!/bin/bash\necho %s\n' "$new_id" >"$stub_bin/systemd-id128"
-printf '#!/bin/bash\nexit 0\n' >"$stub_bin/passwd"
+printf '#!/bin/bash\nexit 0\n' >"$stub_bin/usermod"
 printf '#!/bin/bash\nexit 0\n' >"$stub_bin/mountpoint"
 for tool in mount umount update-grub update-m1n1; do
   printf '#!/bin/bash\necho "%s $*" >>"%s"\n' "$tool" "$calls" >"$stub_bin/$tool"
@@ -191,14 +194,28 @@ done
 
 base_path=$stub_bin:$PATH
 export OMARCHY_PATH=$omarchy OMARCHY_LIFECYCLE_ROOT=$lifecycle
-export OMARCHY_FACTORY_RESET_SOURCE=1 OMARCHY_FACTORY_RESET_LOG=$tmp/reset.log OMARCHY_LUKS_DEVICE=$device
 export PATH=$base_path
 
+# The production functions, without self-elevation or the reset entrypoint,
+# and the globals the script sets around them.
+awk '
+  /^[a-z_]+\(\) \{/ { copying = 1 }
+  copying { print }
+  /^}/ { copying = 0 }
+' "$ROOT/bin/omarchy-system-factory-reset" >"$tmp/functions"
 # shellcheck disable=SC1091
-source "$ROOT/bin/omarchy-system-factory-reset"
-export PATH=$base_path
+source "$tmp/functions"
 # shellcheck disable=SC2034 # read by the sourced reset
-TOP_MNT=$top
+{
+  PROVISIONING_DIR=/var/lib/omarchy/provisioning
+  TOP_MNT=$top
+  NEXT_NAME=@omarchy-reset-next
+  LOG_FILE=$tmp/reset.log
+  DISPATCH=$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch
+  RESET_BOOT_ERROR=""
+}
+luks_device=$device
+luks_device() { echo "$luks_device"; }
 
 # Visible failures: the sourced script replaces fail with its own gum exit.
 test_fail() {
@@ -210,7 +227,8 @@ test_fail() {
 # shellcheck disable=SC2034 # read by the sourced reset
 on_platform() {
   export OMARCHY_PROC_ROOT=$tmp/$1/proc PATH=$tmp/$1/bin:$base_path
-  RESET_BOOT="" RESET_BOOT_PREPARED=0 RESET_LUKS_SLOT="" RESET_LUKS_DEVICE="" RESET_THROWAY="" reset_committed=0 swap_done=0
+  RESET_BOOT="" RESET_BOOT_PREPARED=0 RESET_LUKS_ADDED=0 RESET_LUKS_SLOT="" RESET_LUKS_DEVICE="" RESET_LUKS_AUTH=""
+  RESET_THROWAWAY="" reset_committed=0 swap_done=0
 }
 
 # The previous owner's root at @ and the installer's @factory, which predates
@@ -272,6 +290,11 @@ apple_fixture() {
   printf 'GRUB_CMDLINE_LINUX="quiet rd.luks.name=%s=root"\n' "$luks_uuid" >"$live/etc/default/grub"
   printf 'root UUID=%s none luks\n' "$luks_uuid" >"$live/etc/crypttab"
   printf 'format=1\nencrypt=1\n' >"$live/var/lib/omarchy/mac-first-boot/install.conf"
+  # An older image's @factory kept its first-boot state and the conversion
+  # token; the image's hardware queue belongs in it.
+  mkdir -p "$factory/var/lib/omarchy/mac-first-boot" "$factory/var/lib/omarchy/image" "$factory/boot/efi/omarchy"
+  touch "$factory/var/lib/omarchy/mac-first-boot/"{pending,deferred-steps,install.conf} "$factory/boot/efi/omarchy/install.conf"
+  printf 'install/hardware/apple/limine-boot.sh\n' >"$factory/var/lib/omarchy/image/deferred-steps"
   cat >"$factory/usr/bin/omarchy-mac-boot-update" <<SH
 #!/bin/bash
 root=\$(cd "\$(dirname "\$0")/../.." && pwd)
@@ -317,6 +340,7 @@ grep -Fq "1 $throwaway" "$slots" || test_fail "x86 adds the throwaway slot" "$(c
   test_fail "x86 adds its slot before the rebuild, as before" "$(cat "$calls")"
 [[ $(cat "$(old_root)/owner") == "previous owner" && ! -e $top/@/owner ]] || test_fail "the factory clone is the active root"
 [[ ! -e $live/boot/omarchy/luks-key ]] || test_fail "x86 writes no Apple boot key"
+[[ ! -e $top/@/var/lib/omarchy/mac-first-boot ]] || test_fail "x86 arms no Mac first boot"
 pass "x86 resets through the generic Limine UKI path, and no Mac entrypoint runs"
 
 # ── Apple: prepare, verify, slot, switch, commit ───────────────────────────
@@ -343,6 +367,14 @@ grep -Fq "$token" "$live/boot/grub/grub.cfg" && grep -Fq "$token" "$top/@/etc/de
   test_fail "the scrubbed factory clone is the active root"
 [[ -f $top/@/var/lib/omarchy/provisioning/pending && -f $top/@/var/lib/omarchy/provisioning/wipe-pending ]] ||
   test_fail "owner setup and the wipe are armed on the factory root"
+first_boot=$top/@/var/lib/omarchy/mac-first-boot
+[[ -f $first_boot/pending && ! -e $first_boot/deferred-steps && ! -e $first_boot/install.conf &&
+  ! -e $top/@/boot/efi/omarchy/install.conf && -f $top/@/var/lib/omarchy/image/deferred-steps ]] ||
+  test_fail "the factory root boots into the Mac's first boot without the conversion token or install.conf"
+for rel in var/lib/omarchy/mac-first-boot/{pending,deferred-steps,install.conf} boot/efi/omarchy/install.conf; do
+  [[ ! -e $top/@factory/$rel ]] || test_fail "@factory keeps no $rel"
+done
+[[ -f $top/@factory/var/lib/omarchy/image/deferred-steps ]] || test_fail "@factory keeps the image's hardware queue"
 pass "an Apple reset rebuilds and verifies through the boot package, adds the slot, switches, then writes the key"
 
 # A failed verification rolls back to the previous root: its boot files and
@@ -396,8 +428,8 @@ stage_luks_rekey "$tmp/next" >/dev/null
 (( $(grep -c 'does not unlock' "$screen") == 1 )) || test_fail "a passphrase only a token would accept is asked again" "$(cat "$screen")"
 [[ $RESET_LUKS_AUTH == "current-pass" ]] || test_fail "the reset authorises with the passphrase that opens a slot"
 ! grep -q luksAddKey "$calls" || test_fail "the platform's slot waits for verification"
-add_reset_luks_slot "$RESET_LUKS_DEVICE" "$RESET_THROWAY"
-[[ $RESET_LUKS_SLOT == 1 && $(awk '$1 == 1 { print $2 }' "$slots") == "$RESET_THROWAY" ]] ||
+add_reset_luks_slot
+[[ $RESET_LUKS_SLOT == 1 && $(awk '$1 == 1 { print $2 }' "$slots") == "$RESET_THROWAWAY" ]] ||
   test_fail "the throwaway slot is found beside the token" "$RESET_LUKS_SLOT: $(cat "$slots")"
 revoke_reset_luks
 [[ $(cat "$slots") == "0 current-pass" && -z $RESET_LUKS_SLOT ]] || test_fail "cleanup revokes the slot this attempt added"
@@ -430,64 +462,15 @@ SH
   subvolumes
   mkdir -p "$tmp/real-next/var/lib/omarchy/provisioning"
   (
-    export OMARCHY_LUKS_DEVICE=$volume
+    luks_device=$volume
     stage_luks_rekey "$tmp/real-next" >/dev/null
     (( $(grep -c 'does not unlock' "$screen") == 1 )) || test_fail "a real volume refuses the wrong passphrase once" "$(cat "$screen")"
-    add_reset_luks_slot "$RESET_LUKS_DEVICE" "$RESET_THROWAY"
+    add_reset_luks_slot
     [[ $RESET_LUKS_SLOT == 1 ]] || test_fail "the throwaway's real slot is found beside token 5" "$RESET_LUKS_SLOT"
-    opens "$RESET_THROWAY" || test_fail "the throwaway opens the real volume"
+    opens "$RESET_THROWAWAY" || test_fail "the throwaway opens the real volume"
     revoke_reset_luks
-    ! opens "$RESET_THROWAY" && opens current-pass || test_fail "revoking removes only the throwaway's slot"
+    ! opens "$RESET_THROWAWAY" && opens current-pass || test_fail "revoking removes only the throwaway's slot"
   ) || exit 1
   mv "$tmp/cryptsetup.fake" "$stub_bin/cryptsetup"
   pass "on a real LUKS2 volume with a token, the reset checks the passphrase, adds and revokes exactly its own slot"
 fi
-
-# ── @factory and the next root ─────────────────────────────────────────────
-factory="$tmp/factory"
-mkdir -p "$factory/etc" \
-  "$factory/var/lib/omarchy/mac-first-boot" \
-  "$factory/var/lib/omarchy/provisioning" \
-  "$factory/boot/efi/omarchy" \
-  "$factory/boot/omarchy"
-: >"$factory/etc/passwd"
-: >"$factory/etc/machine-id"
-touch "$factory/var/lib/omarchy/mac-first-boot/pending" \
-  "$factory/var/lib/omarchy/mac-first-boot/deferred-steps" \
-  "$factory/var/lib/omarchy/mac-first-boot/install.conf" \
-  "$factory/var/lib/omarchy/provisioning/pending" \
-  "$factory/var/lib/omarchy/provisioning/wipe-pending" \
-  "$factory/boot/efi/omarchy/install.conf"
-printf 'format=1\nphase=finished\npartition=p\nluks_uuid=u\n' >"$factory/boot/omarchy/encrypt.state"
-sanitize_factory_baseline "$factory"
-[[ ! -e $factory/var/lib/omarchy/mac-first-boot/pending ]] || test_fail "@factory does not keep mac-first-boot/pending"
-[[ ! -e $factory/var/lib/omarchy/mac-first-boot/deferred-steps ]] || test_fail "@factory does not keep the fresh-image conversion token"
-[[ ! -e $factory/var/lib/omarchy/mac-first-boot/install.conf ]] || test_fail "@factory does not keep install.conf"
-[[ ! -e $factory/var/lib/omarchy/provisioning/pending ]] || test_fail "@factory does not keep provisioning/pending"
-[[ ! -e $factory/var/lib/omarchy/provisioning/wipe-pending ]] || test_fail "@factory does not keep wipe-pending"
-[[ ! -e $factory/boot/efi/omarchy/install.conf ]] || test_fail "@factory does not keep the ESP install.conf"
-# /boot inside a subvolume is an empty mountpoint on a real system: the live
-# Boot partition's state belongs to the boot package, never to the scrub.
-[[ -f $factory/boot/omarchy/encrypt.state ]] || test_fail "the subvolume scrub leaves boot/omarchy alone"
-
-cloned="$tmp/cloned"
-mkdir -p "$cloned/var/lib/omarchy/mac-first-boot" "$cloned/boot/omarchy" "$cloned/boot/efi/omarchy"
-mkdir -p "$cloned/var/lib/omarchy/image"
-touch "$cloned/var/lib/omarchy/image/deferred-steps" \
-  "$cloned/var/lib/omarchy/mac-first-boot/pending" \
-  "$cloned/var/lib/omarchy/mac-first-boot/deferred-steps" \
-  "$cloned/var/lib/omarchy/mac-first-boot/install.conf" \
-  "$cloned/boot/efi/omarchy/install.conf"
-printf 'format=1\nphase=finished\n' >"$cloned/boot/omarchy/encrypt.state"
-scrub_factory_boot_state "$cloned"
-arm_reset_markers "$cloned"
-[[ -f $cloned/var/lib/omarchy/mac-first-boot/pending ]] || test_fail "reset re-arms mac-first-boot/pending"
-[[ -f $cloned/var/lib/omarchy/provisioning/pending ]] || test_fail "reset re-arms provisioning/pending"
-[[ -f $cloned/var/lib/omarchy/provisioning/wipe-pending ]] || test_fail "reset re-arms wipe-pending"
-[[ ! -e $cloned/var/lib/omarchy/mac-first-boot/install.conf ]] || test_fail "reset next root does not keep install.conf"
-[[ ! -e $cloned/var/lib/omarchy/mac-first-boot/deferred-steps ]] ||
-  test_fail "reset next root carries no fresh-image conversion token, so the initramfs does not convert it again"
-[[ -f $cloned/var/lib/omarchy/image/deferred-steps ]] || test_fail "reset next root keeps the image's hardware queue for its first boot"
-[[ ! -e $cloned/boot/efi/omarchy/install.conf ]] || test_fail "reset next root does not keep the ESP install.conf"
-[[ -f $cloned/boot/omarchy/encrypt.state ]] || test_fail "the next-root scrub leaves boot/omarchy alone"
-pass "the reset re-arms both markers on the next root and keeps @factory clean"

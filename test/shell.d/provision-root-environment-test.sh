@@ -3,8 +3,8 @@
 set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
-for entry in omarchy-provision-owner omarchy-system-factory-reset; do
-  env -i PATH=/usr/bin:/bin OMARCHY_PROVISION_OWNER_SOURCE=1 OMARCHY_FACTORY_RESET_SOURCE=1 \
+for entry in omarchy-provision-owner; do
+  env -i PATH=/usr/bin:/bin OMARCHY_PROVISION_OWNER_SOURCE=1 \
     bash -c '
       unset OMARCHY_PATH
       fixture_libraries=$2
@@ -24,3 +24,11 @@ for entry in omarchy-provision-owner omarchy-system-factory-reset; do
     ' bash "$ROOT/bin/$entry" "$ROOT/install/provisioning"
   pass "$entry bootstraps without a desktop environment"
 done
+
+# Factory reset is upstream's script: it elevates and resets when run, so only
+# its bootstrap lines are checked.
+reset=$ROOT/bin/omarchy-system-factory-reset
+grep -Fxq 'OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"' "$reset" &&
+  grep -Fxq 'export PATH="$OMARCHY_PATH/bin:$PATH"' "$reset" ||
+  fail "omarchy-system-factory-reset bootstraps without a desktop environment"
+pass "omarchy-system-factory-reset bootstraps without a desktop environment"

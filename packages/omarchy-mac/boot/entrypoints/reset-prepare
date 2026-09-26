@@ -2,11 +2,13 @@
 
 # omarchy-lifecycle-dispatch reset-prepare <factory-root> [<luks-device>].
 # Factory reset runs this while the previous root still boots. It saves the
-# live boot files, stages the unlock of an encrypted root in the factory
-# root, starts the Limine menu over on the ESP this Mac boots from, rebuilds
-# the initramfs and the loader from the factory root, and reopens
+# live boot files, re-arms the Mac's first boot in the factory root without the
+# fresh image's conversion token or install.conf (and drops those from the
+# @factory snapshot beside it), stages the unlock of an encrypted root in the
+# factory root, starts the Limine menu over on the ESP this Mac boots from,
+# rebuilds the initramfs and the loader from the factory root, and reopens
 # encrypt.state for the next owner. It refuses a factory root whose kernel
-# differs from the one in /boot. reset-rollback undoes it.
+# differs from the one in /boot. reset-rollback undoes the boot changes.
 
 set -euo pipefail
 

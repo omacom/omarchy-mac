@@ -6,13 +6,17 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 # The factory reset entrypoints omarchy-lifecycle-dispatch runs, staged by
 # install into a fixture root and run as the files they are. The live Mac is
-# the fixture root; the factory root is a separate clone. chroot runs the
-# factory root's own omarchy-mac-boot-update stub, which rebuilds the live boot
-# files the way the bind-mounted /boot would receive them.
+# the fixture root; the factory root is a separate clone beside the sealed
+# @factory snapshot, as the reset leaves them at the top of the filesystem.
+# chroot runs the factory root's own omarchy-mac-boot-update stub, which
+# rebuilds the live boot files the way the bind-mounted /boot would receive
+# them.
 test_tmp=$(mktemp -d)
 trap 'chmod -R u+w "$test_tmp" 2>/dev/null; rm -rf "$test_tmp"' EXIT
 root=$test_tmp/root
-next=$test_tmp/next
+top=$test_tmp/top
+next=$top/@omarchy-reset-next
+baseline=$top/@factory
 stub_bin=$test_tmp/bin
 calls=$test_tmp/calls
 mkdir -p "$stub_bin"
@@ -59,6 +63,15 @@ cat >"$stub_bin/cryptsetup" <<SH
 echo "cryptsetup \$*" >>"$calls"
 [[ \$1 == luksUUID && -e \$2 ]] && { echo $luks_uuid; exit 0; }
 exit 1
+SH
+# A sealed snapshot is read-only: property set ro true makes the fixture
+# directory unwritable, and false writable again.
+cat >"$stub_bin/btrfs" <<SH
+#!/bin/bash
+echo "btrfs \$*" >>"$calls"
+[[ "\$1 \$2 \$3 \$5" == "property set -ts ro" && -d \$4 ]] || exit 1
+[[ \$6 != false || ! -e $test_tmp/fail-unseal ]] || exit 1
+if [[ \$6 == true ]]; then chmod -R a-w "\$4"; else chmod -R u+w "\$4"; fi
 SH
 for tool in mount umount update-grub update-m1n1; do
   printf '#!/bin/bash\necho "%s $*" >>"%s"\n' "$tool" "$calls" >"$stub_bin/$tool"
@@ -128,11 +141,23 @@ SH
   chmod +x "$next/usr/bin/omarchy-mac-boot-update"
 }
 
+# The fresh image's first-boot state and owner setup's markers, with the
+# image's hardware queue beside them.
+first_boot_state() {
+  mkdir -p "$1/var/lib/omarchy/mac-first-boot" "$1/var/lib/omarchy/provisioning" "$1/var/lib/omarchy/image" \
+    "$1/boot/efi/omarchy"
+  touch "$1/var/lib/omarchy/mac-first-boot/"{pending,deferred-steps,install.conf} \
+    "$1/var/lib/omarchy/provisioning/"{pending,wipe-pending} "$1/boot/efi/omarchy/install.conf"
+  printf 'install/hardware/apple/limine-boot.sh\n' >"$1/var/lib/omarchy/image/deferred-steps"
+}
+
 # A GRUB Mac whose previous owner finished encryption, and a factory root
-# snapshotted before the first boot encrypted it, carrying the same kernel.
+# snapshotted before the first boot encrypted it, carrying the same kernel. It
+# and the sealed @factory still carry an older image's first-boot state; the
+# reset has armed owner setup in the factory root.
 fixture() {
-  chmod -R u+w "$root/boot" "$root/etc" "$root/var" "$root/run" "$next" 2>/dev/null || true
-  rm -rf "${root:?}"/{boot,etc,var,run,dev,proc,sys} "$next"
+  chmod -R u+w "$root/boot" "$root/etc" "$root/var" "$root/run" "$top" 2>/dev/null || true
+  rm -rf "${root:?}"/{boot,etc,var,run,dev,proc,sys} "$top"
   mkdir -p "$root/boot/omarchy" "$root/boot/grub" "$root/boot/efi/EFI/BOOT" "$root/etc/default" \
     "$root/var/lib/omarchy/mac-first-boot" "$root/dev" "$root/proc" "$root/sys" "$root/run" \
     "$next/usr/lib/modules/7.1-aurora" "$next/etc/default" "$next/usr/share/omarchy/default/limine"
@@ -152,6 +177,12 @@ fixture() {
   printf 'GRUB_CMDLINE_LINUX="quiet"\n' >"$next/etc/default/grub"
   echo "$new_id" >"$next/etc/machine-id"
   printf 'timeout: 3\n' >"$next/usr/share/omarchy/default/limine/limine.conf"
+  first_boot_state "$next"
+  chmod 600 "$next/var/lib/omarchy/mac-first-boot/pending"
+  mkdir -p "$baseline/etc" "$baseline/usr/lib/modules"
+  echo "$old_id" >"$baseline/etc/machine-id"
+  first_boot_state "$baseline"
+  chmod -R a-w "$baseline"
   factory_boot_update
   rm -f "$test_tmp"/fail-* "$test_tmp/build-without-firmware"
   : >"$calls"
@@ -232,6 +263,57 @@ printf '%s' "$key" | run reset-commit || fail "reset-commit writes the unlock ke
 [[ $state_after_verify != "$before" ]] || fail "the reset rebuilt the boot files"
 pass "an encrypted reset stages the unlock, rebuilds in the factory root, reopens encrypt.state and writes the key only at commit"
 
+# ── First boot, in the factory root and @factory ───────────────────────────
+fixture
+run reset-prepare "$next" "$root/dev/luks" || fail "prepare" "$(cat "$test_tmp/err")"
+state=$next/var/lib/omarchy/mac-first-boot
+[[ -f $state/pending && $(stat -c '%a' "$state/pending") == 644 ]] || fail "the factory root boots into the Mac's first boot again"
+[[ ! -e $state/deferred-steps ]] ||
+  fail "the factory root carries no conversion token, so the initramfs never encrypts it in place again"
+[[ ! -e $state/install.conf && ! -e $next/boot/efi/omarchy/install.conf ]] || fail "the factory root keeps no previous install.conf"
+[[ -f $next/var/lib/omarchy/provisioning/pending && -f $next/var/lib/omarchy/provisioning/wipe-pending ]] ||
+  fail "owner setup's markers are the caller's and stay armed"
+[[ -f $next/var/lib/omarchy/image/deferred-steps ]] || fail "the image's hardware queue stays for the factory root's first boot"
+for rel in var/lib/omarchy/mac-first-boot/{pending,deferred-steps,install.conf} var/lib/omarchy/provisioning/{pending,wipe-pending} \
+  boot/efi/omarchy/install.conf; do
+  [[ ! -e $baseline/$rel ]] || fail "@factory keeps no $rel"
+done
+[[ -f $baseline/var/lib/omarchy/image/deferred-steps && $(cat "$baseline/etc/machine-id") == "$old_id" ]] ||
+  fail "the rest of @factory stays as it was"
+[[ $(grep '^btrfs' "$calls") == "btrfs property set -ts $baseline ro false"$'\n'"btrfs property set -ts $baseline ro true" ]] ||
+  fail "@factory is unsealed for the scrub and sealed again" "$(cat "$calls")"
+(( EUID == 0 )) || [[ ! -w $baseline/var/lib/omarchy ]] || fail "@factory is left sealed"
+run reset-rollback || fail "rollback" "$(cat "$test_tmp/err")"
+[[ ! -e $baseline/var/lib/omarchy/mac-first-boot/deferred-steps ]] || fail "rollback leaves @factory scrubbed"
+: >"$calls"
+run reset-prepare "$next" "$root/dev/luks" || fail "a second reset prepares" "$(cat "$test_tmp/err")"
+! grep -q '^btrfs' "$calls" || fail "a clean @factory stays sealed" "$(cat "$calls")"
+[[ -f $state/pending ]] || fail "a second reset arms the first boot again"
+run reset-rollback || fail "rollback" "$(cat "$test_tmp/err")"
+pass "reset-prepare re-arms the Mac's first boot without the conversion token or install.conf, and scrubs @factory once"
+
+# A snapshot that cannot be unsealed stops the reset, and rollback restores
+# the boot files. A factory root with no @factory beside it is refused first.
+fixture
+before=$(boot_tree)
+: >"$test_tmp/fail-unseal"
+if run reset-prepare "$next" "$root/dev/luks"; then fail "an @factory that cannot be unsealed fails prepare"; fi
+error_says "first-boot markers from the @factory snapshot"
+! grep -Eq '^(mount|chroot)' "$calls" || fail "the scrub comes before the rebuild" "$(cat "$calls")"
+run reset-rollback || fail "rollback" "$(cat "$test_tmp/err")"
+[[ $(boot_tree) == "$before" && -f $baseline/var/lib/omarchy/mac-first-boot/deferred-steps ]] ||
+  fail "the boot files come back and @factory is as it was"
+fixture
+before=$(boot_tree)
+if run reset-prepare "$baseline"; then fail "@factory itself is not a factory root"; fi
+error_says "not a clone beside the @factory snapshot"
+chmod -R u+w "$baseline"
+rm -rf "$baseline"
+if run reset-prepare "$next" "$root/dev/luks"; then fail "a factory root without @factory beside it is refused"; fi
+error_says "not a clone beside the @factory snapshot"
+[[ $(boot_tree) == "$before" && ! -e $reset_dir && -f $state/deferred-steps ]] || fail "those refusals change nothing"
+pass "a snapshot that cannot be unsealed fails prepare for rollback, and a factory root needs @factory beside it"
+
 # Verification is read-only and fails for every boot-chain gap.
 fixture
 run reset-prepare "$next" "$root/dev/luks" || fail "prepare" "$(cat "$test_tmp/err")"
@@ -297,8 +379,10 @@ before=$(boot_tree)
 printf 'other kernel' >"$next/usr/lib/modules/7.1-aurora/vmlinuz"
 if run reset-prepare "$next" "$root/dev/luks"; then fail "a factory kernel that differs from /boot is refused"; fi
 error_says "coordinated boot-package restore"
-[[ $(boot_tree) == "$before" && ! -e $reset_dir ]] && ! grep -Eq '^(mount|chroot)' "$calls" ||
+[[ $(boot_tree) == "$before" && ! -e $reset_dir ]] && ! grep -Eq '^(mount|chroot|btrfs)' "$calls" ||
   fail "a kernel mismatch changes nothing"
+[[ -f $next/var/lib/omarchy/mac-first-boot/deferred-steps && -f $baseline/var/lib/omarchy/mac-first-boot/deferred-steps ]] ||
+  fail "a refusal leaves the factory root and @factory alone"
 fixture
 if run reset-prepare /; then fail "the running root is not a factory root"; fi
 if run reset-prepare "$test_tmp/missing"; then fail "a missing factory root is refused"; fi
@@ -335,6 +419,8 @@ grep -Fxq 'phase=declined' "$root/boot/omarchy/encrypt.state" || fail "a decline
 run reset-verify "$next" || fail "an unencrypted factory root verifies" "$(cat "$test_tmp/err")"
 printf 'unexpected' | run reset-commit || fail "commit" "$(cat "$test_tmp/err")"
 [[ ! -e $root/boot/omarchy/luks-key ]] || fail "an unencrypted reset writes no key"
+[[ -f $next/var/lib/omarchy/mac-first-boot/pending && ! -e $next/var/lib/omarchy/mac-first-boot/deferred-steps ]] ||
+  fail "an unencrypted factory root boots into the Mac's first boot again"
 pass "an unencrypted reset stages no unlock and writes no key"
 
 # A key the Boot partition cannot keep is reported, with no leftovers.

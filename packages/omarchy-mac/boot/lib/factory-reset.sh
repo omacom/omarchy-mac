@@ -32,6 +32,51 @@ require_factory_root() {
     refuse "Name the factory root the reset activates."
 }
 
+# The sealed @factory snapshot the reset cloned the factory root from, beside
+# it at the top of the filesystem.
+factory_baseline() {
+  local baseline=${1%/*}/@factory
+  [[ -d $baseline && ! -L $baseline && ! $baseline -ef $1 ]] || return 1
+  printf '%s\n' "$baseline"
+}
+
+# A fresh image's first-boot state, relative to a root. A pending first boot
+# with the conversion token (deferred-steps) is what the initramfs encrypts in
+# place, and install.conf is the previous install's choice.
+FIRST_BOOT_STATE=(
+  var/lib/omarchy/mac-first-boot/pending
+  var/lib/omarchy/mac-first-boot/deferred-steps
+  var/lib/omarchy/mac-first-boot/install.conf
+  boot/efi/omarchy/install.conf
+)
+
+# @factory keeps none of it, nor owner setup's markers, so neither a later
+# reset nor a restore of @factory brings them back. It is unsealed only when
+# there is something to remove, and always sealed again.
+scrub_factory_baseline() {
+  local baseline=$1 rel status=0
+  local -a found=()
+  for rel in "${FIRST_BOOT_STATE[@]}" var/lib/omarchy/provisioning/pending var/lib/omarchy/provisioning/wipe-pending; do
+    [[ ! -e $baseline/$rel && ! -L $baseline/$rel ]] || found+=("$baseline/$rel")
+  done
+  (( ${#found[@]} )) || return 0
+  btrfs property set -ts "$baseline" ro false || return 1
+  rm -f -- "${found[@]}" || status=1
+  btrfs property set -ts "$baseline" ro true || status=1
+  return "$status"
+}
+
+# The factory root boots into this Mac's first boot again, without the
+# conversion token or the previous install.conf. Owner setup's markers are the
+# caller's.
+arm_factory_first_boot() {
+  local next=$1 rel dir=$1/var/lib/omarchy/mac-first-boot
+  for rel in "${FIRST_BOOT_STATE[@]}"; do
+    rm -f -- "${next:?}/$rel" || return 1
+  done
+  install -d -m 0755 "$dir" && install -m 0644 /dev/null "$dir/pending"
+}
+
 # Firmware, m1n1 and its device trees are on the ESP, outside the snapshot, and
 # match the kernel in /boot. The factory root must carry that same kernel, or
 # its boot files would pair it with another kernel's device trees.
@@ -366,10 +411,11 @@ factory_limine() {
 }
 
 reset_prepare() {
-  local next=${1:-} device=${2:-} uuid="" esp
+  local next=${1:-} device=${2:-} uuid="" esp baseline
   require_apple_silicon
   (( $# == 1 || $# == 2 )) || refuse "Usage: reset-prepare <factory-root> [<luks-device>]"
   require_factory_root "$next"
+  baseline=$(factory_baseline "$next") || refuse "The factory root is not a clone beside the @factory snapshot."
   require_boot_partition
   [[ ! -e $RESET_DIR ]] ||
     refuse "A failed reset's boot files are still saved in /run/omarchy-mac-boot/reset. Restart before resetting again."
@@ -387,6 +433,8 @@ reset_prepare() {
     refuse "Could not record the reset in /run/omarchy-mac-boot/reset."
   backup_live_boot_files "$(esp_prefix "$esp")" ||
     refuse "Could not save the current boot files. Nothing was changed."
+  scrub_factory_baseline "$baseline" || refuse "Could not remove the first-boot markers from the @factory snapshot."
+  arm_factory_first_boot "$next" || refuse "Could not arm the factory system's first boot."
   if [[ -n $uuid ]]; then
     stage_reset_unlock "$next" "$uuid" || refuse "Could not stage the factory system's disk unlock."
   fi

@@ -252,6 +252,15 @@ omarchy_mac_encrypt_mount_boot() {
     BOOT_MOUNTED=1
 }
 
+# The image's fixed ESP or Boot partition: mounted here, or present on any
+# disk. A Mac without both never had this unit's journal or throwaway key.
+omarchy_mac_encrypt_image_layout() {
+    [[ ${ESP_MOUNTED:-0} == 1 || -n ${OMARCHY_MAC_ENCRYPT_ESP:-} || -n ${OMARCHY_MAC_ENCRYPT_BOOT:-} ]] && return 0
+    [[ -e /dev/disk/by-uuid/$ESP_UUID || -e /dev/disk/by-uuid/$BOOT_UUID ]] && return 0
+    [[ -n $(blkid -c /dev/null -o device -t "UUID=$ESP_UUID" 2>/dev/null || true) ||
+       -n $(blkid -c /dev/null -o device -t "UUID=$BOOT_UUID" 2>/dev/null || true) ]]
+}
+
 # GPT PARTUUID / PARTLABEL survive LUKS; the plaintext btrfs UUID and label do
 # not. The image boots with root=UUID=<btrfs uuid> and labels the filesystem
 # OMARCHY_ROOT; encrypt.state records the PARTUUID before the first mutation.
@@ -847,8 +856,14 @@ omarchy_mac_encrypt_main() {
             if [[ $probe_type == crypto_LUKS ]]; then
                 # The journal and the throwaway key live on Boot: without it an
                 # interrupted conversion cannot resume and sd-encrypt cannot
-                # unlock. Say so instead of dying later at sysroot.mount.
-                omarchy_mac_encrypt_fail "the root is LUKS but the ESP or Boot partition is unusable; the encryption journal and key are unreachable"
+                # unlock. Say so instead of dying later at sysroot.mount. A Mac
+                # with neither of the image's partitions was encrypted before
+                # Omarchy's images (and migrated since): its passphrase unlocks.
+                if omarchy_mac_encrypt_image_layout; then
+                    omarchy_mac_encrypt_fail "the root is LUKS but the ESP or Boot partition is unusable; the encryption journal and key are unreachable"
+                fi
+                omarchy_mac_encrypt_say "the root is LUKS and this Mac has neither the image's ESP nor its Boot partition; leaving unlock to sd-encrypt"
+                return 0
             fi
             if [[ $probe_type == btrfs ]] && omarchy_mac_encrypt_fresh_image; then
                 omarchy_mac_encrypt_fail "the ESP or Boot partition is unusable on a fresh image; refusing to boot without the encryption journal"
