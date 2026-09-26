@@ -6,6 +6,7 @@ source "$(dirname "$0")/base-test.sh"
 
 require_command gzip
 require_command realpath
+require_command b2sum
 
 check="$ROOT/bin/omarchy-apple-silicon-boot-check"
 test_tmp=$(mktemp -d)
@@ -39,12 +40,35 @@ esac
 SH
 cat >"$stub_bin/lsinitcpio" <<'SH'
 #!/bin/bash
+if [[ "$1" == "-x" ]]; then
+  image=${*: -1}
+  [[ -f $image ]] || exit 1
+  printf 'lsinitcpio -x %s\n' "$*" >>"$TEST_CALLS"
+  [[ -z ${TEST_INITRD_TREE:-} ]] || cp -a "$TEST_INITRD_TREE/." .
+  exit 0
+fi
 if [[ "$1" == "-a" && -f "$2" ]]; then
   cat "${TEST_INITRAMFS_ANALYZE:-$TEST_INITRAMFS_LIST.analyze}"
   exit 0
 fi
 [[ "$1" == "-l" && -f "$2" ]] || exit 1
 cat "$TEST_INITRAMFS_LIST"
+SH
+# A fixture UKI is the kernel followed by a marker: .linux is the whole file.
+cat >"$stub_bin/objcopy" <<'SH'
+#!/bin/bash
+printf 'objcopy %s\n' "$*" >>"$TEST_CALLS"
+[[ -f $4 ]] || exit 1
+case $3 in
+  --only-section=.linux) cp "$4" "$5" ;;
+  --only-section=.initrd) printf 'initrd of %s\n' "$4" >"$5" ;;
+  *) exit 1 ;;
+esac
+SH
+cat >"$stub_bin/journalctl" <<'SH'
+#!/bin/bash
+printf 'journalctl %s\n' "$*" >>"$TEST_CALLS"
+[[ -z ${TEST_JOURNAL:-} ]] || cat "$TEST_JOURNAL"
 SH
 cat >"$stub_bin/cryptsetup" <<'SH'
 #!/bin/bash
@@ -241,7 +265,7 @@ run_check() {
     OMARCHY_BOOT_CHECK_ROOT="$root" \
     OMARCHY_BOOT_CHECK_UNAME="$kver" \
     PATH="$stub_bin:$ROOT/bin:$PATH" \
-    bash "$check" linux-aurora >"$test_tmp/out" 2>"$test_tmp/err"
+    bash "$check" ${TEST_BOOT_CHAIN:+--boot-chain} linux-aurora >"$test_tmp/out" 2>"$test_tmp/err"
   status=$?
   set -e
 }
@@ -430,3 +454,292 @@ printf '/dev/nvme0n1p5 btrfs\n/dev/nvme0n1p4 crypto_LUKS\n' >"$test_tmp/lsblk"
 TEST_LSBLK="$test_tmp/lsblk" run_check
 expect_fail "crypto_LUKS parent without crypttab" "encrypted root has no crypttab"
 pass "a mapper or LUKS root without crypttab is a failure"
+
+# The disk passphrase prompt types with the layout the boot image carries.
+initrd_tree="$test_tmp/initrd-tree"
+# What sd-vconsole, the busybox keymap hook and the plymouth hook put next to
+# vconsole.conf: the console tools, the KEYMAP file, keymap.bin and the XKB
+# symbols of each layout.
+initrd_carries() {
+  local setting keymap="" layouts="" layout
+  rm -rf "$initrd_tree"
+  mkdir -p "$initrd_tree/etc"
+  (( $# == 0 )) || printf '%s\n' "$@" >"$initrd_tree/etc/vconsole.conf"
+  mkdir -p "$initrd_tree/usr/lib/systemd" "$initrd_tree/usr/bin" "$initrd_tree/usr/share/kbd/keymaps/i386/qwerty" \
+    "$initrd_tree/usr/share/X11/xkb/symbols"
+  : >"$initrd_tree/usr/lib/systemd/systemd-vconsole-setup"
+  : >"$initrd_tree/usr/bin/loadkeys"
+  : >"$initrd_tree/usr/bin/plymouthd"
+  : >"$initrd_tree/keymap.bin"
+  for setting; do
+    case $setting in
+      KEYMAP=*) keymap=${setting#KEYMAP=} ;;
+      XKBLAYOUT=*) layouts=${setting#XKBLAYOUT=} ;;
+    esac
+  done
+  case $keymap in
+    "" | /*) ;;
+    */*)
+      mkdir -p "$(dirname "$initrd_tree/usr/share/kbd/keymaps/$keymap")"
+      : >"$initrd_tree/usr/share/kbd/keymaps/$keymap.map.gz"
+      ;;
+    *) : >"$initrd_tree/usr/share/kbd/keymaps/i386/qwerty/$keymap.map.gz" ;;
+  esac
+  for layout in ${layouts//,/ }; do
+    : >"$initrd_tree/usr/share/X11/xkb/symbols/$layout"
+  done
+}
+host_layout() {
+  mkdir -p "$root/etc"
+  printf '%s\n' "$@" >"$root/etc/vconsole.conf"
+}
+danish=(KEYMAP=dk-latin1 XKBLAYOUT=dk XKBMODEL=pc105 XKBOPTIONS=terminate:ctrl_alt_bksp)
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+mkdir -p "$test_tmp/tmpdir"
+TMPDIR=$test_tmp/tmpdir TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "an encrypted GRUB Mac whose initramfs carries the Danish vconsole.conf"
+grep -Fq "lsinitcpio -x $root/boot/initramfs-linux-aurora.img" "$calls" ||
+  fail "the GRUB initramfs is the image checked for the layout" "$(cat "$calls")"
+[[ -z $(ls -A "$test_tmp/tmpdir") ]] || fail "the extracted image is removed" "$(find "$test_tmp/tmpdir")"
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries KEYMAP=us XKBLAYOUT=us
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "an initramfs built before the layout changed" "does not carry the keyboard layout of /etc/vconsole.conf (KEYMAP=dk-latin1 XKBLAYOUT=dk)"
+grep -Fq "sudo /usr/bin/mkinitcpio -P && sudo omarchy-mac-boot-update" "$test_tmp/err" ||
+  fail "a GRUB Mac is told to rebuild with mkinitcpio and omarchy-mac-boot-update" "$(cat "$test_tmp/err")"
+TEST_BOOT_CHAIN=1 TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "an initramfs built before the layout changed, checked for the next boot" "does not carry the keyboard layout of /etc/vconsole.conf"
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "an initramfs without vconsole.conf" "does not carry the keyboard layout of /etc/vconsole.conf"
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+rm "$initrd_tree/usr/share/kbd/keymaps/i386/qwerty/dk-latin1.map.gz"
+: >"$initrd_tree/usr/share/kbd/keymaps/i386/qwerty/dk.map.gz"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "an image without the KEYMAP file" "carries /etc/vconsole.conf but not what loads it at the disk passphrase prompt (missing the dk-latin1 keymap)"
+TEST_BOOT_CHAIN=1 TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "an image without the KEYMAP file, checked for the next boot" "missing the dk-latin1 keymap"
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+rm "$initrd_tree/usr/lib/systemd/systemd-vconsole-setup"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "an image without sd-vconsole" "missing /usr/lib/systemd/systemd-vconsole-setup"
+grep -Fq "sudo /usr/bin/mkinitcpio -P && sudo omarchy-mac-boot-update" "$test_tmp/err" ||
+  fail "a missing loader names the rebuild" "$(cat "$test_tmp/err")"
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+rm "$initrd_tree/usr/share/X11/xkb/symbols/dk"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a Plymouth image without the XKB symbols" "missing the XKB symbols for dk"
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+rm "$initrd_tree/usr/share/X11/xkb/symbols/dk" "$initrd_tree/usr/bin/plymouthd"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "an image without Plymouth, which needs no XKB symbols"
+
+system
+encrypt_root
+host_layout KEYMAP=/usr/local/share/kbd/my.map XKBLAYOUT=dk
+initrd_carries KEYMAP=us XKBLAYOUT=dk
+sed -i 's|^KEYMAP=.*|KEYMAP=/usr/local/share/kbd/my.map|' "$initrd_tree/etc/vconsole.conf"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "an image without an absolute KEYMAP" "missing /usr/local/share/kbd/my.map"
+mkdir -p "$initrd_tree/usr/local/share/kbd"
+: >"$initrd_tree/usr/local/share/kbd/my.map"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "an image that carries the absolute KEYMAP"
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+mv "$initrd_tree/usr/share/kbd/keymaps/i386/qwerty/dk-latin1.map.gz" "$initrd_tree/usr/share/kbd/keymaps/i386/qwerty/dk-latin1.map.bak"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a keymap file with a suffix sd-vconsole does not load" "missing the dk-latin1 keymap"
+
+system
+encrypt_root
+host_layout KEYMAP=i386/qwerty/dk-latin1 XKBLAYOUT=dk
+initrd_carries KEYMAP=i386/qwerty/dk-latin1 XKBLAYOUT=dk
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "a KEYMAP named with its directory"
+
+system
+encrypt_root
+host_layout XKBLAYOUT=dk,us
+initrd_carries XKBLAYOUT=dk,us
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "an XKB-only layout, whose console keeps the US map"
+rm "$initrd_tree/usr/share/X11/xkb/symbols/us"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a second XKB layout without its symbols" "missing the XKB symbols for us"
+pass "the image must carry what loads the layout, not only vconsole.conf"
+
+# A Mac whose busybox init unlocks the root through cryptdevice= loads its
+# console keymap from the keymap hook's keymap.bin, not from sd-vconsole, and
+# has no crypttab.
+busybox_root() {
+  rm -f "$root/etc/crypttab"
+  printf '/dev/mapper/root / btrfs subvol=@ 0 0\n' >"$root/etc/fstab"
+  printf 'linux /vmlinuz-linux-aurora root=UUID=x rw rootflags=subvol=@ cryptdevice=UUID=abcd-ef:root\ninitrd /initramfs-linux-aurora.img\n' \
+    >"$root/boot/grub/grub.cfg"
+  printf 'usr/lib/modules/%s/kernel/x.ko\nusr/bin/init\ninit_functions\nhooks/encrypt\nhooks/keymap\nkeymap.bin\n' "$kver" >"$test_tmp/initramfs"
+}
+system
+encrypt_root
+busybox_root
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+rm "$initrd_tree/usr/lib/systemd/systemd-vconsole-setup" "$initrd_tree/usr/share/kbd/keymaps/i386/qwerty/dk-latin1.map.gz"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "a busybox image, which has no sd-vconsole"
+TEST_BOOT_CHAIN=1 TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "a busybox image, checked for the next boot"
+rm "$initrd_tree/keymap.bin"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a busybox image without the keymap hook's keymap.bin" "missing the keymap hook's keymap.bin"
+TEST_BOOT_CHAIN=1 TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a busybox image without keymap.bin, checked for the next boot" "missing the keymap hook's keymap.bin"
+initrd_carries KEYMAP=us XKBLAYOUT=us
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a busybox image built before the layout changed" "/boot/initramfs-linux-aurora.img does not carry the keyboard layout of /etc/vconsole.conf"
+host_layout XKBLAYOUT=dk
+initrd_carries XKBLAYOUT=dk
+rm "$initrd_tree/keymap.bin"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "a busybox image for an XKB-only layout, whose console keeps the US map"
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+rm "$initrd_tree/usr/share/X11/xkb/symbols/dk"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a busybox Plymouth image without the XKB symbols" "missing the XKB symbols for dk"
+pass "a busybox encrypt Mac without crypttab is checked for vconsole.conf, keymap.bin and the XKB symbols"
+
+system
+encrypt_root
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+printf 'loadkeys: Unable to open file: dk-latin1: No such file or directory\n/usr/bin/loadkeys failed with exit status 1.\nsystemd-vconsole-setup.service: Failed with result '"'"'exit-code'"'"'.\n' \
+  >"$test_tmp/journal"
+TEST_INITRD_TREE=$initrd_tree TEST_JOURNAL="$test_tmp/journal" OMARCHY_BOOT_CHECK_LIVE_JOURNAL=1 run_check
+expect_pass "a failed console setup this boot is a warning, not a failure"
+grep -Fq "warning: the console keyboard setup failed during this boot (/usr/bin/loadkeys failed with exit status 1.)" "$test_tmp/err" ||
+  fail "a failed console setup this boot is reported" "$(cat "$test_tmp/err")"
+grep -Fq "journalctl -b --no-pager -o cat -u systemd-vconsole-setup.service" "$calls" ||
+  fail "the check reads this boot's systemd-vconsole-setup journal" "$(cat "$calls")"
+printf 'Configuration of first virtual console was skipped, ignoring remaining ones.\n' >"$test_tmp/journal"
+TEST_INITRD_TREE=$initrd_tree TEST_JOURNAL="$test_tmp/journal" OMARCHY_BOOT_CHECK_LIVE_JOURNAL=1 run_check
+expect_pass "a console setup that only skipped the font"
+! grep -Fq "warning" "$test_tmp/err" || fail "a skipped font is not a keyboard failure" "$(cat "$test_tmp/err")"
+TEST_INITRD_TREE=$initrd_tree TEST_JOURNAL="$test_tmp/journal" run_check
+! grep -Fq "journalctl" "$calls" || fail "a check of another root does not read this machine's journal" "$(cat "$calls")"
+pass "this boot's failed console keyboard setup is reported as a warning"
+
+system
+encrypt_root
+host_layout '# edited by hand' "${danish[@]}" FONT=ter-132n
+initrd_carries "${danish[@]}"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "an image whose vconsole.conf differs only in comments and font"
+
+system
+encrypt_root
+host_layout KEYMAP=de-latin1 XKBLAYOUT=de XKBVARIANT=nodeadkeys
+initrd_carries KEYMAP=de-latin1 XKBLAYOUT=de
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "an image missing the XKB variant" "does not carry the keyboard layout"
+pass "an encrypted Mac with a Latin non-US layout needs its keyboard settings in the initramfs"
+
+system
+encrypt_root
+host_layout KEYMAP=us XKBLAYOUT=us
+initrd_carries
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "a US layout"
+! grep -Fq 'lsinitcpio -x' "$calls" || fail "a US layout extracts nothing" "$(cat "$calls")"
+system
+encrypt_root
+host_layout KEYMAP=ru XKBLAYOUT=ru,us
+initrd_carries
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "a non-Latin layout, which stays out of the initramfs on purpose"
+! grep -Fq 'lsinitcpio -x' "$calls" || fail "a non-Latin layout extracts nothing" "$(cat "$calls")"
+system
+host_layout "${danish[@]}"
+initrd_carries
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "an unencrypted root, which has no passphrase prompt"
+! grep -Fq 'lsinitcpio -x' "$calls" || fail "an unencrypted Mac extracts nothing" "$(cat "$calls")"
+pass "US, non-Latin and unencrypted Macs are not checked for the layout"
+
+# A Limine Mac boots the UKI, whose .initrd is the image checked.
+limine_mac() {
+  local esp_path=${1:-/boot/efi} uki
+  mkdir -p "$root/var/lib/omarchy" "$root/etc/default" "$root/usr/share/limine" "$root$esp_path/EFI/Linux" "$root$esp_path/EFI/BOOT"
+  : >"$root/var/lib/omarchy/limine.enabled"
+  printf 'ESP_PATH="%s"\nENABLE_UKI=yes\n' "$esp_path" >"$root/etc/default/limine"
+  printf 'limine\n' >"$root/usr/share/limine/BOOTAA64.EFI"
+  cp "$root/usr/share/limine/BOOTAA64.EFI" "$root$esp_path/EFI/BOOT/BOOTAA64.EFI"
+  uki=$root$esp_path/EFI/Linux/omarchy_linux-aurora.efi
+  { cat "$modules/vmlinuz"; printf 'initrd\n'; } >"$uki"
+  printf '/+Omarchy\n  //linux-aurora\n    protocol: efi\n    path: boot():/EFI/Linux/omarchy_linux-aurora.efi#%s\n    cmdline: root=UUID=1111-2222 rw rootflags=subvol=@ rd.luks.name=abcd-ef=root\n' \
+    "$(b2sum "$uki" | cut -d' ' -f1)" >"$root$esp_path/limine.conf"
+  [[ $esp_path == /boot/efi ]] || mv "$esp/m1n1" "$root$esp_path/m1n1"
+}
+
+system
+encrypt_root
+limine_mac
+host_layout "${danish[@]}"
+initrd_carries "${danish[@]}"
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "an encrypted Limine Mac whose UKI carries the Danish vconsole.conf"
+grep -Fq "objcopy -O binary --only-section=.initrd $esp/EFI/Linux/omarchy_linux-aurora.efi" "$calls" ||
+  fail "a Limine Mac checks the initramfs inside the UKI" "$(cat "$calls")"
+TEST_BOOT_CHAIN=1 TEST_INITRD_TREE=$initrd_tree run_check
+expect_pass "an encrypted Limine Mac whose UKI carries the layout, checked for the next boot"
+
+system
+encrypt_root
+limine_mac
+host_layout "${danish[@]}"
+initrd_carries KEYMAP=us XKBLAYOUT=us
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a UKI built before the layout changed" "the initramfs inside /boot/efi/EFI/Linux/omarchy_linux-aurora.efi does not carry the keyboard layout"
+grep -Fq "rebuild the boot image with 'sudo omarchy-mac-boot-update'" "$test_tmp/err" ||
+  fail "a Limine Mac is told to rebuild with omarchy-mac-boot-update" "$(cat "$test_tmp/err")"
+TEST_BOOT_CHAIN=1 TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a UKI built before the layout changed, checked for the next boot" "does not carry the keyboard layout"
+
+system
+encrypt_root
+limine_mac /boot
+host_layout "${danish[@]}"
+initrd_carries KEYMAP=us XKBLAYOUT=us
+TEST_INITRD_TREE=$initrd_tree run_check
+expect_fail "a UKI on an ESP mounted at /boot" "the initramfs inside /boot/EFI/Linux/omarchy_linux-aurora.efi does not carry the keyboard layout"
+pass "a Limine Mac checks the layout inside the UKI it boots"
