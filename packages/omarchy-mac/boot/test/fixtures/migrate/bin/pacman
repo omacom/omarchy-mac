@@ -17,6 +17,9 @@
 #   third column, the key that signed the package; where the repository's
 #   SigLevel requires signatures, the key must be trusted in --gpgdir's keys.
 # - $MIGRATE_FIXTURE/depends lists "package version dependency..." for -R.
+# - With $MIGRATE_FIXTURE/kernel-hook, a transaction runs the kernel's install
+#   hook: the removed Apple kernel leaves /boot, and linux-aurora's image is
+#   copied there and its initramfs built.
 set -euo pipefail
 
 fixture=${MIGRATE_FIXTURE:?}
@@ -315,6 +318,15 @@ if (( ! dbonly )); then
   if [[ ${OMARCHY_MAC_MIGRATE_KILL_MID:-} == "transaction" && ! -e $fixture/killed-in-pacman ]]; then
     : >"$fixture/killed-in-pacman"
     kill -9 "$PPID" $$
+  fi
+  if [[ -e $fixture/kernel-hook ]]; then
+    for name in linux-asahi linux-aurora; do
+      [[ -n ${version[$name]:-} ]] || rm -f "$root/boot/vmlinuz-$name" "$root/boot/initramfs-$name.img"
+    done
+    if [[ -n ${version[linux-aurora]:-} ]]; then
+      cp "$root"/usr/lib/modules/*-aurora/vmlinuz "$root/boot/vmlinuz-linux-aurora"
+      mkinitcpio -p linux-aurora >/dev/null
+    fi
   fi
   echo "hooks" >>"$fixture/pacman.log"
   rm -f "$dbpath/db.lck"

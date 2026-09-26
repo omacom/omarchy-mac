@@ -1,2 +1,11 @@
 #!/bin/bash
-cat "${MIGRATE_FIXTURE:?}/hooks"
+# The fixture's HOOKS file, else the real resolver over the fixture root's
+# mkinitcpio.conf and drop-ins.
+fixture=${MIGRATE_FIXTURE:?}
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+if [[ -f $fixture/hooks ]]; then
+  cat "$fixture/hooks"
+  exit 0
+fi
+exec env OMARCHY_MKINITCPIO_CONF="$root/etc/mkinitcpio.conf" OMARCHY_MKINITCPIO_CONF_DIR="$root/etc/mkinitcpio.conf.d" \
+  OMARCHY_MKINITCPIO_PRESET_DIR="$root/etc/mkinitcpio.d" OMARCHY_MKINITCPIO_KERNEL=linux-aurora "$root/usr/bin/omarchy-mac-initramfs-hooks"

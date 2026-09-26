@@ -1,4 +1,7 @@
 #!/bin/bash
 fixture=${MIGRATE_FIXTURE:?}
 echo "cryptsetup $*" >>"$fixture/pacman.log"
-[[ $1 == "luksHeaderBackup" ]] && echo "LUKS header of $2" >"$4"
+case $1 in
+  luksHeaderBackup) echo "LUKS header of $2" >"$4" ;;
+  luksUUID) cat "$fixture/luks-uuid" 2>/dev/null ;;
+esac

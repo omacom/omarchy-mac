@@ -433,9 +433,12 @@ target_version() {
 # The cohort an Apple Silicon Mac belongs to, from what is installed. Each
 # cohort needs an adapter defining <cohort>_plan and <cohort>_retire; it may
 # also define <cohort>_preflight, _prefetch, _prepare and _restore, which the
-# steps of those names call. A legacy omarchy-mac install runs Omarchy from a
-# checkout, trusts the rc4 fork keyring or carries the quattro tree, whose
-# 3.x upgrade command quattro-upstream never had.
+# steps of those names call, and _stage and _unstage, which the loader step of
+# a GRUB Mac calls before Limine is activated and after a failed activation.
+# Only a cohort with a stage may have its ESP mounted at /boot or its root
+# unlocked by busybox encrypt: the stage moves both. A legacy omarchy-mac
+# install runs Omarchy from a checkout, trusts the rc4 fork keyring or carries
+# the quattro tree, whose 3.x upgrade command quattro-upstream never had.
 detect_cohort() {
   local list=$1
   if grep -Eq '^omarchy(-settings)?-dev ' "$list"; then
@@ -542,7 +545,7 @@ pacman_trust_problems() {
 }
 
 preflight() {
-  local reasons=() installed boot_state kernels hooks check_output luks="" need
+  local reasons=() installed boot_state kernels hooks="" check_output luks="" need esp_mount staged=0
   local future transaction targets_file resolved name version problem
   work=$(mktemp -d "$R/var/tmp/omarchy-mac-migrate.XXXXXX") || die "cannot create a work directory"
   chmod 755 "$work"
@@ -554,6 +557,7 @@ preflight() {
 
   cohort=$(detect_cohort "$installed")
   declare -F "${cohort//-/_}_plan" >/dev/null || reasons+=("$(cohort_refusal "$cohort")")
+  ! declare -F "${cohort//-/_}_stage" >/dev/null || staged=1
 
   kernels=$(awk '$1 == "linux-asahi" || $1 == "linux-aurora" { print $1 }' "$installed" | xargs)
   [[ $kernels == "linux-asahi" || $kernels == "linux-aurora" ]] ||
@@ -572,12 +576,11 @@ preflight() {
   fi
   # The busybox encrypt hook matters only where it unlocks the root: legacy
   # omarchy-mac sets it on every Mac, and on an unencrypted one it does nothing.
-  # An encrypted one gets nothing here, the HOOKS baseline included, until its
-  # boot switch (ticket 45) has moved its unlock.
+  # Only a cohort whose stage moves that unlock (legacy) may carry it.
   if ! hooks=$(omarchy-mac-initramfs-hooks 2>/dev/null); then
     reasons+=("cannot read the initramfs HOOKS")
-  elif [[ -n $luks && " $hooks " == *" encrypt "* ]]; then
-    reasons+=("the root unlocks through busybox encrypt: its boot switch is the legacy adapter's (ticket 45)")
+  elif [[ -n $luks && " $hooks " == *" encrypt "* ]] && (( ! staged )); then
+    reasons+=("the root unlocks through busybox encrypt, which only the legacy omarchy-mac migration moves")
   fi
   # Installed boot files, not the running kernel: an update that just replaced
   # the kernel leaves a reboot pending, and the migration replaces it anyway.
@@ -587,12 +590,18 @@ preflight() {
   if [[ -e $first_boot_marker || -e $legacy_first_boot_marker ]]; then
     reasons+=("first boot has not finished on this Mac")
   fi
-  # Limine and its UKI live on the ESP U-Boot boots, mounted at /boot/efi.
-  [[ $(omarchy-mac-esp 2>/dev/null) == "$esp" ]] || reasons+=("the system ESP is not mounted at $esp")
+  # Limine and its UKI live on the ESP U-Boot boots, mounted at /boot/efi. A
+  # cohort with a stage moves an ESP mounted at /boot there first.
+  esp_mount=$(omarchy-mac-esp 2>/dev/null) || esp_mount=""
+  if [[ $esp_mount == "/boot" ]] && (( staged )); then
+    :
+  elif [[ $esp_mount != "$esp" ]]; then
+    reasons+=("the system ESP is not mounted at $esp")
+  fi
 
   while IFS= read -r problem; do
     [[ -z $problem ]] || reasons+=("$problem")
-  done < <(adapter_hook preflight "$installed" "$luks")
+  done < <(adapter_hook preflight "$installed" "$luks" "$hooks")
 
   while IFS= read -r problem; do
     [[ -z $problem ]] || reasons+=("$problem")
@@ -611,9 +620,12 @@ preflight() {
     reasons+=("the battery is below 30% and no charger is connected")
   fi
   need=$(( 4 * 1024 * 1024 * 1024 + $(bytes_used "$R/etc") + $(bytes_used "$R/boot") ))
+  # An ESP mounted at /boot is also /boot: its kernel and initramfs move onto
+  # the root filesystem.
+  [[ $esp_mount != "/boot" ]] || need=$(( need + 512 * 1024 * 1024 ))
   (( $(free_bytes "$R/var/lib") >= need )) || reasons+=("the root filesystem needs $(( need / 1024 / 1024 )) MiB free for backups and downloads")
-  (( $(free_bytes "$R$esp") >= 64 * 1024 * 1024 )) || reasons+=("the ESP needs 64 MiB free")
-  (( $(free_bytes "$R/boot") >= 128 * 1024 * 1024 )) || reasons+=("/boot needs 128 MiB free")
+  (( $(free_bytes "$R${esp_mount:-$esp}") >= 64 * 1024 * 1024 )) || reasons+=("the ESP needs 64 MiB free")
+  [[ $esp_mount == "/boot" ]] || (( $(free_bytes "$R/boot") >= 128 * 1024 * 1024 )) || reasons+=("/boot needs 128 MiB free")
 
   if (( ${#reasons[@]} )); then
     refuse "${reasons[@]}"
@@ -647,7 +659,7 @@ preflight() {
     refuse "cannot read the target repositories: $(tail -n 1 "$work/sync.log")"
 
   targets_file=$work/targets
-  "${cohort//-/_}_plan" "$installed" "$work" >"$targets_file" || die "the $cohort adapter could not plan this Mac"
+  "${cohort//-/_}_plan" "$installed" "$work" "$luks" "$hooks" >"$targets_file" || die "the $cohort adapter could not plan this Mac"
   resolved=$work/resolved
   # shellcheck disable=SC2046
   if ! pacman_run --config "$transaction" --dbpath "$work/db" --logfile "$work/pacman.log" -Sup --noconfirm --ask 4 \
@@ -689,6 +701,7 @@ preflight() {
   printf '%s\n' "$cohort" >"$plan.new/cohort"
   printf '%s\n' "$boot_state" >"$plan.new/boot"
   printf '%s\n' "$luks" >"$plan.new/luks"
+  printf '%s\n' "$esp_mount" >"$plan.new/esp"
   sync "$plan.new"/*
   if [[ $target_type == "candidate-set" ]]; then
     rm -rf "$set_copy"
@@ -743,13 +756,24 @@ plan_targets() {
   cat "$plan/targets"
 }
 
+# Where the ESP was mounted at preflight: /boot/efi, or /boot where the
+# cohort's stage moves it.
+plan_esp() {
+  if [[ -s $plan/esp ]]; then
+    cat "$plan/esp"
+  else
+    printf '%s\n' "$esp"
+  fi
+}
+
 # Unqualified names of every package the transaction replaces or may remove.
 plan_package_names() {
   { sed 's|^.*/||' "$plan/targets"; cat "$plan/allowed-removals"; } | sort -u
 }
 
 step_backup() {
-  local partial=$state/backup.partial name version file found luks
+  local partial=$state/backup.partial name version file found luks esp_mount
+  esp_mount=$(plan_esp)
   rm -rf "$partial"
   install -d -m 700 "$partial" "$partial/packages"
   cp "$plan/installed" "$partial/installed"
@@ -767,8 +791,11 @@ step_backup() {
   done < <(plan_package_names)
   tar -C "$R/" --xattrs --acls -cpf "$partial/etc.tar" etc 2>"$partial/etc.log" || die "cannot back up /etc"
   interrupt_for_test mid backup
-  tar -C "$R/boot" --one-file-system -cpf "$partial/boot.tar" . || die "cannot back up /boot"
-  tar -C "$R$esp" -cpf "$partial/esp.tar" . || die "cannot back up the ESP"
+  # An ESP mounted at /boot is /boot: esp.tar holds it.
+  if [[ $esp_mount != "/boot" ]]; then
+    tar -C "$R/boot" --one-file-system -cpf "$partial/boot.tar" . || die "cannot back up /boot"
+  fi
+  tar -C "$R$esp_mount" -cpf "$partial/esp.tar" . || die "cannot back up the ESP"
   luks=$(<"$plan/luks")
   if [[ -n $luks ]]; then
     cryptsetup luksHeaderBackup "$luks" --header-backup-file "$partial/luks-header.img" ||
@@ -1042,7 +1069,9 @@ step_boot_chain() {
 # Limine is staged and verified before it takes U-Boot's EFI slot. A GRUB Mac,
 # as preflight found it, is switched by the package's own activation, which
 # restores every file it touched when anything fails, so a failed stage leaves
-# GRUB booting. A switch cut short is run again from its start.
+# GRUB booting. The cohort's stage runs first, while GRUB still boots the Mac,
+# and is undone when it or the activation fails. A switch cut short is run
+# again from its start.
 step_loader() {
   local output uki=$R$esp/EFI/Linux/omarchy_linux-aurora.efi
   if [[ $(<"$plan/boot") == "limine" ]]; then
@@ -1050,10 +1079,15 @@ step_loader() {
       die "Limine has no linux-aurora UKI entry; the active loader was left alone"
     omarchy-mac-limine-deploy || die "cannot put Limine on the ESP"
   else
+    if ! adapter_hook stage; then
+      adapter_hook unstage || die "the $cohort adapter could not stage the boot switch, nor undo it; GRUB is still the loader"
+      die "the $cohort adapter could not stage the boot switch; GRUB is still the loader"
+    fi
     install -D -m 644 /dev/null "$limine_gate" || die "cannot mark this Mac for Limine"
     interrupt_for_test mid loader
     if ! (export OMARCHY_PATH=/usr/share/omarchy; source "$boot_lib/setup/limine-boot.sh"); then
       rm -f "$limine_gate"
+      adapter_hook unstage || die "Limine could not be activated, and the $cohort adapter could not undo its stage; GRUB is still the loader"
       die "Limine could not be activated; GRUB is still the loader"
     fi
   fi

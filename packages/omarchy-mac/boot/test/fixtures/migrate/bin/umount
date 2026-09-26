@@ -1,0 +1,17 @@
+#!/bin/bash
+# umount MOUNTPOINT: the ESP's link goes and the directory it covered comes back.
+set -euo pipefail
+fixture=${MIGRATE_FIXTURE:?}
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+target=${!#}
+relative=${target#"$root"}
+echo "umount $relative" >>"$fixture/boot.log"
+grep -Fxq "$target" "$fixture/mounts" && [[ -L $target ]] || { echo "umount: $relative: not mounted" >&2; exit 32; }
+rm "$target"
+if [[ -d $fixture/covered/${relative//\//_} ]]; then
+  mv "$fixture/covered/${relative//\//_}" "$target"
+else
+  mkdir -p "$target"
+fi
+grep -Fxv "$target" "$fixture/mounts" >"$fixture/mounts.new" || true
+mv "$fixture/mounts.new" "$fixture/mounts"

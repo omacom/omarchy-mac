@@ -1,0 +1,27 @@
+#!/bin/bash
+# mkinitcpio -p KERNEL (or -P for linux-aurora): writes /boot/initramfs-KERNEL.img
+# as a listing of what the resolved HOOKS put in an image, and fails as the
+# preset does without /boot/vmlinuz-KERNEL.
+set -euo pipefail
+fixture=${MIGRATE_FIXTURE:?}
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+echo "mkinitcpio $*" >>"$fixture/boot.log"
+[[ ! -e $fixture/mkinitcpio-fail ]] || { echo "==> ERROR: mkinitcpio failed" >&2; exit 1; }
+kernel=linux-aurora
+[[ ${1:-} != "-p" ]] || kernel=$2
+[[ -f $root/boot/vmlinuz-$kernel ]] || { echo "==> ERROR: invalid kernel specified: '/boot/vmlinuz-$kernel'" >&2; exit 1; }
+hooks=$(omarchy-mac-initramfs-hooks) || { echo "==> ERROR: cannot read the HOOKS" >&2; exit 1; }
+{
+  echo "kernel $(sha256sum <"$root/boot/vmlinuz-$kernel" | cut -d' ' -f1)"
+  echo "HOOKS $hooks"
+  if [[ " $hooks " == *" systemd "* ]]; then
+    echo usr/lib/systemd/systemd
+    if [[ " $hooks " == *" sd-encrypt "* ]]; then
+      echo usr/lib/systemd/system-generators/systemd-cryptsetup-generator
+      echo usr/bin/systemd-cryptsetup
+    fi
+  else
+    echo init_functions
+    for hook in $hooks; do echo "hooks/$hook"; done
+  fi
+} >"$root/boot/initramfs-$kernel.img"

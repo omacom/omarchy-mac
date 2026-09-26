@@ -404,6 +404,11 @@ output=$(migrate run 2>&1) || fail "a second run succeeds" "$output"
 [[ $(outcome) == "$baseline" ]] || fail "a second run changes nothing"
 pass "after the reboot the fork's channel state and TrustAll copies are retired, and a second run changes nothing"
 
+! grep -q '^mount \|^umount \|^mkinitcpio ' "$F/boot.log" && [[ ! -e $R/etc/crypttab && ! -e $state/backup/boot-switch ]] &&
+  [[ $(cat "$R/etc/default/grub") == 'GRUB_CMDLINE_LINUX=""' && $(cat "$F/mounts") == "$R/boot/efi" ]] ||
+  fail "an unencrypted Mac with its ESP at /boot/efi has no boot switch to stage" "$(cat "$F/boot.log")"
+pass "an unencrypted legacy Mac keeps its layout and unlock: Limine is its only boot change"
+
 # --- Interruption at every checkpoint -------------------------------------------
 
 interrupt() { # when point step
@@ -481,10 +486,6 @@ refused() { # description reason-pattern
 }
 
 new_fixture refusals checkout
-printf '/dev/mapper/root crypt btrfs\n/dev/nvme0n1p6 part crypto_LUKS\n/dev/nvme0n1 disk \n' >"$F/lsblk"
-echo "/dev/mapper/root[/@]" >"$F/root-source"
-refused "an encrypted legacy Mac" "busybox encrypt: its boot switch is the legacy adapter's (ticket 45)"
-new_fixture refusals checkout
 rm "$R/usr/share/omarchy"
 refused "a 3.x checkout" "upgrade the 3.x install with omarchy-upgrade-to-quattro-mac first"
 new_fixture refusals channel
@@ -505,7 +506,7 @@ sed -i '/^\[omarchy-aarch64\]$/,/^Server/d' "$R/etc/pacman.conf"
 printf '\nInclude = /etc/pacman.d/fork.conf\n' >>"$R/etc/pacman.conf"
 printf '[omarchy-aarch64]\nSigLevel = Optional TrustAll\nServer = file://%s/repos/omarchy-aarch64\n' "$F" >"$R/etc/pacman.d/fork.conf"
 refused "the fork repository an Include configures" "\[omarchy-aarch64\] is configured through an Include"
-pass "preflight refuses encrypted, pre-Quattro and mid-channel-switch legacy Macs, unknown fork keys and included repositories, changing nothing"
+pass "preflight refuses pre-Quattro and mid-channel-switch legacy Macs, unknown fork keys and included repositories, changing nothing"
 
 # --- Failures that change nothing, or put things back ------------------------------
 
@@ -586,6 +587,296 @@ rm "$F/fail-transaction"
 finish
 [[ -d $R/usr/share/omarchy && ! -L $R/usr/share/omarchy ]] || fail "the retried transaction converts the checkout"
 pass "a failed transaction puts the checkout's links and a dev link's paths back, and the retry converts"
+
+# --- The boot switch --------------------------------------------------------------
+
+luks_uuid=5b1f0c2e-8a44-4f1d-9d7e-3c2a1b0e9f11
+fs_uuid=0a1b2c3d-4e5f-4061-8a9b-c0d1e2f3a4b5
+baseline_hooks=$ROOT/../../../etc/mkinitcpio.conf.d/00-omarchy-hooks.conf
+converged_hooks="base systemd plymouth autodetect microcode modconf kms keyboard sd-vconsole block asahi omarchy-vendorfw omarchy-mac-encrypt sd-encrypt filesystems fsck"
+
+# The ESP mounted at /boot, as omarchy-system-boot-to-esp leaves it: GRUB, the
+# Asahi kernel and its busybox image live on it, and the root's own /boot is an
+# empty directory beneath. The fixture's mount stand-ins link a mountpoint to
+# $F/esp. HOOKS and images come from the real resolver over mkinitcpio.conf and
+# the drop-ins (the Apple boot package's, the fork's omarchy_hooks.conf and,
+# with BASELINE, the target settings' HOOKS baseline), and the transaction runs
+# the kernel's install hook.
+esp_at_boot() {
+  local hooks=$1
+  rm "$F/hooks"
+  : >"$F/kernel-hook"
+  mkdir -p "$F/esp" "$F/covered"
+  mv "$R/boot/efi/EFI" "$R/boot/efi/m1n1" "$R/boot/grub" "$F/esp/"
+  rmdir "$R/boot/efi"
+  mv "$R/boot" "$F/covered/_boot"
+  ln -s "$F/esp" "$R/boot"
+  printf '%s\n' "$R/boot" >"$F/mounts"
+  echo UUID=4A1B-2C3D >"$F/esp-device"
+  echo "aurora kernel 7.1.12" >"$R/usr/lib/modules/7.1.12-aurora/vmlinuz"
+  echo "asahi kernel 6.19.1" >"$F/esp/vmlinuz-linux-asahi"
+  printf 'MODULES=(btrfs)\nHOOKS=(%s)\n' "$hooks" >"$R/etc/mkinitcpio.conf"
+  printf 'UUID=%s / btrfs rw,noatime,compress=zstd:3,subvol=/@ 0 0\nUUID=4A1B-2C3D /boot vfat rw,relatime,fmask=0022,dmask=0022 0 2\n' "$fs_uuid" >"$R/etc/fstab"
+  if [[ ${BASELINE:-1} == 1 && -f $baseline_hooks ]]; then
+    cp "$baseline_hooks" "$R/etc/mkinitcpio.conf.d/"
+  fi
+  # The fork's line, which sorts after every Apple drop-in and sets HOOKS outright.
+  printf 'HOOKS=(base udev plymouth keyboard autodetect microcode modconf kms keymap consolefont block encrypt filesystems fsck)\n' \
+    >"$R/etc/mkinitcpio.conf.d/omarchy_hooks.conf"
+  OMARCHY_MAC_MIGRATE_ROOT=$R MIGRATE_FIXTURE=$F PATH="$stubs:$PATH" mkinitcpio -p linux-asahi >/dev/null
+  : >"$F/boot.log"
+  # The activation leaf, with the menu's kernel line derived from GRUB's
+  # defaults by the real omarchy-mac-limine-cmdline and a UKI carrying the
+  # kernel line and /boot's initramfs. It needs the ESP at /boot/efi.
+  cat >"$R/usr/lib/omarchy-mac/boot/setup/limine-boot.sh" <<'LEAF'
+root=$OMARCHY_MAC_MIGRATE_ROOT
+if [[ -e $MIGRATE_FIXTURE/limine-activation-fail ]]; then
+  echo "limine-boot: limine-update failed; activation failed" >&2
+  exit 1
+fi
+[[ -d $root/boot/efi/EFI/BOOT ]] || { echo "limine-boot: the ESP is not mounted at /boot/efi" >&2; exit 1; }
+echo "limine-boot activate OMARCHY_PATH=$OMARCHY_PATH" >>"$MIGRATE_FIXTURE/boot.log"
+printf 'ESP_PATH="/boot/efi"\nKERNEL_CMDLINE[default]=""\n' >"$root/etc/default/limine"
+OMARCHY_GRUB_DEFAULT=$root/etc/default/grub OMARCHY_LIMINE_DEFAULT=$root/etc/default/limine OMARCHY_FSTAB=$root/etc/fstab \
+  "$root/usr/bin/omarchy-mac-limine-cmdline" || exit 1
+if [[ ${OMARCHY_MAC_MIGRATE_KILL_MID:-} == "loader-leaf" && ! -e $MIGRATE_FIXTURE/killed-in-leaf ]]; then
+  : >"$MIGRATE_FIXTURE/killed-in-leaf"
+  kill -9 $$ $BASHPID
+fi
+limine-update || exit 1
+{ sed -n 's/^KERNEL_CMDLINE\[default\]=//p' "$root/etc/default/limine"; cat "$root/boot/vmlinuz-linux-aurora" "$root/boot/initramfs-linux-aurora.img"; } \
+  >"$root/boot/efi/EFI/Linux/omarchy_linux-aurora.efi"
+cp "$root/usr/share/limine/BOOTAA64.EFI" "$root/boot/efi/EFI/BOOT/BOOTAA64.EFI"
+LEAF
+}
+
+# An encrypted legacy Mac as the quattro guided installer (#155) left it: the
+# root is LUKS2 opened as root by cryptdevice= from GRUB's defaults, and busybox
+# encrypt is in mkinitcpio.conf's own HOOKS and the fork's omarchy_hooks.conf.
+encrypted_fixture() {
+  new_fixture "$1" "${2:-checkout}"
+  esp_at_boot "base asahi udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystems fsck"
+  echo "$luks_uuid" >"$F/luks-uuid"
+  printf 'GRUB_DEFAULT=0\nGRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=%s:root:allow-discards loglevel=3 quiet splash"\nGRUB_CMDLINE_LINUX=""\n' \
+    "$luks_uuid" >"$R/etc/default/grub"
+  printf 'menuentry Omarchy {\n  linux /vmlinuz-linux-asahi root=UUID=%s rw rootflags=subvol=@ cryptdevice=UUID=%s:root:allow-discards\n  initrd /initramfs-linux-asahi.img\n}\n' \
+    "$fs_uuid" "$luks_uuid" >"$F/esp/grub/grub.cfg"
+  printf '/dev/mapper/root crypt btrfs\n/dev/nvme0n1p6 part crypto_LUKS\n/dev/nvme0n1 disk \n' >"$F/lsblk"
+  echo "/dev/mapper/root[/@]" >"$F/root-source"
+}
+
+# GRUB's chain on the ESP still boots and unlocks: GRUB holds U-Boot's slot,
+# its menu passes cryptdevice=, and every image on the ESP is busybox with
+# encrypt.
+grub_boots_esp() {
+  local image found=0
+  [[ $(cat "$F/esp/EFI/BOOT/BOOTAA64.EFI") == "grub" ]] && grep -q "cryptdevice=UUID=$luks_uuid:root" "$F/esp/grub/grub.cfg" || return 1
+  for image in "$F"/esp/initramfs-linux-*.img; do
+    [[ -f $image ]] || continue
+    grep -qx hooks/encrypt "$image" && grep -qx init_functions "$image" || return 1
+    found=1
+  done
+  (( found ))
+}
+
+# Everything the boot switch leaves, however it got there.
+switch_outcome() {
+  outcome
+  cat "$R/etc/fstab" "$R/etc/default/grub" "$R/etc/mkinitcpio.conf"
+  cat "$R/etc/crypttab" 2>/dev/null || echo "no crypttab"
+  ls "$R/etc/mkinitcpio.conf.d"
+  (cd "$R/boot" && find . -type f | LC_ALL=C sort && cat initramfs-linux-aurora.img)
+  (cd "$F/esp" && find . -type f | LC_ALL=C sort && cat EFI/Linux/omarchy_linux-aurora.efi)
+  sed "s|$R|ROOT|" "$F/mounts"
+  [[ -L $R/boot/efi && ! -L $R/boot ]] && echo "the ESP at /boot/efi, the root's /boot beneath"
+  grep '^cryptsetup' "$F/pacman.log" | cut -d' ' -f2 | LC_ALL=C sort -u
+}
+
+encrypted_fixture encrypted checkout
+output=$(migrate run 2>&1) || fail "an encrypted legacy Mac migrates to its reboot" "$output"
+grep -q "Reboot to finish" <<<"$output" || fail "the encrypted Mac's run asks for a reboot" "$output"
+state=$(state_dir)
+[[ $(<"$state/plan/adapter/unlock") == "busybox $luks_uuid 1" && $(<"$state/plan/esp") == "/boot" ]] ||
+  fail "the plan records the busybox unlock and the ESP at /boot" "$(cat "$state/plan/adapter/unlock" "$state/plan/esp")"
+pass "an encrypted legacy Mac (busybox encrypt, /boot on the ESP) is no longer refused"
+
+[[ $(sed "s|$R|ROOT|" "$F/mounts") == "ROOT/boot/efi" && -L $R/boot/efi && ! -L $R/boot ]] &&
+  grep -qx "UUID=4A1B-2C3D /boot/efi vfat rw,relatime,fmask=0022,dmask=0022 0 2" "$R/etc/fstab" ||
+  fail "the ESP moves from /boot to /boot/efi, in fstab and mounted" "$(cat "$R/etc/fstab" "$F/mounts")"
+[[ $(<"$R/boot/vmlinuz-linux-aurora") == "aurora kernel 7.1.12" ]] || fail "the root's /boot gets the Aurora kernel"
+[[ $(sed -n 's/^HOOKS //p' "$R/boot/initramfs-linux-aurora.img") == "$converged_hooks" ]] ||
+  fail "the root's /boot gets the converged systemd image the Apple boot package composes" "$(cat "$R/boot/initramfs-linux-aurora.img")"
+[[ $(cat "$R/etc/crypttab") == "root UUID=$luks_uuid none luks,discard" ]] || fail "crypttab names the root's LUKS partition, discards kept" "$(cat "$R/etc/crypttab")"
+[[ $(cat "$R/etc/default/grub") == "GRUB_DEFAULT=0
+GRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3 quiet splash\"
+GRUB_CMDLINE_LINUX=\"rd.luks.name=$luks_uuid=root rd.luks.options=$luks_uuid=discard\"" ]] ||
+  fail "GRUB's defaults trade cryptdevice= for rd.luks.name= and rd.luks.options=" "$(cat "$R/etc/default/grub")"
+grep -qx "HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)" "$R/etc/mkinitcpio.conf" &&
+  [[ ! -e $R/etc/mkinitcpio.conf.d/omarchy_hooks.conf && -f $state/backup/boot-switch/files/etc/mkinitcpio.conf.d/omarchy_hooks.conf ]] ||
+  fail "busybox encrypt and asahi leave mkinitcpio.conf and the fork's omarchy_hooks.conf goes to the backup" "$(cat "$R/etc/mkinitcpio.conf")"
+for path in etc/fstab etc/default/grub etc/mkinitcpio.conf; do
+  grep -q "cryptdevice\|encrypt\|/boot vfat" "$state/backup/boot-switch/files/$path" || fail "the switch keeps the original $path"
+done
+[[ -f $state/backup/boot-switch/absent/etc/crypttab ]] || fail "the switch records that crypttab did not exist"
+pass "the ESP moves to /boot/efi and the unlock to crypttab, rd.luks.name= and the converged systemd image, each original kept"
+
+uki=$(cat "$F/esp/EFI/Linux/omarchy_linux-aurora.efi")
+[[ $(head -n 1 <<<"$uki") == "\"root=UUID=$fs_uuid rw rootflags=subvol=@ rd.luks.name=$luks_uuid=root rd.luks.options=$luks_uuid=discard loglevel=3 quiet splash\"" ]] &&
+  grep -qx "aurora kernel 7.1.12" <<<"$uki" && grep -qx "usr/lib/systemd/system-generators/systemd-cryptsetup-generator" <<<"$uki" ||
+  fail "Limine's UKI boots Aurora with the systemd image and unlocks the root by rd.luks.name=, without cryptdevice=" "$uki"
+[[ $(cat "$F/esp/EFI/BOOT/BOOTAA64.EFI") == "limine 12.9" && -e $R/var/lib/omarchy/limine.enabled ]] || fail "Limine takes U-Boot's slot"
+grep -q "HOOKS base udev plymouth keyboard autodetect microcode modconf kms keymap consolefont block encrypt filesystems fsck" "$F/esp/initramfs-linux-aurora.img" &&
+  grep -qx hooks/encrypt "$F/esp/initramfs-linux-aurora.img" ||
+  fail "the transaction, with the HOOKS baseline installed, still built the busybox image GRUB boots" "$(cat "$F/esp/initramfs-linux-aurora.img")"
+[[ $(grep -E '^(mkinitcpio|update-grub|boot-check|umount|mount|limine-boot)' "$F/boot.log" | tr '\n' '|') == \
+  "boot-check pending --boot-chain|mkinitcpio -p linux-aurora|update-grub |boot-check pending --boot-chain linux-aurora|umount /boot|mount /boot/efi|mkinitcpio -p linux-aurora|limine-boot activate OMARCHY_PATH=/usr/share/omarchy|boot-check pending --boot-chain linux-aurora|" ]] ||
+  fail "the busybox image and GRUB are rebuilt and checked, then the ESP moves and the new image is built, before Limine takes the slot" "$(cat "$F/boot.log")"
+[[ $(grep '^cryptsetup' "$F/pacman.log" | cut -d' ' -f2 | sort -u | xargs) == "luksHeaderBackup luksUUID" ]] ||
+  fail "the LUKS header, keyslots and passphrase are never changed, only backed up and read" "$(grep cryptsetup "$F/pacman.log")"
+pass "Limine's UKI unlocks the same LUKS root with its passphrase through sd-encrypt; the header is only backed up"
+
+reboot_into_aurora
+output=$(migrate verify 2>&1) || fail "the encrypted Mac's migration completes after its reboot" "$output"
+[[ -f $state/complete ]] || fail "the encrypted Mac's migration completes"
+[[ ! -e $F/esp/vmlinuz-linux-aurora && ! -e $F/esp/initramfs-linux-aurora.img && ! -e $F/esp/grub ]] &&
+  [[ -f $F/esp/m1n1/boot.bin && -f $F/esp/EFI/BOOT/BOOTAA64.EFI && -f $F/esp/EFI/Linux/omarchy_linux-aurora.efi ]] ||
+  fail "retire removes the kernels and GRUB the moved ESP still carried, and keeps m1n1, Limine and the UKI" "$(cd "$F/esp" && find . -type f)"
+tar -tf "$state/backup/esp.tar" | grep -q '^./grub/grub.cfg$' && tar -tf "$state/backup/esp.tar" | grep -q '^./vmlinuz-linux-asahi$' ||
+  fail "the backup holds the ESP as it was, GRUB's chain included"
+[[ ! -e $state/backup/boot.tar ]] || fail "an ESP at /boot is backed up once"
+encrypted_baseline=$(switch_outcome)
+output=$(migrate run 2>&1) || fail "a second run succeeds" "$output"
+[[ $(switch_outcome) == "$encrypted_baseline" ]] || fail "a second run changes nothing" "$(diff <(echo "$encrypted_baseline") <(switch_outcome))"
+pass "after the verified reboot the moved ESP's old kernels and GRUB are retired, and a second run changes nothing"
+
+# The Mac as a channel install that did not get the HOOKS baseline, whose
+# omarchy-settings owned the fork's omarchy_hooks.conf.
+BASELINE=0 encrypted_fixture no-baseline channel
+finish
+[[ $(sed -n 's/^HOOKS //p' "$R/boot/initramfs-linux-aurora.img") == "base systemd autodetect microcode modconf kms keyboard sd-vconsole block asahi omarchy-vendorfw omarchy-mac-encrypt sd-encrypt filesystems fsck" ]] ||
+  fail "without the HOOKS baseline the Apple drop-ins still move the line to systemd and sd-encrypt" "$(cat "$R/boot/initramfs-linux-aurora.img")"
+pass "without the HOOKS baseline the drop-ins compose the systemd unlock from mkinitcpio.conf's line"
+
+# --- The boot switch cut short ------------------------------------------------------
+
+switch_interrupt() { # when point step
+  local when=$1 point=$2 step=$3 status=0 output last
+  encrypted_fixture "switch-kill-$when-$point"
+  output=$(env "OMARCHY_MAC_MIGRATE_KILL_${when^^}=$point" OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+    "$R/usr/bin/omarchy-mac-migrate" run 2>&1) || status=$?
+  if (( status == 0 )); then
+    reboot_into_aurora
+    output=$(env "OMARCHY_MAC_MIGRATE_KILL_${when^^}=$point" OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+      "$R/usr/bin/omarchy-mac-migrate" verify 2>&1) || status=$?
+  fi
+  (( status == 137 )) || fail "the run is killed $when $point" "status $status: $output"
+  last=$(tail -n 1 "$(state_dir)/journal" | cut -d' ' -f2-)
+  if [[ $when == "after" ]]; then
+    [[ $last == "$step done"* ]] || fail "killed $when $point, the journal ends with $step done" "$last"
+  else
+    [[ $last == "$step begin"* ]] || fail "killed $when $point, the journal ends with $step begun" "$last"
+  fi
+  if [[ ! -e $R/var/lib/omarchy/limine.enabled || $(cat "$F/esp/EFI/BOOT/BOOTAA64.EFI") == "grub" ]]; then
+    grub_boots_esp || fail "killed $when $point before Limine took the slot, GRUB's chain still unlocks the root" "$(cd "$F/esp" && find . -type f)"
+  fi
+  finish
+  [[ $(switch_outcome) == "$encrypted_baseline" ]] ||
+    fail "killed $when $point, the resumed switch ends where an uninterrupted one does" "$(diff <(echo "$encrypted_baseline") <(switch_outcome))"
+}
+
+for step in "${steps[@]}"; do
+  switch_interrupt after "$step" "$step"
+  switch_interrupt during "$step" "$step"
+done
+for point in backup transaction boot-chain loader reboot retire; do
+  switch_interrupt mid "$point" "$point"
+done
+for point in esp-fstab esp-unmounted unlock initramfs loader-leaf; do
+  switch_interrupt mid "$point" loader
+done
+pass "a kill -9 anywhere in the switch leaves GRUB's chain unlocking the root until Limine takes the slot, and resumes to the same end"
+
+# --- A failed stage leaves GRUB --------------------------------------------------
+
+# Everything GRUB's chain and the root's configuration read, as before the stage.
+before_stage() {
+  (cd "$F/esp" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
+  (cd "$R" && sha256sum etc/fstab etc/default/grub etc/mkinitcpio.conf etc/mkinitcpio.conf.d/*)
+  cat "$R/etc/crypttab" 2>/dev/null || echo "no crypttab"
+  (cd "$R/boot" && find . -type f | LC_ALL=C sort)
+  sed "s|$R|ROOT|" "$F/mounts"
+  [[ -L $R/boot ]] && echo "the ESP at /boot"
+}
+
+stage_fails() { # description fixture-change reason-pattern
+  local status=0 output snapshot
+  encrypted_fixture "stage-fails-$1"
+  kill_after boot-chain
+  eval "$2"
+  snapshot=$(before_stage)
+  output=$(migrate run 2>&1) || status=$?
+  (( status == 1 )) && grep -q -- "$3" <<<"$output" && grep -q "GRUB is still the loader" <<<"$output" ||
+    fail "$1: the loader step fails and says GRUB boots" "status $status: $output"
+  [[ $(before_stage) == "$snapshot" ]] || fail "$1: the stage is undone, the ESP back at /boot" "$(diff <(echo "$snapshot") <(before_stage))"
+  grub_boots_esp && [[ ! -e $R/var/lib/omarchy/limine.enabled ]] || fail "$1: GRUB's chain still unlocks the root"
+  [[ $(migrate status) == *"failed at loader"* ]] || fail "$1: status names the failed loader step" "$(migrate status)"
+}
+
+stage_fails mkinitcpio ': >"$F/mkinitcpio-fail"' "mkinitcpio -p linux-aurora failed"
+rm "$F/mkinitcpio-fail"
+finish
+[[ $(switch_outcome) == "$encrypted_baseline" ]] || fail "the retried switch ends where an uninterrupted one does" "$(diff <(echo "$encrypted_baseline") <(switch_outcome))"
+stage_fails limine ': >"$F/limine-activation-fail"' "Limine could not be activated"
+rm "$F/limine-activation-fail"
+finish
+[[ $(switch_outcome) == "$encrypted_baseline" ]] || fail "the retried activation ends where an uninterrupted one does"
+stage_fails local-hooks 'printf "HOOKS+=(encrypt)\n" >"$R/etc/mkinitcpio.conf.d/99-local.conf"' "do not unlock the root through systemd"
+pass "a stage or activation that fails is undone, GRUB keeps booting the Mac, and the retry finishes"
+
+# --- An unencrypted Mac with its ESP at /boot ---------------------------------------
+
+new_fixture plain-esp-boot checkout
+esp_at_boot "base asahi udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck"
+hooks_before=$(OMARCHY_MAC_MIGRATE_ROOT=$R MIGRATE_FIXTURE=$F PATH="$stubs:$PATH" omarchy-mac-initramfs-hooks)
+grub_before=$(cat "$R/etc/default/grub")
+finish
+[[ -L $R/boot/efi && ! -L $R/boot ]] && grep -q " /boot/efi vfat " "$R/etc/fstab" || fail "an unencrypted Mac's ESP moves to /boot/efi too"
+[[ ! -e $R/etc/crypttab && $(cat "$R/etc/default/grub") == "$grub_before" ]] && ! grep -q '^cryptsetup' "$F/pacman.log" ||
+  fail "an unencrypted Mac stays unencrypted: no crypttab, no LUKS, its kernel line kept"
+[[ $(sed -n 's/^HOOKS //p' "$R/boot/initramfs-linux-aurora.img") == "$hooks_before" ]] ||
+  fail "an unencrypted Mac keeps its HOOKS" "$(cat "$R/boot/initramfs-linux-aurora.img")"
+[[ $(cat "$F/esp/EFI/BOOT/BOOTAA64.EFI") == "limine 12.9" ]] && grep -q "^\"root=UUID=$fs_uuid rw rootflags=subvol=@\"$" "$F/esp/EFI/Linux/omarchy_linux-aurora.efi" ||
+  fail "an unencrypted Mac boots Aurora's UKI from Limine with no unlock" "$(cat "$F/esp/EFI/Linux/omarchy_linux-aurora.efi")"
+pass "an unencrypted Mac with its ESP at /boot moves it and boots Limine, and stays unencrypted"
+
+# --- Refusals of an encrypted Mac ----------------------------------------------------
+
+encrypted_fixture refusals
+sed -i "s/:root:allow-discards/:cryptroot/" "$R/etc/default/grub"
+refused "a mapping other than root" "do not pass the one cryptdevice=UUID=$luks_uuid:root"
+encrypted_fixture refusals
+sed -i "s/^GRUB_CMDLINE_LINUX=\"\"/GRUB_CMDLINE_LINUX=\"cryptkey=rootfs:\/key\"/" "$R/etc/default/grub"
+refused "a key file" "found: cryptkey=rootfs:/key cryptdevice"
+encrypted_fixture refusals
+sed -i "s/$luks_uuid:root/0000-1111:root/" "$R/etc/default/grub"
+refused "another LUKS partition" "do not pass the one cryptdevice=UUID=$luks_uuid:root"
+encrypted_fixture refusals
+sed -i 's/ encrypt / /' "$R/etc/mkinitcpio.conf"
+refused "busybox encrypt only in a drop-in" "not in /etc/mkinitcpio.conf's own HOOKS"
+encrypted_fixture refusals
+printf 'root UUID=0000-1111 none luks\n' >"$R/etc/crypttab"
+refused "crypttab naming another root" "/etc/crypttab names another root"
+encrypted_fixture refusals
+sed -i '/ \/boot vfat /d' "$R/etc/fstab"
+refused "an ESP at /boot fstab does not mount" "no single vfat line mounting it there"
+new_fixture refusals checkout
+printf '/dev/mapper/root crypt btrfs\n/dev/nvme0n1p6 part crypto_LUKS\n/dev/nvme0n1 disk \n' >"$F/lsblk"
+echo "/dev/mapper/root[/@]" >"$F/root-source"
+echo "$luks_uuid" >"$F/luks-uuid"
+printf 'GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=%s:root"\n' "$luks_uuid" >"$R/etc/default/grub"
+printf 'HOOKS=(base udev block encrypt filesystems)\n' >"$R/etc/mkinitcpio.conf"
+refused "an encrypted Mac whose ESP is at /boot/efi" "kernels are not on the ESP mounted at /boot"
+pass "preflight refuses encrypted legacy Macs outside the guided installer's layout, changing nothing"
 
 # --- Packaging --------------------------------------------------------------------
 
