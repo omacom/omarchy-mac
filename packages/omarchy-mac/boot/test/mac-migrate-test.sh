@@ -515,7 +515,7 @@ echo generic-aarch64 >"$F/platform"
 output=$(migrate run 2>&1) || fail "another platform is a no-op" "$output"
 grep -q "Not an Apple Silicon Mac" <<<"$output" && [[ ! -e $(state_dir) ]] || fail "another platform is left alone" "$output"
 echo apple-silicon >"$F/platform"
-rm "$R/etc/omarchy-mac/migration-target"
+rm "$R/etc/omarchy-mac/migration-target" "$R/usr/lib/omarchy-mac/boot/migration-target"
 output=$(migrate run 2>&1) || fail "no target is a no-op" "$output"
 grep -q "No migration target is set" <<<"$output" && [[ ! -e $(state_dir) ]] || fail "without a target nothing runs" "$output"
 if OMARCHY_MAC_MIGRATE_ROOT="" "$R/usr/bin/omarchy-mac-migrate" run 2>/dev/null; then fail "a normal user without a fixture root is refused"; fi
@@ -790,6 +790,8 @@ pass "a repository target (omacom stable later) replaces the same names from [om
 [[ -x $R/usr/lib/omarchy/mac-boot/migrate && $(stat -c %a "$R/usr/lib/omarchy/mac-boot/migrate") == 755 ]] ||
   fail "the migrate entrypoint is staged for omarchy-lifecycle-dispatch"
 [[ -f $R/usr/lib/systemd/system/omarchy-mac-migrate-verify.service ]] || fail "the post-reboot unit is staged"
+[[ $(grep -v '^#' "$R/usr/lib/omarchy-mac/boot/migration-target") == $'format=1\ntype=repository\nchannel=stable' ]] ||
+  fail "the package activates the migration onto Omarchy's stable channel"
 for file in migrate-engine.sh migrate-tester.sh migrate-legacy.sh migrate-mx-mac.sh; do
   [[ -f $R/usr/lib/omarchy-mac/boot/$file ]] || fail "$file is staged"
 done
@@ -797,4 +799,4 @@ new_fixture entrypoint
 output=$(OMARCHY_MAC_MIGRATE_ROOT=$R MIGRATE_FIXTURE=$F PATH="$stubs:$PATH" "$R/usr/lib/omarchy/mac-boot/migrate" 2>&1) ||
   fail "the dispatch entrypoint runs the migration" "$output"
 grep -q "Reboot to finish" <<<"$output" || fail "the entrypoint runs omarchy-mac-migrate run" "$output"
-pass "the package ships the dispatch entrypoint, the engine and the post-reboot unit"
+pass "the package ships the dispatch entrypoint, the engine, the post-reboot unit and the stable target that activates it"
