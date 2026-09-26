@@ -650,7 +650,7 @@ preflight() {
   resolved=$work/resolved
   # shellcheck disable=SC2046
   if ! pacman_run --config "$transaction" --dbpath "$work/db" --logfile "$work/pacman.log" -Sup --noconfirm --ask 4 \
-    --print-format '%r/%n %v' $(cat "$targets_file") >"$resolved" 2>"$work/resolve.log"; then
+    --print-format '%r/%n %v' $(plan_ignores "$work/removals") $(cat "$targets_file") >"$resolved" 2>"$work/resolve.log"; then
     refuse "the target set does not resolve on this Mac: $(tail -n 1 "$work/resolve.log")"
   fi
   if [[ $target_type == "candidate-set" ]]; then
@@ -805,6 +805,15 @@ step_keyring() {
   key_trusted "$target_keyring" || die "the Omarchy key $target_keyring is not trusted after the bootstrap"
 }
 
+# The planned removals stay out of the upgrade: an official build of the same
+# name that provides a target (omacom's omarchy-dev provides omarchy) would
+# otherwise join the transaction, and pacman drops the target it conflicts with.
+plan_ignores() {
+  local removals=${1:-$plan/removals}
+  [[ -s $removals ]] && printf -- '--ignore=%s\n' "$(paste -sd, "$removals")"
+  return 0
+}
+
 # Packages the transaction removes by name once it has installed the targets,
 # as far as DB still has them. By exact name: pacman -Q NAME also answers with
 # a package that provides NAME (mise-bin for mise), which pacman -R refuses.
@@ -844,12 +853,12 @@ step_prefetch() {
   transaction_conf "$plan/pacman.conf" "${target_set:+$cache/candidate}" >"$conf"
   # shellcheck disable=SC2046
   pacman_run --config "$conf" --dbpath "$db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" --logfile "$cache/pacman.log" \
-    -Syuw --noconfirm --ask 4 $(plan_targets) || die "cannot download and verify the target set"
+    -Syuw --noconfirm --ask 4 $(plan_ignores) $(plan_targets) || die "cannot download and verify the target set"
   interrupt_for_test mid prefetch
   cp -a "$db" "$rehearsal"
   # shellcheck disable=SC2046
   pacman_run --config "$conf" --dbpath "$rehearsal" --cachedir "$cache/pkg" --cachedir "$pacman_cache" --logfile "$cache/pacman.log" \
-    --dbonly -Su --noconfirm --ask 4 $(plan_targets) >"$cache/rehearsal.log" 2>&1 ||
+    --dbonly -Su --noconfirm --ask 4 $(plan_ignores) $(plan_targets) >"$cache/rehearsal.log" 2>&1 ||
     die "the rehearsed transaction failed: $(tail -n 1 "$cache/rehearsal.log")"
   removals=$(plan_removals "$rehearsal" | xargs)
   if [[ -n $removals ]]; then
@@ -865,6 +874,12 @@ step_prefetch() {
     grep -Fxq "$name" "$plan/allowed-removals" || bad+=("$name")
   done
   (( ${#bad[@]} == 0 )) || die "the transaction would also remove ${bad[*]}; nothing was changed"
+  # pacman can drop a named target that conflicts with another package of the
+  # transaction; every target must end installed.
+  while read -r name; do
+    [[ -n $(installed_version "${name#*/}" "$cache/expected") ]] ||
+      die "the rehearsed transaction would not install ${name#*/}; nothing was changed"
+  done < <(plan_targets)
   if [[ $target_type == "candidate-set" ]]; then
     while read -r name; do
       [[ $name == "$candidate_repo/"* ]] || continue
@@ -1021,7 +1036,7 @@ step_transaction() {
       fi
       # shellcheck disable=SC2046
       if ! pacman_run --config "$cache/transaction.conf" --dbpath "$pacman_db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" \
-        -Su --noconfirm --ask 4 "${overwrite[@]}" $(plan_targets); then
+        -Su --noconfirm --ask 4 "${overwrite[@]}" $(plan_ignores) $(plan_targets); then
         adapter_hook restore
         die "the package transaction failed"
       fi

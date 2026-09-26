@@ -540,6 +540,16 @@ grep -qx "quickshell-git 0.3.0.r20.g28771c7-3" "$R/var/lib/pacman/local/packages
   fail "the official build of the same name is named and nothing is removed for it" "$(cat "$(state_dir)/plan/allowed-removals" "$F/pacman.log")"
 pass "a fork build moves to the official build of its own name before a renamed counterpart"
 
+# omacom's own omarchy-dev provides omarchy: once it is newer than the frozen
+# fork's, an upgrade would take it and pacman would drop the omarchy target.
+new_fixture newer-official-dev
+echo "omarchy-dev 4.0.5.r1-1" >>"$F/repos/omarchy/omarchy.db"
+printf 'omarchy-dev omarchy\n' >>"$F/provides"
+finish
+grep -q "^omarchy 4.0.0.alpha" "$R/var/lib/pacman/local/packages" && ! grep -q "^omarchy-dev " "$R/var/lib/pacman/local/packages" ||
+  fail "the runtime pair still comes from the target when an official omarchy-dev is newer than the fork's" "$(cat "$R/var/lib/pacman/local/packages")"
+pass "the planned removals stay out of the upgrade, so a newer official omarchy-dev cannot displace the omarchy target"
+
 new_fixture grub
 rm "$R/var/lib/omarchy/limine.enabled" "$R/etc/default/limine" "$R/boot/efi/limine.conf" "$R/boot/efi/EFI/Linux/omarchy_linux-aurora.efi"
 echo grub >"$R/boot/efi/EFI/BOOT/BOOTAA64.EFI"
