@@ -29,6 +29,7 @@ You can see all the main keyboard bindings with `Super + K` (Tmux bindings with 
 | `Super + S` / `Super + Grave` | Toggle scratchpad |
 | `Super + Alt + S` / `Super + Shift + Grave` | Move window to scratchpad |
 | `Super + Shift + Alt + Arrows` | Move workspaces to directional monitor |
+| `Super + Ctrl + Alt + Arrows` | Move window to directional monitor |
 | `Super + Arrow`  | Move focus to window in direction of arrow              |
 | `Super + Shift + Arrow`  | Swap window with another in direction of arrow     |
 | `Super + Minus` | Expand window left |
