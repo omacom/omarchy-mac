@@ -36,18 +36,7 @@ saved=$modules/$running
 [[ -d $root$saved && ! -L $root$saved ]] || exit 0
 pacman "${pacman_args[@]}" -Qq kernel-modules-hook >/dev/null 2>&1 || exit 0
 
-# The directory update-m1n1's default picks is the running kernel's, and the
-# one this transaction installed is what it picks once that is gone.
-mapfile -t newest < <(
-  for match in "$root$modules"/*-ARCH; do
-    [[ ! -e $match && ! -L $match ]] || printf '%s\n' "${match##*/}"
-  done | sort -rV
-)
-(( ${#newest[@]} >= 2 )) && [[ ${newest[0]} == "$running" && " ${installed[*]} " == *" ${newest[1]} "* ]] || exit 0
-owner=$(LC_ALL=C pacman "${pacman_args[@]}" -Qqo "$root$saved" 2>&1) && exit 0
-[[ $owner == *"No package owns"* ]] || exit 0
-
-# Only when update-m1n1 takes its device trees from that default.
+# Only when update-m1n1 takes its device trees from the -ARCH default.
 script=$root/usr/bin/update-m1n1
 [[ -r $script ]] && grep -Eq '^[[:space:]]*:[[:space:]]+\$\{DTBS:=.*/modules/\*-ARCH' "$script" || exit 0
 config=$root/etc/default/update-m1n1
@@ -59,6 +48,32 @@ if [[ -e $config ]]; then
   ' _ "$config") || exit 0
   [[ -z $configured ]] || exit 0
 fi
+
+# Only after a downgrade: the running kernel's tree is the newest, and this
+# transaction installed a kernel below it.
+mapfile -t newest < <(
+  for match in "$root$modules"/*-ARCH; do
+    [[ ! -e $match && ! -L $match ]] || printf '%s\n' "${match##*/}"
+  done | sort -rV
+)
+(( ${#newest[@]} >= 2 )) && [[ ${newest[0]} == "$running" ]] || exit 0
+downgrade=0
+for kver in "${installed[@]}"; do
+  [[ $kver == "$running" || $(printf '%s\n' "$kver" "$running" | sort -V | head -n 1) != "$kver" ]] || downgrade=1
+done
+(( downgrade )) || exit 0
+
+# The tree update-m1n1 takes once the saved one is gone must be the installed
+# kernel's, and the saved one must be no package's.
+leave() {
+  echo "Leaving $saved in place, so update-m1n1 takes the running kernel's device trees until the reboot: $1"
+  exit 0
+}
+[[ " ${installed[*]} " == *" ${newest[1]} "* ]] ||
+  leave "$modules/${newest[1]} sits between it and the kernel this transaction installed"
+owner=$(LC_ALL=C pacman "${pacman_args[@]}" -Qqo "$root$saved" 2>&1) &&
+  leave "$owner still owns it; downgrade or remove $owner as well"
+[[ $owner == *"No package owns"* ]] || leave "pacman cannot tell whether a package owns it"
 
 echo "Moving the running kernel's saved modules ($running) to $modules/.old, as linux-modules-cleanup does at boot, so m1n1 carries the device trees of ${newest[1]}. Reboot soon: until then the running kernel cannot load modules it has not loaded yet."
 rsync -AHXal "$root$saved" "$root$modules/.old/" || {

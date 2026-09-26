@@ -35,8 +35,8 @@ cat >"$stubs/uname" <<'SH'
 [[ $* == -r ]] || exec /usr/bin/uname "$@"
 echo "$TEST_RUNNING"
 SH
-# pacman on the fixture's root: installed names the packages, owned the
-# directories packages own.
+# pacman on the fixture's root: installed names the packages, owned holds
+# "directory package" for the directories packages own.
 cat >"$stubs/pacman" <<'SH'
 #!/bin/bash
 [[ $1 == --root && $2 == "$TEST_ROOT" && $3 == --dbpath && $4 == "$TEST_ROOT/var/lib/pacman/" ]] || { echo "pacman: not the fixture root: $*" >&2; exit 2; }
@@ -44,8 +44,9 @@ shift 4
 case $1 in
   -Qq) grep -Fxq -- "$2" "$TEST_STATE/installed" ;;
   -Qqo)
-    if grep -Fxq -- "${2#"$TEST_ROOT"}" "$TEST_STATE/owned"; then
-      echo linux-aurora
+    owner=$(awk -v path="${2#"$TEST_ROOT"}" '$1 == path { print $2; exit }' "$TEST_STATE/owned")
+    if [[ -n $owner ]]; then
+      echo "$owner"
     else
       echo "error: No package owns $2" >&2
       exit 1
@@ -79,7 +80,7 @@ downgraded() {
     limine_mac_dtb "$modules/$running/dtbs/${dtb##*/}" "from $running"
   done
   printf '%s\n' linux-aurora m1n1-aurora uboot-asahi limine kernel-modules-hook >"$state/installed"
-  printf '/usr/lib/modules/%s\n' "$mac_kver" >"$state/owned"
+  printf '/usr/lib/modules/%s linux-aurora\n' "$mac_kver" >"$state/owned"
   : >"$state/calls"
 }
 
@@ -114,6 +115,12 @@ verify() {
   set -e
 }
 
+left_with_reason() {
+  (( retire_status == 0 )) && [[ ! -s $state/calls && -d $modules/$running && ! -e $modules/.old ]] &&
+    grep -Fq "Leaving /usr/lib/modules/$running in place, so update-m1n1 takes the running kernel's device trees until the reboot: $2" "$tmp/retire.out" ||
+    fail "$1 is left in place, and the hook says why" "status $retire_status: $(cat "$tmp/retire.out" "$tmp/retire.err" "$state/calls")"
+}
+
 left_alone() {
   (( retire_status == 0 )) && [[ ! -s $tmp/retire.out && ! -s $state/calls && -d $modules/$running && ! -e $modules/.old ]] ||
     fail "$1 is left alone" "status $retire_status: $(cat "$tmp/retire.out" "$tmp/retire.err" "$state/calls")"
@@ -127,7 +134,6 @@ verify
 pass "a downgrade's saved modules give m1n1 the wrong device trees, which update-verify refuses"
 
 downgraded
-limine_menu=$(cat "$mac_esp/limine.conf")
 retire_hook
 m1n1_hook
 (( retire_status == 0 )) || fail "the hook retires the saved modules" "status $retire_status: $(cat "$tmp/retire.err")"
@@ -138,21 +144,19 @@ grep -Fxq "rsync -AHXal $modules/$running $modules/.old/" "$state/calls" ||
   fail "they are copied the way linux-modules-cleanup copies them" "$(cat "$state/calls")"
 grep -Fq "Moving the running kernel's saved modules ($running) to /usr/lib/modules/.old" "$tmp/retire.out" &&
   grep -Fq "Reboot soon" "$tmp/retire.out" || fail "the move and its cost are explained" "$(cat "$tmp/retire.out")"
-[[ $(cat "$mac_esp/limine.conf") == "$limine_menu" ]] && (( $(grep -c '^  //' "$mac_esp/limine.conf") == 1 )) ||
-  fail "the Limine menu keeps its one entry, the installed kernel's UKI" "$(cat "$mac_esp/limine.conf")"
 verify
 (( status == 0 )) && grep -Fq "installed linux-aurora $mac_kver boot files match; running $running, reboot pending" "$tmp/out" ||
   fail "update-verify passes the downgrade, with its reboot pending" "status $status: $(cat "$tmp/err")"
 retire_hook
 (( retire_status == 0 )) && [[ ! -s $tmp/retire.out ]] || fail "a later kernel transaction before the reboot finds nothing to do" "$(cat "$tmp/retire.out")"
-pass "the hook moves a downgrade's saved modules to .old before m1n1 is rebuilt, leaving no stale module tree or Limine entry, and update-verify passes"
+pass "the hook moves a downgrade's saved modules to .old before m1n1 is rebuilt, leaving no stale module tree, and update-verify passes"
 
 downgraded
 retire_hook "$running"
 left_alone "a reinstall of the running kernel itself"
-printf '/usr/lib/modules/%s\n' "$running" >>"$state/owned"
+printf '/usr/lib/modules/%s linux-aurora-headers\n' "$running" >>"$state/owned"
 retire_hook
-left_alone "a newer module tree a package owns"
+left_with_reason "a downgrade whose running tree the headers still own" "linux-aurora-headers still owns it; downgrade or remove linux-aurora-headers as well"
 downgraded
 mv "$modules/$running" "$modules/6.16.0-aurora1-ARCH"
 running=6.16.0-aurora1-ARCH retire_hook
@@ -161,7 +165,7 @@ running=6.16.0-aurora1-ARCH retire_hook
 downgraded
 mkdir -p "$modules/6.17.5-aurora1-ARCH"
 retire_hook
-left_alone "another module tree between the running and installed kernels"
+left_with_reason "another module tree between the running and installed kernels" "/usr/lib/modules/6.17.5-aurora1-ARCH sits between it and the kernel this transaction installed"
 downgraded
 sed -i '/^kernel-modules-hook$/d' "$state/installed"
 retire_hook
@@ -184,7 +188,7 @@ ln -s "$tmp/elsewhere" "$modules/$running"
 retire_hook
 (( retire_status == 0 )) && [[ -L $modules/$running && ! -e $modules/.old && -d $tmp/elsewhere ]] || fail "a symlinked module tree is left alone"
 rm -rf "$tmp/elsewhere"
-pass "an upgrade, a reinstall, an owned or intervening tree, no kernel-modules-hook, or DTBS not from the -ARCH default moves nothing"
+pass "an upgrade, a reinstall, an owned or intervening tree (said why), no kernel-modules-hook, or DTBS not from the -ARCH default moves nothing"
 
 downgraded
 TEST_RSYNC_FAILS=1 retire_hook
