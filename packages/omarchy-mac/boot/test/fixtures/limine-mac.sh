@@ -40,12 +40,14 @@ case "$*" in
   *) exit 1 ;;
 esac
 SH
+  # -x extracts initrd-tree, the image's files, into the current directory.
   cat >"$mac_stubs/lsinitcpio" <<'SH'
 #!/bin/bash
 [[ -f ${@: -1} ]] || exit 1
 case $1 in
   -l) cat "$MAC_STATE/initramfs" ;;
   -a) printf '==> Image: initramfs\n' ;;
+  -x) [[ ! -d $MAC_STATE/initrd-tree ]] || cp -a "$MAC_STATE/initrd-tree/." . ;;
   *) exit 1 ;;
 esac
 SH
@@ -66,8 +68,13 @@ SH
 [[ $* == "-n -o VFS-OPTIONS --mountpoint "* ]] && grep -Fxq -- "${@: -1}" "$MAC_STATE/mounts" || exit 1
 echo ro,relatime
 SH
+  # lsblk-chain is the root's device stack, luks-uuid its LUKS partition's UUID.
   cat >"$mac_stubs/lsblk" <<'SH'
 #!/bin/bash
+case "$*" in
+  "-nsrpo NAME,FSTYPE "*) [[ ! -f $MAC_STATE/lsblk-chain ]] || cat "$MAC_STATE/lsblk-chain" ;;
+  "-ndo UUID "*) [[ ! -f $MAC_STATE/luks-uuid ]] || cat "$MAC_STATE/luks-uuid" ;;
+esac
 exit 0
 SH
   cat >"$mac_stubs/blkid" <<'SH'
@@ -79,11 +86,16 @@ SH
 [[ $1 == luksDump && -f $MAC_STATE/luks-dump ]] || exit 1
 cat "$MAC_STATE/luks-dump"
 SH
-  # A fixture UKI is the kernel followed by a marker: .linux is the whole file.
+  # A fixture UKI is the kernel followed by a marker: .linux is the whole file,
+  # and .initrd stands for the image lsinitcpio extracts.
   cat >"$mac_stubs/objcopy" <<'SH'
 #!/bin/bash
-[[ $* == "-O binary --only-section=.linux "* ]] || exit 1
-cp "$4" "$5"
+[[ "$1 $2" == "-O binary" && -f $4 ]] || exit 1
+case $3 in
+  --only-section=.linux) cp "$4" "$5" ;;
+  --only-section=.initrd) printf 'initrd of %s\n' "$4" >"$5" ;;
+  *) exit 1 ;;
+esac
 SH
   chmod +x "$mac_stubs"/*
 }
@@ -211,6 +223,51 @@ limine_mac_luks() {
   } >"$mac_state/luks-dump"
   mac_cmdline="root=UUID=r rw rootflags=subvol=@ rd.luks.name=$uuid=root quiet"
   limine_mac_menu
+}
+
+# Makes the fixture a Mac installed before Omarchy's images: GRUB boots it from
+# the ESP mounted at /boot, and mkinitcpio's busybox init unlocks the root
+# through the encrypt hook and GRUB's cryptdevice=, with no crypttab.
+limine_mac_busybox() {
+  local uuid=0422663f-9969-4953-900f-b342703b7e84
+  rm -rf "$mac_root/var/lib/omarchy/limine.enabled" "$mac_root/etc/default/limine" "$mac_esp/EFI" "$mac_esp/limine.conf"
+  mv "$mac_esp/m1n1" "$mac_root/boot/m1n1"
+  rmdir "$mac_esp"
+  mkdir -p "$mac_root/boot/grub"
+  printf 'linux /vmlinuz-linux-aurora root=UUID=r rw rootflags=subvol=@ cryptdevice=UUID=%s:root:allow-discards quiet\ninitrd /initramfs-linux-aurora.img\n' \
+    "$uuid" >"$mac_root/boot/grub/grub.cfg"
+  printf '/dev/mapper/root / btrfs rw,subvol=/@ 0 0\n' >"$mac_root/etc/fstab"
+  printf 'usr/lib/modules/%s/kernel/drivers/gpu/drm/apple/appledrm.ko.zst\ninit\ninit_functions\nhooks/encrypt\nhooks/keymap\nkeymap.bin\n' \
+    "$mac_kver" >"$mac_state/initramfs"
+  printf '/dev/mapper/root btrfs\n/dev/nvme0n1p5 crypto_LUKS\n/dev/nvme0n1 \n' >"$mac_state/lsblk-chain"
+  printf '%s\n' "$uuid" >"$mac_state/luks-uuid"
+}
+
+# /etc/vconsole.conf holds the given keyboard settings, and the boot image
+# carries them with what loads them at the disk passphrase prompt: the
+# KEYMAP file and tools sd-vconsole adds, the keymap.bin the busybox keymap
+# hook compiles, and Plymouth's XKB symbols.
+limine_mac_keyboard() {
+  local tree=$mac_state/initrd-tree setting layout
+  printf '%s\n' "$@" >"$mac_root/etc/vconsole.conf"
+  rm -rf "$tree"
+  mkdir -p "$tree/etc" "$tree/usr/lib/systemd" "$tree/usr/bin" "$tree/usr/share/kbd/keymaps/i386/qwerty" "$tree/usr/share/X11/xkb/symbols"
+  cp "$mac_root/etc/vconsole.conf" "$tree/etc/vconsole.conf"
+  : >"$tree/usr/lib/systemd/systemd-vconsole-setup"
+  : >"$tree/usr/bin/loadkeys"
+  : >"$tree/usr/bin/plymouthd"
+  : >"$tree/keymap.bin"
+  for setting; do
+    case $setting in
+      KEYMAP=*) : >"$tree/usr/share/kbd/keymaps/i386/qwerty/${setting#KEYMAP=}.map.gz" ;;
+      XKBLAYOUT=*)
+        setting=${setting#XKBLAYOUT=}
+        for layout in ${setting//,/ }; do
+          : >"$tree/usr/share/X11/xkb/symbols/$layout"
+        done
+        ;;
+    esac
+  done
 }
 
 # The environment the check reads the fixture through, one export per line:

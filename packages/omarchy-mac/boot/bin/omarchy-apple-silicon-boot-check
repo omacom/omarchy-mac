@@ -8,15 +8,19 @@
 # Compare the installed kernel, initramfs, boot menu, LUKS state and stage-two
 # m1n1 image with the installed package files. Read the ESP through a private
 # read-only mount; never regenerate boot files or mutate a release channel.
-# An explicit pending-reboot override checks installed boot files only.
+# An explicit pending-reboot override checks installed boot files only. An
+# encrypted root unlocks through sd-encrypt and crypttab, or on a GRUB Mac
+# installed before Omarchy's images through busybox encrypt and cryptdevice=;
+# either way the image must carry the keyboard layout its passphrase prompt
+# types with.
 #
 # --boot-chain checks only what the next boot reads, for omarchy update's
-# update-verify: the kernel, initramfs, unlock settings, device trees, m1n1
-# stage 2, U-Boot and Limine. It holds only the kernel image, device trees and
-# m1n1 against their package mtree, checks the kernel the boot menu starts
-# first when both kernels are installed, and leaves out LUKS keyslots and
-# provisioning leftovers and an m1n1 image its owner took over with
-# M1N1_UPDATE_DISABLED.
+# update-verify: the kernel, initramfs, unlock settings and prompt layout,
+# device trees, m1n1 stage 2, U-Boot and Limine. It holds only the kernel
+# image, device trees and m1n1 against their package mtree, checks the kernel
+# the boot menu starts first when both kernels are installed, and leaves out
+# LUKS keyslots and provisioning leftovers and an m1n1 image its owner took
+# over with M1N1_UPDATE_DISABLED.
 
 set -euo pipefail
 
@@ -52,6 +56,8 @@ cleanup() {
     sudo umount "$mountpoint" 2>/dev/null || true
     sudo rmdir "$mountpoint" 2>/dev/null || true
   fi
+  # The keyboard layout check extracts an initramfs as root under workdir.
+  [[ ! -d $workdir/vconsole-initrd ]] || sudo rm -rf "$workdir/vconsole-initrd" 2>/dev/null || true
   rm -rf "$workdir"
 }
 trap cleanup EXIT
@@ -209,12 +215,52 @@ sd_encrypt_in_initramfs() {
     grep -Eq '(^|/)usr/bin/systemd-cryptsetup$' "$workdir/initramfs"
 }
 
+# A Mac installed before Omarchy's images can unlock its root in mkinitcpio's
+# busybox init: the encrypt hook and a cryptdevice= on GRUB's kernel line.
+# Busybox is recognised positively: its init_functions and the encrypt
+# runtime hook, and no systemd init or cryptsetup generator (an image with
+# both runs systemd and keeps the sd-encrypt checks below). That init keeps
+# only the last rootflags=, so a second one loses subvol=@.
+busybox_encrypt_in_initramfs() {
+  grep -Eq '(^|/)init_functions$' "$workdir/initramfs" &&
+    grep -Eq '(^|/)hooks/encrypt$' "$workdir/initramfs" &&
+    ! grep -Eq '(^|/)usr/lib/systemd/systemd$' "$workdir/initramfs" &&
+    ! grep -Eq '(^|/)usr/lib/systemd/system-generators/systemd-cryptsetup-generator$' "$workdir/initramfs"
+}
+
+busybox_luks=0
+if (( ! limine_mac )) && root_on_luks && busybox_encrypt_in_initramfs; then
+  busybox_luks=1
+  luks_part=$(lsblk -nsrpo NAME,FSTYPE "$(root_block_device)" 2>/dev/null | awk '$2=="crypto_LUKS"{print $1; exit}' || true)
+  luks_uuid=""
+  [[ -z $luks_part ]] || luks_uuid=$(lsblk -ndo UUID "$luks_part" 2>/dev/null || true)
+  # Each entry that boots this kernel is checked on its own; there must be one.
+  kernel_entries=0
+  while read -r kernel_line; do
+    [[ -n $kernel_line ]] || continue
+    kernel_entries=$(( kernel_entries + 1 ))
+    cryptdevice_arg=$(grep -Eo '(^|[[:space:]])cryptdevice=[^[:space:]]+' <<<"$kernel_line" | tail -n 1 || true)
+    cryptdevice_arg=${cryptdevice_arg#"${cryptdevice_arg%%[![:space:]]*}"}
+    [[ -n $cryptdevice_arg ]] ||
+      fail "/boot/grub/grub.cfg does not set cryptdevice= for the root the encrypt hook unlocks"
+    if [[ -n $luks_uuid && ${cryptdevice_arg#cryptdevice=} == UUID=* ]]; then
+      [[ ${cryptdevice_arg#cryptdevice=UUID=} == "$luks_uuid":* ]] ||
+        fail "/boot/grub/grub.cfg cryptdevice= does not name the LUKS partition of the root"
+    fi
+    (( $(grep -Eo '(^|[[:space:]])rootflags=' <<<"$kernel_line" | wc -l) <= 1 )) ||
+      fail "/boot/grub/grub.cfg passes more than one rootflags=, and the busybox initramfs keeps only the last"
+  done < <(sudo grep -E '^[[:space:]]*linux[[:space:]]' "$grub_cfg" | grep -F "vmlinuz-$kernel" || true)
+  (( kernel_entries > 0 )) || fail "/boot/grub/grub.cfg has no linux entry for vmlinuz-$kernel"
+fi
+
 crypttab=$(path /etc/crypttab)
 has_crypttab_root=0
 if [[ -f $crypttab ]] && sudo grep -Eq '^[[:space:]]*root[[:space:]]' "$crypttab"; then
   has_crypttab_root=1
 fi
-if (( has_crypttab_root )); then
+if (( busybox_luks )); then
+  : # Unlocked by cryptdevice= above; Omarchy's sd-encrypt provisioning is not this Mac's.
+elif (( has_crypttab_root )); then
   crypttab_uuid=$(sudo awk '/^[[:space:]]*root[[:space:]]/ {
     if ($2 ~ /^UUID=/) { sub(/^UUID=/, "", $2); print $2; exit }
   }' "$crypttab")
@@ -375,6 +421,124 @@ if (( limine_mac )); then
     if (( ! boot_chain )) && [[ ! -f $(path /var/lib/omarchy/provisioning/luks-key) && ! -f $(path /var/lib/omarchy/mac-first-boot/pending) ]]; then
       grep -q 'rd.luks.key=' <<<"$limine_cmdline" &&
         fail "the Limine $kernel entry still has rd.luks.key= after provisioning"
+    fi
+  fi
+fi
+
+# The disk passphrase is typed with the layout the boot image carries, not the
+# one the desktop uses. On an encrypted Mac with a non-US layout that types
+# Latin letters, the image that boots (the UKI on a Limine Mac) must carry the
+# keyboard settings of /etc/vconsole.conf as they are now (KEYMAP for the
+# console, XKB* for Plymouth; comments and fonts do not count): a layout
+# changed after the image was built only reaches the prompt with the next
+# rebuild. The file alone loads nothing: on a systemd image the console prompt
+# needs systemd-vconsole-setup, loadkeys and the KEYMAP file (sd-vconsole), on
+# a busybox image the keymap.bin the keymap hook compiles, and Plymouth, which
+# reads keys through evdev, needs the XKB symbols of each XKBLAYOUT (the
+# plymouth hook). Those files must be there too; that proves they were
+# bundled, not that every file they include is. Layouts that cannot type Latin
+# letters are left out of the image on purpose (94-omarchy-mac-vconsole.conf),
+# so they are not checked. On a live systemd Mac a failed
+# systemd-vconsole-setup this boot is reported as a warning: the image was
+# right, yet the prompt typed with the kernel's US map.
+vconsole_value() {
+  # shellcheck disable=SC1090 # the host vconsole.conf, under the check root
+  (set +eu; unset "$1"; . "$2" >/dev/null 2>&1; printf '%s' "${!1:-}")
+}
+vconsole_keyboard() {
+  local key
+  for key in KEYMAP KEYMAP_TOGGLE XKBLAYOUT XKBMODEL XKBVARIANT XKBOPTIONS; do
+    printf '%s=%s\n' "$key" "$(vconsole_value "$key" "$1")"
+  done
+}
+host_vconsole=$(path /etc/vconsole.conf)
+if (( has_crypttab_root || busybox_luks )) && [[ -f $host_vconsole ]]; then
+  vconsole_keymap=$(vconsole_value KEYMAP "$host_vconsole")
+  vconsole_layout=$(vconsole_value XKBLAYOUT "$host_vconsole")
+  vconsole_latin=1
+  case ${vconsole_layout%%,*} in
+    af | am | ara | bd | bg | by | et | ge | gr | il | in | iq | ir | kg | kh | kz | la | lk | mk | mm | mn | mv | np | rs | ru | sy | th | tj | ua) vconsole_latin=0 ;;
+  esac
+  if (( vconsole_latin )) && [[ ${vconsole_keymap:-us} != us || ${vconsole_layout:-us} != us ]]; then
+    initrd_dir=$workdir/vconsole-initrd
+    mkdir -p "$initrd_dir"
+    initrd_image=""
+    if (( limine_mac )); then
+      if command -v objcopy >/dev/null 2>&1; then
+        initrd_image=$workdir/uki.initrd
+        sudo objcopy -O binary --only-section=.initrd "$limine_uki" "$initrd_image" 2>/dev/null &&
+          sudo test -s "$initrd_image" ||
+          fail "cannot read the initramfs inside $limine_esp/EFI/Linux/omarchy_$kernel.efi"
+      else
+        echo "Apple Silicon boot check: objcopy (binutils) is not installed; not checking the keyboard layout in the UKI" >&2
+      fi
+    else
+      initrd_image=$(path "/boot/initramfs-$kernel.img")
+    fi
+    if [[ -n $initrd_image ]]; then
+      label="/boot/initramfs-$kernel.img"
+      rebuild="sudo /usr/bin/mkinitcpio -P && sudo omarchy-mac-boot-update"
+      if (( limine_mac )); then
+        label="the initramfs inside $limine_esp/EFI/Linux/omarchy_$kernel.efi"
+        rebuild="sudo omarchy-mac-boot-update"
+      fi
+      # Both archives: mkinitcpio keeps files that are already compressed, the
+      # KEYMAP's .map.gz among them, in the early one.
+      (cd "$initrd_dir" && sudo lsinitcpio -x "$initrd_image" >/dev/null 2>&1) ||
+        fail "$label cannot be extracted"
+      [[ -f $initrd_dir/etc/vconsole.conf &&
+        $(vconsole_keyboard "$initrd_dir/etc/vconsole.conf") == "$(vconsole_keyboard "$host_vconsole")" ]] ||
+        fail "$label does not carry the keyboard layout of /etc/vconsole.conf (KEYMAP=${vconsole_keymap:-unset} XKBLAYOUT=${vconsole_layout:-unset}), so the disk passphrase prompt may type with another layout; rebuild the boot image with '$rebuild'"
+      layout_missing=()
+      if (( busybox_luks )); then
+        # The keymap hook compiles KEYMAP into keymap.bin when the image is built.
+        case ${vconsole_keymap:-us} in
+          us | @kernel) ;;
+          *) [[ -f $initrd_dir/keymap.bin ]] || layout_missing+=("the keymap hook's keymap.bin") ;;
+        esac
+      else
+        for tool in usr/lib/systemd/systemd-vconsole-setup usr/bin/loadkeys; do
+          [[ -e $initrd_dir/$tool || -L $initrd_dir/$tool ]] || layout_missing+=("/$tool")
+        done
+        # The lookup sd-vconsole makes when it builds the image: the name,
+        # which may carry directories, under /usr/share/kbd/keymaps, then an
+        # optional .map or .inc and an optional compression suffix. An
+        # absolute KEYMAP is taken as it is. Only the file itself is checked,
+        # not the files it includes.
+        case ${vconsole_keymap:-us} in
+          us | @kernel) ;;
+          /*) [[ -e $initrd_dir$vconsole_keymap ]] || layout_missing+=("$vconsole_keymap") ;;
+          *)
+            keymap_found=0
+            while IFS= read -r -d '' keymap_file; do
+              for keymap_suffix in "" .map .inc; do
+                for keymap_compression in "" .gz .bz2 .zst; do
+                  [[ $keymap_file == */"$vconsole_keymap$keymap_suffix$keymap_compression" ]] && keymap_found=1
+                done
+              done
+            done < <(find "$initrd_dir/usr/share/kbd/keymaps" -type f -print0 2>/dev/null)
+            (( keymap_found )) || layout_missing+=("the $vconsole_keymap keymap")
+            ;;
+        esac
+      fi
+      if [[ -e $initrd_dir/usr/bin/plymouthd && -n $vconsole_layout ]]; then
+        IFS=, read -r -a xkb_layouts <<<"$vconsole_layout"
+        for xkb_layout in "${xkb_layouts[@]}"; do
+          [[ -z $xkb_layout || -e $initrd_dir/usr/share/X11/xkb/symbols/$xkb_layout ]] ||
+            layout_missing+=("the XKB symbols for $xkb_layout")
+        done
+      fi
+      if (( ${#layout_missing[@]} )); then
+        missing_text=$(printf '%s, ' "${layout_missing[@]}")
+        fail "$label carries /etc/vconsole.conf but not what loads it at the disk passphrase prompt (missing ${missing_text%, }); rebuild the boot image with '$rebuild'"
+      fi
+      sudo rm -rf "$initrd_dir"
+    fi
+    if (( ! busybox_luks )) && [[ -z $root || ${OMARCHY_BOOT_CHECK_LIVE_JOURNAL:-0} == 1 ]]; then
+      vconsole_failure=$(sudo journalctl -b --no-pager -o cat -u systemd-vconsole-setup.service 2>/dev/null |
+        grep -E -m1 "Failed with result|failed with exit status|status=[1-9]" || true)
+      [[ -z $vconsole_failure ]] ||
+        echo "Apple Silicon boot check: warning: the console keyboard setup failed during this boot ($vconsole_failure), so the disk passphrase prompt may have typed with the US layout; see 'journalctl -b -u systemd-vconsole-setup.service'" >&2
     fi
   fi
 fi
