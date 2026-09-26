@@ -65,6 +65,61 @@ assert(
   'notch-height is read raw, not through the font-scaled bar tokens'
 )
 
+// Every notched panel moves the center section beside the right one, at any scale.
+const notchedPanels = [
+  ['MacBook Pro 14"', 3024, 1964],
+  ['MacBook Pro 16"', 3456, 2234],
+  ['MacBook Air 13.6"', 2560, 1664],
+  ['MacBook Air 15"', 2880, 1864]
+]
+for (const [name, width, height] of notchedPanels) {
+  for (const scale of [1, 2]) {
+    assertEqual(
+      bar.centerBesideRight(true, 'top', 'eDP-1', width / scale, height / scale, scale),
+      true,
+      `${name} at scale ${scale} draws the center section beside the right one`
+    )
+  }
+}
+assertEqual(bar.centerBesideRight(true, 'top', 'eDP-1', 1890, 1228, 1.6), true, 'a fractional scale still moves the center section')
+
+// Everything else keeps the configured layout.
+assertEqual(bar.centerBesideRight(true, 'top', 'USB-2', 3440, 1440, 1), false, 'an external monitor on a notched Mac keeps the center section')
+assertEqual(bar.centerBesideRight(true, 'top', 'DP-1', 1728, 1117, 2), false, 'an external monitor shaped like a notched panel keeps the center section')
+assertEqual(bar.centerBesideRight(false, 'top', 'eDP-1', 1728, 1117, 2), false, 'a machine that is not Apple Silicon keeps the center section')
+for (const position of ['bottom', 'left', 'right'])
+  assertEqual(bar.centerBesideRight(true, position, 'eDP-1', 1728, 1117, 2), false, `a ${position} bar keeps the center section`)
+assertEqual(bar.centerBesideRight(true, 'top', 'eDP-1', 1728, 1080, 2), false, 'a notched panel with its strip hidden keeps the center section')
+assertEqual(bar.centerBesideRight(true, 'top', 'eDP-1', 1280, 800, 2), false, 'a panel without a notch keeps the center section')
+
+// The move is per screen and draw-time only: the user's layout is read as
+// configured, and the center entries keep their order and their own region.
+assert(
+  /centerBesideRight: BarModel\.centerBesideRight\(root\.appleSiliconHost, root\.position, screen\.name, screen\.width, screen\.height, screen\.devicePixelRatio\)/.test(barSource),
+  'each bar surface decides the move from its own screen'
+)
+assert(
+  /CenterModules \{\s*anchors\.fill: parent\s*entries: barWindow\.centerBesideRight \? \[\] : root\.layoutEntries\("center"\)\s*\}/.test(barSource),
+  'a moved center section draws nothing in the middle of the bar'
+)
+assert(
+  /ModuleList \{\s*entries: barWindow\.centerBesideRight \? root\.layoutEntries\("center"\) : \[\]\s*region: "center"\s*anchors\.right: rightModules\.left\s*anchors\.rightMargin: Style\.space\(\d+\)/.test(barSource),
+  'the center entries sit just left of the right section in their own region'
+)
+
+// With no gap the last center slot and the first right slot would share an
+// edge, and a drop there would always land in whichever registered first.
+const seam = [
+  { slot: 'right-first', x: 104, width: 20 },
+  { slot: 'center-last', x: 80, width: 20 }
+]
+assertDeepEqual(bar.nearestDropTarget(seam, { x: 101 }, false), { slot: 'center-last', after: true }, 'a drop at the seam nearer the center section lands after its last entry')
+assertDeepEqual(bar.nearestDropTarget(seam, { x: 103 }, false), { slot: 'right-first', after: false }, 'a drop at the seam nearer the right section lands before its first entry')
+assert(
+  /anchorEntry: root\.findCenterAnchorEntry\(entries\)/.test(barSource),
+  'an emptied center section does not keep a hidden copy of its anchor'
+)
+
 const parsed = JSON.parse(shellJson)
 assertEqual(parsed.bar.centerAnchor, 'omarchy.clock', 'shipped bar layout still anchors on the clock')
 assert(
