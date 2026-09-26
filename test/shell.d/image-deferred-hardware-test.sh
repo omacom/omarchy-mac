@@ -414,6 +414,16 @@ reset_logs
 root=$(new_root request)
 write_manifest "$root"
 build "$root" >/dev/null || fail "the fixture image builds"
+printf '%s\n' install/hardware/c.sh >"$root/var/lib/omarchy/image/deferred-steps"
+touch "$REQUEST_REBUILD"
+first_boot "$root" >/dev/null || fail "a step that asks for the rebuild finishes"
+rm -f "$REQUEST_REBUILD"
+[[ $(cat "$REBUILDS" 2>/dev/null) == "mkinitcpio -P" && ! -e $root/var/lib/omarchy/image/boot-rebuild ]] ||
+  fail "the request alone, with no changed input, gets one rebuild and is then cleared" "$(cat "$REBUILDS" 2>/dev/null)"
+reset_logs
+root=$(new_root request)
+write_manifest "$root"
+build "$root" >/dev/null || fail "the fixture image builds"
 printf '%s\n' install/hardware/c.sh install/hardware/apple/b.sh >"$root/var/lib/omarchy/image/deferred-steps"
 rm -f "$root/etc/mkinitcpio.conf.d/b.conf"
 touch "$REQUEST_REBUILD" "$FAIL_B"
