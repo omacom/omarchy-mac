@@ -42,6 +42,8 @@ Hyprland works great with multiple screens. Read more about how to lay them out 
 
 New windows and the launcher open on the focused screen, and moving the pointer onto another screen doesn't change which one that is. Click on the other screen, point at one of its windows, or press `Ctrl + Alt + Tab` to focus it. `Super + Ctrl + Alt + Arrows` moves the active window to the screen in that direction. If you'd rather have focus follow the pointer across screens, add `hl.config({ misc = { mouse_move_focuses_monitor = true } })` to `~/.config/hypr/input.lua`.
 
+On a MacBook with Apple Silicon, menus and apps you open from the MacBook's own keyboard open on the MacBook's screen (the pointer moves there too), while an external keyboard keeps opening them on the focused screen. This covers the Omarchy menus and panels and any binding written with `{ omarchy = ... }`, `{ launch = ... }`, `{ webapp = ... }` or `{ tui = ... }` in `~/.config/hypr/bindings.lua`. With the lid closed or the laptop display turned off, everything opens on the focused screen.
+
 You can also checkout [Hyprmon](https://github.com/erans/hyprmon/), if you'd like a TUI to help you with the positioning of multiple screens.
 
 ### Controlling brightness

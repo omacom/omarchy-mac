@@ -89,6 +89,58 @@ function o.preinstalled_bindings_enabled()
   return not file_exists((os.getenv("HOME") or "") .. "/.local/state/omarchy/preinstalls-removed")
 end
 
+-- The MacBook's own keyboard as Hyprland names it: SPI on M1, MTP on M2 and later.
+local builtin_keyboards = { "apple-spi-keyboard", "apple-mtp-keyboard" }
+local launcher_prefixes = {
+  "omarchy-launch-",
+  "omarchy-menu",
+  "omarchy-shell shell toggle ",
+  "omarchy-shell -q shell togglePanelAt ",
+  "omarchy-agent --pick",
+  "omacalc",
+  "uwsm-app ",
+}
+local apple_silicon
+
+local function opens_something(command)
+  if type(command) ~= "string" then
+    return false
+  end
+
+  for _, prefix in ipairs(launcher_prefixes) do
+    if command:sub(1, #prefix) == prefix then
+      return true
+    end
+  end
+
+  return false
+end
+
+function o.focus_builtin_screen()
+  for _, monitor in ipairs(hl.get_monitors()) do
+    if monitor.name:match("^eDP%-") then
+      if not monitor.focused then
+        hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
+      end
+      return
+    end
+  end
+end
+
+-- A launcher pressed on the MacBook's own keyboard opens on the MacBook's own
+-- screen. Hyprland runs every bind matching a key press in the order they were
+-- added, so this bind, scoped to the built-in keyboard, moves focus before the
+-- launcher bind runs. Other keyboards only match the launcher bind.
+local function bind_builtin_screen_focus(keys)
+  if apple_silicon == nil then
+    apple_silicon = o.shell_succeeds("omarchy-hw-apple-silicon")
+  end
+
+  if apple_silicon then
+    hl.bind(keys, o.focus_builtin_screen, { device = { inclusive = true, list = builtin_keyboards } })
+  end
+end
+
 function o.bind(keys, description, dispatcher, options)
   local opts = options or {}
 
@@ -97,6 +149,10 @@ function o.bind(keys, description, dispatcher, options)
   end
 
   dispatcher = command_from(dispatcher, description)
+
+  if opens_something(dispatcher) and not opts.locked then
+    bind_builtin_screen_focus(keys)
+  end
 
   if type(dispatcher) == "string" then
     dispatcher = hl.dsp.exec_cmd(dispatcher)
