@@ -23,7 +23,7 @@ fail() {
 tmp=$(mktemp -d)
 trap 'gpgconf --homedir "$tmp/signer" --kill gpg-agent 2>/dev/null; rm -rf "$tmp"' EXIT
 stubs=$ROOT/test/fixtures/migrate/bin
-steps=(preflight backup keyring prefetch repositories transaction boot-chain loader reboot retire)
+steps=(preflight backup keyring prefetch repositories transaction boot-chain loader defaults reboot retire)
 official=40DFB630FF42BCFFB047046CF0134EE680CAC571
 fork_key=C81AC3E2A99556F9B21D5FEA3DD49BC9F8360BDC
 release_key=5983B1CA32CB778F4D74D24ECFF35022CA5B5959
@@ -428,7 +428,7 @@ for step in "${steps[@]}"; do
   interrupt during "$step"
 done
 pass "a kill -9 after any step's work but before its record resumes to the same end"
-for step in backup keyring prefetch repositories transaction boot-chain loader reboot mx-mac-retire retire; do
+for step in backup keyring prefetch repositories transaction boot-chain loader defaults reboot mx-mac-retire retire; do
   interrupt mid "$step"
 done
 pass "a kill -9 in the middle of any step, the adapter's retire included, resumes to the same end"

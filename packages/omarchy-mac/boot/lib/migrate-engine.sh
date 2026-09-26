@@ -1,6 +1,6 @@
 # Sourced by omarchy-mac-migrate: the journaled transition engine.
 #
-# It moves a Mac onto a target package set in ten ordered steps. Every step
+# It moves a Mac onto a target package set in eleven ordered steps. Every step
 # records its start and its end in an append-only journal synced to disk, so a
 # power loss or a kill resumes at the first step that did not finish, and every
 # step can run again from its start. Preflight changes nothing and freezes the
@@ -13,7 +13,7 @@
 # unprivileged tests drive it) and boot_lib. Adapters read the target_* values.
 # shellcheck disable=SC2034,SC2154
 
-migrate_steps=(preflight backup keyring prefetch repositories transaction boot-chain loader reboot retire)
+migrate_steps=(preflight backup keyring prefetch repositories transaction boot-chain loader defaults reboot retire)
 
 # pacman's download user reads the work, cache and candidate directories.
 umask 022
@@ -41,6 +41,9 @@ verify_unit=omarchy-mac-migrate-verify.service
 first_boot_marker=$R/var/lib/omarchy/mac-first-boot/pending
 legacy_first_boot_marker=$R/var/lib/omarchy/first-boot/pending
 candidate_repo=omarchy-mac-candidate
+# The user units a fresh install's first run enables
+# (install/user/first-run/enable-user-units.sh).
+fresh_user_units="bt-agent.service omarchy-recover-internal-monitor.service omarchy-sleep-lock.service omarchy-migrate-notify.service omarchy-fcitx5.service omarchy-crash-watch.service omarchy-brightness-keyboard-auto.service"
 
 # The Omarchy packaging key omarchy-keyring carries (as in omarchy-upgrade-to-quattro).
 official_key=40DFB630FF42BCFFB047046CF0134EE680CAC571
@@ -701,6 +704,9 @@ preflight() {
   printf '%s\n' "$boot_state" >"$plan.new/boot"
   printf '%s\n' "$luks" >"$plan.new/luks"
   printf '%s\n' "$esp_mount" >"$plan.new/esp"
+  for name in $fresh_user_units; do
+    [[ ! -f $R/usr/lib/systemd/user/$name ]] || printf '%s\n' "$name"
+  done >"$plan.new/user-units"
   sync "$plan.new"/*
   if [[ $target_type == "candidate-set" ]]; then
     rm -rf "$set_copy"
@@ -1131,6 +1137,84 @@ step_loader() {
   fi
   cmp -s "$R/usr/share/limine/BOOTAA64.EFI" "$R$esp/EFI/BOOT/BOOTAA64.EFI" || die "the ESP loader is not the packaged Limine"
   output=$(boot_check_pending linux-aurora 2>&1) || die "the staged boot chain does not check: $(tail -n 1 <<<"$output")"
+}
+
+# Runs a command as USER, whose home is HOME, in a clean environment, so
+# nothing root does follows a link the user controls.
+as_user() {
+  local user=$1 home=$2
+  shift 2
+  if (( fixture )); then
+    env HOME="$home" "$@"
+  else
+    runuser -u "$user" -- env -i HOME="$home" USER="$user" LOGNAME="$user" PATH="$PATH" "$@"
+  fi
+}
+
+# Accounts that have used Omarchy: a regular UID and Omarchy's state in the home.
+omarchy_users() {
+  local user home
+  awk -F: '$3 >= 1000 && $3 < 60000 { print $1, $6 }' "$R/etc/passwd" 2>/dev/null |
+    while read -r user home; do
+      [[ ! -d $R$home/.local/state/omarchy ]] || printf '%s %s\n' "$user" "$home"
+    done
+}
+
+# Enables a user unit as systemctl --user enable would, by the links its
+# [Install] WantedBy names. A mask, an override or any enablement, the user's
+# or the administrator's, stays as it is.
+enable_user_unit() {
+  local user=$1 home=$2 unit=$3 config=$R$2/.config/systemd/user target path
+  [[ -f $R/usr/lib/systemd/user/$unit ]] || return 0
+  for path in "$config/$unit" "$R/etc/systemd/user/$unit" "$config"/*.wants/"$unit" "$R/etc/systemd/user"/*.wants/"$unit"; do
+    [[ ! -e $path && ! -L $path ]] || return 0
+  done
+  for target in $(awk -F= '/^\[/ { install = ($0 == "[Install]") } install && $1 == "WantedBy" { print $2 }' "$R/usr/lib/systemd/user/$unit"); do
+    as_user "$user" "$R$home" mkdir -p "$config/$target.wants" &&
+      as_user "$user" "$R$home" ln -s "/usr/lib/systemd/user/$unit" "$config/$target.wants/$unit" || return 1
+  done
+}
+
+# A migrated Mac ends as a fresh install does: with the default packages the
+# aarch64 and Apple lists add (the base list's applications stay the owner's
+# choice), the Mac services the image's hardware setup enables and, for every
+# Omarchy user, the units first run enables. A unit that was already installed
+# before the migration and is off was turned off, and stays off. The reboot
+# that follows brings up what probes only at boot, such as the video decoder.
+step_defaults() {
+  local generic apple available name missing=() absent=() user home unit output
+  generic=$(env OMARCHY_PATH="$R/usr/share/omarchy" omarchy-pkg-defaults generic) &&
+    apple=$(env OMARCHY_PATH="$R/usr/share/omarchy" omarchy-pkg-defaults apple-silicon) ||
+    die "cannot read the Apple Silicon default packages"
+  available=$(LC_ALL=C pacman --config "$pacman_conf" --dbpath "$pacman_db" -Sl | awk '{ print $2 }') ||
+    die "cannot read the repositories' packages"
+  while read -r name; do
+    [[ -n $name ]] && ! grep -Fxq -- "$name" <<<"$generic" || continue
+    LC_ALL=C pacman --config "$pacman_conf" --dbpath "$pacman_db" -Qq "$name" >/dev/null 2>&1 && continue
+    if grep -Fxq -- "$name" <<<"$available"; then
+      missing+=("$name")
+    else
+      absent+=("$name")
+    fi
+  done <<<"$apple"
+  (( ${#absent[@]} == 0 )) || say "No repository carries these default packages, so they stay missing: ${absent[*]}"
+  if (( ${#missing[@]} )); then
+    say "Installing the default packages a fresh install has: ${missing[*]}"
+    pacman_run --config "$pacman_conf" --dbpath "$pacman_db" -S --noconfirm "${missing[@]}" ||
+      die "cannot install the default packages: ${missing[*]}"
+    # Firmware rebuilds the initramfs and the UKI through pacman's hooks.
+    output=$(boot_check_pending linux-aurora 2>&1) || die "the boot files do not check after the default packages: $(tail -n 1 <<<"$output")"
+  fi
+  interrupt_for_test mid defaults
+  omarchy-mac-setup-system >/dev/null || die "omarchy-mac-setup-system could not set up the Mac's services"
+  while read -r user home; do
+    [[ -n $user ]] || continue
+    for unit in $fresh_user_units; do
+      grep -Fxq "$unit" "$plan/user-units" 2>/dev/null && continue
+      enable_user_unit "$user" "$home" "$unit" || say "Could not enable $unit for $user"
+    done
+    as_user "$user" "$R$home" omarchy-mac-setup-user >/dev/null || say "Could not apply the Mac user setup for $user"
+  done < <(omarchy_users)
 }
 
 # Waits for a reboot; after it, the new chain must have booted Aurora through

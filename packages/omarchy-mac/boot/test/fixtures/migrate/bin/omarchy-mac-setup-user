@@ -1,0 +1,4 @@
+#!/bin/bash
+# Records which home the Mac user setup ran for.
+echo "${0##*/} HOME=$HOME" >>"${MIGRATE_FIXTURE:?}/boot.log"
+[[ ! -e $MIGRATE_FIXTURE/${0##*/}-fail ]]

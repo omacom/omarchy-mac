@@ -1,0 +1,5 @@
+#!/bin/bash
+# systemctl, update-m1n1, update-grub, omarchy-mac-limine-cmdline, omarchy-mac-setup-system
+fixture=${MIGRATE_FIXTURE:?}
+echo "${0##*/} $*" >>"$fixture/boot.log"
+[[ ! -e $fixture/${0##*/}-fail ]]

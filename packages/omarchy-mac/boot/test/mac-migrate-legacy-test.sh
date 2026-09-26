@@ -22,7 +22,7 @@ fail() {
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 stubs=$ROOT/test/fixtures/migrate/bin
-steps=(preflight backup keyring prefetch repositories transaction boot-chain loader reboot retire)
+steps=(preflight backup keyring prefetch repositories transaction boot-chain loader defaults reboot retire)
 official=40DFB630FF42BCFFB047046CF0134EE680CAC571
 fork=FBD6874D423C418DDB6D143EECE19CDDE306DBD2
 alarm=1111111111111111111111111111111111111111
@@ -444,7 +444,7 @@ for step in "${steps[@]}"; do
   interrupt after "$step" "$step"
   interrupt during "$step" "$step"
 done
-for step in backup keyring prefetch repositories boot-chain loader reboot retire; do
+for step in backup keyring prefetch repositories boot-chain loader defaults reboot retire; do
   interrupt mid "$step" "$step"
 done
 for point in unwire convert extraction transaction removals; do
