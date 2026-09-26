@@ -1,0 +1,661 @@
+{
+  "schema": 1,
+  "candidate_only": true,
+  "set": "apple-test-b2ba91785ed8-20260926",
+  "created": "2026-09-26T13:50:50+1000",
+  "source": {
+    "repository": "omacom/omarchy-mac",
+    "commit": "b2ba91785ed812f86a648a16b197e6f100b1bb57",
+    "ref": "quattro-upstream"
+  },
+  "location": {
+    "repository": "maralcbr/omarchy-pkgs",
+    "release": "apple-test-b2ba91785ed8-20260926",
+    "state": "draft"
+  },
+  "set_sha256": "9895675d687fadc8278e40ae591ed2b15cf6467268b8c42334812127e1e2fcf1",
+  "signer": {
+    "key": "Omarchy Mac candidate test lane",
+    "receipt": "signing.json beside this manifest and in the release; its fingerprint is the trust anchor"
+  },
+  "builds": {
+    "omarchy-mac commit": {
+      "run": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36215481874",
+      "artifact": "candidate-set-36215481874-1",
+      "artifact_sha256": "5599c9a74d7b8f85c383356f6b413829bdc1445e1f7f5074e092bf0004a20f10",
+      "workflow": "maralcbr/omarchy-pkgs@dfbaed30eba8394d48f2f267de5cf93e43c993f7 .github/workflows/candidate-set.yml",
+      "image": "menci/archlinuxarm@sha256:1f453fcfd9f44ad5ff71f3603b3cd723359ec7829728515c4f9ccb851255169f",
+      "recipes": {
+        "omarchy": "omacom/omarchy-pkgs@4b60e4cd95972c16fbf3da634522a955cf7bf36c pkgbuilds/omarchy",
+        "omarchy-settings": "omacom/omarchy-pkgs@4b60e4cd95972c16fbf3da634522a955cf7bf36c pkgbuilds/omarchy-settings",
+        "arm-patch": "omarchy-mac/omarchy-pkgs-aarch64@8f7bf309aa399d5de6c7b5c4228e9e8a0109b17b patches/omarchy-first-run-packages.patch",
+        "omarchy-mac": "omacom/omarchy-pkgs@8b4c4a4051a7687996be40b7360f1305abf3b584 pkgbuilds/omarchy-mac",
+        "omarchy-mac-boot": "maralcbr/omarchy-pkgs@dfbaed30eba8394d48f2f267de5cf93e43c993f7 lab/recipes/omarchy-mac-boot (from omacom/omarchy-pkgs@539f27b1d13d55749fb538a296aa609e0be40493)"
+      },
+      "checks": {
+        "omarchy-mac": "makepkg --check passed",
+        "omarchy-mac-boot": "makepkg --check passed (boot/test/all)",
+        "provenance": "source-revision markers match; no file in two packages"
+      },
+      "source_date_epoch": 1790393635
+    },
+    "omacom edge": "Downloaded from https://pkgs.omarchy.org/edge/aarch64; each file matches the edge database and its omacom signature"
+  },
+  "resolution": {
+    "lists": "omarchy-pkg-defaults apple-silicon at the source commit (install/omarchy-base, -aarch64, -apple .packages) plus the set, closed over runtime dependencies in the Apple pacman.conf repository order ([omarchy], [asahi-alarm], core, extra, alarm, aur)",
+    "databases_sha256": {
+      "alarm-alarm.db": "95c09e603c9f96fc72d41ec2295b39fae617e4a2d70822fa071c4106933f644a",
+      "alarm-aur.db": "bdd038c7c32dc6de8977c65659249f3ca4b498c303ded46750eb6ab6f1dad187",
+      "alarm-core.db": "a4bdd08c84204404befd04918e795f5a5502f98ce0efe225592b54889fab6a9f",
+      "alarm-extra.db": "15eff4c6c113c33344884a81f3eacb9008687118fdfd0a86e902a4749e4cf5a0",
+      "asahi-alarm.db": "88c1bb2a08add5604327a9f10dfaabce927313d6e58bfd1c31e249561dc121c7",
+      "omarchy-edge.db": "566f9ee8f0baed20dfe5bb9916d1a23dad71cd4f478c20470a0fc743e95522b4"
+    },
+    "omarchy_only": "every package of the closure found in no ALARM or asahi-alarm repository is in this set",
+    "asahi_alarm": {
+      "asahi-scripts": "20260127.1-1",
+      "asahi-bless": "0.4.2-1",
+      "alsa-ucm-conf-asahi": "10-1",
+      "asahi-audio": "4.1-1",
+      "triforce-lv2": "0.3.2-1",
+      "speakersafetyd": "2.0.1-1",
+      "bankstown": "1.1.0-2",
+      "widevine": "4.10.2891.0-1"
+    },
+    "alarm_packages": 885,
+    "unresolved": {
+      "obs-studio": "in omarchy-base.packages; no aarch64 package in any repository"
+    },
+    "notes": [
+      "vulkan-asahi (ALARM extra), asahi-bless and alsa-ucm-conf-asahi (asahi-alarm) are in the Apple list since omacom/omarchy-mac#561",
+      "m1n1 is satisfied by m1n1-aurora (provides m1n1)",
+      "opengl-driver is satisfied by mesa, which the closure already holds",
+      "omarchy and omarchy-settings candidates (4.0.0.alpha.quattro...) sort below omacom edge omarchy 4.0.4-1; omarchy-mac-boot 20260926-1.<run> sorts above edge 20260925-4"
+    ]
+  },
+  "not_tested": [
+    "installation (ticket 23)",
+    "boot (tickets 25 and 26)"
+  ],
+  "packages": [
+    {
+      "name": "omarchy",
+      "version": "4.0.0.alpha.quattro.r1790393635.gb2ba91785ed8-1.362154818740001",
+      "arch": "aarch64",
+      "filename": "omarchy-4.0.0.alpha.quattro.r1790393635.gb2ba91785ed8-1.362154818740001-aarch64.pkg.tar.xz",
+      "sha256": "e31ae7db31acc517b7489dcb397fbc2eb9e1340fdc004e5b3238a17e97f2f328",
+      "source": {
+        "repository": "omacom/omarchy-mac",
+        "commit": "b2ba91785ed812f86a648a16b197e6f100b1bb57"
+      },
+      "recipe": "omacom/omarchy-pkgs@4b60e4cd95972c16fbf3da634522a955cf7bf36c pkgbuilds/omarchy",
+      "build": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36215481874",
+      "needed_by": "omarchy-mac"
+    },
+    {
+      "name": "omarchy-settings",
+      "version": "4.0.0.alpha.quattro.r1790393635.gb2ba91785ed8-1.362154818740001",
+      "arch": "aarch64",
+      "filename": "omarchy-settings-4.0.0.alpha.quattro.r1790393635.gb2ba91785ed8-1.362154818740001-aarch64.pkg.tar.xz",
+      "sha256": "0e5c30b39c21b4cb83daaaabaf70ec7c3bf6ea4c70be4686ef1d006570f240c7",
+      "source": {
+        "repository": "omacom/omarchy-mac",
+        "commit": "b2ba91785ed812f86a648a16b197e6f100b1bb57"
+      },
+      "recipe": "omacom/omarchy-pkgs@4b60e4cd95972c16fbf3da634522a955cf7bf36c pkgbuilds/omarchy-settings",
+      "build": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36215481874",
+      "needed_by": "omarchy"
+    },
+    {
+      "name": "omarchy-mac",
+      "version": "0.1.0-5.362154818740001",
+      "arch": "aarch64",
+      "filename": "omarchy-mac-0.1.0-5.362154818740001-aarch64.pkg.tar.xz",
+      "sha256": "e933b56cef2467360b312114ae1ff7916694b2fbb70bff00001d1c28828b4e2c",
+      "source": {
+        "repository": "omacom/omarchy-mac",
+        "commit": "b2ba91785ed812f86a648a16b197e6f100b1bb57"
+      },
+      "recipe": "omacom/omarchy-pkgs@8b4c4a4051a7687996be40b7360f1305abf3b584 pkgbuilds/omarchy-mac",
+      "build": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36215481874",
+      "needed_by": "list"
+    },
+    {
+      "name": "omarchy-mac-boot",
+      "version": "20260926-1.362154818740001",
+      "arch": "aarch64",
+      "filename": "omarchy-mac-boot-20260926-1.362154818740001-aarch64.pkg.tar.xz",
+      "sha256": "7bf0ab35ee775b39d956f5e0e0f02c185dabc803298cc77c7619a4fe5d2146ce",
+      "source": {
+        "repository": "omacom/omarchy-mac",
+        "commit": "b2ba91785ed812f86a648a16b197e6f100b1bb57"
+      },
+      "recipe": "maralcbr/omarchy-pkgs@dfbaed30eba8394d48f2f267de5cf93e43c993f7 lab/recipes/omarchy-mac-boot (from omacom/omarchy-pkgs@539f27b1d13d55749fb538a296aa609e0be40493)",
+      "build": "https://github.com/maralcbr/omarchy-pkgs/actions/runs/36215481874",
+      "needed_by": "list"
+    },
+    {
+      "name": "linux-aurora",
+      "version": "7.1.12.aurora2-10",
+      "arch": "aarch64",
+      "filename": "linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst",
+      "sha256": "9201253d17ada58381a2cfd116ec24315fbf5f3b458d75da9a2217ca04898c86",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/linux-aurora-7.1.12.aurora2-10-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "set"
+    },
+    {
+      "name": "linux-aurora-headers",
+      "version": "7.1.12.aurora2-10",
+      "arch": "aarch64",
+      "filename": "linux-aurora-headers-7.1.12.aurora2-10-aarch64.pkg.tar.zst",
+      "sha256": "cbc397e8b16e26e0297998ec80cc00884ac0a0f4ad286a0cba9dd3c9a4249d80",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/linux-aurora-headers-7.1.12.aurora2-10-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "set"
+    },
+    {
+      "name": "m1n1-aurora",
+      "version": "1.6.1.aurora1-3",
+      "arch": "aarch64",
+      "filename": "m1n1-aurora-1.6.1.aurora1-3-aarch64.pkg.tar.zst",
+      "sha256": "5e01b73b0cf2145d9917621b2a3fab4b6703ee7f9e684aae4eb26e1e2ccafc34",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/m1n1-aurora-1.6.1.aurora1-3-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "set"
+    },
+    {
+      "name": "uboot-asahi",
+      "version": "2026.07.asahi2-4",
+      "arch": "aarch64",
+      "filename": "uboot-asahi-2026.07.asahi2-4-aarch64.pkg.tar.zst",
+      "sha256": "5f20164d0d4c4e5bb5fb2c344ae255fcccfeffec366fdd6194ed2b12b521918e",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/uboot-asahi-2026.07.asahi2-4-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "set"
+    },
+    {
+      "name": "limine-mkinitcpio-hook",
+      "version": "1.39.0-2",
+      "arch": "aarch64",
+      "filename": "limine-mkinitcpio-hook-1.39.0-2-aarch64.pkg.tar.zst",
+      "sha256": "8d3c904056e0880db39152207f62cdff2d3c9cf16598dfb7eb512149f3ebd8b0",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/limine-mkinitcpio-hook-1.39.0-2-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "omarchy-mac-boot"
+    },
+    {
+      "name": "aether",
+      "version": "4.30.0-1",
+      "arch": "aarch64",
+      "filename": "aether-4.30.0-1-aarch64.pkg.tar.zst",
+      "sha256": "73ff687119fbf5194ea8bd8d1748576e3232f11b058c047bf48595dbc043fd01",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/aether-4.30.0-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "aquamarine",
+      "version": "0.15.1-1.1",
+      "arch": "aarch64",
+      "filename": "aquamarine-0.15.1-1.1-aarch64.pkg.tar.zst",
+      "sha256": "f84d2948a3768bbfd192a58ab6befb6eeaf272d2543bdf97c112ae1a58f1bb81",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/aquamarine-0.15.1-1.1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "hyprtoolkit"
+    },
+    {
+      "name": "asdcontrol",
+      "version": "1:0.6.0-2",
+      "arch": "aarch64",
+      "filename": "asdcontrol-1.0.6.0-2-aarch64.pkg.tar.zst",
+      "sha256": "0dd708ccc4ceefdcf233a19460344ec3b809fff24446614d34666562a73737e9",
+      "original_filename": "asdcontrol-1:0.6.0-2-aarch64.pkg.tar.zst",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/asdcontrol-1:0.6.0-2-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "avd-fw",
+      "version": "0.1-1",
+      "arch": "aarch64",
+      "filename": "avd-fw-0.1-1-aarch64.pkg.tar.zst",
+      "sha256": "da493a7b9c592e528d309faeb728563205149e9d86da4033066e149d57862d88",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/avd-fw-0.1-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "cliamp",
+      "version": "2.0.1-1",
+      "arch": "aarch64",
+      "filename": "cliamp-2.0.1-1-aarch64.pkg.tar.zst",
+      "sha256": "7a59c5c44dfab70ee338ee067056e28fb71a361f598945069bcb752504d4cc51",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/cliamp-2.0.1-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "dotnet-host-bin",
+      "version": "10.0.401-2",
+      "arch": "aarch64",
+      "filename": "dotnet-host-bin-10.0.401-2-aarch64.pkg.tar.zst",
+      "sha256": "1fb19b704669272e69a1ab6b65e6e549bb05fb6c68c75ccaa4ad0a28abaf7b71",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/dotnet-host-bin-10.0.401-2-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "dotnet-runtime-bin"
+    },
+    {
+      "name": "dotnet-runtime-bin",
+      "version": "10.0.401-2",
+      "arch": "aarch64",
+      "filename": "dotnet-runtime-bin-10.0.401-2-aarch64.pkg.tar.zst",
+      "sha256": "66e6ba0b48550b805e6854ff8c8d89db9b9b144c01e112cdaa47a39791311826",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/dotnet-runtime-bin-10.0.401-2-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "herdr",
+      "version": "0.8.2-1",
+      "arch": "aarch64",
+      "filename": "herdr-0.8.2-1-aarch64.pkg.tar.zst",
+      "sha256": "aa21c67bec181301c4f5c1b697aa0107cd23b93cb4926c5e87f6f1c10332b109",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/herdr-0.8.2-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "hyprland",
+      "version": "0.56.2-3",
+      "arch": "aarch64",
+      "filename": "hyprland-0.56.2-3-aarch64.pkg.tar.zst",
+      "sha256": "09cd043355fe87581a57a3b41623ade2b418463e3ec152e283518bc6b3b93e94",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/hyprland-0.56.2-3-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "hyprland-guiutils",
+      "version": "0.2.2-3",
+      "arch": "aarch64",
+      "filename": "hyprland-guiutils-0.2.2-3-aarch64.pkg.tar.zst",
+      "sha256": "803bf353cb156f2afb88174de4fa876b1752b7385741c7832df49da392c79df0",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/hyprland-guiutils-0.2.2-3-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "hyprland"
+    },
+    {
+      "name": "hyprland-preview-share-picker",
+      "version": "0.2.1-2",
+      "arch": "aarch64",
+      "filename": "hyprland-preview-share-picker-0.2.1-2-aarch64.pkg.tar.zst",
+      "sha256": "38667485868a17f240db74554810b8b9b12a89cd22079e4e6600033a38fc4189",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/hyprland-preview-share-picker-0.2.1-2-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "hyprtoolkit",
+      "version": "0.5.4-5.1",
+      "arch": "aarch64",
+      "filename": "hyprtoolkit-0.5.4-5.1-aarch64.pkg.tar.zst",
+      "sha256": "7f258973e417278b30f755fae12b957b25811103446580a9c84d813ce8a374d6",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/hyprtoolkit-0.5.4-5.1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "hyprland-guiutils"
+    },
+    {
+      "name": "libva-v4l2_request-avd",
+      "version": "1.3-1",
+      "arch": "aarch64",
+      "filename": "libva-v4l2_request-avd-1.3-1-aarch64.pkg.tar.zst",
+      "sha256": "df381f94324936bdb06fd33603b55b83e2e1387aa8fd361cb706de8bccac7bd4",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/libva-v4l2_request-avd-1.3-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "limine-snapper-sync",
+      "version": "1.32.0-1",
+      "arch": "aarch64",
+      "filename": "limine-snapper-sync-1.32.0-1-aarch64.pkg.tar.zst",
+      "sha256": "0def3e0cbc5d68c70e39ac9928fcb609d5f426a71a246b55363481e2051927d0",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/limine-snapper-sync-1.32.0-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "omarchy-mac-boot"
+    },
+    {
+      "name": "localsend",
+      "version": "1.18.2-1",
+      "arch": "aarch64",
+      "filename": "localsend-1.18.2-1-aarch64.pkg.tar.zst",
+      "sha256": "8a41fde552b79e2e269afce3f199af58e4d970ee79bf1fb79075c203d890bd65",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/localsend-1.18.2-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "mise-bin",
+      "version": "2026.9.12-1",
+      "arch": "aarch64",
+      "filename": "mise-bin-2026.9.12-1-aarch64.pkg.tar.zst",
+      "sha256": "9a4457015fc8123d4fcdf7c2ccf454af4ed3afe0f33e1c29fcc64a113f215b49",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/mise-bin-2026.9.12-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "obsidian",
+      "version": "1.13.7-2",
+      "arch": "aarch64",
+      "filename": "obsidian-1.13.7-2-aarch64.pkg.tar.zst",
+      "sha256": "878cea55cd865db6b3470234b4ac34eca48c906a575be96f758f2af0d66c7799",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/obsidian-1.13.7-2-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "omacalc",
+      "version": "0.2.2-1",
+      "arch": "aarch64",
+      "filename": "omacalc-0.2.2-1-aarch64.pkg.tar.zst",
+      "sha256": "3ca5cf74ea0dce65183219b48cb31b87492ee1835463cb1181ab7d2953b9b24b",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/omacalc-0.2.2-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "omacut",
+      "version": "0.4.0-1",
+      "arch": "aarch64",
+      "filename": "omacut-0.4.0-1-aarch64.pkg.tar.zst",
+      "sha256": "a7461faa5684abe44c45e0b1f3fd01da00a85da3b12b2546875feab39eae1c1c",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/omacut-0.4.0-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "omarchy-keyring",
+      "version": "20251027-1",
+      "arch": "any",
+      "filename": "omarchy-keyring-20251027-1-any.pkg.tar.zst",
+      "sha256": "cce48c07cfc2b97e198df1bc81705db2921685032fe39f18b4ddfd84264b5967",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/omarchy-keyring-20251027-1-any.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "omarchy"
+    },
+    {
+      "name": "omarchy-nvim",
+      "version": "2026.9.21-2",
+      "arch": "any",
+      "filename": "omarchy-nvim-2026.9.21-2-any.pkg.tar.zst",
+      "sha256": "c276e27c22fe2680df72274f5311f285df56953cdf9e2a035fa0079cea87f37c",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/omarchy-nvim-2026.9.21-2-any.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "omawrite",
+      "version": "0.5.0-1",
+      "arch": "aarch64",
+      "filename": "omawrite-0.5.0-1-aarch64.pkg.tar.zst",
+      "sha256": "5c75f6f093fef0f86d9b6355df5a0100cbe937f3639b450b92f3ed965892096c",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/omawrite-0.5.0-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "pinta",
+      "version": "3.1.2-1",
+      "arch": "aarch64",
+      "filename": "pinta-3.1.2-1-aarch64.pkg.tar.zst",
+      "sha256": "ebdf1b4de706b67e955027fe5817baf0d5848cf65066ed6102dccbbd2b25892d",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/pinta-3.1.2-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "qemu-user-static",
+      "version": "1:1.10.0.13+ds.0+deb13u1-1",
+      "arch": "aarch64",
+      "filename": "qemu-user-static-1.1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst",
+      "sha256": "88ff26fed51b043d9706ae7320c5ee33a7036d1ed1ea0c4b2e49d6d49785deb4",
+      "original_filename": "qemu-user-static-1:1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/qemu-user-static-1:1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "qemu-user-static-binfmt"
+    },
+    {
+      "name": "qemu-user-static-binfmt",
+      "version": "1:1.10.0.13+ds.0+deb13u1-1",
+      "arch": "aarch64",
+      "filename": "qemu-user-static-binfmt-1.1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst",
+      "sha256": "1255d5d015514dcb56068e3cf75c65490cd570f4327cc482d36ac3126f02316f",
+      "original_filename": "qemu-user-static-binfmt-1:1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/qemu-user-static-binfmt-1:1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "tensaku",
+      "version": "0.28.0-1",
+      "arch": "aarch64",
+      "filename": "tensaku-0.28.0-1-aarch64.pkg.tar.zst",
+      "sha256": "3dc3f860a1136f7d43f40d7c26824ab0a0da0892af87c3c1ff97cbff2b27afa7",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/tensaku-0.28.0-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "tobi-try",
+      "version": "1.8.1-3",
+      "arch": "any",
+      "filename": "tobi-try-1.8.1-3-any.pkg.tar.zst",
+      "sha256": "fa4ba96e6920c9166e0017a205fceee603f3a487f055ce5f40987678418f1e43",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/tobi-try-1.8.1-3-any.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "ttf-ia-writer",
+      "version": "20181225-1",
+      "arch": "any",
+      "filename": "ttf-ia-writer-20181225-1-any.pkg.tar.zst",
+      "sha256": "3a0d604964e4c3a6e577f3b925d4e82284bd6f32b9e22f9a88dfa6480706da1c",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/ttf-ia-writer-20181225-1-any.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "ttf-jetbrains-mono-nerd-basic",
+      "version": "3.5.1-1",
+      "arch": "any",
+      "filename": "ttf-jetbrains-mono-nerd-basic-3.5.1-1-any.pkg.tar.zst",
+      "sha256": "99070b6ef240303d55f4af175d27b34b36b154480b39dd43b02abd1b710b8553",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/ttf-jetbrains-mono-nerd-basic-3.5.1-1-any.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "ttfx",
+      "version": "0.3.3-1",
+      "arch": "aarch64",
+      "filename": "ttfx-0.3.3-1-aarch64.pkg.tar.zst",
+      "sha256": "204a15ee78734b305c15ccea61086409809d3bd3f50002c3ea4f7ad39a5471cb",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/ttfx-0.3.3-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "tzupdate",
+      "version": "3.1.0-1",
+      "arch": "aarch64",
+      "filename": "tzupdate-3.1.0-1-aarch64.pkg.tar.zst",
+      "sha256": "1831268a649a0633a6853bc2cc9702963dc8df7b341d2ccde3d69c5eeae1e07b",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/tzupdate-3.1.0-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "ufw-docker",
+      "version": "251123-1",
+      "arch": "any",
+      "filename": "ufw-docker-251123-1-any.pkg.tar.zst",
+      "sha256": "e6af9cc2d241ce0529c35ca9c18bec18fa92a6f94921b95e8f86a41b3dcb05bb",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/ufw-docker-251123-1-any.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "xdg-terminal-exec",
+      "version": "0.14.3-1",
+      "arch": "any",
+      "filename": "xdg-terminal-exec-0.14.3-1-any.pkg.tar.zst",
+      "sha256": "aaace8e76c2ea833714c417b8401ad689e016dbd2f6f1ccfb8a3e6e9df539e0f",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/xdg-terminal-exec-0.14.3-1-any.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "yaru-icon-theme",
+      "version": "26.04.5.1ubuntu-1",
+      "arch": "any",
+      "filename": "yaru-icon-theme-26.04.5.1ubuntu-1-any.pkg.tar.zst",
+      "sha256": "679b7ab464e86424ebd3c2b4ef6d09531f18583c0b0ba62252193ff05e19796a",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/yaru-icon-theme-26.04.5.1ubuntu-1-any.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    },
+    {
+      "name": "yay",
+      "version": "13.0.1-1",
+      "arch": "aarch64",
+      "filename": "yay-13.0.1-1-aarch64.pkg.tar.zst",
+      "sha256": "4b946395bf2dbf6462acb986c3dded67cb86bbeee6a44dbe9161aaac88b8fa9f",
+      "source": {
+        "channel": "omacom edge aarch64",
+        "url": "https://pkgs.omarchy.org/edge/aarch64/yay-13.0.1-1-aarch64.pkg.tar.zst",
+        "omacom_signature": "40DFB630FF42BCFFB047046CF0134EE680CAC571 (omarchy-keyring 20251027-1), verified"
+      },
+      "needed_by": "list"
+    }
+  ]
+}
