@@ -1,10 +1,11 @@
 #!/bin/bash
 
 # 94-omarchy-mac-vconsole.conf: the Mac initramfs carries the owner's keyboard
-# layout to the disk passphrase prompt (sd-vconsole + /etc/vconsole.conf), and
-# keeps a layout that cannot type Latin letters out (upstream #6229). The HOOKS
-# cases source a copy that reads a scratch vconsole.conf; building a real image
-# runs in an Arch ARM container (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in).
+# layout to the disk passphrase prompt (sd-vconsole, which bundles
+# /etc/vconsole.conf), and keeps a layout that cannot type Latin letters out
+# (upstream #6229). FILES is omarchy_hooks.conf's, so the drop-in adds none. The
+# HOOKS cases source a copy that reads a scratch vconsole.conf; building a real
+# image runs in an Arch ARM container (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in).
 
 set -euo pipefail
 
@@ -19,6 +20,8 @@ fail() {
 }
 
 [[ -f $dropin ]] || fail "94-omarchy-mac-vconsole.conf is in the package files tree"
+# The drop-ins ask omarchy-hw-platform; the stand-in answers apple-silicon.
+export PATH="$ROOT/test/helpers:$PATH"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -62,9 +65,9 @@ vconsole KEYMAP=dk-latin1 XKBLAYOUT=dk XKBMODEL=pc105
 mapfile -t out < <(after "$dropin" "${stock[@]}")
 [[ ${out[0]} == 0 ]] || fail "the drop-in sources cleanly" "status ${out[0]}"
 [[ ${out[1]} == "${stock[*]}" ]] || fail "a stock line keeps sd-vconsole right after keyboard" "HOOKS=(${out[1]})"
-[[ ${out[2]} == "$vconsole_conf" ]] || fail "a Latin layout bundles /etc/vconsole.conf" "FILES=(${out[2]})"
+[[ -z ${out[2]} ]] || fail "FILES is left to omarchy_hooks.conf" "FILES=(${out[2]})"
 [[ -z ${out[3]} ]] || fail "the drop-in leaves no variable behind" "${out[3]}"
-echo 'ok - Danish: sd-vconsole stays after keyboard and vconsole.conf is bundled (an exported XKBLAYOUT does not leak in)'
+echo 'ok - Danish: sd-vconsole stays after keyboard and FILES is untouched (an exported XKBLAYOUT does not leak in)'
 
 mapfile -t out < <(after "$dropin" base systemd autodetect keyboard block filesystems)
 [[ ${out[1]} == "base systemd autodetect keyboard sd-vconsole block filesystems" ]] ||
@@ -73,15 +76,15 @@ mapfile -t out < <(after "$dropin" base systemd sd-vconsole block keymap console
 [[ ${out[1]} == "base systemd sd-vconsole block filesystems" ]] ||
   fail "without keyboard, sd-vconsole lands once after systemd; busybox keymap/consolefont go" "HOOKS=(${out[1]})"
 mapfile -t out < <(after "$dropin $dropin" "${stock[@]}")
-[[ ${out[1]} == "${stock[*]}" && ${out[2]} == "$vconsole_conf $vconsole_conf" ]] ||
+[[ ${out[1]} == "${stock[*]}" && -z ${out[2]} ]] ||
   fail "sourcing twice never duplicates the hook" "HOOKS=(${out[1]}) FILES=(${out[2]})"
 echo 'ok - a systemd line gets sd-vconsole exactly once, after keyboard or systemd'
 
 busybox=(base udev autodetect keyboard keymap block encrypt filesystems fsck)
 mapfile -t out < <(after "$dropin" "${busybox[@]}")
-[[ ${out[1]} == "${busybox[*]}" && ${out[2]} == "$vconsole_conf" ]] ||
-  fail "a busybox cryptdevice= line keeps its hooks and gets the file for Plymouth" "HOOKS=(${out[1]}) FILES=(${out[2]})"
-echo 'ok - a busybox (cryptdevice=) line is left alone apart from the file'
+[[ ${out[1]} == "${busybox[*]}" && -z ${out[2]} ]] ||
+  fail "a busybox cryptdevice= line keeps its hooks" "HOOKS=(${out[1]}) FILES=(${out[2]})"
+echo 'ok - a busybox (cryptdevice=) line is left alone'
 
 vconsole KEYMAP=ru XKBLAYOUT=ru,us
 mapfile -t out < <(after "$dropin" "${stock[@]}")
@@ -98,14 +101,40 @@ mapfile -t out < <(after "$dropin" "${stock[@]}")
   fail "no vconsole.conf keeps sd-vconsole and bundles nothing" "status ${out[0]} HOOKS=(${out[1]}) FILES=(${out[2]})"
 echo 'ok - without vconsole.conf the line is unchanged and nothing is bundled'
 
-# The whole Mac chain over the stock line: 90 → 94, as mkinitcpio sources them.
+vconsole KEYMAP=ru XKBLAYOUT=ru
+for platform in qualcomm generic-aarch64 generic ""; do
+  for line in "${stock[*]}" "${busybox[*]}"; do
+    # shellcheck disable=SC2086
+    mapfile -t out < <(OMARCHY_TEST_HW_PLATFORM=$platform after "$dropin" $line)
+    [[ ${out[0]} == 0 && ${out[1]} == "$line" && -z ${out[2]} && -z ${out[3]} ]] ||
+      fail "the drop-in changes nothing off Apple Silicon (detector: ${platform:-empty})" "HOOKS=(${out[1]}) FILES=(${out[2]})"
+  done
+done
+if OMARCHY_TEST_HW_PLATFORM=fail bash -c 'HOOKS=(base systemd); source "$1"' _ "$dropin"; then
+  fail "a detector that cannot place the machine stops the build"
+fi
+echo 'ok - off Apple Silicon the drop-in changes nothing, even for a non-Latin layout; a failing detector stops it'
+
+# The whole Mac chain over a busybox line: 90 → 94, as mkinitcpio sources them.
 vconsole KEYMAP=dk-latin1 XKBLAYOUT=dk
-chain="$confd/90-omarchy-mac.conf $confd/91-omarchy-mac-encrypt.conf $confd/93-omarchy-mac-plymouth.conf $dropin"
+chain="$confd/90-omarchy-mac.conf $confd/91-omarchy-mac-encrypt.conf $dropin"
 mapfile -t out < <(after "$chain" base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)
 [[ ${out[1]} == *"keyboard sd-vconsole block"* && ${out[1]} == *"sd-encrypt filesystems"* ]] ||
   fail "the full Mac chain ends with sd-vconsole after keyboard and sd-encrypt before filesystems" "HOOKS=(${out[1]})"
 (( $(grep -o sd-vconsole <<<"${out[1]}" | wc -l) == 1 )) || fail "the chain has one sd-vconsole" "HOOKS=(${out[1]})"
-echo 'ok - 90..94 over the stock busybox line: one sd-vconsole, after keyboard'
+
+# A runtime too old to ship the detector: the chain still acts as on a Mac.
+mkdir -p "$tmp/no-detector"
+ln -sf "$(command -v bash)" "$tmp/no-detector/bash"
+ln -sf "$(command -v grep)" "$tmp/no-detector/grep"
+vconsole KEYMAP=ru XKBLAYOUT=ru
+mapfile -t out < <(PATH=$tmp/no-detector after "$chain" "${stock[@]}")
+[[ ${out[1]} == "base systemd autodetect microcode modconf kms keyboard block asahi omarchy-vendorfw omarchy-mac-encrypt sd-encrypt filesystems fsck" ]] ||
+  fail "without the detector the chain keeps the Mac behaviour" "HOOKS=(${out[1]})"
+mapfile -t out < <(PATH=$tmp/no-detector after "$dropin" "${stock[@]}")
+[[ ${out[1]} == "base systemd autodetect microcode modconf kms keyboard block filesystems fsck" ]] ||
+  fail "without the detector the drop-in keeps the Mac behaviour" "HOOKS=(${out[1]})"
+echo 'ok - 90..94 over the stock busybox line: one sd-vconsole, after keyboard; without the detector the chain acts as on a Mac'
 
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${IN_OMARCHY_MAC_VCONSOLE_TEST:-0} != "1" ]]; then
   echo 'ok - source checks passed; disposable initramfs tests not run (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in)'
@@ -141,6 +170,8 @@ for module in crypto_lzo crypto_lz4; do
     cp "$elf" "/lib/modules/$kver/kernel/extra/${module//_/-}.ko"
 done
 depmod "$kver" >/dev/null 2>&1 || true
+# mkinitcpio runs with PATH=/usr/bin:/bin, where omarchy ships the detector.
+install -Dm755 "$ROOT/test/helpers/omarchy-hw-platform" /usr/bin/omarchy-hw-platform
 install -Dm644 "$dropin" /etc/mkinitcpio.conf.d/94-omarchy-mac-vconsole.conf
 cat >/etc/mkinitcpio.conf <<'CONF'
 MODULES=()

@@ -11,6 +11,8 @@ late_unit=$files/usr/lib/omarchy/initcpio/omarchy-vendorfw.service
 early_sh=$files/usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.sh
 early_unit=$files/usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.service
 cryptsetup_dropin=$files/usr/lib/omarchy/initcpio/omarchy-vendorfw-cryptsetup.conf
+# The drop-ins ask omarchy-hw-platform; the stand-in answers apple-silicon.
+export PATH="$ROOT/test/helpers:$PATH"
 
 fail() {
   echo "not ok - $1" >&2
@@ -166,6 +168,19 @@ mapfile -t sourced < <(source_hid hid_apple=/lib/modules/x/hid-apple.ko)
   fail "a driver the kernel does not build is left out" "MODULES=(${sourced[1]})"
 echo 'ok - a driver the kernel does not build is left out'
 
+for platform in qualcomm generic-aarch64 generic ""; do
+  mapfile -t sourced < <(OMARCHY_TEST_HW_PLATFORM=$platform source_hid \
+    hid_apple=/lib/modules/x/hid-apple.ko usbhid=/lib/modules/x/usbhid.ko thunderbolt=/lib/modules/x/thunderbolt.ko)
+  [[ ${sourced[0]} == 0 && ${sourced[1]} == btrfs && ${sourced[2]} == unset ]] ||
+    fail "the drop-in adds no module off Apple Silicon (detector: ${platform:-empty})" "status ${sourced[0]} MODULES=(${sourced[1]})"
+done
+mapfile -t sourced < <(OMARCHY_TEST_HW_PLATFORM=fail source_hid hid_apple=/lib/modules/x/hid-apple.ko)
+[[ ${sourced[0]} != 0 ]] || fail "a detector that cannot place the machine stops the build"
+write_modinfo hid_apple=/lib/modules/x/hid-apple.ko
+modules=$(MODINFO_DIR=$tmp/modinfo KERNELVERSION=x PATH=$stub "$BASH" -c 'MODULES=(); source "$1"; printf "%s" "${MODULES[*]}"' bash "$hid_conf")
+[[ $modules == hid_apple ]] || fail "a runtime without the detector keeps the Apple modules" "MODULES=($modules)"
+echo 'ok - off Apple Silicon the drop-in adds no module; a failing detector stops it, a missing one keeps the Mac behaviour'
+
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${IN_OMARCHY_MAC_HID_TEST:-0} != "1" ]]; then
   echo 'ok - source checks passed; disposable initramfs/block tests not run (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in)'
   exit 0
@@ -272,6 +287,8 @@ install -Dm644 "$late_unit" /usr/lib/omarchy/initcpio/omarchy-vendorfw.service
 install -Dm644 "$early_unit" /usr/lib/omarchy/initcpio/omarchy-vendorfw-initrd.service
 install -Dm644 "$cryptsetup_dropin" /usr/lib/omarchy/initcpio/omarchy-vendorfw-cryptsetup.conf
 install -Dm755 "$install_hook" /usr/lib/initcpio/install/omarchy-vendorfw
+# mkinitcpio runs with PATH=/usr/bin:/bin, where omarchy ships the detector.
+install -Dm755 "$ROOT/test/helpers/omarchy-hw-platform" /usr/bin/omarchy-hw-platform
 install -Dm644 "$hid_conf" /etc/mkinitcpio.conf.d/92-omarchy-mac-hid.conf
 install -Dm644 "$files/etc/mkinitcpio.conf.d/90-omarchy-mac.conf" /etc/mkinitcpio.conf.d/90-omarchy-mac.conf
 

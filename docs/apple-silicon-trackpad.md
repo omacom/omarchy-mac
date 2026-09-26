@@ -43,7 +43,7 @@ arrives for the node — so the trackpad stays dead for the session.
 
 `install/hardware/apple/fix-asahi-hid-race.sh` writes
 `/etc/mkinitcpio.conf.d/apple_hid_modules.conf`, which adds both drivers to
-`MODULES` on kernels that build them as modules:
+`MODULES` on kernels that build them as modules. On a Mac with `omarchy-mac-boot`, its `92-omarchy-mac-hid.conf` loads them instead, and the leaf writes nothing:
 
 ```
 for _omarchy_apple_hid_module in hid_apple hid_magicmouse; do

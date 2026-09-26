@@ -15,6 +15,10 @@
 # race.
 omarchy-hw-apple-silicon || return 0
 
+# omarchy-mac-boot's 92-omarchy-mac-hid.conf early-loads both drivers along with
+# the rest of the passphrase prompt's keyboard stack, so it is the one writer.
+[[ ! -f /etc/mkinitcpio.conf.d/92-omarchy-mac-hid.conf ]] || return 0
+
 echo "Detected Apple Silicon Mac: early-loading the Apple HID drivers"
 
 sudo mkdir -p /etc/mkinitcpio.conf.d

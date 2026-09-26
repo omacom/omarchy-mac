@@ -12,6 +12,8 @@ RUNTIME_HOOK=$FILES/usr/lib/initcpio/hooks/omarchy-mac-encrypt
 ESP_UUID=4F4D-5801
 BOOT_UUID=4f4d5801-424f-4f54-8000-000000000001
 REDUCE_BYTES=$((32 * 1024 * 1024))
+# The drop-ins ask omarchy-hw-platform; the stand-in answers apple-silicon.
+export PATH="$ROOT/test/helpers:$PATH"
 
 fail() {
   echo "not ok - $1" >&2
@@ -79,6 +81,20 @@ hooks_after() {
 [[ $(hooks_after base udev autodetect keyboard keymap block encrypt filesystems fsck) == \
   "base udev autodetect keyboard keymap block encrypt filesystems fsck" ]] ||
   fail "a cryptdevice= Mac (busybox encrypt hook) keeps its HOOKS line untouched"
+for platform in qualcomm generic-aarch64 generic ""; do
+  [[ $(OMARCHY_TEST_HW_PLATFORM=$platform hooks_after base udev autodetect keyboard keymap block filesystems fsck) == \
+    "base udev autodetect keyboard keymap block filesystems fsck" ]] ||
+    fail "the drop-in leaves HOOKS alone off Apple Silicon (detector: ${platform:-empty})"
+done
+if OMARCHY_TEST_HW_PLATFORM=fail bash -c 'HOOKS=(base systemd block filesystems); source "$1"' _ "$DROPIN"; then
+  fail "a detector that cannot place the machine stops the build"
+fi
+[[ $(PATH=/nonexistent hooks_after base udev autodetect keyboard keymap block filesystems fsck) == \
+  "base systemd autodetect keyboard sd-vconsole block omarchy-mac-encrypt sd-encrypt filesystems fsck" ]] ||
+  fail "a runtime without the detector keeps the Apple hooks"
+[[ $(OMARCHY_TEST_HW_PLATFORM=generic-aarch64 hooks_after base systemd block asahi omarchy-vendorfw filesystems fsck) == \
+  "base systemd block asahi omarchy-vendorfw omarchy-mac-encrypt sd-encrypt filesystems fsck" ]] ||
+  fail "the asahi hook marks an Apple root off a Mac, as the baseline has it"
 
 grep -Fq 'cryptsetup reencrypt --encrypt' "$SCRIPT" &&
   grep -Fq -- '--reduce-device-size' "$SCRIPT" && grep -Fq -- '--device-size' "$SCRIPT" &&

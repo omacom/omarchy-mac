@@ -18,6 +18,7 @@ trap 'rm -rf "$test_tmp"' EXIT
 stub_bin="$test_tmp/bin"
 calls="$test_tmp/calls.log"
 conf="$test_tmp/etc/mkinitcpio.conf.d/apple_hid_modules.conf"
+boot_hid_conf="$test_tmp/etc/mkinitcpio.conf.d/92-omarchy-mac-hid.conf"
 ready="$test_tmp/var/lib/omarchy/apple-hid-initramfs-ready"
 mkdir -p "$stub_bin"
 
@@ -73,11 +74,13 @@ chmod +x "$stub_bin"/*
 sed -e "s|/etc/mkinitcpio.conf.d|$test_tmp/etc/mkinitcpio.conf.d|g" \
   "$leaf" >"$test_tmp/leaf.sh"
 
+# $2 is 1 on a Mac with omarchy-mac-boot's HID drop-in.
 run_leaf() {
-  local apple_silicon="${1:-1}"
+  local apple_silicon="${1:-1}" boot_hid="${2:-0}"
 
   rm -rf "$test_tmp/etc"
   : >"$calls"
+  (( ! boot_hid )) || install -D /dev/null "$boot_hid_conf"
 
   APPLE_SILICON="$apple_silicon" TEST_LOG="$calls" PATH="$stub_bin:$PATH" \
     bash -eE -c 'source "$1"' bash "$test_tmp/leaf.sh" </dev/null
@@ -93,6 +96,11 @@ run_leaf 0 >/dev/null
 [[ ! -e $conf ]] ||
   fail "a Mac without Apple Silicon is left alone" "$(cat "$conf")"
 pass "a Mac without Apple Silicon is left alone"
+
+run_leaf 1 1 >/dev/null
+[[ ! -e $conf ]] ||
+  fail "a Mac with omarchy-mac-boot's HID drop-in gets no second writer" "$(cat "$conf")"
+pass "a Mac with omarchy-mac-boot's HID drop-in gets no second writer"
 
 # mkinitcpio sources the drop-in while building the image and dies on a MODULES
 # entry it cannot find, so what the file does when a driver is missing decides
@@ -200,3 +208,14 @@ if grep -Fq 'mkinitcpio' "$calls"; then
   fail "the migration rebuilds nothing without Apple Silicon" "$(cat "$calls")"
 fi
 pass "the migration skips hardware without the race"
+
+rm -rf "$test_tmp/etc"
+rm -f "$ready"
+install -D /dev/null "$boot_hid_conf"
+run_migration >/dev/null
+[[ ! -e $conf ]] ||
+  fail "the migration leaves a Mac with omarchy-mac-boot's HID drop-in alone" "$(cat "$conf")"
+if grep -Fq 'mkinitcpio' "$calls"; then
+  fail "the migration rebuilds nothing when omarchy-mac-boot loads the drivers" "$(cat "$calls")"
+fi
+pass "the migration leaves a Mac with omarchy-mac-boot's HID drop-in alone"
