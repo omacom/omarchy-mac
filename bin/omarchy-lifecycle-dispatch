@@ -5,11 +5,11 @@
 # omarchy:requires-sudo=true
 # omarchy:hidden=true
 
-# Provisioning, factory reset and update call a fixed set of operations here.
-# A platform whose boot chain needs its own handling registers a directory of
-# root-owned entrypoints below; on every other platform each operation is a
-# no-op and the caller keeps its generic path. The contract is
-# docs/lifecycle-dispatch.md.
+# Provisioning, factory reset, update and the platform migration call a fixed
+# set of operations here. A platform whose boot chain needs its own handling
+# registers a directory of root-owned entrypoints below; on every other
+# platform each operation is a no-op and the caller keeps its generic path. The
+# contract is docs/lifecycle-dispatch.md.
 #
 # --resolve prints the entrypoint an operation would run, or nothing when it is
 # a no-op here, so a caller can choose between a platform implementation and
@@ -31,6 +31,7 @@ operations=(
   reset-prepare reset-verify reset-commit reset-rollback
   update-verify
   luks-slots
+  migrate
 )
 
 usage() {
@@ -86,9 +87,8 @@ fi
 # Apple Silicon's is omarchy-mac-boot (omacom/omarchy-mac). Provisioning and
 # factory reset have no other path on a Mac, only update-verify checks what an
 # update left in its boot chain, and its boot checks prove the kept LUKS slots
-# that luks-slots records, so those operations are required. An optional
-# operation added later is a no-op where its entrypoint is missing; moving one
-# to required also changes apple_optional in
+# that luks-slots records, so those operations are required. migrate is
+# optional. Moving an operation to required also changes apple_optional in
 # test/shell.d/lifecycle-dispatch-test.sh and the Apple column and registration
 # table in docs/lifecycle-dispatch.md.
 case $platform in

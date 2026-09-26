@@ -8,8 +8,8 @@ dispatch="$ROOT/bin/omarchy-lifecycle-dispatch"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback update-verify luks-slots)
-apple_optional=()
+operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback update-verify luks-slots migrate)
+apple_optional=(migrate)
 
 for platform in apple-silicon qualcomm generic-aarch64 generic; do
   fake_platform "$tmp/$platform" "$platform"
