@@ -1,8 +1,8 @@
 # What an Apple Silicon image enables when its builder applies presets. The
 # first-boot hand-off enables the display manager and owner provisioning once
-# their packages are installed.
+# their packages are installed. Speaker protection is omarchy-mac's alone
+# (80-omarchy-mac-audio.preset); existing enable links are left in place.
 enable omarchy-vendor-firmware.service
-enable speakersafetyd.service
 enable NetworkManager.service
 enable systemd-resolved.service
 enable systemd-timesyncd.service
