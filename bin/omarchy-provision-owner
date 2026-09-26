@@ -1105,6 +1105,13 @@ run_provisioning() {
     log_step "LUKS re-key complete"
   fi
 
+  # The recovery key the owner acknowledged can also set a new password, from
+  # a boot unlocked with it (omarchy-drive-recover).
+  if [[ -n $(luks_rekey_recovery_slot) ]]; then
+    log_step "arming the password reset with the recovery key"
+    "$OMARCHY_PATH/bin/omarchy-drive-recover" --arm || return 1
+  fi
+
   # After a factory reset on an unencrypted machine nothing above rebuilds the
   # boot entries, so entries keyed to the previous machine identity would
   # linger and go hash-stale on the first UKI rebuild. Refresh them now.
