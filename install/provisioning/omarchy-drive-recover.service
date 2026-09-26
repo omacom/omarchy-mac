@@ -6,7 +6,6 @@ Description=Omarchy password reset with the disk recovery key
 ConditionPathExists=/run/omarchy/drive-recover
 After=omarchy-drive-recover-check.service systemd-user-sessions.service
 Before=display-manager.service getty@tty1.service
-Conflicts=getty@tty1.service
 
 [Service]
 Type=oneshot

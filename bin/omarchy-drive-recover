@@ -225,6 +225,21 @@ finish_accounts() {
   rm -f "$REKEY_STATE"
 }
 
+# Whether $1, other than the recovery key, finishes a reset that stopped part
+# way: the password the disk holds beside the recovery key alone, or once the
+# accounts phase began, in the slot it recorded. Sets finish_slot.
+finishes() {
+  local slot
+  slot=$(luks_slot_for "$1" "$root_drive")
+  [[ -n $slot && $slot != "$journal_recovery" ]] || return 1
+  if [[ $phase == "accounts" ]]; then
+    [[ $slot == "$journal_slot" ]] || return 1
+  else
+    [[ $(sorted_slots) == "$(printf '%s\n' "$journal_recovery" "$slot" | sort -n)" ]] || return 1
+  fi
+  finish_slot=$slot
+}
+
 stopped() {
   say "The password reset stopped: $1"
   say "Restart and unlock the disk with the recovery key to finish it."
@@ -233,18 +248,18 @@ stopped() {
 }
 
 run_reset() {
-  local phase journal_slot password slot recovery="" recovery_slot="" finish="" typed tries=0 new_password status=0
+  local phase="" journal_slot="" journal_recovery="" password slot recovery="" recovery_slot="" finish="" typed tries=0 new_password status=0
   local -a cached=()
 
   mkdir -p "$RUN_DIR" && exec {lock_fd}>"$RUN_DIR/drive-recover.lock" && flock -n "$lock_fd" || exit 0
   root_drive=$(root_luks_device) && [[ -n $root_drive ]] || stopped "could not tell which drive holds the system."
   root_uuid=$(lsblk -dno UUID "$root_drive") && [[ -n $root_uuid ]] || stopped "could not read the UUID of $root_drive."
 
-  phase=""
   if journal_pending; then
     phase=$(rekey_state_get phase)
     journal_slot=$(rekey_state_get slot)
-    if [[ $phase == "accounts" && ! $journal_slot =~ ^[0-9]+$ ]]; then
+    journal_recovery=$(rekey_state_get recovery_slot)
+    if [[ ! $journal_recovery =~ ^[0-9]+$ ]] || [[ $phase == "accounts" && ! $journal_slot =~ ^[0-9]+$ ]]; then
       stopped "$REKEY_STATE is unreadable."
     fi
   fi
@@ -257,7 +272,7 @@ run_reset() {
     if luks_recovery_passphrase "$password"; then
       slot=$(luks_slot_for "$password" "$root_drive")
       [[ -n $slot ]] && recovery=$password recovery_slot=$slot
-    elif [[ $phase == "accounts" && $(luks_slot_for "$password" "$root_drive") == "$journal_slot" ]]; then
+    elif [[ -n $phase ]] && finishes "$password"; then
       finish=$password
     fi
   done
@@ -269,17 +284,16 @@ run_reset() {
     clear_screen
     say "The last password reset with the recovery key stopped part way."
     while [[ -z $recovery && -z $finish ]]; do
-      if [[ $phase == "accounts" ]]; then
-        typed=$(gum input --password --header "Recovery key, or the new password you chose (empty to skip)") || exit 0
-      else
-        typed=$(gum input --password --header "Recovery key (empty to skip)") || exit 0
-      fi
+      typed=$(gum input --password --header "Recovery key, or the new password you chose (empty to skip)") || exit 0
       [[ -n $typed ]] || exit 0
-      slot=$(luks_slot_for "$typed" "$root_drive")
-      if [[ -n $slot ]] && luks_recovery_passphrase "$typed"; then
-        recovery=$typed recovery_slot=$slot
-      elif [[ -n $slot && $phase == "accounts" && $slot == "$journal_slot" ]]; then
+      if luks_recovery_passphrase "$typed"; then
+        slot=$(luks_slot_for "$typed" "$root_drive")
+        [[ -n $slot ]] && recovery=$typed recovery_slot=$slot
+      elif finishes "$typed"; then
         finish=$typed
+      fi
+      if [[ -n $recovery || -n $finish ]]; then
+        break
       elif (( ++tries >= 3 )); then
         stopped "that does not finish it."
       else
@@ -294,8 +308,11 @@ run_reset() {
   if [[ -n $finish ]]; then
     console_font
     clear_screen
-    say "Finishing the password reset: $user and root take the disk's new password."
-    finish_accounts "$finish" "$journal_slot" || stopped "the login and root passwords did not change."
+    say "Finishing the password reset: $user and root take the password that unlocked the disk."
+    if [[ $phase == "luks" ]]; then
+      rekey_state_put slot "$finish_slot" phase accounts || stopped "could not record the finished disk change."
+    fi
+    finish_accounts "$finish" "$finish_slot" || stopped "the login and root passwords did not change."
     say "Done. The disk, $user and root use the new password; the recovery key still unlocks the disk."
     pause
     exit 0

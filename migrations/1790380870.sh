@@ -11,4 +11,14 @@ root_source=$(findmnt -no SOURCE /)
 ancestry=$(lsblk -nsrpo FSTYPE "${root_source%%[*}")
 grep -qx crypto_LUKS <<<"$ancestry" || exit 0
 
-sudo omarchy-drive-recover --arm
+# Another user's run may have armed it already; then this one needs no sudo.
+unit_dir=${OMARCHY_SYSTEMD_UNIT_DIR:-/etc/systemd/system}
+armed=1
+for unit in omarchy-drive-recover-check.service omarchy-drive-recover.service; do
+  if ! cmp -s "$OMARCHY_PATH/install/provisioning/$unit" "$unit_dir/$unit" || [[ ! -L $unit_dir/multi-user.target.wants/$unit ]]; then
+    armed=0
+  fi
+done
+if (( ! armed )); then
+  sudo omarchy-drive-recover --arm
+fi

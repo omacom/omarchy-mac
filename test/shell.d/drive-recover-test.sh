@@ -63,6 +63,10 @@ if [[ $1 == "-dno" && $2 == "UUID" ]]; then
   cat "$3.uuid"
   exit
 fi
+if [[ $* == "-nsrpo FSTYPE /dev/mapper/root" ]]; then
+  awk '{ print $3 }' "$TEST_TMP/root-ancestry"
+  exit
+fi
 [[ $* == "-nsrpo NAME,TYPE,FSTYPE /dev/mapper/root" ]] || exit 98
 cat "$TEST_TMP/root-ancestry"
 SH
@@ -555,12 +559,68 @@ typed_at_boot
 attempt 0 ""
 [[ -e $journal && $(account owner) == "$old_password" ]] || fail "skipping the pending reset keeps the journal and the accounts"
 said "stopped part way"
-attempt 0 "$wrong_recovery" "$old_password" "$new_password" || true
+attempt 0 "$wrong_recovery" "not-a-key" "$new_password" || true
 said "That does not finish the reset."
 [[ -e $journal && $(account owner) == "$old_password" ]] || fail "keys that do not finish the reset change nothing"
 attempt 0 "$recovery_key" "$new_password" "$new_password" || fail "the recovery key typed at the reset finishes it" "$(cat "$tmp/output")"
 reset_to "recovery key typed at the reset" "$new_password"
 pass "a pending reset asks for the recovery key on a boot unlocked otherwise, and refuses keys that do not finish it"
+
+# Stopped before the new password was added, then unlocked with the password
+# the owner remembered after all: it is the disk's only key beside the
+# recovery key, so the reset ends there with the accounts on it.
+for run_spec in "fake x86" "fake apple"; do
+  use $run_spec
+  fixture
+  typed_at_boot "$recovery_key"
+  attempt 3 "$new_password" "$new_password" || true
+  grep -qx 'phase=luks' "$journal" && [[ -z $(opens "$new_password") ]] || fail "$platform: killed before the add" "$(cat "$tmp/trace")"
+  typed_at_boot "$old_password"
+  : >"$tmp/prompts"
+  attempt 0 || fail "$platform: a boot unlocked with the remembered password ends the reset" "$(cat "$tmp/output")"
+  [[ ! -s $tmp/prompts && ! -e $journal ]] || fail "$platform: ending the reset asks nothing and drops the journal" "$(cat "$tmp/prompts")"
+  [[ $(opens "$old_password") == "0" && $(opens "$recovery_key") == "$recovery_slot" && $(slot_count) == 2 ]] ||
+    fail "$platform: the disk keeps the remembered password and the recovery key"
+  [[ $(account owner) == "$old_password" && $(account root) == "$old_password" ]] || fail "$platform: the accounts keep the remembered password"
+  if [[ $platform == "apple" ]]; then
+    [[ $(tail -n 1 "$tmp/slot-record") == "owner=0 recovery=$recovery_slot" ]] || fail "apple: the kept slots are recorded" "$(cat "$tmp/slot-record")"
+  fi
+done
+pass "a reset stopped before the disk changed ends on a boot unlocked with the remembered password"
+
+# Stopped after the old key went but before the accounts phase: the new
+# password and the recovery key are the disk's only keys, and a boot unlocked
+# with the new password finishes the reset without asking.
+use fake x86
+fixture
+typed_at_boot "$recovery_key"
+attempt 0 "$new_password" "$new_password"
+killed_step=$(grep -n 'slot 0 killed' "$tmp/trace" | head -1 | cut -d: -f1)
+fixture
+typed_at_boot "$recovery_key"
+attempt "$killed_step" "$new_password" "$new_password" || true
+grep -qx 'phase=luks' "$journal" && [[ -z $(opens "$old_password") ]] || fail "killed after the old key went, in phase luks" "$(cat "$journal" "$tmp/trace")"
+typed_at_boot "$new_password"
+: >"$tmp/prompts"
+attempt 0 || fail "a boot unlocked with the new password finishes phase luks" "$(cat "$tmp/output")"
+[[ ! -s $tmp/prompts ]] || fail "finishing phase luks with the new password asks nothing" "$(cat "$tmp/prompts")"
+reset_to "phase luks finished from the new password" "$new_password"
+pass "once the new password and the recovery key are the disk's only keys, unlocking with the new password finishes the reset"
+
+fixture
+mkdir -p "${journal%/*}"
+printf 'uuid=uuid-system
+recovery_slot=
+user=owner
+slot=
+phase=luks
+' >"$journal"
+typed_at_boot "$recovery_key"
+if attempt 0 "$new_password" "$new_password"; then fail "a journal without its recovery slot stops the reset"; fi
+said "is unreadable"
+[[ -e $journal ]] || fail "an unreadable journal is kept for the owner to look at"
+[[ $(opens "$old_password") == "0" && $(account owner) == "$old_password" ]] || fail "an unreadable journal changes nothing"
+pass "a journal without its recovery slot is refused rather than trusted"
 
 fixture
 typed_at_boot "$recovery_key"
@@ -685,3 +745,35 @@ unset TEST_TRACE
 ! grep -Fq -e "$recovery_key" -e "$new_password" "$tmp/output" || fail "tracing never shows a key" "$(cat "$tmp/output")"
 reset_to "traced" "$new_password"
 pass "bash -x does not trace keys"
+
+# ── the migration that arms Macs set up before ───────────────────────────────
+migration=$ROOT/migrations/1790380870.sh
+cat >"$tmp/bin/sudo" <<'SH'
+#!/bin/bash
+printf 'sudo %s\n' "$*" >>"$TEST_TMP/sudo-calls"
+exec "$@"
+SH
+chmod +x "$tmp/bin/sudo"
+
+run_migration() {
+  : >"$tmp/sudo-calls"
+  bash -euo pipefail "$migration" >/dev/null 2>&1
+}
+
+use fake x86
+fixture
+run_migration || fail "the migration succeeds on x86"
+[[ ! -s $tmp/sudo-calls && ! -e $tmp/units/omarchy-drive-recover.service ]] || fail "x86 arms nothing and runs no sudo"
+use fake apple
+fixture
+printf '/dev/mapper/root part btrfs\n/dev/fake-disk disk \n' >"$tmp/root-ancestry"
+run_migration || fail "the migration succeeds on a plain Mac"
+[[ ! -s $tmp/sudo-calls && ! -e $tmp/units/omarchy-drive-recover.service ]] || fail "a plain Mac arms nothing and runs no sudo"
+fixture
+run_migration || fail "the migration arms an encrypted Mac"
+grep -qx 'sudo omarchy-drive-recover --arm' "$tmp/sudo-calls" || fail "an encrypted Mac is armed through sudo" "$(cat "$tmp/sudo-calls")"
+[[ -L $tmp/units/multi-user.target.wants/omarchy-drive-recover-check.service && -L $tmp/units/multi-user.target.wants/omarchy-drive-recover.service ]] ||
+  fail "the migration enables both units"
+run_migration || fail "the migration runs again for another user"
+[[ ! -s $tmp/sudo-calls ]] || fail "an armed Mac needs no sudo for the next user" "$(cat "$tmp/sudo-calls")"
+pass "the migration arms an encrypted Mac once, and does nothing on x86, a plain Mac or for a second user"
