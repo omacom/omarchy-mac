@@ -561,6 +561,33 @@ fi
 grep -Fq 'journal and key are unreachable' "$case_dir/out" || fail "the unreachable journal is named"
 echo 'ok - a LUKS root without its Boot partition stops with a clear message'
 drop_root_disk
+
+# A legacy Mac the quattro guided installer encrypted, migrated to sd-encrypt:
+# it has neither the image's ESP nor its Boot partition, and its passphrase
+# unlocks the root. The unit leaves it alone and never touches the header.
+umount "$esp_mnt" "$boot_mnt"
+detach_loop "$ESP_LOOP"
+detach_loop "$BOOT_LOOP"
+make_root_disk "$tmp/legacy-luks.img" 128
+printf 'legacy-passphrase' >"$tmp/legacy.pass"
+cryptsetup luksFormat --type luks2 --batch-mode --pbkdf pbkdf2 --pbkdf-force-iterations 1000 --key-file "$tmp/legacy.pass" "$ROOT_PART"
+legacy_header=$(dd if="$ROOT_PART" bs=1M count=16 status=none | sha256sum)
+set_cmdline "root=UUID=0a1b2c3d-4e5f-4061-8a9b-c0d1e2f3a4b5 rw rootflags=subvol=@ rd.luks.name=$(cryptsetup luksUUID "$ROOT_PART")=root loglevel=3 quiet splash"
+: >"$tmp/cryptsetup.log"
+OMARCHY_MAC_ENCRYPT_SYSTEMD_RUN="$tmp/systemd" bash "$SCRIPT" >"$case_dir/out" 2>&1 ||
+  fail "a migrated legacy Mac's LUKS root without the image's partitions must boot on to its passphrase prompt"
+grep -Fq "neither the image's ESP nor its Boot partition; leaving unlock to sd-encrypt" "$case_dir/out" || fail "the migrated legacy Mac is left to sd-encrypt"
+! grep -v '^cryptsetup isLuks ' "$tmp/cryptsetup.log" && [[ $(dd if="$ROOT_PART" bs=1M count=16 status=none | sha256sum) == "$legacy_header" ]] ||
+  fail "the migrated legacy Mac's LUKS header is never touched"
+cryptsetup open --test-passphrase --key-file "$tmp/legacy.pass" "$ROOT_PART" || fail "its passphrase still opens it"
+echo 'ok - a migrated legacy LUKS root without the image ESP and Boot is left to sd-encrypt'
+drop_root_disk
+attach_loop "$tmp/esp.img"
+ESP_LOOP=$ATTACHED_LOOP
+mount "$ESP_LOOP" "$esp_mnt"
+attach_loop "$tmp/boot.img"
+BOOT_LOOP=$ATTACHED_LOOP
+mount "$BOOT_LOOP" "$boot_mnt"
 make_root_disk "$tmp/noboot.img" 256
 mkdir -p "$tmp/mnt-noboot"
 mount "$ROOT_PART" "$tmp/mnt-noboot"
