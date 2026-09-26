@@ -24,7 +24,7 @@ fail() {
 tmp=$(mktemp -d)
 trap 'for home in signer other subkey-home; do gpgconf --homedir "$tmp/$home" --kill gpg-agent 2>/dev/null; done; rm -rf "$tmp"' EXIT
 stubs=$ROOT/test/fixtures/migrate/bin
-steps=(preflight backup keyring prefetch repositories transaction boot-chain loader reboot retire)
+steps=(preflight backup keyring prefetch repositories transaction boot-chain loader defaults reboot retire)
 official=40DFB630FF42BCFFB047046CF0134EE680CAC571
 retired=FBD6874D423C418DDB6D143EECE19CDDE306DBD2
 
@@ -399,7 +399,7 @@ for step in "${steps[@]}"; do
   interrupt during "$step"
 done
 pass "a kill -9 after any step's work but before its record resumes to the same end, with one transaction"
-for step in backup keyring prefetch repositories transaction boot-chain loader loader-leaf reboot retire; do
+for step in backup keyring prefetch repositories transaction boot-chain loader loader-leaf defaults reboot retire; do
   interrupt mid "$step"
 done
 pass "a kill -9 in the middle of any step resumes to the same end; pacman killed before its hooks runs the transaction again"
@@ -664,6 +664,93 @@ rm "$F/systemctl-fail"
 output=$(migrate run 2>&1) || fail "the retry reaches the reboot" "$output"
 [[ $(grep -c "^systemctl enable omarchy-mac-migrate-verify.service" "$F/boot.log") == 2 ]] || fail "each run enables the check again"
 pass "the post-reboot check is enabled on every run, and a failure to enable it is not ignored"
+
+# --- A fresh install's defaults ----------------------------------------------------
+
+user_unit() { # name target
+  mkdir -p "$R/usr/lib/systemd/user"
+  printf '[Unit]\nDescription=%s\n\n[Install]\nWantedBy=%s\n' "$1" "$2" >"$R/usr/lib/systemd/user/$1"
+}
+
+# Two users: one who has used Omarchy, with a unit enabled, one masked and one
+# installed and turned off; one account Omarchy never ran for.
+new_fixture defaults
+printf 'root:x:0:0::/root:/bin/bash\ntester:x:1000:1000::/home/tester:/bin/bash\nguest:x:1001:1001::/home/guest:/bin/bash\n' >"$R/etc/passwd"
+home=$R/home/tester
+mkdir -p "$home/.local/state/omarchy" "$home/.config/systemd/user/graphical-session.target.wants" "$R/home/guest"
+for unit in bt-agent.service omarchy-sleep-lock.service omarchy-migrate-notify.service omarchy-fcitx5.service; do
+  user_unit "$unit" graphical-session.target
+done
+user_unit omarchy-recover-internal-monitor.service graphical-session-pre.target
+ln -s /usr/lib/systemd/user/bt-agent.service "$home/.config/systemd/user/graphical-session.target.wants/bt-agent.service"
+ln -s /dev/null "$home/.config/systemd/user/omarchy-fcitx5.service"
+echo "zram-generator 1.2-1" >>"$R/var/lib/pacman/local/packages"
+echo "avd-fw 0.1-1" >>"$F/repos/asahi-alarm/asahi-alarm.db"
+echo "libva-v4l2_request-avd 1.0-1" >>"$F/repos/omarchy/omarchy.db"
+echo "obs-studio 32.0-1" >>"$F/repos/extra/extra.db"
+kill_after preflight
+# The target's omarchy brings units this Mac never had.
+user_unit omarchy-brightness-keyboard-auto.service graphical-session.target
+user_unit omarchy-crash-watch.service graphical-session.target
+output=$(env OMARCHY_MAC_MIGRATE_KILL_MID=defaults OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+  "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "the run is killed in the middle of its defaults"
+grep -q "Installing the default packages a fresh install has: avd-fw libva-v4l2_request-avd" <<<"$output" || fail "the missing Apple defaults are named" "$output"
+grep -q "No repository carries these default packages, so they stay missing: .*vulkan-asahi" <<<"$output" ||
+  fail "defaults no repository carries are named, not fatal" "$output"
+finish
+[[ $(grep -c '^transaction avd-fw libva-v4l2_request-avd$' "$F/pacman.log") == 1 ]] ||
+  fail "the missing Apple defaults are installed once, across a resumed step" "$(cat "$F/pacman.log")"
+grep -q "^avd-fw 0.1-1$" "$R/var/lib/pacman/local/packages" && grep -q "^libva-v4l2_request-avd 1.0-1$" "$R/var/lib/pacman/local/packages" ||
+  fail "the Apple defaults end installed" "$(cat "$R/var/lib/pacman/local/packages")"
+! grep -q "obs-studio\|zram-generator" <(grep '^transaction' "$F/pacman.log") || fail "the base list's applications and installed defaults are left alone"
+grep -q "^omarchy-mac-setup-system" "$F/boot.log" || fail "the Mac services a fresh install enables are set up"
+[[ $(grep -E '^(limine-boot activate|boot-check pending --boot-chain linux-aurora|omarchy-mac-setup-system)' "$F/boot.log" | cut -d' ' -f1-2 | tr '\n' '|') == \
+  "boot-check pending|limine-boot activate|boot-check pending|boot-check pending|omarchy-mac-setup-system |" ]] ||
+  fail "the boot files are checked again after the default packages' hooks" "$(cat "$F/boot.log")"
+[[ $(grep -n '' "$F/boot.log" | grep -E 'omarchy-mac-setup-system|systemctl enable omarchy-mac-migrate-verify' | cut -d: -f2- | head -n 2 | cut -d' ' -f1-2 | tr '\n' '|') == \
+  "omarchy-mac-setup-system |systemctl enable|" ]] || fail "the defaults come before the reboot" "$(cat "$F/boot.log")"
+wants=$home/.config/systemd/user/graphical-session.target.wants
+for unit in omarchy-brightness-keyboard-auto.service omarchy-crash-watch.service; do
+  [[ $(readlink "$wants/$unit") == "/usr/lib/systemd/user/$unit" ]] || fail "a unit new to this Mac is enabled as first run does: $unit" "$(ls -la "$wants")"
+done
+[[ ! -e $wants/omarchy-sleep-lock.service && ! -L $wants/omarchy-sleep-lock.service ]] || fail "a unit the Mac had and the user turned off stays off"
+[[ $(readlink "$home/.config/systemd/user/omarchy-fcitx5.service") == /dev/null && ! -L $wants/omarchy-fcitx5.service ]] || fail "a masked unit stays masked"
+[[ $(readlink "$wants/bt-agent.service") == /usr/lib/systemd/user/bt-agent.service ]] || fail "an enabled unit is left as it is"
+[[ ! -e $R/home/guest/.config ]] || fail "an account Omarchy never ran for is left alone"
+[[ $(grep -c "^omarchy-mac-setup-user HOME=$home$" "$F/boot.log") -ge 1 ]] && ! grep -q "HOME=$R/home/guest\|HOME=$R/root" "$F/boot.log" ||
+  fail "the Mac user setup runs for each Omarchy user only" "$(grep setup-user "$F/boot.log")"
+pass "a migrated Mac gains the Apple defaults, the Mac services and the user units a fresh install has, keeping every choice made"
+
+new_fixture defaults-failing
+echo "avd-fw 0.1-1" >>"$F/repos/asahi-alarm/asahi-alarm.db"
+: >"$F/omarchy-mac-setup-system-fail"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 1 )) && grep -q "omarchy-mac-setup-system could not set up the Mac's services" <<<"$output" || fail "a failed system setup fails the step" "$output"
+[[ $(migrate status) == *"failed at defaults"* ]] || fail "status names the failed defaults" "$(migrate status)"
+! grep -q "^systemctl enable omarchy-mac-migrate-verify" "$F/boot.log" || fail "the reboot waits for the defaults"
+rm "$F/omarchy-mac-setup-system-fail"
+finish
+[[ $(grep -c '^transaction avd-fw$' "$F/pacman.log") == 1 ]] || fail "the retry installs nothing twice" "$(cat "$F/pacman.log")"
+pass "a failed defaults step stops before the reboot and is retried"
+
+new_fixture defaults-old-plan
+printf 'tester:x:1000:1000::/home/tester:/bin/bash\n' >"$R/etc/passwd"
+home=$R/home/tester
+mkdir -p "$home/.local/state/omarchy"
+kill_after preflight
+rm "$(state_dir)/plan/user-units"
+user_unit omarchy-brightness-keyboard-auto.service graphical-session.target
+finish
+[[ ! -e $home/.config ]] || fail "a plan that predates the unit record enables no user unit" "$(find "$home/.config")"
+grep -q "^omarchy-mac-setup-user HOME=$home$" "$F/boot.log" || fail "the Mac user setup still runs"
+pass "a plan frozen before the unit record enables no user unit"
+
+first_run_units=$(sed -n '/systemctl --user enable --now/,/[^\\]$/p' "$ROOT/../../../install/user/first-run/enable-user-units.sh" | grep -o '[a-z0-9-]*\.service' | xargs)
+engine_units=$(sed -n 's/^fresh_user_units="\(.*\)"$/\1/p' "$ROOT/lib/migrate-engine.sh")
+[[ -n $first_run_units && $first_run_units == "$engine_units" ]] ||
+  fail "the migration enables the user units first run enables" "first run: $first_run_units; migration: $engine_units"
+pass "the migration's user units are first run's"
 
 # --- A tester already on Aurora and Limine ------------------------------------
 

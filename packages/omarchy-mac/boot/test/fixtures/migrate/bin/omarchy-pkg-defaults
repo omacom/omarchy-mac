@@ -1,0 +1,4 @@
+#!/bin/bash
+# Stands in for the target omarchy's command: this repository's own lists.
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../../../../.." && pwd)
+OMARCHY_PATH=$repo exec "$repo/bin/omarchy-pkg-defaults" "$@"
