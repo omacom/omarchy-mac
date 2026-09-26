@@ -41,7 +41,9 @@ grep -Fq 'After=systemd-udevd.service systemd-udev-trigger.service systemd-udev-
 grep -Fxq 'StandardOutput=kmsg' "$UNIT" && grep -Fxq 'StandardError=kmsg' "$UNIT" &&
   grep -Fxq 'SyslogLevel=notice' "$UNIT" && ! grep -Eq '^(TTYPath|StandardInput)=' "$UNIT" ||
   fail "the initrd unit logs to the journal and kmsg (serial harness), never the console"
-for binary in chroot grep mv cat mkdir chmod readlink stat sync date; do
+grep -Fxq 'After=plymouth-start.service' "$UNIT" ||
+  fail "the initrd unit starts once the splash it reports progress on is up"
+for binary in chroot grep mv cat mkdir chmod readlink stat sync date sleep; do
   grep -Eq "\b$binary\b" "$INSTALL" || fail "the install hook adds $binary (busybox is not guaranteed)"
 done
 ! grep -Eq 'blockdev|dmsetup' "$INSTALL" || fail "the install hook adds nothing the script does not run"
@@ -87,9 +89,12 @@ grep -Fq 'btrfs filesystem usage -b' "$SCRIPT" || fail "extent comes from btrfs 
 ! grep -Fq 'part - fs' "$SCRIPT" || fail "shrink must not skip when spare partition space exists"
 grep -Fq 'btrfs filesystem resize "-$REDUCE"' "$SCRIPT" || fail "shrink is always -32M"
 grep -Fq 'update-grub' "$SCRIPT" && grep -Fq '/usr/bin/mkinitcpio -P' "$SCRIPT" ||
-  fail "the script regenerates GRUB the way the fresh installer does, then mkinitcpio -P"
-grep -Fq 'limine.enabled' "$SCRIPT" && grep -Fq 'omarchy-mac-boot-update' "$SCRIPT" ||
-  fail "the script rebuilds the Limine UKI on a Limine Mac (limine.enabled + omarchy-mac-boot-update)"
+  fail "a GRUB Mac regenerates GRUB the way the fresh installer does, then mkinitcpio -P"
+grep -Fq 'limine.enabled' "$SCRIPT" &&
+  grep -Fq 'OMARCHY_MAC_BOOT_UPDATE_GRUB=0 chroot "$ROOT_MNT" omarchy-mac-boot-update' "$SCRIPT" ||
+  fail "a Limine Mac only rebuilds its UKI (limine.enabled + omarchy-mac-boot-update without GRUB)"
+grep -Fq -- '--progress-json' "$SCRIPT" && grep -Fq 'omarchy_mac_encrypt_follow_reencrypt' "$SCRIPT" ||
+  fail "the reencrypt progress is read from cryptsetup --progress-json"
 GATE_HOOK=$FILES/etc/boot/hooks/pre.d/05-omarchy-mac-limine-gate
 GATE_HELPER=$FILES/usr/lib/omarchy/mac-boot/limine-ready
 [[ -x $GATE_HOOK && -x $GATE_HELPER ]] && grep -Fq '/usr/lib/omarchy/mac-boot/limine-ready' "$GATE_HOOK" &&
@@ -162,6 +167,58 @@ if command -v systemd-analyze >/dev/null; then
     echo 'ok - systemd-analyze cannot verify units here; unit verification not run'
   fi
 fi
+
+# ── splash progress ────────────────────────────────────────────────────────
+# A stub plymouth records what the splash is told; the follower turns
+# cryptsetup's JSON progress into the bar and the line under it.
+progress_tmp=$(mktemp -d)
+mkdir -p "$progress_tmp/bin"
+cat >"$progress_tmp/bin/plymouth" <<'STUB'
+#!/bin/bash
+if [[ $1 == --ping ]]; then
+  [[ ! -e $PROGRESS_TMP/no-splash ]]
+  exit
+fi
+printf '%s\n' "$*" >>"$PROGRESS_TMP/plymouth.log"
+STUB
+printf '#!/bin/bash\n' >"$progress_tmp/bin/sleep"
+chmod +x "$progress_tmp/bin/plymouth" "$progress_tmp/bin/sleep"
+with_splash() {
+  PROGRESS_TMP=$progress_tmp PATH="$progress_tmp/bin:$PATH" OMARCHY_MAC_ENCRYPT_PROGRESS_FILE="$progress_tmp/progress" \
+    bash -c 'set -euo pipefail; source "$1"; PROGRESS_CREEP=""; eval "$2"' bash "$SCRIPT" "$1"
+}
+json() {
+  printf '{"device":"/dev/nvme0n1p6","device_bytes":"%s","device_size":"%s","speed":"659554304","eta_ms":"1","time_ms":"2"}\n' "$1" "$2"
+}
+follow_out=$( { json 0 1000; json 424 1000; json 425 1000; json 430 1000; echo 'a line that is not progress'; json 1000 1000; } |
+  with_splash omarchy_mac_encrypt_follow_reencrypt) || fail "the progress follower never fails the pipeline"
+[[ $follow_out == 'a line that is not progress' ]] ||
+  fail "JSON progress is consumed and other cryptsetup output passes through: $follow_out"
+[[ $(cat "$progress_tmp/plymouth.log") == $'system-update --progress=0\nsystem-update --progress=16\nsystem-update --progress=17\nsystem-update --progress=40' ]] ||
+  fail "the encryption moves the bar across 0-40% and leaves the line alone: $(cat "$progress_tmp/plymouth.log")"
+[[ $(<"$progress_tmp/progress") == 40 ]] || fail "the progress file keeps the last value for first boot"
+rm -f "$progress_tmp/plymouth.log"
+: >"$progress_tmp/no-splash"
+{ json 500 1000; json 1000 1000; } | with_splash omarchy_mac_encrypt_follow_reencrypt >/dev/null ||
+  fail "the follower runs without a splash"
+with_splash 'omarchy_mac_encrypt_progress_creep 42 52; omarchy_mac_encrypt_progress_creep_stop' ||
+  fail "the creep is a no-op without a splash"
+[[ ! -e $progress_tmp/plymouth.log ]] || fail "without a running splash nothing is sent to it"
+rm -f "$progress_tmp/no-splash"
+# A reader that stops early would close the pipe on cryptsetup mid-conversion.
+{
+  printf 'garbage {"device_bytes":"x"}\n'
+  json 5 0
+  json 1 3
+  for _ in $(seq 2000); do json 1 2; done
+} | with_splash omarchy_mac_encrypt_follow_reencrypt >/dev/null || fail "the follower reads to the end whatever it is given"
+rm -f "$progress_tmp/plymouth.log"
+with_splash 'omarchy_mac_encrypt_progress_creep 42 52; wait "$PROGRESS_CREEP"; omarchy_mac_encrypt_progress_creep_stop' ||
+  fail "the creep runs and stops"
+[[ $(sed -n 's/^system-update --progress=//p' "$progress_tmp/plymouth.log" | tr '\n' ' ') == '45 47 49 50 51 52 ' ]] ||
+  fail "the creep eases the bar to the end of its band: $(tr '\n' ' ' <"$progress_tmp/plymouth.log")"
+rm -rf "$progress_tmp"
+echo 'ok - cryptsetup JSON progress drives the splash bar and its line; nothing is sent without a splash'
 
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${OMARCHY_MAC_ENCRYPT_TEST_INNER:-0} != "1" ]]; then
   echo 'ok - source checks passed; disposable initramfs/block tests not run (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in)'
@@ -431,7 +488,9 @@ STUB
   printf 'KERNEL_CMDLINE[default]=""\n' >"$mnt/@/etc/default/limine"
   cat >"$mnt/@/usr/bin/omarchy-mac-boot-update" <<'STUB'
 #!/bin/bash
-echo "omarchy-mac-boot-update $*" >>/var/lib/omarchy/mac-first-boot/boot.log
+echo "omarchy-mac-boot-update grub=${OMARCHY_MAC_BOOT_UPDATE_GRUB:-} $*" >>/var/lib/omarchy/mac-first-boot/boot.log
+# limine-update writes the UKI and limine.conf to the ESP
+: >/boot/efi/EFI/BOOT/boot-update.probe
 STUB
   chmod 755 "$mnt/@/usr/bin/update-grub" "$mnt/@/usr/bin/mkinitcpio" "$mnt/@/usr/bin/omarchy-mac-boot-update"
 }
@@ -452,7 +511,14 @@ fi
 exec "$REAL_CRYPTSETUP" "\$@"
 EOF
 chmod +x "$tmp/bin/cryptsetup"
+cat >"$tmp/bin/plymouth" <<EOF
+#!/bin/bash
+[[ \$1 != --ping ]] || exit 0
+printf '%s\\n' "\$*" >>"$tmp/plymouth.log"
+EOF
+chmod +x "$tmp/bin/plymouth"
 export PATH="$tmp/bin:$PATH"
+export OMARCHY_MAC_ENCRYPT_PROGRESS_FILE="$tmp/progress"
 : >"$tmp/cryptsetup.log"
 
 export OMARCHY_MAC_ENCRYPT_CMDLINE="$tmp/cmdline"
@@ -802,18 +868,18 @@ fs_before=$(btrfs filesystem usage -b "$tmp/mnt-root" | awk '/Device size:/ { pr
 umount "$tmp/mnt-root"
 rm -f "$esp_mnt/omarchy/install.conf" "$boot_mnt/omarchy/luks-key" "$boot_mnt/omarchy/encrypt.state"
 # absent install.conf ⇒ encrypt=1
-# The unit reads the ESP read-only; update-grub must still be able to write it.
-rm -f "$esp_mnt/EFI/BOOT/update-grub.probe"
+# The unit reads the ESP read-only; the Limine rebuild must still be able to write it.
+rm -f "$esp_mnt/EFI/BOOT/boot-update.probe" "$tmp/plymouth.log" "$tmp/progress"
 mount -o remount,ro "$esp_mnt"
 start=$(date +%s)
 run_script || fail "plain to LUKS conversion"
 end=$(date +%s)
-[[ -e $esp_mnt/EFI/BOOT/update-grub.probe ]] ||
-  fail "update-grub could write BOOTAA64.EFI on the ESP the unit mounted read-only"
+[[ -e $esp_mnt/EFI/BOOT/boot-update.probe ]] ||
+  fail "the Limine rebuild could write the ESP the unit mounted read-only"
 findmnt -no OPTIONS "$esp_mnt" | grep -Eq '(^|,)ro(,|$)' ||
   fail "the ESP is read-only again after the boot configuration"
 mount -o remount,rw "$esp_mnt"
-rm -f "$esp_mnt/EFI/BOOT/update-grub.probe"
+rm -f "$esp_mnt/EFI/BOOT/boot-update.probe"
 [[ $(blkid -o value -s TYPE "$ROOT_PART") == crypto_LUKS ]] || fail "the partition is now crypto_LUKS"
 elapsed=$((end - start))
 [[ -e /dev/mapper/root ]] || fail "the mapping is left open as root"
@@ -836,12 +902,18 @@ grep -Fq "rd.luks.name=${luks_uuid}=root" "$tmp/mnt-mapped/etc/default/grub" &&
   ! grep -Fq 'root=/dev/mapper/root' "$tmp/mnt-mapped/etc/default/grub" &&
   grep -Fq "rd.luks.key=${luks_uuid}=/omarchy/luks-key:UUID=$BOOT_UUID" "$tmp/mnt-mapped/etc/default/grub" ||
   fail "GRUB_CMDLINE_LINUX names the LUKS mapping and the Boot key and leaves root= to grub-mkconfig"
-grep -Fxq 'update-grub ' "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log" ||
-  fail "update-grub ran inside the opened root"
-grep -Fxq 'mkinitcpio -P' "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log" ||
-  fail "mkinitcpio -P ran inside the opened root"
-grep -Fxq 'omarchy-mac-boot-update ' "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log" ||
-  fail "omarchy-mac-boot-update ran inside the opened root of a Limine Mac, after mkinitcpio"
+[[ $(cat "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log") == 'omarchy-mac-boot-update grub=0 ' ]] ||
+  fail "a Limine Mac only rebuilds its UKI inside the opened root: no GRUB, no separate mkinitcpio -P ($(cat "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log"))"
+progress=$(sed -n 's/^system-update --progress=//p' "$tmp/plymouth.log" | tr '\n' ' ')
+[[ $progress == "0 "* && $progress == *" 40 42 "* && $progress == *" 54 " ]] ||
+  fail "the bar starts at 0, reaches 40 with the encryption, then 42 and 54 around the boot files: $progress"
+[[ $progress == "$(tr ' ' '\n' <<<"$progress" | sed '/^$/d' | sort -n | tr '\n' ' ')" ]] ||
+  fail "the bar never moves back: $progress"
+messages=$(sed -n 's/^display-message --text=//p' "$tmp/plymouth.log")
+[[ $messages == $'Encrypting your drive...\nPreparing your Mac for first boot...' ]] ||
+  fail "the line names the encryption, then says the Mac is being prepared: $messages"
+[[ $(<"$tmp/progress") == 54 ]] || fail "first boot carries the bar on from 54%"
+! grep -Fq 'device_bytes' "$case_dir/out" || fail "cryptsetup's JSON progress stays out of the journal"
 grep -Fq 'x-systemd.growfs' "$tmp/mnt-mapped/etc/fstab" || fail "x-systemd.growfs stays on the root fstab"
 grep -Fq 'phase=configured' "$boot_mnt/omarchy/encrypt.state" || fail "state ends at phase=configured"
 grep -Fq "luks_uuid=$luks_uuid" "$boot_mnt/omarchy/encrypt.state" || fail "state records the LUKS UUID"
@@ -871,13 +943,24 @@ grep -Fq 'regenerating GRUB' "$case_dir/out" && fail "phase=configured must not 
 [[ -e /dev/mapper/root ]] || fail "phase=configured leaves the mapping open"
 echo 'ok - phase=configured opens and continues without rewriting the boot configuration'
 
-# phase=encrypted (interrupted before the boot configuration) finishes it once
+# phase=encrypted (interrupted before the boot configuration) finishes it once,
+# here on a GRUB Mac: GRUB, then mkinitcpio -P, and no Limine rebuild.
+mount -o subvol=@ /dev/mapper/root "$tmp/mnt-mapped"
+rm "$tmp/mnt-mapped/var/lib/omarchy/limine.enabled"
+: >"$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log"
+umount "$tmp/mnt-mapped"
 write_state "$boot_mnt" encrypted "$ROOT_PARTUUID" "$luks_uuid"
 run_script || fail "phase=encrypted must finish the boot configuration"
 grep -Fq 'encrypting in place' "$case_dir/out" && fail "phase=encrypted must not re-encrypt"
 grep -Fq 'regenerating GRUB' "$case_dir/out" || fail "phase=encrypted rewrites the boot configuration once"
 grep -Fq 'phase=configured' "$boot_mnt/omarchy/encrypt.state" || fail "phase=encrypted ends at configured"
-echo 'ok - phase=encrypted completes the boot configuration and ends configured'
+mount -o subvol=@ /dev/mapper/root "$tmp/mnt-mapped"
+[[ $(cat "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log") == $'update-grub \nmkinitcpio -P' ]] ||
+  fail "a GRUB Mac regenerates GRUB, then the initramfs: $(cat "$tmp/mnt-mapped/var/lib/omarchy/mac-first-boot/boot.log")"
+: >"$tmp/mnt-mapped/var/lib/omarchy/limine.enabled"
+umount "$tmp/mnt-mapped"
+rm -f "$esp_mnt/EFI/BOOT/update-grub.probe"
+echo 'ok - phase=encrypted completes the boot configuration and ends configured (GRUB Mac)'
 
 # a revoked or missing throwaway key never halts the boot
 write_state "$boot_mnt" rekeyed "$ROOT_PARTUUID" "$luks_uuid"

@@ -59,6 +59,13 @@ grep -Fxq 'KERNEL_CMDLINE[default]="root=UUID=root-uuid rw rootflags=subvol=@ rd
   fail "the Limine command line is re-derived from GRUB's defaults before limine-update" "$(cat "$limine_default")"
 pass "a Limine Mac rebuilds Limine from GRUB's defaults file"
 
+# A fresh image's first boot never booted GRUB: it leaves GRUB alone.
+: >"$calls"
+OMARCHY_MAC_BOOT_UPDATE_GRUB=0 run || fail "boot update without GRUB on a Limine Mac succeeds"
+[[ $(cat "$calls") == $'limine-update \nomarchy-mac-limine-deploy ' ]] ||
+  fail "OMARCHY_MAC_BOOT_UPDATE_GRUB=0 only rebuilds and deploys Limine" "$(cat "$calls")"
+pass "a Limine Mac asked to leave GRUB alone runs no GRUB step"
+
 # An image that never shipped GRUB: update-grub still ships with asahi-scripts,
 # so the absence of GRUB's own tools is what must stop the refresh.
 cat >"$stub_bin/omarchy-cmd-present" <<'SH'
