@@ -10,10 +10,11 @@
 # retires the image's build manifest, so from then on this machine is itself.
 # Steps run in order and each one that succeeds leaves the queue, so a failure
 # stops the run and the next run resumes at that step. Once the queue is empty
-# the initramfs is rebuilt if any step changed its configuration, and the
-# service is disabled. With nothing deferred this does nothing. A step that
-# fails exits 75 (the step stays queued for the next run); anything else that
-# stops the run, such as an untrusted manifest or queue, exits 1.
+# the initramfs is rebuilt if any step changed its configuration or asked for
+# the rebuild, and the service is disabled. With nothing deferred this does
+# nothing. A step that fails exits 75 (the step stays queued for the next run);
+# anything else that stops the run, such as an untrusted manifest or queue,
+# exits 1.
 
 set -euo pipefail
 
@@ -83,6 +84,11 @@ fi
 
 mkdir -p "$(dirname "$OMARCHY_INSTALL_LOG_FILE")"
 
+# A step that would build the boot image itself (the Apple Limine leaf) asks
+# for this run's rebuild instead, so the image is built once, after the last
+# step. The request stays on disk until that rebuild lands.
+export OMARCHY_IMAGE_BOOT_REBUILD=$omarchy_image_boot_rebuild
+
 # Images ship no pacman sync databases, so a step that installs a package fails
 # until they are fetched. Only after a step fails, once per run, are they fetched
 # and the step retried: while every step succeeds (an image carrying its steps'
@@ -128,7 +134,7 @@ while (( ${#remaining[@]} )); do
   omarchy_image_write_queue "${remaining[@]}" || fail "could not update $omarchy_image_queue"
 done
 
-if [[ $(initramfs_inputs) != "$(<"$omarchy_image_initramfs_baseline")" ]]; then
+if [[ -e $omarchy_image_boot_rebuild || $(initramfs_inputs) != "$(<"$omarchy_image_initramfs_baseline")" ]]; then
   echo "Rebuilding the initramfs for the deferred hardware setup"
   if omarchy-cmd-present limine-mkinitcpio; then
     limine-mkinitcpio </dev/null >>"$OMARCHY_INSTALL_LOG_FILE" 2>&1
@@ -138,7 +144,7 @@ if [[ $(initramfs_inputs) != "$(<"$omarchy_image_initramfs_baseline")" ]]; then
   # The new image must be on disk before the queue that owes it is cleared.
   sync || fail "could not flush the rebuilt initramfs to disk"
 fi
-rm -f "$omarchy_image_initramfs_baseline"
+rm -f "$omarchy_image_initramfs_baseline" "$omarchy_image_boot_rebuild"
 
 # Disabled, not deleted: a platform first boot that runs this while the
 # service's start job waits would otherwise fail that job at the next

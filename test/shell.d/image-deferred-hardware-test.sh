@@ -74,8 +74,9 @@ echo b >>"$RUNS"
 SH
 cat >"$fixture/install/hardware/c.sh" <<'SH'
 echo c >>"$RUNS"
+[[ ! -e $REQUEST_REBUILD ]] || touch "$OMARCHY_IMAGE_BOOT_REBUILD"
 SH
-export RUNS="$test_tmp/runs" FAIL_B="$test_tmp/fail-b"
+export RUNS="$test_tmp/runs" FAIL_B="$test_tmp/fail-b" REQUEST_REBUILD="$test_tmp/request-rebuild"
 
 new_root() {
   local root="$test_tmp/root-$1"
@@ -398,6 +399,42 @@ output=$(first_boot "$root") || fail "a step no longer shipped does not block th
 [[ $output == *"Skipping deferred hardware step install/hardware/removed.sh"* && $(cat "$RUNS") == "c" ]] ||
   fail "a step no longer shipped is skipped and the rest run" "$output"
 pass "a deferred step Omarchy no longer ships is skipped"
+
+# A step that would build the boot image itself (the Apple Limine leaf) asks
+# for the rebuild after the last step instead: one rebuild, even when no
+# initramfs input changed, and the request outlives a run that stopped early.
+reset_logs
+root=$(new_root request)
+write_manifest "$root"
+build "$root" >/dev/null || fail "the fixture image builds"
+printf '%s\n' install/hardware/c.sh >"$root/var/lib/omarchy/image/deferred-steps"
+first_boot "$root" >/dev/null || fail "a step that asks for nothing finishes"
+[[ ! -e $REBUILDS ]] || fail "no rebuild without a changed input or a request" "$(cat "$REBUILDS")"
+reset_logs
+root=$(new_root request)
+write_manifest "$root"
+build "$root" >/dev/null || fail "the fixture image builds"
+printf '%s\n' install/hardware/c.sh >"$root/var/lib/omarchy/image/deferred-steps"
+touch "$REQUEST_REBUILD"
+first_boot "$root" >/dev/null || fail "a step that asks for the rebuild finishes"
+rm -f "$REQUEST_REBUILD"
+[[ $(cat "$REBUILDS" 2>/dev/null) == "mkinitcpio -P" && ! -e $root/var/lib/omarchy/image/boot-rebuild ]] ||
+  fail "the request alone, with no changed input, gets one rebuild and is then cleared" "$(cat "$REBUILDS" 2>/dev/null)"
+reset_logs
+root=$(new_root request)
+write_manifest "$root"
+build "$root" >/dev/null || fail "the fixture image builds"
+printf '%s\n' install/hardware/c.sh install/hardware/apple/b.sh >"$root/var/lib/omarchy/image/deferred-steps"
+rm -f "$root/etc/mkinitcpio.conf.d/b.conf"
+touch "$REQUEST_REBUILD" "$FAIL_B"
+first_boot "$root" >/dev/null 2>&1 && fail "the first boot reports the failed step"
+[[ -f $root/var/lib/omarchy/image/boot-rebuild && ! -e $REBUILDS ]] ||
+  fail "a requested rebuild waits for the queue to empty, and stays requested"
+rm -f "$FAIL_B" "$REQUEST_REBUILD"
+first_boot "$root" >/dev/null || fail "the next boot finishes the deferred hardware setup"
+[[ $(cat "$REBUILDS" 2>/dev/null) == "mkinitcpio -P" && ! -e $root/var/lib/omarchy/image/boot-rebuild ]] ||
+  fail "the requested rebuild runs once after the last step and is then cleared" "$(cat "$REBUILDS" 2>/dev/null)"
+pass "a step can ask for the one rebuild after the last step"
 
 for entry in /etc/passwd install/hardware/../../bin/x.sh install/login/sddm.sh; do
   reset_logs
