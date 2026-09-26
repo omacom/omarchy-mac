@@ -1,0 +1,36 @@
+#!/bin/bash
+# Print concrete MacBook outputs for the initial 2x default; never a wildcard.
+set -euo pipefail
+omarchy-hw-apple-silicon || exit 0
+proc=/proc
+sys=/sys
+if (( EUID != 0 )); then
+  proc=${OMARCHY_PROC_ROOT:-/proc}
+  sys=${OMARCHY_SYS_ROOT:-/sys}
+fi
+[[ -r $proc/device-tree/model ]] || exit 0
+model=$(tr -d '\0' < "$proc/device-tree/model")
+case $model in
+  'Apple MacBook Air '*|'Apple MacBook Pro '*) ;;
+  *) exit 0 ;;
+esac
+for connector in "$sys"/class/drm/card*-*; do
+  [[ -r $connector/status && $(<"$connector/status") == "connected" ]] || continue
+  output=${connector##*/}
+  output=${output#card*-}
+  if [[ $output =~ ^eDP-[0-9]+$ ]]; then
+    printf '%s\n' "$output"
+  elif [[ $output =~ ^Unknown-[0-9]+$ ]]; then
+    card=${connector##*/}
+    card=${card%%-*}
+    device="$sys/class/drm/$card/device"
+    driver=$(readlink -f "$device/driver") || continue
+    # Firmware framebuffers do not expose internal/external identity. This is
+    # an experimental MacBook default, including external/clamshell boot; it
+    # is not panel detection. Normal external DRM outputs remain independent.
+    if [[ ${driver##*/} == "simple-framebuffer" && -r $device/of_node/compatible ]] &&
+      tr '\0' '\n' <"$device/of_node/compatible" | grep -Fxq 'apple,simple-framebuffer'; then
+      printf '%s\n' "$output"
+    fi
+  fi
+done
