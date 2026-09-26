@@ -66,6 +66,7 @@ follow_hardware() (
   set +e
   local pid=$1 queue=$root/var/lib/omarchy/image/deferred-steps
   local total left done=0 last=-1 since=$SECONDS t work next position shown=10
+  command -v plymouth >/dev/null 2>&1 && plymouth --ping 2>/dev/null || exit 0
   [[ -f $queue ]] || exit 0
   total=$(grep -c . "$queue")
   (( total > 0 )) || exit 0
