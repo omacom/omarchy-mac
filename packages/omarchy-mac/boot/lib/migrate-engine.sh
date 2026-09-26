@@ -431,15 +431,18 @@ target_version() {
 # --- Preflight -----------------------------------------------------------------
 
 # The cohort an Apple Silicon Mac belongs to, from what is installed. Each
-# cohort needs an adapter defining <cohort>_plan and <cohort>_retire.
+# cohort needs an adapter defining <cohort>_plan and <cohort>_retire; it may
+# also define <cohort>_preflight, _prefetch, _prepare and _restore, which the
+# steps of those names call. A legacy omarchy-mac install runs Omarchy from a
+# checkout, trusts the rc4 fork keyring or carries the quattro tree, whose
+# 3.x upgrade command quattro-upstream never had.
 detect_cohort() {
   local list=$1
   if grep -Eq '^omarchy(-settings)?-dev ' "$list"; then
     echo mx-mac
-  elif ! grep -Eq '^omarchy ' "$list"; then
-    echo legacy-checkout
-  elif grep -Eq '^omarchy-mac-keyring ' "$list"; then
-    echo legacy-channel
+  elif ! grep -Eq '^omarchy ' "$list" || grep -Eq '^omarchy-mac-keyring ' "$list" ||
+    [[ -e $R/usr/share/omarchy/bin/omarchy-upgrade-to-quattro-mac ]]; then
+    echo legacy
   else
     echo tester
   fi
@@ -448,10 +451,17 @@ detect_cohort() {
 cohort_refusal() {
   case $1 in
     mx-mac) echo "this is an mx-mac install (omarchy-dev): its adapter (ticket 43) is not available yet" ;;
-    legacy-checkout) echo "Omarchy is not installed as a package here (a legacy omarchy-mac checkout): its adapter (ticket 44) is not available yet" ;;
-    legacy-channel) echo "this Mac follows omarchy-mac's rc4 channel (omarchy-mac-keyring): its adapter (ticket 44) is not available yet" ;;
     *) echo "no adapter handles the $1 cohort" ;;
   esac
+}
+
+# Runs the cohort's optional hook for a step.
+adapter_hook() {
+  local hook=${cohort//-/_}_$1
+  shift
+  if declare -F "$hook" >/dev/null; then
+    "$hook" "$@"
+  fi
 }
 
 # The LUKS partition beneath /, or nothing when / is not encrypted; fails when
@@ -498,6 +508,22 @@ low_battery() {
   (( on_battery && low ))
 }
 
+# The configuration pacman reads: FILE with each Include replaced by the files
+# it names, three levels deep.
+pacman_conf_flat() {
+  local file=$1 depth=${2:-0} line included
+  while IFS= read -r line || [[ -n $line ]]; do
+    if (( depth < 3 )) && [[ $line =~ ^[[:space:]]*Include[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$ ]]; then
+      # shellcheck disable=SC2086 # Include takes a glob
+      for included in $R${BASH_REMATCH[1]}; do
+        [[ ! -f $included ]] || pacman_conf_flat "$included" $(( depth + 1 ))
+      done
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$file"
+}
+
 pacman_trust_problems() {
   local conf=$1 retired
   retired=$(IFS=,; echo "${retired_repos[*]}")
@@ -541,9 +567,16 @@ preflight() {
     boot_state=unknown
     reasons+=("cannot tell whether this Mac boots GRUB or Limine")
   fi
+  if ! luks=$(root_luks_device); then
+    reasons+=("cannot tell whether the root filesystem is encrypted")
+  fi
+  # The busybox encrypt hook matters only where it unlocks the root: legacy
+  # omarchy-mac sets it on every Mac, and on an unencrypted one it does nothing.
+  # An encrypted one gets nothing here, the HOOKS baseline included, until its
+  # boot switch (ticket 45) has moved its unlock.
   if ! hooks=$(omarchy-mac-initramfs-hooks 2>/dev/null); then
     reasons+=("cannot read the initramfs HOOKS")
-  elif [[ " $hooks " == *" encrypt "* ]]; then
+  elif [[ -n $luks && " $hooks " == *" encrypt "* ]]; then
     reasons+=("the root unlocks through busybox encrypt: its boot switch is the legacy adapter's (ticket 45)")
   fi
   # Installed boot files, not the running kernel: an update that just replaced
@@ -556,13 +589,20 @@ preflight() {
   fi
   # Limine and its UKI live on the ESP U-Boot boots, mounted at /boot/efi.
   [[ $(omarchy-mac-esp 2>/dev/null) == "$esp" ]] || reasons+=("the system ESP is not mounted at $esp")
-  if ! luks=$(root_luks_device); then
-    reasons+=("cannot tell whether the root filesystem is encrypted")
-  fi
 
   while IFS= read -r problem; do
     [[ -z $problem ]] || reasons+=("$problem")
-  done < <(pacman_trust_problems "$pacman_conf")
+  done < <(adapter_hook preflight "$installed" "$luks")
+
+  while IFS= read -r problem; do
+    [[ -z $problem ]] || reasons+=("$problem")
+  done < <(pacman_trust_problems <(pacman_conf_flat "$pacman_conf"))
+  # The switch rewrites only pacman.conf itself: a repository it drops that an
+  # Include file defines would stay.
+  for problem in $(comm -13 <(repositories_in "$pacman_conf" | LC_ALL=C sort -u) <(repositories_in <(pacman_conf_flat "$pacman_conf") | LC_ALL=C sort -u)); do
+    [[ $problem != "omarchy" && " ${retired_repos[*]} " != *" $problem "* ]] ||
+      reasons+=("[$problem] is configured through an Include, which the repository switch cannot rewrite; move it into $pacman_conf first")
+  done
 
   if [[ $target_type == "candidate-set" ]] && ! command -v gpgv >/dev/null; then
     reasons+=("gpgv is not installed (gnupg), so the candidate set's signatures cannot be checked")
@@ -641,6 +681,8 @@ preflight() {
   cp "$targets_file" "$plan.new/targets"
   cp "$work/allowed-removals" "$plan.new/allowed-removals"
   cp "$work/kept" "$plan.new/kept" 2>/dev/null || : >"$plan.new/kept"
+  cp "$work/removals" "$plan.new/removals" 2>/dev/null || : >"$plan.new/removals"
+  [[ ! -d $work/adapter ]] || cp -r "$work/adapter" "$plan.new/adapter"
   cp "$target_file" "$plan.new/target"
   printf '%s\n' "$target_id" >"$plan.new/target-id"
   printf '%s\n' "$target_packages" >"$plan.new/target-packages"
@@ -764,19 +806,41 @@ step_keyring() {
   key_trusted "$target_keyring" || die "the Omarchy key $target_keyring is not trusted after the bootstrap"
 }
 
+# Packages the transaction removes by name once it has installed the targets,
+# as far as DB still has them.
+plan_removals() {
+  local db=$1 name
+  [[ -f $plan/removals ]] || return 0
+  while read -r name; do
+    [[ -n $name ]] && LC_ALL=C pacman --config "$pacman_conf" --dbpath "$db" -Qq "$name" >/dev/null 2>&1 &&
+      printf '%s\n' "$name"
+  done <"$plan/removals"
+  return 0
+}
+
 # Downloads and verifies every package the transaction needs, then rehearses the
 # transaction on a copy of the package database (--dbonly: no files, scripts or
-# hooks) to learn exactly what it installs and removes.
+# hooks) to learn exactly what it installs and removes. Signatures are checked
+# against the trust the switch leaves, a copy of the keyring without the
+# retired keys, so nothing that needs a fork key gets this far.
 step_prefetch() {
-  local db=$cache/db rehearsal=$cache/rehearsal conf=$cache/transaction.conf removed name version bad=()
+  local db=$cache/db rehearsal=$cache/rehearsal conf=$cache/transaction.conf removed name version bad=() fpr removals
   install -d -m 755 "$cache" "$cache/pkg"
-  rm -rf "$db" "$rehearsal" "$cache/candidate"
+  rm -rf "$db" "$rehearsal" "$cache/candidate" "$cache/trust"
   mkdir -p "$db"
   cp -a "$pacman_db/local" "$db/local" || die "cannot copy the package database"
   LC_ALL=C pacman --config "$pacman_conf" --dbpath "$db" -Q >"$cache/start" || die "cannot read the package database copy"
   if [[ $target_type == "candidate-set" ]]; then
     stage_candidate_repo "$cache/candidate" "$cache/gnupg" || die "the candidate set does not verify"
   fi
+  install -d -m 700 "$cache/trust"
+  tar -C "$pacman_gpg" --exclude='S.*' -cf - . | tar -C "$cache/trust" -xf - || die "cannot copy the pacman keyring"
+  for fpr in "${retired_keys[@]}"; do
+    if key_present "$fpr"; then
+      pacman-key --gpgdir "$cache/trust" --delete "$fpr" >/dev/null 2>&1 || die "cannot drop $fpr from the keyring copy"
+    fi
+  done
+  gpgdir=$cache/trust
   transaction_conf "$plan/pacman.conf" "${target_set:+$cache/candidate}" >"$conf"
   # shellcheck disable=SC2046
   pacman_run --config "$conf" --dbpath "$db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" --logfile "$cache/pacman.log" \
@@ -787,6 +851,14 @@ step_prefetch() {
   pacman_run --config "$conf" --dbpath "$rehearsal" --cachedir "$cache/pkg" --cachedir "$pacman_cache" --logfile "$cache/pacman.log" \
     --dbonly -Su --noconfirm --ask 4 $(plan_targets) >"$cache/rehearsal.log" 2>&1 ||
     die "the rehearsed transaction failed: $(tail -n 1 "$cache/rehearsal.log")"
+  removals=$(plan_removals "$rehearsal" | xargs)
+  if [[ -n $removals ]]; then
+    # shellcheck disable=SC2086
+    pacman_run --config "$conf" --dbpath "$rehearsal" --logfile "$cache/pacman.log" --dbonly -R --noconfirm $removals \
+      >>"$cache/rehearsal.log" 2>&1 || die "the rehearsed removal of $removals failed: $(tail -n 1 "$cache/rehearsal.log")"
+  fi
+  gpgdir=""
+  gpgconf --homedir "$cache/trust" --kill all >/dev/null 2>&1 || true
   LC_ALL=C pacman --config "$conf" --dbpath "$rehearsal" -Q >"$cache/expected" || die "cannot read the rehearsed result"
   removed=$(comm -23 <(awk '{ print $1 }' "$cache/start" | LC_ALL=C sort) <(awk '{ print $1 }' "$cache/expected" | LC_ALL=C sort))
   for name in $removed; do
@@ -800,6 +872,7 @@ step_prefetch() {
       [[ $(installed_version "${name#*/}" "$cache/expected") == "$version" ]] || die "${name#*/} would not end at the candidate's $version"
     done < <(plan_targets)
   fi
+  adapter_hook prefetch || die "the $cohort adapter refused the rehearsed transaction; nothing was changed"
   durable_write "$start" <"$cache/start" && durable_write "$expected" <"$cache/expected" ||
     die "cannot record the rehearsed transaction"
 }
@@ -871,13 +944,32 @@ step_repositories() {
   done
 }
 
+# The installed packages with the planned removals left out.
+without_removals() {
+  awk 'NR == FNR { drop[$1]; next } !($1 in drop)' "$plan/removals" "$1"
+}
+
+# The targets are installed and only the planned removals are left.
+removals_pending() {
+  [[ -f $plan/removals ]] && ! cmp -s "$state/installed.now" "$expected" &&
+    cmp -s <(without_removals "$state/installed.now") "$expected"
+}
+
+# A path as a pacman --overwrite glob that matches only itself.
+overwrite_glob() {
+  sed 's/[][*?\\]/\\&/g' <<<"$1"
+}
+
 # One transaction from the prefetched cache and databases, without a new sync:
 # it installs exactly what was verified and rehearsed. Same-name packages are
 # named explicitly, so a higher installed version is replaced too. A lock left
 # by a transaction that was killed means its hooks may not have run, so the
-# transaction runs again even when the packages are all in place.
+# transaction runs again even when the packages are all in place. The adapter
+# prepares the system for it first and may list, in $state/overwrite, files no
+# package owns that it may replace; when pacman fails, the adapter restores
+# what it prepared. Planned removals run after it, by name.
 step_transaction() {
-  local holder interrupted=0
+  local holder interrupted=0 overwrite=() remove=() path
   if [[ -e $pacman_db/db.lck ]]; then
     if holder=$(lock_holder); then
       die "pacman is running (process $holder); run the migration again when it has finished"
@@ -888,15 +980,36 @@ step_transaction() {
   fi
   # Kept across a new rehearsal until a transaction has run to its end.
   [[ ! -e $interrupted_marker ]] || interrupted=1
-  if system_moved && ! cmp -s "$state/installed.now" "$expected"; then
+  if system_moved && ! cmp -s "$state/installed.now" "$expected" && ! removals_pending; then
     restart_from_prefetch "before the transaction"
     return 0
   fi
   if (( interrupted )) || ! cmp -s "$state/installed.now" "$expected"; then
     install_rehearsed_databases
-    # shellcheck disable=SC2046
-    pacman_run --config "$cache/transaction.conf" --dbpath "$pacman_db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" \
-      -Su --noconfirm --ask 4 $(plan_targets) || die "the package transaction failed"
+    if (( interrupted )) || ! removals_pending; then
+      rm -f "$state/overwrite"
+      if ! adapter_hook prepare; then
+        adapter_hook restore
+        die "the $cohort adapter could not prepare the transaction"
+      fi
+      if [[ -f $state/overwrite ]]; then
+        while IFS= read -r path; do
+          [[ -z $path ]] || overwrite+=(--overwrite "$(overwrite_glob "$path")")
+        done <"$state/overwrite"
+      fi
+      # shellcheck disable=SC2046
+      if ! pacman_run --config "$cache/transaction.conf" --dbpath "$pacman_db" --cachedir "$cache/pkg" --cachedir "$pacman_cache" \
+        -Su --noconfirm --ask 4 "${overwrite[@]}" $(plan_targets); then
+        adapter_hook restore
+        die "the package transaction failed"
+      fi
+    fi
+    interrupt_for_test mid removals
+    mapfile -t remove < <(plan_removals "$pacman_db")
+    if (( ${#remove[@]} )); then
+      pacman_run --config "$cache/transaction.conf" --dbpath "$pacman_db" -R --noconfirm "${remove[@]}" ||
+        die "cannot remove ${remove[*]}"
+    fi
     installed_packages >"$state/installed.now" || die "cannot list the installed packages"
     cmp -s "$state/installed.now" "$expected" ||
       die "the installed packages differ from the rehearsed transaction: $(diff "$expected" "$state/installed.now" | grep '^[<>]' | head -n 3 | xargs)"
@@ -986,7 +1099,7 @@ step_retire() {
 tidy_completed() {
   if [[ -e $reboot_pending || -d $cache || -d $set_copy ]]; then
     systemctl disable "$verify_unit" >/dev/null 2>&1 || say "Could not disable $verify_unit; it does nothing from now on."
-    rm -rf "$cache" "$set_copy" "$state/installed.now"
+    rm -rf "$cache" "$set_copy" "$state/installed.now" "$state/overwrite"
     rm -f "$reboot_pending"
   fi
 }
