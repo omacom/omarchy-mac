@@ -88,10 +88,14 @@ make_db "$db/sync/extra.db" firefox "aquamarine:hyprland-stack" hyprland
 # The same Apple-only name in a repository that does not tag it.
 make_db "$db/sync/asahi-alarm.db" uboot-asahi m1n1
 
+# Each fixture machine is booted: systemd runs as PID 1 from a root with no
+# image manifest.
+mkdir -p "$test_tmp/no-image/run/systemd/system"
 for platform in apple-silicon qualcomm generic-aarch64 generic; do
   fake_platform "$test_tmp/$platform" "$platform"
   mkdir -p "$test_tmp/$platform/proc/1"
-  ln -s / "$test_tmp/$platform/proc/1/root"
+  ln -s "$test_tmp/no-image" "$test_tmp/$platform/proc/1/root"
+  echo systemd >"$test_tmp/$platform/proc/1/comm"
 done
 
 # $1 is the machine's platform fixture; the transaction's names follow.
@@ -221,7 +225,8 @@ pass "an unreadable database is reported and skipped"
 # transaction holds a tagged package, and then refuses it.
 mkdir -p "$test_tmp/contradiction/proc/device-tree" "$test_tmp/contradiction/proc/1" "$test_tmp/contradiction/bin"
 printf '%s\0' apple,j416c qcom,x1e80100 >"$test_tmp/contradiction/proc/device-tree/compatible"
-ln -s / "$test_tmp/contradiction/proc/1/root"
+ln -s "$test_tmp/no-image" "$test_tmp/contradiction/proc/1/root"
+echo systemd >"$test_tmp/contradiction/proc/1/comm"
 cp "$test_tmp/apple-silicon/bin/uname" "$test_tmp/contradiction/bin/uname"
 allows "untagged packages install when the platform cannot be told" contradiction firefox
 refuses "tagged packages are refused when the platform cannot be told" contradiction omarchy-mac
@@ -229,8 +234,9 @@ grep -Fq "Cannot tell which platform this machine is" "$test_tmp/err" || fail "t
 pass "an unknown platform refuses only tagged packages"
 
 # Image builds: a chroot on some build host, with the target in a manifest.
+# Booted: systemd runs as PID 1 from this root.
 image="$test_tmp/image"
-mkdir -p "$image/var/lib/omarchy/image"
+mkdir -p "$image/var/lib/omarchy/image" "$image/run/systemd/system"
 manifest="$image/var/lib/omarchy/image/target"
 chroot_proc() {
   local platform="$1" proc="$test_tmp/chroot-$1"
@@ -241,10 +247,28 @@ chroot_proc() {
   ln -s "$test_tmp/build-host-root" "$proc/1/root"
   printf '%s\n' "$proc"
 }
+# The same machine booted from the image root.
+booted_proc() {
+  local platform="$1" proc="$test_tmp/booted-$1"
+  rm -rf "$proc"
+  cp -a "$test_tmp/$platform/proc" "$proc"
+  rm "$proc/1/root"
+  ln -s "$image" "$proc/1/root"
+  printf '%s\n' "$proc"
+}
 printf '# written by the image builder\nformat=1\nbuilder=test\nplatform=apple-silicon\n' >"$manifest"
 chmod 644 "$manifest"
 
-GUARD_IMAGE_ROOT=$image refuses "a booted system ignores an image manifest" generic-aarch64 omarchy-mac
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$(booted_proc generic-aarch64) \
+  refuses "a booted system ignores an image manifest" generic-aarch64 omarchy-mac
+not_systemd=$(booted_proc generic-aarch64)
+echo sleep >"$not_systemd/1/comm"
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$not_systemd \
+  allows "a root whose PID 1 is not systemd, such as a container build, takes the manifest" generic-aarch64 omarchy-mac
+rmdir "$image/run/systemd/system"
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$(booted_proc generic-aarch64) \
+  allows "a root without /run/systemd/system takes the manifest" generic-aarch64 omarchy-mac
+mkdir "$image/run/systemd/system"
 GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic-aarch64) \
   allows "an Apple image builds on a generic host from its manifest" generic-aarch64 omarchy-mac linux-aurora
 GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic) \
@@ -275,7 +299,7 @@ GUARD_IMAGE_ROOT=$image GUARD_PROC=$hidden_root \
 GUARD_ARGS=(--platform)
 GUARD_IMAGE_ROOT=$image GUARD_PROC=$(chroot_proc generic) allows "--platform reports an image build's target" generic
 [[ $(cat "$test_tmp/out") == "apple-silicon" ]] || fail "--platform reports an image build's target" "$(cat "$test_tmp/out")"
-GUARD_IMAGE_ROOT=$image allows "--platform reports a booted system's hardware" qualcomm
+GUARD_IMAGE_ROOT=$image GUARD_PROC=$(booted_proc qualcomm) allows "--platform reports a booted system's hardware" qualcomm
 [[ $(cat "$test_tmp/out") == "qualcomm" ]] || fail "--platform reports a booted system's hardware" "$(cat "$test_tmp/out")"
 GUARD_ARGS=()
 pass "image builds take their platform from the manifest, and only image builds"

@@ -77,11 +77,12 @@ sync_records() {
 
 # An image build installs into a chroot on whatever host builds it, or into a
 # root without /proc; there the root-owned image manifest names the platform.
-# A booted system shares PID 1's root, and its own hardware decides, as it does
-# whenever PID 1 is visible but its root cannot be compared.
+# Otherwise the detector decides, which also takes the manifest when PID 1 is
+# not systemd or the root has no /run/systemd/system, and asks the hardware on
+# a booted system.
 image_build() {
   if [[ -e $proc/1/root ]]; then
-    [[ ! $proc/1/root -ef / ]]
+    [[ ! $proc/1/root -ef $image_root/ ]]
   else
     [[ ! -e $proc/1 && ! -L $proc/1 ]]
   fi
