@@ -39,7 +39,7 @@ This is what the first release is qualified against on both reference Macs. <spa
 | Keyboard, backlight, trackpad | <span class="status ok">works</span> | Drivers loaded early, so they work at the passphrase prompt. The backlight follows the ambient light sensor. See [Keyboard and trackpad]({{page:keyboard}}). |
 | Wi-Fi, Bluetooth | <span class="status ok">works</span> | NetworkManager with the iwd backend. Wi-Fi on BCM4378 and BCM4387 chips recovers after resume. Wi-Fi 6E Macs join on 2.4 and 5 GHz: a 6 GHz join passes no traffic with the current firmware. |
 | Speakers, microphone, headphones | <span class="status ok">works</span> | Asahi's DSP chain with `speakersafetyd` protecting the speakers. The microphone array is mapped, and a headset microphone takes priority when plugged in. |
-| Suspend and resume | <span class="status ok">works</span> | |
+| Suspend and resume | <span class="status ok">works</span> | Open the lid or press the power button to wake the Mac. A key press or trackpad click does not wake it: the kernel drivers for the built-in keyboard and trackpad do not register as a wakeup source on M1 or M2 MacBooks. Closed in a bag, it stays asleep. |
 | Battery, lid, power profiles | <span class="status ok">works</span> | |
 | External displays | <span class="status ok">works</span> | HDMI on models that have it, USB4 and DisplayPort alt-mode through the Aurora kernel. Five displays on the M2 Max. A third and fourth display rely on an aquamarine fix carried until Hyprland releases it. |
 | Variable refresh rate, camera (ISP), always-on processor | <span class="status ok">works</span> | Aurora kernel |
