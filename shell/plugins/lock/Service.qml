@@ -32,6 +32,11 @@ Item {
   property string lastEvent: "init"
   property string lastEventAt: ""
   property bool displaysBlank: false
+  // A lock that is not touched goes dark after blankRunUp. One that was just
+  // woken, from a blank panel or from suspend, stays lit for wakeRunUp first:
+  // the user is looking at it.
+  readonly property int blankRunUp: 5000
+  readonly property int wakeRunUp: 30000
   // displaysBlank tracks what the lock asked for; Hyprland reports what each
   // panel actually did. While a video is on show the two are reconciled, so a
   // blank that failed keeps playing and a panel woken behind the lock's back
@@ -172,16 +177,22 @@ Item {
     runWake()
   }
 
-  function armBlankTimer() {
-    idleBlankTimer.armedAt = Date.now()
+  // Input re-arms the short run-up but never cuts a longer one short.
+  function armBlankTimer(runUp) {
+    var interval = runUp || blankRunUp
+    var now = Date.now()
+    if (idleBlankTimer.running && idleBlankTimer.armedAt + idleBlankTimer.interval - now > interval) return
+    idleBlankTimer.interval = interval
+    idleBlankTimer.armedAt = now
     idleBlankTimer.restart()
   }
 
-  function runWake() {
+  function runWake(runUp) {
+    var fromBlank = root.displaysBlank
     root.displaysBlank = false
     root.monitorDpmsKnown = false
     if (!wakeProcess.running) wakeProcess.running = true
-    if (lockRequested) armBlankTimer()
+    if (lockRequested) armBlankTimer(runUp || (fromBlank ? wakeRunUp : blankRunUp))
   }
 
   function runBlank() {
@@ -524,7 +535,7 @@ Item {
 
   Timer {
     id: idleBlankTimer
-    interval: 5000
+    interval: root.blankRunUp
     repeat: false
     property double armedAt: 0
     onTriggered: {
@@ -532,7 +543,7 @@ Item {
       // blank the freshly woken unlock screen under the user. Wall-clock time
       // exposes the gap: take a fresh run-up instead of blanking.
       if (Date.now() - armedAt > interval + 2000) {
-        root.armBlankTimer()
+        root.armBlankTimer(root.wakeRunUp)
         return
       }
       // Only a password check in flight should hold the display up. The
@@ -550,15 +561,16 @@ Item {
     interval: 1000
     repeat: true
     running: root.lockRequested
+    // Start the clock with the lock: sleep-lock suspends within a second of it.
     property double lastTick: 0
-    onRunningChanged: lastTick = 0
+    onRunningChanged: lastTick = running ? Date.now() : 0
     onTriggered: {
       var now = Date.now()
       var resumed = lastTick > 0 && now - lastTick > interval + 2000
       lastTick = now
       if (resumed) {
         root.logEvent("resume-detected")
-        root.runWake()
+        root.runWake(root.wakeRunUp)
       }
     }
   }
