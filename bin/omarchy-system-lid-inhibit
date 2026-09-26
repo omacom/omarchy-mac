@@ -73,13 +73,15 @@ if (( in_use )) && omarchy-hw-laptop; then
 fi
 
 # Bound to the user unit of the watcher that keeps it in step, so a watcher that
-# is gone cannot leave the lid inhibited until logout.
+# is gone cannot leave the lid inhibited until logout. systemd-run unquotes
+# property values, so the backslashes in an escaped unit name are doubled.
 watcher_binding() {
   local cgroup="" unit
 
   read -r cgroup 2>/dev/null <"$cgroup_path"
   unit=${cgroup##*/}
   if [[ $cgroup == */user@*.service/* && ( $unit == *.scope || $unit == *.service ) ]]; then
+    unit=${unit//\\/\\\\}
     printf '%s\n' "--property=BindsTo=$unit" "--property=After=$unit"
   fi
 }

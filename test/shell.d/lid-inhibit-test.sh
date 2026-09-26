@@ -186,7 +186,10 @@ watcher_scope='app-Hyprland-omarchy\x2dhyprland\x2dmonitor\x2dwatch-f1fda151.sco
 printf '0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-graphical.slice/%s\n' "$watcher_scope" >"$cgroup"
 sync_inhibit
 start=$(grep '^start' "$call_log")
-[[ $start == *"--property=BindsTo=$watcher_scope --property=After=$watcher_scope"* ]] ||
+# systemd-run unquotes property values: a single backslash would name a unit
+# that does not exist, and the inhibitor would never start.
+bound_scope='app-Hyprland-omarchy\\x2dhyprland\\x2dmonitor\\x2dwatch-f1fda151.scope'
+[[ $start == *"--property=BindsTo=$bound_scope --property=After=$bound_scope "* ]] ||
   fail "the inhibitor is bound to the watcher's unit" "$start"
 printf '0::/user.slice/user-1000.slice/session-3.scope\n' >"$cgroup"
 pass "the inhibitor is bound to the watcher's unit, so it cannot outlive it"
