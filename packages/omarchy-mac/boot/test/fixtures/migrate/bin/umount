@@ -6,6 +6,7 @@ root=${OMARCHY_MAC_MIGRATE_ROOT:?}
 target=${!#}
 relative=${target#"$root"}
 echo "umount $relative" >>"$fixture/boot.log"
+[[ ! -e $fixture/umount-busy ]] || { echo "umount: $relative: target is busy." >&2; exit 32; }
 grep -Fxq "$target" "$fixture/mounts" && [[ -L $target ]] || { echo "umount: $relative: not mounted" >&2; exit 32; }
 rm "$target"
 if [[ -d $fixture/covered/${relative//\//_} ]]; then

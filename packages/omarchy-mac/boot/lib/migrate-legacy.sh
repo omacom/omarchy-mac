@@ -75,7 +75,11 @@ legacy_preflight() {
     done <"$R/usr/share/pacman/keyrings/omarchy-mac-trusted"
   fi
   esp_mount=$(omarchy-mac-esp 2>/dev/null) || esp_mount=""
+  if [[ $esp_mount == "/boot" || ( -n $luks && " $hooks " == *" encrypt "* ) ]] && limine_mac; then
+    echo "this Mac boots Limine with its ESP at /boot or its root unlocked by busybox encrypt; the boot switch moves those only on a GRUB Mac"
+  fi
   if [[ $esp_mount == "/boot" ]]; then
+    legacy_esp_space
     legacy_fstab_esp >/dev/null ||
       echo "the ESP is mounted at /boot, but /etc/fstab has no single vfat line mounting it there to move to /boot/efi"
     ! findmnt --mountpoint "$R/boot/efi" >/dev/null 2>&1 ||
@@ -86,6 +90,18 @@ legacy_preflight() {
   fi
 }
 
+# An ESP at /boot holds GRUB's kernel and image until retire, the transaction's
+# Aurora ones beside them and Limine's UKI of both: it needs room for another
+# kernel and image on top of the engine's 64 MiB.
+legacy_esp_space() {
+  local used=0 file
+  for file in "$R"/boot/vmlinuz-linux-* "$R"/boot/initramfs-linux-*.img; do
+    [[ -f $file && $file != *-fallback.img ]] && used=$(( used + $(stat -c %s "$file") ))
+  done
+  (( $(free_bytes "$R/boot") >= used + 64 * 1024 * 1024 )) ||
+    echo "the ESP at /boot needs $(( (used + 64 * 1024 * 1024) / 1024 / 1024 )) MiB free for the Aurora kernel and Limine's UKI beside GRUB's"
+}
+
 # The device of the one vfat line in fstab mounting the ESP at /boot.
 legacy_fstab_esp() {
   awk '$1 !~ /^#/ && $2 == "/boot" && $3 == "vfat" { device = $1; found++ } END { if (found != 1) exit 1; print device }' "$R/etc/fstab" 2>/dev/null
@@ -93,7 +109,7 @@ legacy_fstab_esp() {
 
 # fstab (stdin) with the ESP's /boot line mounting it at /boot/efi instead.
 legacy_esp_fstab() {
-  awk '$1 !~ /^#/ && NF >= 4 && $2 == "/boot" && $3 == "vfat" { $2 = "/boot/efi" } { print }'
+  awk '$1 !~ /^#/ && $2 == "/boot" && $3 == "vfat" { $2 = "/boot/efi" } { print }'
 }
 
 # GRUB's value of a defaults variable, as omarchy-mac-limine-cmdline reads it.
@@ -128,8 +144,11 @@ legacy_busybox_problems() {
     echo "busybox encrypt is not in /etc/mkinitcpio.conf's own HOOKS, so the package transaction could drop the unlock GRUB boots with; add it there first"
   [[ $esp_mount == "/boot" ]] ||
     echo "the encrypted root's kernels are not on the ESP mounted at /boot (the quattro guided installer's layout); the ESP is at ${esp_mount:-no mountpoint}"
-  spec=$(awk '$1 == "root" { print $2; exit }' "$R/etc/crypttab" 2>/dev/null)
+  spec=$(awk '$1 == "root" { print $2; exit }' "$R/etc/crypttab" 2>/dev/null) || spec=""
   [[ -z $spec || ${spec,,} == "uuid=${uuid,,}" ]] || echo "/etc/crypttab names another root ($spec)"
+  # The switch rewrites these lines double-quoted.
+  ! grep -Eq '^GRUB_CMDLINE_LINUX(_DEFAULT)?=.*[$`\\]' "$R/etc/default/grub" 2>/dev/null ||
+    echo "GRUB_CMDLINE_LINUX in /etc/default/grub uses shell expansion, which the switch cannot rewrite; write the words out"
 }
 
 # legacy_plan INSTALLED WORK LUKS HOOKS: the tester plan, plus the checkout's
@@ -322,10 +341,10 @@ legacy_move_esp() {
   if legacy_fstab_esp >/dev/null; then
     legacy_stage_keep /etc/fstab || return 1
     legacy_esp_fstab <"$fstab" | durable_write "$fstab" 644 || return 1
-    systemctl daemon-reload >/dev/null 2>&1 || echo "systemctl daemon-reload failed; the mounts move anyway" >&2
   fi
   interrupt_for_test mid esp-fstab
   if [[ $(omarchy-mac-esp 2>/dev/null) == "/boot" ]]; then
+    systemctl daemon-reload >/dev/null 2>&1 || echo "systemctl daemon-reload failed; the mounts move anyway" >&2
     umount "$R/boot" || { echo "cannot unmount the ESP from /boot" >&2; return 1; }
   fi
   interrupt_for_test mid esp-unmounted
@@ -469,7 +488,7 @@ legacy_check_unlock() {
     echo "/boot/initramfs-$legacy_kernel.img does not unlock the root through sd-encrypt" >&2
     return 1
   fi
-  spec=$(awk '$1 == "root" { print $2; exit }' "$R/etc/crypttab" 2>/dev/null)
+  spec=$(awk '$1 == "root" { print $2; exit }' "$R/etc/crypttab" 2>/dev/null) || spec=""
   [[ ${spec,,} == "uuid=${uuid,,}" ]] || { echo "/etc/crypttab does not name the root UUID=$uuid" >&2; return 1; }
   if [[ -n $(legacy_crypt_words) || " $(legacy_grub_value GRUB_CMDLINE_LINUX) " != *" rd.luks.name=$uuid=root "* ]]; then
     echo "GRUB's defaults, which Limine's kernel line comes from, do not unlock the root with rd.luks.name=$uuid=root alone" >&2
@@ -508,6 +527,8 @@ legacy_unstage() {
   if [[ $(plan_esp) == "/boot" ]]; then
     legacy_restore_esp || return 1
   fi
+  # Everything is back: a later stage keeps what it finds then.
+  rm -rf "$kept"
   echo "The boot switch was undone; GRUB boots this Mac as before." >&2
 }
 

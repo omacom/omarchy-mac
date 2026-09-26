@@ -833,6 +833,12 @@ rm "$F/limine-activation-fail"
 finish
 [[ $(switch_outcome) == "$encrypted_baseline" ]] || fail "the retried activation ends where an uninterrupted one does"
 stage_fails local-hooks 'printf "HOOKS+=(encrypt)\n" >"$R/etc/mkinitcpio.conf.d/99-local.conf"' "do not unlock the root through systemd"
+# The ESP cannot leave /boot: nothing on it may be removed on the way back.
+stage_fails umount-busy ': >"$F/umount-busy"' "cannot unmount the ESP from /boot"
+[[ ! -e $(state_dir)/backup/boot-switch ]] || fail "an undone stage keeps no stale originals for the next"
+rm "$F/umount-busy"
+finish
+[[ $(switch_outcome) == "$encrypted_baseline" ]] || fail "the retried move ends where an uninterrupted one does"
 pass "a stage or activation that fails is undone, GRUB keeps booting the Mac, and the retry finishes"
 
 # --- An unencrypted Mac with its ESP at /boot ---------------------------------------
@@ -868,6 +874,13 @@ refused "busybox encrypt only in a drop-in" "not in /etc/mkinitcpio.conf's own H
 encrypted_fixture refusals
 printf 'root UUID=0000-1111 none luks\n' >"$R/etc/crypttab"
 refused "crypttab naming another root" "/etc/crypttab names another root"
+encrypted_fixture refusals
+sed -i 's/loglevel=3/loglevel=$LEVEL/' "$R/etc/default/grub"
+refused "a kernel line with shell expansion" "uses shell expansion"
+encrypted_fixture refusals
+: >"$R/var/lib/omarchy/limine.enabled"
+printf 'KERNEL_CMDLINE[default]=""\n' >"$R/etc/default/limine"
+refused "a Limine Mac with its ESP at /boot" "moves those only on a GRUB Mac"
 encrypted_fixture refusals
 sed -i '/ \/boot vfat /d' "$R/etc/fstab"
 refused "an ESP at /boot fstab does not mount" "no single vfat line mounting it there"
