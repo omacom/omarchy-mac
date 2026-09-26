@@ -133,6 +133,7 @@ Item {
       hoverEnabled: true
       onClicked: { root.wakeRequested(); root.forcePasswordFocus() }
       onPositionChanged: root.wakeRequested()
+      onWheel: root.wakeRequested()
     }
 
     BorderSurface {
