@@ -19,7 +19,7 @@ run_harness() {
   PATH="$test_tmp/bin:$PATH" HOME="$test_tmp/home" bash "$harness" "$@" >"$test_tmp/out" 2>&1
 }
 
-scenarios=(first-boot conversion second-boot password-change update snapshot-restore factory-reset)
+scenarios=(first-boot conversion second-boot password-change recovery-reset update snapshot-restore factory-reset)
 
 run_harness --list || fail "--list succeeds" "$(cat "$test_tmp/out")"
 for name in "${scenarios[@]}" fresh-install all; do
@@ -55,8 +55,8 @@ done
 [[ ! -e $test_tmp/home ]] || fail "a refused host keeps no state"
 pass "valid selections reach the host checks, and a refused host keeps no state"
 
-# The three entrypoint cases probe the paths their skip reasons name.
-for path in /usr/lib/omarchy/mac-boot/update-verify /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check /usr/lib/omarchy/mac-boot/reset-prepare; do
+# The cases that wait for an entrypoint probe the paths their skip reasons name.
+for path in /usr/lib/omarchy/mac-boot/update-verify /usr/bin/omarchy-drive-recover /etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check /usr/lib/omarchy/mac-boot/reset-prepare; do
   [[ $(grep -Fc -- "$path" "$harness") -ge 2 ]] || fail "$path is both probed and named in its skip reason"
 done
 pass "each entrypoint case probes the path its skip reason names"

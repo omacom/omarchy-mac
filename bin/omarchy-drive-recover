@@ -1,0 +1,349 @@
+#!/bin/bash
+
+# omarchy:summary=Set a new disk, login and root password with the disk's recovery key
+# omarchy:args=[--check|--arm]
+# omarchy:requires-sudo=true
+# omarchy:hidden=true
+
+# An owner who forgot the password unlocks the disk at boot with the recovery
+# key setup showed. systemd caches what was typed at that prompt in root's
+# kernel keyring for 2.5 minutes (crypttab password-cache=, on by default), where
+# --check, run by omarchy-drive-recover-check.service before the login screen,
+# looks for a recovery key. Finding one, or a reset that stopped part way, it
+# arms omarchy-drive-recover.service, which runs this on tty1: the recovery key
+# lets the owner choose a new password for the disk, the login user and root.
+#
+# The disk changes first and the accounts follow it, as in omarchy-drive-password.
+# The journal holds the disk's UUID, the recovery key's slot, the login user and
+# the phase, never a key. Phase luks: the new password is added with the
+# recovery key and every other slot is retired, so the disk ends with those two
+# keys alone; with the recovery key a reset can always start this phase again.
+# Phase accounts: the disk holds exactly those keys, and the login and root
+# passwords follow the new one. The owner's slot is then recorded for a
+# platform's boot checks. --arm installs and enables the two units; owner setup
+# runs it where it gives the disk a recovery key.
+
+# Keys live in variables; never trace them.
+set +x
+
+OMARCHY_PATH=${OMARCHY_PATH:-/usr/share/omarchy}
+export PATH="$OMARCHY_PATH/bin:$PATH"
+
+REKEY_STATE=${OMARCHY_DRIVE_RECOVER_STATE:-/var/lib/omarchy/drive-recover.state}
+RUN_DIR=${OMARCHY_DRIVE_RECOVER_RUN_DIR:-/run/omarchy}
+UNIT_DIR=${OMARCHY_SYSTEMD_UNIT_DIR:-/etc/systemd/system}
+PROVISIONING_DIR=${OMARCHY_PROVISIONING_DIR:-/var/lib/omarchy/provisioning}
+AUTOLOGIN_CONF=${OMARCHY_AUTOLOGIN_CONF:-/etc/sddm.conf.d/autologin.conf}
+CMDLINE=${OMARCHY_CMDLINE:-/proc/cmdline}
+ARMED=$RUN_DIR/drive-recover
+UNITS=(omarchy-drive-recover-check.service omarchy-drive-recover.service)
+
+source "$OMARCHY_PATH/install/provisioning/luks-rekey.sh" &&
+  source "$OMARCHY_PATH/install/provisioning/luks-recovery.sh" || {
+  echo "Required LUKS support is unavailable" >&2
+  exit 1
+}
+
+say() {
+  printf '%s\n' "$*"
+}
+
+pause() {
+  sleep "${OMARCHY_DRIVE_RECOVER_PAUSE:-5}"
+}
+
+clear_screen() {
+  printf '\e[3J\e[2J\e[H'
+}
+
+# What was typed at this boot's disk password prompts, NUL-separated: systemd
+# caches every attempt there. The units link root's user keyring into their own
+# (KeyringMode=shared), which lets them read it.
+cached_passwords() {
+  local id
+  id=$(keyctl search @u user cryptsetup 2>/dev/null) || return 0
+  keyctl pipe "$id" 2>/dev/null || true
+}
+
+# A snapshot boot writes to a throwaway root, and a read-only root keeps no
+# change: a reset there would re-key the disk but lose the accounts.
+writable_root() {
+  if grep -Eq '(^|[[:space:]])rootflags=([^[:space:]]*,)?subvol=[^[:space:],]*/\.snapshots/[0-9]+/snapshot' "$CMDLINE" 2>/dev/null; then
+    return 1
+  fi
+  [[ $(findmnt -no FSTYPE /) != "overlay" ]] && [[ ,$(findmnt -no OPTIONS /), == *,rw,* ]]
+}
+
+# The journal of a reset on this disk, dropping one left for another disk.
+journal_pending() {
+  local phase uuid
+  phase=$(rekey_state_get phase) || return 1
+  uuid=$(rekey_state_get uuid)
+  if [[ $phase == "luks" || $phase == "accounts" ]] && [[ -n $uuid && $uuid == "$root_uuid" ]]; then
+    return 0
+  fi
+  rm -f "$REKEY_STATE"
+  return 1
+}
+
+run_check() {
+  local password
+  rm -f "$ARMED"
+  [[ ! -e $PROVISIONING_DIR/pending ]] || return 0
+  writable_root || return 0
+  root_drive=$(root_luks_device) && [[ -n $root_drive ]] || return 0
+  root_uuid=$(lsblk -dno UUID "$root_drive") && [[ -n $root_uuid ]] || return 0
+
+  if ! journal_pending; then
+    while IFS= read -r -d '' password || [[ -n $password ]]; do
+      luks_recovery_passphrase "$password" && break
+      password=""
+    done < <(cached_passwords)
+    [[ -n $password ]] || return 0
+  fi
+  mkdir -p "$RUN_DIR" && : >"$ARMED" || return 1
+  say "Arming the password reset with the recovery key for this boot"
+}
+
+run_arm() {
+  local unit
+  mkdir -p "$UNIT_DIR/multi-user.target.wants" || return 1
+  for unit in "${UNITS[@]}"; do
+    install -m 644 "$OMARCHY_PATH/install/provisioning/$unit" "$UNIT_DIR/$unit" || return 1
+    ln -sfn "$UNIT_DIR/$unit" "$UNIT_DIR/multi-user.target.wants/$unit" || return 1
+  done
+}
+
+# The account whose password follows the disk's: the one a reset in progress
+# recorded, else the one the login screen signs in, else the only person's.
+login_user() {
+  local user users
+  user=$(rekey_state_get user 2>/dev/null) || user=""
+  if [[ -z $user && -f $AUTOLOGIN_CONF ]]; then
+    user=$(awk -F= '/^\[/ { section = $0 } section == "[Autologin]" && $1 == "User" { print $2 }' "$AUTOLOGIN_CONF" | tail -n 1)
+  fi
+  if [[ -z $user ]]; then
+    users=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ { print $1 }')
+    (( $(grep -c . <<<"$users") == 1 )) && user=$users
+  fi
+  [[ -n $user && $user != "root" ]] && getent passwd "$user" >/dev/null || return 1
+  printf '%s' "$user"
+}
+
+# The largest console font that still leaves 80 columns: at a Mac screen's
+# native resolution the default one is tiny.
+console_font() {
+  local name rows cols
+  [[ $(tty 2>/dev/null) == /dev/tty[0-9]* ]] || return 0
+  for name in latarcyrheb-sun32 sun12x22 default8x16; do
+    setfont "$name" 2>/dev/null || continue
+    read -r rows cols < <(stty size 2>/dev/null || echo "0 0")
+    (( cols >= 80 )) && return 0
+  done
+}
+
+# The new password, asked twice. Fails when the owner leaves.
+ask_new_password() {
+  local password confirmation
+  while true; do
+    password=$(gum input --password --header "New password for the disk, $user and root") || return 1
+    confirmation=$(gum input --password --header "Confirm the new password") || return 1
+    if [[ -z $password ]]; then
+      say "Password cannot be empty." >&2
+    elif [[ $password != "$confirmation" ]]; then
+      say "Passwords do not match." >&2
+    elif luks_recovery_passphrase "$password"; then
+      say "That has the form of a recovery key. Choose another password." >&2
+    else
+      printf '%s' "$password"
+      return 0
+    fi
+  done
+}
+
+add_password() {
+  local recovery=$1 password=$2
+  local -a pbkdf=(--iter-time 2000)
+  if cryptsetup isLuks --type luks2 "$root_drive"; then
+    pbkdf+=(--pbkdf argon2id)
+  fi
+  cryptsetup luksAddKey "${pbkdf[@]}" --key-file <(printf '%s' "$recovery") "$root_drive" <(printf '%s' "$password")
+}
+
+# The slots on the disk, sorted, one per line.
+sorted_slots() {
+  luks_dump_slots "$root_drive" | sort -n
+}
+
+# Phase luks: add the new password with the recovery key unless it opens the
+# disk already, then retire every slot but the two. Sets new_slot.
+reset_disk() {
+  local recovery=$1 recovery_slot=$2 password=$3 slots slot
+
+  mkdir -p "${REKEY_STATE%/*}" &&
+    rekey_state_put uuid "$root_uuid" recovery_slot "$recovery_slot" user "$user" slot "" phase luks || return 1
+
+  say "Adding the new password to the disk"
+  new_slot=$(luks_slot_for "$password" "$root_drive")
+  if [[ -z $new_slot ]]; then
+    add_password "$recovery" "$password" || return 1
+    new_slot=$(luks_slot_for "$password" "$root_drive")
+  fi
+  [[ -n $new_slot && $new_slot != "$recovery_slot" ]] || return 1
+
+  say "Removing every other key from the disk"
+  slots=$(sorted_slots) || return 1
+  for slot in $slots; do
+    [[ $slot == "$recovery_slot" || $slot == "$new_slot" ]] && continue
+    cryptsetup luksKillSlot -q --key-file <(printf '%s' "$recovery") "$root_drive" "$slot" || return 1
+  done
+
+  [[ $(sorted_slots) == "$(printf '%s\n' "$recovery_slot" "$new_slot" | sort -n)" ]] || return 1
+  [[ $(luks_slot_for "$recovery" "$root_drive") == "$recovery_slot" ]] || return 1
+  [[ $(luks_slot_for "$password" "$root_drive") == "$new_slot" ]] || return 1
+  rekey_state_put slot "$new_slot" phase accounts
+}
+
+# Record the two slots where the platform's boot checks prove them; a no-op
+# where nothing does, or on a machine without its platform's boot package
+# (dispatch exit 3).
+record_slots() {
+  local recorder status=0
+  recorder=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" --resolve luks-slots) || status=$?
+  (( status == 3 )) && return 0
+  (( status == 0 )) || return 1
+  [[ -z $recorder ]] || "$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" luks-slots "owner=$1" "recovery=$2"
+}
+
+# Phase accounts: the login and root passwords follow the disk's new one.
+finish_accounts() {
+  local password=$1 slot=$2
+  say "Setting the login password for $user and root"
+  printf '%s:%s\n' "$user" "$password" | chpasswd || return 1
+  printf 'root:%s\n' "$password" | chpasswd || return 1
+  record_slots "$slot" "$(rekey_state_get recovery_slot)" || return 1
+  rm -f "$REKEY_STATE"
+}
+
+# Whether $1, other than the recovery key, finishes a reset that stopped part
+# way: the password the disk holds beside the recovery key alone, or once the
+# accounts phase began, in the slot it recorded. Sets finish_slot.
+finishes() {
+  local slot
+  slot=$(luks_slot_for "$1" "$root_drive")
+  [[ -n $slot && $slot != "$journal_recovery" ]] || return 1
+  if [[ $phase == "accounts" ]]; then
+    [[ $slot == "$journal_slot" ]] || return 1
+  else
+    [[ $(sorted_slots) == "$(printf '%s\n' "$journal_recovery" "$slot" | sort -n)" ]] || return 1
+  fi
+  finish_slot=$slot
+}
+
+stopped() {
+  say "The password reset stopped: $1"
+  say "Restart and unlock the disk with the recovery key to finish it."
+  pause
+  exit 1
+}
+
+run_reset() {
+  local phase="" journal_slot="" journal_recovery="" password slot recovery="" recovery_slot="" finish="" typed tries=0 new_password status=0
+  local -a cached=()
+
+  mkdir -p "$RUN_DIR" && exec {lock_fd}>"$RUN_DIR/drive-recover.lock" && flock -n "$lock_fd" || exit 0
+  root_drive=$(root_luks_device) && [[ -n $root_drive ]] || stopped "could not tell which drive holds the system."
+  root_uuid=$(lsblk -dno UUID "$root_drive") && [[ -n $root_uuid ]] || stopped "could not read the UUID of $root_drive."
+
+  if journal_pending; then
+    phase=$(rekey_state_get phase)
+    journal_slot=$(rekey_state_get slot)
+    journal_recovery=$(rekey_state_get recovery_slot)
+    if [[ ! $journal_recovery =~ ^[0-9]+$ ]] || [[ $phase == "accounts" && ! $journal_slot =~ ^[0-9]+$ ]]; then
+      stopped "$REKEY_STATE is unreadable."
+    fi
+  fi
+
+  # The keys typed at the unlock prompt: the recovery key, or once the disk
+  # holds the new password alone beside it, that password.
+  mapfile -d '' -t cached < <(cached_passwords)
+  for password in "${cached[@]}"; do
+    [[ -n $password ]] || continue
+    if luks_recovery_passphrase "$password"; then
+      slot=$(luks_slot_for "$password" "$root_drive")
+      [[ -n $slot ]] && recovery=$password recovery_slot=$slot
+    elif [[ -n $phase ]] && finishes "$password"; then
+      finish=$password
+    fi
+  done
+  cached=()
+
+  if [[ -z $recovery && -z $finish ]]; then
+    [[ -n $phase ]] || exit 0
+    console_font
+    clear_screen
+    say "The last password reset with the recovery key stopped part way."
+    while [[ -z $recovery && -z $finish ]]; do
+      typed=$(gum input --password --header "Recovery key, or the new password you chose (empty to skip)") || exit 0
+      [[ -n $typed ]] || exit 0
+      if luks_recovery_passphrase "$typed"; then
+        slot=$(luks_slot_for "$typed" "$root_drive")
+        [[ -n $slot ]] && recovery=$typed recovery_slot=$slot
+      elif finishes "$typed"; then
+        finish=$typed
+      fi
+      if [[ -n $recovery || -n $finish ]]; then
+        break
+      elif (( ++tries >= 3 )); then
+        stopped "that does not finish it."
+      else
+        say "That does not finish the reset."
+      fi
+    done
+  fi
+  typed=""
+
+  user=$(login_user) || stopped "could not tell whose login password follows the disk's."
+
+  if [[ -n $finish ]]; then
+    console_font
+    clear_screen
+    say "Finishing the password reset: $user and root take the password that unlocked the disk."
+    if [[ $phase == "luks" ]]; then
+      rekey_state_put slot "$finish_slot" phase accounts || stopped "could not record the finished disk change."
+    fi
+    finish_accounts "$finish" "$finish_slot" || stopped "the login and root passwords did not change."
+    say "Done. The disk, $user and root use the new password; the recovery key still unlocks the disk."
+    pause
+    exit 0
+  fi
+
+  console_font
+  clear_screen
+  if [[ -z $phase ]]; then
+    say "This disk was unlocked with its recovery key."
+    gum confirm --affirmative "Set a new password" --negative "Not now" \
+      "Set a new password for the disk, $user and root?" || exit 0
+  else
+    say "Choose the new password again to finish the reset."
+  fi
+
+  new_password=$(ask_new_password) || exit 0
+  reset_disk "$recovery" "$recovery_slot" "$new_password" || status=$?
+  if (( status != 0 )); then
+    stopped "the disk's keys did not change as expected."
+  fi
+  finish_accounts "$new_password" "$new_slot" || stopped "the login and root passwords did not change."
+  say "Done. The disk, $user and root use the new password; the recovery key still unlocks the disk."
+  pause
+}
+
+case ${1:-} in
+  --check) run_check ;;
+  --arm) run_arm ;;
+  "") run_reset ;;
+  *)
+    echo "Usage: omarchy-drive-recover [--check|--arm]" >&2
+    exit 2
+    ;;
+esac

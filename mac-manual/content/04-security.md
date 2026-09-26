@@ -1,6 +1,6 @@
 ---
 title: Encryption and passwords
-description: Disk encryption on a Mac, the first-boot re-key, the recovery passphrase, password changes and resetting a Mac.
+description: Disk encryption on a Mac, the first-boot re-key, the recovery passphrase, password changes, a forgotten password and resetting a Mac.
 section: Using it
 ---
 
@@ -23,7 +23,17 @@ The next boot unlocks the disk with your password. At the prompt the built-in ke
 
 ## Changing passwords
 
-Change passwords under _Update > Password_ in the Omarchy menu, as on x86. On a Mac your disk password and your login password start out the same. Changing the disk password changes the LUKS key first and your login password second, and records each step, so an interruption resumes rather than leaving the two out of step. Enter your current password, not the recovery passphrase: the recovery passphrase stays as it is. It applies only to the root volume: changing the password of another encrypted drive never changes your login.
+Change passwords under _Update > Password_ in the Omarchy menu, as on x86. On a Mac your disk password and your login password start out the same. Changing the disk password changes the LUKS key first and your login password second, and records each step, so an interruption resumes rather than leaving the two out of step. Enter your current password, not the recovery passphrase: the recovery passphrase stays as it is. It applies only to the root volume: changing the password of another encrypted drive never changes your login. If you no longer know your password, see the next section.
+
+## If you forget your password
+
+The recovery passphrase sets a new one. Restart the Mac and type the recovery passphrase at the disk password prompt instead of your password. Before the login screen, Omarchy says the disk was unlocked with its recovery key and offers to set a new password. Choose _Set a new password_, then type the new password twice. It becomes your disk password and the login password for your account and for root, as after a password change.
+
+Every other key to the disk is removed, so the forgotten password no longer unlocks it. The recovery passphrase stays as it is and keeps working: keep it where it was.
+
+The reset changes the disk first and your accounts second, and records each step, so an interruption never leaves you locked out. If the Mac loses power part way, restart and unlock with the recovery passphrase again: you are asked to choose the new password again, and the reset finishes. If the new password already unlocks the disk, unlocking with it finishes the reset without asking anything.
+
+_Not now_ goes on to the desktop and changes nothing; the offer comes back whenever the disk is unlocked with the recovery passphrase. Booting a snapshot from the Limine menu never offers it, since a snapshot boot keeps no changes.
 
 ## Resetting the Mac for a new owner
 

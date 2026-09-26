@@ -1,0 +1,18 @@
+# Arms omarchy-drive-recover.service when this boot's disk unlock was answered
+# with the recovery key, or a reset with it stopped part way. systemd caches the
+# disk password typed at boot in root's user keyring, which KeyringMode=shared
+# lets this unit read. Installed and enabled by omarchy-drive-recover --arm,
+# which owner setup runs where it gives the disk a recovery key.
+[Unit]
+Description=Omarchy check for a disk unlocked with its recovery key
+ConditionPathExists=!/var/lib/omarchy/provisioning/pending
+Before=omarchy-drive-recover.service display-manager.service
+
+[Service]
+Type=oneshot
+KeyringMode=shared
+TimeoutStartSec=60
+ExecStart=/usr/bin/omarchy-drive-recover --check
+
+[Install]
+WantedBy=multi-user.target

@@ -319,7 +319,7 @@ run() {
   {
     ROOT=$ROOT TMP=$tmp BACKEND=$backend DEVICE=$device MODE=$mode PASSWORD=$password CRASH_AT=$crash_at \
       OMARCHY_PATH=$runtime OMARCHY_PROC_ROOT=$tmp/$platform/proc OMARCHY_LIFECYCLE_ROOT=$tmp/lifecycle \
-      PATH="$tmp/$platform/bin:$PATH" bash "$tmp/attempt.sh"
+      OMARCHY_SYSTEMD_UNIT_DIR=$tmp/etc/systemd/system PATH="$tmp/$platform/bin:$PATH" bash "$tmp/attempt.sh"
   } >>"$tmp/output" 2>&1
 }
 
@@ -511,10 +511,14 @@ for run_spec in "${matrix[@]}"; do
   (( total_steps >= 11 )) || fail "$backend: every durable step is a crash point" "$(cat "$tmp/trace")"
   if [[ $platform == "apple" ]]; then
     [[ $(wc -l <"$tmp/recovery-shown") == "1" ]] || fail "apple $backend: the recovery key is shown once"
-    pass "apple $backend: uninterrupted setup leaves the owner's and the recovery slot, records them and destroys the staged key"
+    [[ -L $tmp/etc/systemd/system/multi-user.target.wants/omarchy-drive-recover-check.service &&
+      -L $tmp/etc/systemd/system/multi-user.target.wants/omarchy-drive-recover.service ]] ||
+      fail "apple $backend: setup arms the password reset with the recovery key"
+    pass "apple $backend: uninterrupted setup leaves the owner's and the recovery slot, records them, arms the reset with the recovery key and destroys the staged key"
   else
     [[ ! -e $tmp/recovery-shown ]] || fail "x86 $backend: setup makes no recovery key"
-    pass "x86 $backend: uninterrupted setup leaves only the owner's slot and destroys the staged key"
+    [[ ! -e $tmp/etc/systemd/system/omarchy-drive-recover.service ]] || fail "x86 $backend: setup arms no reset with a recovery key"
+    pass "x86 $backend: uninterrupted setup leaves only the owner's slot, arms nothing else and destroys the staged key"
   fi
 
   # After each kill the owner reboots and answers the form again, with the same

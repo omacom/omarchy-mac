@@ -172,8 +172,10 @@ omarchy=$tmp/omarchy
 mkdir -p "$omarchy/install/provisioning" "$omarchy/bin"
 printf 'OMARCHY\n' >"$omarchy/logo.txt"
 : >"$omarchy/install/provisioning/setup-form.sh"
-cp "$ROOT/install/provisioning/luks-rekey.sh" "$ROOT/install/provisioning/luks-recovery.sh" "$omarchy/install/provisioning/"
-for command in omarchy-lifecycle-dispatch omarchy-hw-platform omarchy-hw-apple-silicon; do
+cp "$ROOT/install/provisioning/luks-rekey.sh" "$ROOT/install/provisioning/luks-recovery.sh" \
+  "$ROOT/install/provisioning/omarchy-drive-recover-check.service" "$ROOT/install/provisioning/omarchy-drive-recover.service" \
+  "$omarchy/install/provisioning/"
+for command in omarchy-lifecycle-dispatch omarchy-hw-platform omarchy-hw-apple-silicon omarchy-drive-recover; do
   ln -s "$ROOT/bin/$command" "$omarchy/bin/$command"
 done
 
@@ -181,6 +183,8 @@ export PATH="$stub_bin:$tmp/apple/bin:$PATH"
 export OMARCHY_PATH=$omarchy OMARCHY_PROC_ROOT=$tmp/apple/proc OMARCHY_LIFECYCLE_ROOT=$lifecycle
 export OMARCHY_PROVISIONING_DIR=$prov OMARCHY_PROVISION_OWNER_LOG=$tmp/provision.log
 export OMARCHY_LUKS_DEVICE=$device OMARCHY_PROVISION_OWNER_SOURCE=1 COLUMNS=80
+units=$tmp/units
+export OMARCHY_SYSTEMD_UNIT_DIR=$units
 
 # shellcheck disable=SC1091
 source "$ROOT/bin/omarchy-provision-owner"
@@ -242,6 +246,7 @@ fixture() {
   "$stub_bin/mkinitcpio" && : >"$calls"
   printf '0 throwaway-install-key\n' >"$slots"
   rm -f "$tmp"/fail-* "$tmp/token-slot" "$tmp/token-id" "$screen" "$tmp/gum-stdin"
+  rm -rf "$units"
   : >"$OMARCHY_PROVISION_OWNER_LOG"
   printf 'nope\n%s\n' "$RECOVERY_ACK_PHRASE" >"$tmp/gum-input"
   password=owner-secret
@@ -288,7 +293,11 @@ grep -qx provision-commit "$calls" && grep -qx provision-verify "$calls" && grep
 ! grep -Eq '^(limine-update|update-grub)$' "$calls" || fail "the Limine UKI path never runs on Apple Silicon" "$(cat "$calls")"
 ! grep -Fq -e "$recovery_key" -e owner-secret -e throwaway-install-key "$OMARCHY_PROVISION_OWNER_LOG" ||
   fail "no key material reaches the provision log"
-pass "an encrypted Apple image's first boot re-keys to the owner, keeps the recovery key and takes the throwaway key out of the boot chain"
+for unit in omarchy-drive-recover-check.service omarchy-drive-recover.service; do
+  [[ -f $units/$unit && -L $units/multi-user.target.wants/$unit ]] ||
+    fail "setup arms the password reset with the recovery key: $unit" "$(ls -R "$units" 2>&1)"
+done
+pass "an encrypted Apple image's first boot re-keys to the owner, keeps the recovery key, arms the reset with it and takes the throwaway key out of the boot chain"
 
 # ── install.conf handoff before the owner is asked anything ────────────────
 fixture
@@ -304,6 +313,7 @@ platform_ready || fail "encrypt=0 lets a plain root be set up" "$(cat "$screen" 
 OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$OMARCHY_PROVISION_OWNER_LOG" 2>&1 ||
   fail "a plain Mac finishes setup" "$(cat "$OMARCHY_PROVISION_OWNER_LOG")"
 ! grep -q provision-commit "$calls" && ! grep -q 'cryptsetup luks' "$calls" || fail "a plain Mac is not re-keyed" "$(cat "$calls")"
+[[ ! -e $units ]] || fail "a plain Mac arms no password reset with a recovery key"
 pass "provision-prepare holds setup to the encryption install.conf asked for"
 
 # ── failures and retries ──────────────────────────────────────────────────
