@@ -703,7 +703,8 @@ pass "an encrypted legacy Mac (busybox encrypt, /boot on the ESP) is no longer r
 [[ $(sed "s|$R|ROOT|" "$F/mounts") == "ROOT/boot/efi" && -L $R/boot/efi && ! -L $R/boot ]] &&
   grep -qx "UUID=4A1B-2C3D /boot/efi vfat rw,relatime,fmask=0022,dmask=0022 0 2" "$R/etc/fstab" ||
   fail "the ESP moves from /boot to /boot/efi, in fstab and mounted" "$(cat "$R/etc/fstab" "$F/mounts")"
-[[ $(<"$R/boot/vmlinuz-linux-aurora") == "aurora kernel 7.1.12" ]] || fail "the root's /boot gets the Aurora kernel"
+[[ $(<"$R/boot/vmlinuz-linux-aurora") == "aurora kernel 7.1.12" && -d $R/boot/grub ]] ||
+  fail "the root's /boot gets the Aurora kernel and the directory update-grub needs"
 [[ $(sed -n 's/^HOOKS //p' "$R/boot/initramfs-linux-aurora.img") == "$converged_hooks" ]] ||
   fail "the root's /boot gets the converged systemd image the Apple boot package composes" "$(cat "$R/boot/initramfs-linux-aurora.img")"
 [[ $(cat "$R/etc/crypttab") == "root UUID=$luks_uuid none luks,discard" ]] || fail "crypttab names the root's LUKS partition, discards kept" "$(cat "$R/etc/crypttab")"
@@ -803,7 +804,8 @@ before_stage() {
   (cd "$F/esp" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
   (cd "$R" && sha256sum etc/fstab etc/default/grub etc/mkinitcpio.conf etc/mkinitcpio.conf.d/*)
   cat "$R/etc/crypttab" 2>/dev/null || echo "no crypttab"
-  (cd "$R/boot" && find . -type f | LC_ALL=C sort)
+  (cd "$R/boot" && find . | LC_ALL=C sort)
+  (cd "$F/covered/_boot" 2>/dev/null && find . | LC_ALL=C sort)
   sed "s|$R|ROOT|" "$F/mounts"
   [[ -L $R/boot ]] && echo "the ESP at /boot"
 }

@@ -333,6 +333,9 @@ legacy_move_esp() {
     install -d -m 755 "$R/boot/efi" && mount "$R/boot/efi" || { echo "cannot mount the ESP at /boot/efi" >&2; return 1; }
   fi
   [[ $(omarchy-mac-esp 2>/dev/null) == "/boot/efi" ]] || { echo "the ESP is not mounted at /boot/efi after the move" >&2; return 1; }
+  # Asahi's update-grub, which the Limine activation still runs, resolves its
+  # directory before creating it: without one it fails.
+  install -d -m 755 "$R/boot/grub" || { echo "cannot create /boot/grub" >&2; return 1; }
 }
 
 # The ESP goes back to /boot. What the switch put on the root's /boot is
@@ -345,7 +348,7 @@ legacy_restore_esp() {
   fi
   if ! findmnt --mountpoint "$R/boot" >/dev/null 2>&1; then
     rm -f "$R/boot/vmlinuz-$legacy_kernel" "$R/boot/initramfs-$legacy_kernel.img" "$R/boot/initramfs-$legacy_kernel-fallback.img"
-    rmdir "$R/boot/efi" 2>/dev/null || true
+    rmdir "$R/boot/efi" "$R/boot/grub" 2>/dev/null || true
   fi
   legacy_stage_restore /etc/fstab || return 1
   systemctl daemon-reload >/dev/null 2>&1 || true
