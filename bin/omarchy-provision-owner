@@ -820,13 +820,24 @@ configure_hostname() {
 # step, overwriting the placeholder (UTC) the deferred install seeded.
 configure_timezone() {
   [[ -n ${timezone:-} ]] || return 0
-  if timedatectl set-timezone "$timezone" 2>&1; then
-    return 0
+  if ! timedatectl set-timezone "$timezone" 2>&1; then
+    # Fallback only if the zone file exists, so a bad zone can't point
+    # /etc/localtime at nothing and break every localtime read afterward.
+    [[ -e /usr/share/zoneinfo/$timezone ]] &&
+      ln -sf "/usr/share/zoneinfo/$timezone" /etc/localtime 2>&1 || true
   fi
-  # Fallback only if the zone file exists, so a bad zone can't point
-  # /etc/localtime at nothing and break every localtime read afterward.
-  [[ -e /usr/share/zoneinfo/$timezone ]] &&
-    ln -sf "/usr/share/zoneinfo/$timezone" /etc/localtime 2>&1 || true
+  configure_wireless_regdom
+}
+
+# The install's hardware step found only the UTC placeholder, which names no
+# country, so the wireless regulatory domain comes from the owner's timezone
+# here. No reboot follows setup, so the radios get it now the way udev applies
+# it at every boot.
+configure_wireless_regdom() {
+  bash "$OMARCHY_PATH/install/hardware/set-wireless-regdom.sh" 2>&1 || return 0
+  if omarchy-cmd-present set-wireless-regdom; then
+    set-wireless-regdom 2>&1 || true
+  fi
 }
 
 finalize_user() {

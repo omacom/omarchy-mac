@@ -758,6 +758,26 @@ check_snapshots() {
   fi
 }
 
+# The image's hardware steps saw only UTC, so the regulatory domain is the
+# country of the timezone the owner picked, found the way the install step
+# finds it; a timezone with no country sets none.
+check_regdom() {
+  local root=$work/mnt zone country="" regdom
+  zone=$(sudo -n readlink "$root/etc/localtime") || zone=""
+  zone=${zone#*/zoneinfo/}
+  if [[ ${zone%%/*} =~ ^[A-Z]{2}$ ]]; then
+    country=${zone%%/*}
+  elif [[ -n $zone ]]; then
+    country=$(sudo -n awk -v tz="$zone" '$3 == tz { print $1; exit }' "$root/usr/share/zoneinfo/zone.tab") || country=""
+  fi
+  regdom=$(sudo -n sed -n 's/^WIRELESS_REGDOM="\{0,1\}\([A-Z][A-Z]\)"\{0,1\}$/\1/p' "$root/etc/conf.d/wireless-regdom" | tail -n 1) || regdom=""
+  if [[ $regdom == "$country" ]]; then
+    ok "$1: the wireless regulatory domain (${regdom:-none}) follows the owner's timezone ${zone:-unset}"
+  else
+    not_ok "$1: the wireless regulatory domain is ${regdom:-unset}, but the owner's timezone ${zone:-unset} is in ${country:-no country}"
+  fi
+}
+
 # ── scenarios ────────────────────────────────────────────────────────────────
 scenario_first_boot() {
   local disk=$work/first-boot.img log=$evidence_dir/first-boot-serial.log dev
@@ -788,6 +808,7 @@ scenario_first_boot() {
   ok "first-boot: install.conf consumed, root left plain, keyring made, the deferred Limine step rebuilt the menu and UKI for this Mac, owner setup finished and the console login is up"
   check_plymouth first-boot
   check_snapshots first-boot
+  check_regdom first-boot
   skip "first-boot: default audio sink: N/A in a VM (no Apple audio device, so no card profile to fall back from); hardware validation checks it"
   umount_last
   umount_root "${dev}p3"
