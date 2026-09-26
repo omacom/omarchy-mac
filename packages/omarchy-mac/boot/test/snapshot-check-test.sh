@@ -87,9 +87,19 @@ run_check() {
   set +e
   (
     eval "$(limine_mac_env "$ROOT/bin" "${TEST_UNAME:-}")"
-    local detector=$tmp/detector
+    local detector=$tmp/detector dir
+    local -a kept=() dirs=()
     [[ -z ${TEST_NO_DETECTOR:-} ]] || detector=$tmp/no-detector
     export PATH="${TEST_PATH_FIRST:-$fake}:$fake:$detector:$PATH"
+    # A root without the detector must not find one further down PATH, such
+    # as the runtime's bin/ when the suite runs with OMARCHY_PATH/bin first.
+    if [[ -n ${TEST_NO_DETECTOR:-} ]]; then
+      IFS=: read -r -a dirs <<<"$PATH"
+      for dir in "${dirs[@]}"; do
+        [[ -e $dir/omarchy-hw-platform ]] || kept+=("$dir")
+      done
+      PATH=$(IFS=:; printf '%s' "${kept[*]}")
+    fi
     export CHECK_RAN="$tmp/check-ran" HOOK_CMDLINE="$hook_cmdline" OMARCHY_CMDLINE="$tmp/cmdline"
     export OMARCHY_LIMINE_GATE="$mac_root/var/lib/omarchy/limine.enabled" OMARCHY_LIMINE_DEFAULT="$mac_root/etc/default/limine"
     export OMARCHY_BOOT_DIR="$mac_root/boot" OMARCHY_SNAPSHOTS_DIR="$tmp/snapshots"
