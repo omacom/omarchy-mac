@@ -422,10 +422,7 @@ sed -i 's/^omarchy 4.0.2-2$/omarchy-dev 4.0.3.r1-1/' "$R/var/lib/pacman/local/pa
 refused "mx-mac" "mx-mac install (omarchy-dev): its adapter (ticket 43)"
 new_fixture refusals
 sed -i '/^omarchy /d' "$R/var/lib/pacman/local/packages"
-refused "legacy checkout" "legacy omarchy-mac checkout"
-new_fixture refusals
-echo "omarchy-mac-keyring 20260914-2" >>"$R/var/lib/pacman/local/packages"
-refused "rc4 channel" "rc4 channel (omarchy-mac-keyring)"
+refused "Omarchy 3.x" "upgrade the 3.x install with omarchy-upgrade-to-quattro-mac first"
 new_fixture refusals
 echo "base udev autodetect microcode modconf kms keyboard keymap block encrypt filesystems fsck" >"$F/hooks"
 refused "busybox encrypt" "busybox encrypt"

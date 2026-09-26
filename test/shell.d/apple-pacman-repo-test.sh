@@ -74,10 +74,12 @@ run_leaf() {
     bash -euo pipefail -c 'source "$1"' _ "$leaf"
 }
 
+migration_journal="$test_tmp/var/lib/omarchy-mac/migration/journal"
+
 run_migration() {
   : >"$calls"
-  APPLE_SILICON="${1:-0}" OMARCHY_PACMAN_CONF="$conf" OMARCHY_AARCH64_REPO_PENDING="$pending" OMARCHY_PATH="$ROOT" TEST_LOG="$calls" PATH="$stub_bin:$PATH" \
-    bash -euo pipefail "$migration"
+  APPLE_SILICON="${1:-0}" OMARCHY_PACMAN_CONF="$conf" OMARCHY_AARCH64_REPO_PENDING="$pending" OMARCHY_PATH="$ROOT" TEST_LOG="$calls" \
+    OMARCHY_MAC_MIGRATION_JOURNAL="$migration_journal" PATH="$stub_bin:$PATH" bash -euo pipefail "$migration"
 }
 
 unsigned_repository() {
@@ -173,3 +175,12 @@ fi
 run_migration 1
 grep -Fxq 'pacman -Sy' "$calls" || fail "the retried migration fetches the database" "$(cat "$calls")"
 pass "the migration stays pending until the database has been fetched"
+
+stock_conf
+before=$(cat "$conf")
+mkdir -p "$(dirname "$migration_journal")"
+: >"$migration_journal"
+run_migration 1
+[[ $(cat "$conf") == "$before" && ! -s $calls ]] || fail "a migrated Mac does not get the unsigned repository back" "$(cat "$conf" "$calls")"
+rm "$migration_journal"
+pass "a Mac omarchy-mac-migrate moved onto the official repositories never gets [omarchy-aarch64] back"
