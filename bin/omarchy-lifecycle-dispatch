@@ -188,7 +188,7 @@ fi
 # and nothing else.
 environment=(PATH="$fixed_path")
 if listed "$operation" "${user_operations[@]}"; then
-  for name in HOME USER XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS WAYLAND_DISPLAY OMARCHY_PATH; do
+  for name in HOME USER XDG_CONFIG_HOME XDG_STATE_HOME XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS WAYLAND_DISPLAY OMARCHY_PATH; do
     [[ -z ${!name:-} ]] || environment+=("$name=${!name}")
   done
 fi

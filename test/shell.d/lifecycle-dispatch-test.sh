@@ -279,8 +279,8 @@ for operation in "${setup_operations[@]}"; do
 done
 pass "apple: setup resolves in omarchy-mac's directory, and is a no-op without omarchy-mac"
 
-session=(CALLER_SECRET=leak HOME=/home/owner USER=owner XDG_RUNTIME_DIR=/run/user/1000
-  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus OMARCHY_PATH=/usr/share/omarchy)
+session=(CALLER_SECRET=leak HOME=/home/owner USER=owner XDG_RUNTIME_DIR=/run/user/1000 XDG_CONFIG_HOME=/home/owner/.cfg
+  XDG_STATE_HOME=/home/owner/.st XDG_DATA_HOME=/home/owner/.data DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus OMARCHY_PATH=/usr/share/omarchy)
 rm -f "$tmp/ran"
 env -u WAYLAND_DISPLAY "${session[@]}" OMARCHY_PROC_ROOT="$tmp/apple-silicon/proc" OMARCHY_LIFECYCLE_ROOT="$with_mac" \
   PATH="$tmp/apple-silicon/bin:$PATH" "$dispatch" setup-system image-first-boot || fail "apple: setup-system runs"
@@ -292,7 +292,7 @@ env -u WAYLAND_DISPLAY "${session[@]}" OMARCHY_PROC_ROOT="$tmp/apple-silicon/pro
   PATH="$tmp/apple-silicon/bin:$PATH" "$dispatch" setup-user || fail "apple: setup-user runs"
 [[ $(cat "$tmp/ran") == "setup-user" ]] || fail "apple: setup-user runs its entrypoint" "$(cat "$tmp/ran")"
 expected=$(printf '%s\n' DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus HOME=/home/owner OMARCHY_PATH=/usr/share/omarchy \
-  PATH=/usr/local/sbin:/usr/local/bin:/usr/bin USER=owner XDG_RUNTIME_DIR=/run/user/1000)
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/bin USER=owner XDG_CONFIG_HOME=/home/owner/.cfg XDG_RUNTIME_DIR=/run/user/1000 XDG_STATE_HOME=/home/owner/.st)
 [[ $(grep -Ev '^(_|PWD|OLDPWD|SHLVL)=' "$tmp/env" | sort) == "$expected" ]] ||
   fail "apple: setup-user gets its home and session, and nothing else" "$(cat "$tmp/env")"
 echo 3 >"$tmp/fail-with"
