@@ -129,6 +129,47 @@ install.sh` forces the attempt.
 
 ## Troubleshooting
 
+### The Asahi Alarm installer stops with `Bad CRC-32 for file 'esp/m1n1/boot.bin'`
+
+When you pick the OS, the installer downloads only the image's file index
+(`Downloading OS package info...`). The files themselves are downloaded later,
+after the stub macOS is set up. The images on asahi-alarm.org get rebuilt under
+the same file name, so if that happens while the installer is waiting — say you
+closed the lid at the size prompt — the index no longer matches the file, and
+the copy into the EFI partition fails on the very first file:
+
+```
+  Copying from esp into disk0s4 partition...
+zipfile.BadZipFile: Bad CRC-32 for file 'esp/m1n1/boot.bin'
+```
+
+The image is fine and so is your disk. The resize already finished, and macOS is
+still the default boot volume. What you have now is three leftover partitions:
+a 2.5 GB stub APFS container with the name you gave the OS, an `EFI - ASAHI`
+partition, and an empty `Linux Filesystem` partition. The installer's `p`
+(repair) option won't fix this — it only redoes the stub and the boot setup, it
+never copies the EFI and root files again.
+
+Delete the three partitions from macOS and run the installer again. Run
+`diskutil list` first and use your own identifiers — they differ from machine to
+machine — and never delete the `Apple_APFS_Recovery` partition:
+
+```bash
+diskutil list internal physical
+sudo diskutil apfs deleteContainer <stub container, e.g. disk0s5>
+sudo diskutil eraseVolume free free <EFI - ASAHI, e.g. disk0s4>
+sudo diskutil eraseVolume free free <Linux Filesystem, e.g. disk0s7>
+```
+
+The [Asahi Linux partitioning cheatsheet](https://asahilinux.org/docs/sw/partitioning-cheatsheet/)
+explains the same steps. The free space is still there, so the next run offers
+`f` (install into free space) and you don't have to resize macOS again. Next
+time, don't leave the installer sitting between choosing the OS and
+`Installation successful!`. If you need to step away, quit before choosing the
+OS — nothing has been written at that point. The same traceback is reported
+upstream as
+[AsahiLinux/asahi-installer#377](https://github.com/AsahiLinux/asahi-installer/issues/377).
+
 ### SSH stopped working after the install
 
 Asahi Alarm ships openssh enabled — the images are built for headless boards —
