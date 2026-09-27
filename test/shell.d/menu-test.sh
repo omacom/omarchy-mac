@@ -270,10 +270,11 @@ assert(!defaultById['install.ai.crush'], 'menu removes Crush from Install > AI')
 // dropped, so the list reads as a catalog of what Omarchy can install.
 // An Install row may hide for one reason other than the software already
 // being there: no package for this architecture at all, which is what the
-// explicit package or architecture guard asks. Chromium Account is the sole
+// explicit package or architecture guard asks, or a platform that can't run
+// it (the Windows VM on Apple Silicon). Chromium Account is the sole
 // Install row with anything else left to hide for, so any other `when:` here
 // is a row that went back to vanishing once installed.
-const availabilityGuard = when => typeof when === 'string' && (when.startsWith('omarchy-pkg-available ') || when.startsWith('[[ $(uname -m)'))
+const availabilityGuard = when => typeof when === 'string' && (when.startsWith('omarchy-pkg-available ') || when.startsWith('[[ $(uname -m)') || when === '! omarchy-hw-apple-silicon')
 assertDeepEqual(
   defaultItems
     .filter(item => item.id.startsWith('install.') && item.action && item.when && !availabilityGuard(item.when))

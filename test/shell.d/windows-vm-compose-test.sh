@@ -20,6 +20,15 @@ export OMARCHY_WINDOWS_DIR="$TMPDIR/win"
 export HOME="$TMPDIR/home"
 mkdir -p "$HOME"
 
+# The command refuses Apple Silicon before defining anything, and sourcing it
+# there would exit this test with it. What is under test is the x86 path, so
+# answer the detector as a non-Mac.
+STUB_BIN="$TMPDIR/bin"
+mkdir -p "$STUB_BIN"
+printf '#!/bin/bash\nexit 1\n' >"$STUB_BIN/omarchy-hw-apple-silicon"
+chmod +x "$STUB_BIN/omarchy-hw-apple-silicon"
+PATH="$STUB_BIN:$PATH"
+
 set -- help
 source "$ROOT/bin/omarchy-windows-vm" >/dev/null 2>&1
 COMPOSE="$OMARCHY_WINDOWS_DIR/docker-compose.yml"

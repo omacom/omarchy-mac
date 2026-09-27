@@ -30,6 +30,13 @@ mount -t tmpfs -o uid=0,gid=0,mode=0710,size=1g home-alice /home/alice
 
 export HOME=/home/alice
 unset OMARCHY_WINDOWS_DIR
+# The command refuses Apple Silicon before defining anything, and sourcing it
+# there would exit this test with it. What is under test is the x86 path, so
+# answer the detector as a non-Mac.
+mkdir -p "$test_tmp/bin"
+printf '#!/bin/bash\nexit 1\n' >"$test_tmp/bin/omarchy-hw-apple-silicon"
+chmod +x "$test_tmp/bin/omarchy-hw-apple-silicon"
+PATH="$test_tmp/bin:$PATH"
 set -- help
 source "$test_tmp/omarchy-windows-vm" >/dev/null 2>&1
 
