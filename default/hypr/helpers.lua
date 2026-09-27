@@ -89,6 +89,37 @@ function o.preinstalled_bindings_enabled()
   return not file_exists((os.getenv("HOME") or "") .. "/.local/state/omarchy/preinstalls-removed")
 end
 
+-- A platform package's defaults load before Omarchy's (see omarchy.lua). A chord
+-- they bind replaces Omarchy's own default for it, and a decorator they add runs
+-- for every later bind, before it is made, so it can bind something that must
+-- run first (Hyprland runs the binds of a key press in the order they were
+-- added). The user's files, loaded after both, can still unbind or rebind any
+-- chord. Both start empty on every load.
+o.platform_chords = {}
+o.bind_decorators = {}
+o.decorating = false
+
+-- Modifier order, case and aliases don't change the chord Hyprland binds.
+local modifier_aliases = { CONTROL = "CTRL", WIN = "SUPER", LOGO = "SUPER", MOD4 = "SUPER", META = "SUPER", MOD1 = "ALT" }
+
+local function chord(keys)
+  local parts = {}
+  for raw in (tostring(keys) .. "+"):gmatch("([^+]*)%+") do
+    local part = raw:match("^%s*(.-)%s*$"):upper()
+    if part ~= "" then
+      table.insert(parts, part)
+    end
+  end
+  for index = 1, #parts - 1 do
+    parts[index] = modifier_aliases[parts[index]] or parts[index]
+  end
+
+  local key = table.remove(parts) or ""
+  table.sort(parts)
+  table.insert(parts, key)
+  return table.concat(parts, "+")
+end
+
 function o.bind(keys, description, dispatcher, options)
   local opts = options or {}
 
@@ -97,6 +128,25 @@ function o.bind(keys, description, dispatcher, options)
   end
 
   dispatcher = command_from(dispatcher, description)
+
+  if o.binding_phase == "defaults" and o.platform_chords[chord(keys)] then
+    return
+  elseif o.binding_phase == "platform" then
+    o.platform_chords[chord(keys)] = true
+  end
+
+  -- A bind a decorator makes through o.bind is not decorated again.
+  if not o.decorating then
+    o.decorating = true
+    for _, decorate in ipairs(o.bind_decorators) do
+      local ok, err = pcall(decorate, keys, dispatcher, opts)
+      if not ok then
+        o.decorating = false
+        error(err, 0)
+      end
+    end
+    o.decorating = false
+  end
 
   if type(dispatcher) == "string" then
     dispatcher = hl.dsp.exec_cmd(dispatcher)
@@ -156,4 +206,49 @@ function o.window(match, rules)
   end
 
   hl.window_rule(rules)
+end
+
+local modifier_names = { "SHIFT", "CAPS", "CTRL", "CONTROL", "ALT", "MOD1", "MOD2", "MOD3", "SUPER", "WIN", "LOGO", "MOD4", "META", "MOD5" }
+
+-- Hyprland reads a modifier out of any string that contains one's name, so
+-- "NONE" or "" is no modifier at all.
+local function holds_modifier(mods)
+  if type(mods) ~= "string" then
+    return mods ~= nil
+  end
+
+  mods = mods:upper()
+  for _, name in ipairs(modifier_names) do
+    if mods:find(name, 1, true) then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- Hyprland rejects a gesture another one already covers, and gives Lua no way
+-- to list what's registered. Record each one, so a platform's default gesture,
+-- added after the user's files, can step aside for the user's own. The list
+-- starts empty on every load, and hl.gesture is wrapped once whether or not a
+-- reload keeps the Lua state.
+if hl and hl.gesture then
+  o.registered_gestures = {}
+
+  if hl.gesture ~= o.gesture_wrapper then
+    local register_gesture = hl.gesture
+
+    o.gesture_wrapper = function(gesture, ...)
+      if type(gesture) == "table" then
+        table.insert(o.registered_gestures, {
+          fingers = tonumber(gesture.fingers),
+          direction = type(gesture.direction) == "string" and gesture.direction:lower() or "",
+          modified = holds_modifier(gesture.mods),
+        })
+      end
+
+      return register_gesture(gesture, ...)
+    end
+    hl.gesture = o.gesture_wrapper
+  end
 end

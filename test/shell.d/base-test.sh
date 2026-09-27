@@ -9,6 +9,9 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 SHELL_TEST_DIR="$ROOT/test/shell.d"
 
 export ROOT
+# Hyprland config reads platform packages' defaults from the packaged tree; a
+# test must not pick up the ones installed on the machine running it.
+export OMARCHY_PACKAGED_PATH="$ROOT"
 
 pass() {
   printf 'ok - %s\n' "$1"

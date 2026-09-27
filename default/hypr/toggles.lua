@@ -21,3 +21,11 @@ disabled_input_device("touchpad")
 disabled_input_device("touchscreen")
 
 require("default.hypr.workspace-layouts")
+
+-- A platform package's own late defaults (default/hypr/platform/*.lua), loaded
+-- after the user's files so that the user's settings can keep them out (a
+-- default gesture stepping aside for the user's own, say). They are read from
+-- the packaged tree, so a development checkout in OMARCHY_PATH keeps them.
+local platform_dir = paths.packaged_path .. "/default/hypr/platform"
+package.path = platform_dir .. "/?.lua;" .. package.path
+require_all.files(platform_dir, nil, { reload = true })
