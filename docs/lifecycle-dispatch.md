@@ -139,6 +139,7 @@ A platform's runtime package can also ship Hyprland defaults, without an operati
 
 - **Early: `default/hypr/platform/defaults/*.lua`**, loaded by `default/hypr/omarchy.lua` right after the helpers, before Omarchy's own defaults and the user's files. A chord bound there with `o.bind` replaces Omarchy's default for the same chord (`o.platform_chords`), and a function added to `o.bind_decorators` runs for every later `o.bind`, Omarchy's and the user's, before the bind is made, so it can bind something that has to run first (Hyprland runs a key press's binds in the order they were added). The user's files load after and can unbind or rebind any of it. A file that binds keys honors `omarchy_default_bindings = false`. Settings Omarchy's defaults also set belong in the late directory.
 - **Late: `default/hypr/platform/*.lua`**, loaded by `default/hypr/toggles.lua` after the user's files, for defaults that must see the user's: `o.registered_gestures` lists the gestures registered before it, so a default gesture can step aside for the user's own.
+- **Key names: `default/omarchy/platform/key-names`**, one `<keysym> <name>` per line, which the keybindings menu shows in place of the keysym (a MacBook's `XF86MonBrightnessUp` is its F2 key).
 
 ## Apple Silicon
 
