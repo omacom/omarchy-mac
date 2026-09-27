@@ -307,7 +307,8 @@ pass "webcam size rules place the initial window in its final corner"
 recording_dir="$tmp_dir/recordings"
 mkdir -p "$recording_dir"
 
-cat >"$stub_bin/pgrep" <<'SH'
+# Nothing is recording yet, whatever else runs on the machine.
+cat >"$stub_bin/omarchy-capture-screenrecording-process" <<'SH'
 #!/bin/bash
 exit 1
 SH
@@ -331,7 +332,7 @@ cat >"$stub_bin/omarchy-shell" <<'SH'
 exit 0
 SH
 
-chmod +x "$stub_bin"/pgrep "$stub_bin"/omarchy-hyprland-monitor-focused \
+chmod +x "$stub_bin"/omarchy-capture-screenrecording-process "$stub_bin"/omarchy-hyprland-monitor-focused \
   "$stub_bin"/gpu-screen-recorder "$stub_bin"/omarchy-shell
 
 # Compare that name across the run rather than demanding it be absent: the
@@ -410,3 +411,92 @@ pass "without a runtime dir the webcam anchors to the recorded region"
 mode=$(stat -c '%a' "$state_home/omarchy" 2>/dev/null || stat -f '%Lp' "$state_home/omarchy")
 [[ $mode == "700" ]] || fail "fallback directory is private even when it already existed" "mode: $mode"
 pass "fallback directory is private even when it already existed"
+
+# gpu-screen-recorder aborts before recording on a GPU it does not know, such
+# as Apple Silicon's. wf-recorder takes over when it is installed, on the same
+# monitor, and its pid is the one stop and status act on.
+cat >"$stub_bin/gpu-screen-recorder" <<'SH'
+#!/bin/bash
+echo "gsr error: unknown gpu vendor" >&2
+exit 1
+SH
+
+cat >"$stub_bin/wf-recorder" <<'SH'
+#!/bin/bash
+printf '%s\n' "$@" >"$OMARCHY_TEST_WF_ARGS"
+echo "$$" >"$OMARCHY_TEST_WF_PID"
+for i in "$@"; do
+  [[ -n ${take_next:-} ]] && { : >"$i"; break; }
+  [[ $i == "-f" ]] && take_next=1
+done
+sleep 5
+SH
+chmod +x "$stub_bin/gpu-screen-recorder" "$stub_bin/wf-recorder"
+
+# Fresh directories: a recording named for the same second must not exist yet.
+wf_runtime="$tmp_dir/wf-runtime"
+wf_recordings="$tmp_dir/wf-recordings"
+mkdir -p "$wf_runtime" "$wf_recordings"
+wf_args="$tmp_dir/wf-args"
+wf_pid="$tmp_dir/wf-pid"
+XDG_RUNTIME_DIR="$wf_runtime" OMARCHY_TEST_WF_ARGS="$wf_args" OMARCHY_TEST_WF_PID="$wf_pid" \
+  OMARCHY_SCREENRECORD_DIR="$wf_recordings" \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen >/dev/null 2>&1
+
+pkill -f "$stub_bin/wf-recorder" 2>/dev/null || true
+
+[[ -s $wf_args ]] || fail "wf-recorder records when gpu-screen-recorder cannot start"
+grep -Fxq -- '-o' "$wf_args" && grep -Fxq DP-1 "$wf_args" && grep -Fxq 48000 "$wf_args" ||
+  fail "wf-recorder records the focused monitor at 48 kHz" "$(<"$wf_args")"
+[[ $(<"$wf_runtime/omarchy-screenrecord-pid") == "$(<"$wf_pid")" ]] ||
+  fail "the recorder pid is the wf-recorder that is recording" "$(ls -a "$wf_runtime")"
+[[ $(<"$wf_runtime/omarchy-screenrecord-filename") == "$wf_recordings"/* ]] ||
+  fail "the wf-recorder recording is the one recorded as started"
+pass "wf-recorder records when gpu-screen-recorder cannot start"
+
+# Without wf-recorder, a recorder that cannot start leaves nothing behind.
+rm "$stub_bin/wf-recorder"
+none_runtime="$tmp_dir/none-runtime"
+none_recordings="$tmp_dir/none-recordings"
+mkdir -p "$none_runtime" "$none_recordings"
+XDG_RUNTIME_DIR="$none_runtime" OMARCHY_SCREENRECORD_DIR="$none_recordings" \
+  "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen >/dev/null 2>&1 || true
+[[ ! -e $none_runtime/omarchy-screenrecord-pid && ! -e $none_runtime/omarchy-screenrecord-filename ]] ||
+  fail "a recorder that cannot start records no state" "$(ls -a "$none_runtime")"
+pass "a recorder that cannot start records no state"
+
+# A recorded pid that is no longer a recorder must not hide the recording the
+# bar and the menu see: status and stop both fall back to the user's recorders,
+# and stop signals those rather than the stale pid.
+stale_runtime="$tmp_dir/stale-runtime"
+mkdir -p "$stale_runtime"
+echo 424242 >"$stale_runtime/omarchy-screenrecord-pid"
+helper_calls="$tmp_dir/helper-calls"
+recording_flag="$tmp_dir/recording"
+touch "$recording_flag"
+cat >"$stub_bin/omarchy-capture-screenrecording-process" <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >>"$OMARCHY_TEST_HELPER_CALLS"
+[[ $1 == "--pid" ]] && exit 1
+if [[ $* == "--signal INT" ]]; then
+  rm -f "$OMARCHY_TEST_RECORDING"
+  exit 0
+fi
+[[ -e $OMARCHY_TEST_RECORDING ]]
+SH
+chmod +x "$stub_bin/omarchy-capture-screenrecording-process"
+
+XDG_RUNTIME_DIR="$stale_runtime" OMARCHY_TEST_HELPER_CALLS="$helper_calls" OMARCHY_TEST_RECORDING="$recording_flag" \
+  OMARCHY_SCREENRECORD_DIR="$recording_dir" \
+  "$ROOT/bin/omarchy-capture-screenrecording" --stop-recording >/dev/null 2>&1 ||
+  fail "stop finds a recording its stale pid does not name" "$(<"$helper_calls")"
+grep -Fxq -- '--signal INT' "$helper_calls" ||
+  fail "stop signals the user's recorder when the recorded pid is stale" "$(<"$helper_calls")"
+! grep -q -- '--pid 424242 --signal' "$helper_calls" ||
+  fail "stop never signals a stale pid" "$(<"$helper_calls")"
+! grep -Fxq -- '--signal KILL' "$helper_calls" ||
+  fail "a recorder that stops on INT is not killed" "$(<"$helper_calls")"
+[[ ! -e $stale_runtime/omarchy-screenrecord-pid ]] ||
+  fail "stop clears the stale pid"
+pass "status and stop fall back to the user's recorders when the recorded pid is stale"
+

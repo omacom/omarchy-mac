@@ -447,6 +447,11 @@ assertEqual(
   'omarchy-hw-webcam',
   'menu only shows webcam screen recording when a webcam is available'
 )
+assertEqual(
+  defaultById['trigger.capture.screenrecord.stop'].when,
+  'omarchy-capture-screenrecording-process',
+  'menu shows Stop Screenrecording for gpu-screen-recorder and wf-recorder'
+)
 assert(
   /font\.family: row\.iconFont\.length > 0 \? row\.iconFont : root\.fontFamily/.test(menuQml),
   'menu rows support per-icon font families'
