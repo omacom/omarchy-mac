@@ -208,9 +208,79 @@ function nearestDropTarget(candidates, point, vertical) {
   return best
 }
 
+// Display cutouts (a camera notch at the top of a laptop panel) are described
+// by the platform's own package, in default/shell/platform/display-cutouts.json
+// under the packaged tree:
+//
+//   { "panels": [ { "connector": "eDP", "width": 3024, "height": 1964, "top": 64 } ] }
+//
+// A panel matches a screen whose connector name starts with `connector` and
+// whose mode is width x height physical pixels; `top` is how many physical rows
+// at its top the cutout covers. Anything malformed is dropped.
+function parseCutouts(text) {
+  var parsed
+  try {
+    parsed = JSON.parse(String(text || ""))
+  } catch (error) {
+    return []
+  }
+  var panels = parsed && Array.isArray(parsed.panels) ? parsed.panels : []
+  var cutouts = []
+  for (var i = 0; i < panels.length; i++) {
+    var panel = panels[i] || {}
+    var width = Number(panel.width)
+    var height = Number(panel.height)
+    var top = Number(panel.top)
+    if (typeof panel.connector !== "string" || panel.connector === "") continue
+    if (!(width > 0) || !(height > 0) || !(top > 0) || top >= height) continue
+    cutouts.push({ connector: panel.connector, width: width, height: height, top: top })
+  }
+  return cutouts
+}
+
+// The cutout at the top of this screen, in logical pixels, or 0. Logical sizes
+// are rounded, so the reconstructed mode can be a couple of pixels off at
+// fractional scales.
+function cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio) {
+  var name = String(screenName || "")
+  var scale = Number(devicePixelRatio) > 0 ? Number(devicePixelRatio) : 1
+  var width = Math.round(Number(logicalWidth) * scale)
+  var height = Math.round(Number(logicalHeight) * scale)
+  if (!(width > 0) || !(height > 0)) return 0
+  var list = Array.isArray(cutouts) ? cutouts : []
+  for (var i = 0; i < list.length; i++) {
+    var panel = list[i]
+    if (name.indexOf(panel.connector) !== 0) continue
+    if (Math.abs(width - panel.width) <= 4 && Math.abs(height - panel.height) <= 4)
+      return Math.ceil(panel.top / scale)
+  }
+  return 0
+}
+
+// The height a top bar on this screen must reach to cover its cutout, or a
+// calibrated [bar] notch-height in its place. A screen without a cutout, or a
+// bar on another edge, has no floor, so a calibration never reaches an
+// external monitor.
+function notchFloor(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, calibrated) {
+  if (position !== "top") return 0
+  var top = cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio)
+  if (!(top > 0)) return 0
+  return Number(calibrated) > 0 ? Math.round(Number(calibrated)) : top
+}
+
+// A cutout covers the middle of a top bar, so that bar draws its center
+// section beside the right one.
+function centerBesideRight(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio) {
+  return position === "top" && cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio) > 0
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
+    centerBesideRight: centerBesideRight,
+    cutoutTop: cutoutTop,
     isDrawnSlot: isDrawnSlot,
+    notchFloor: notchFloor,
+    parseCutouts: parseCutouts,
     pickDrawnSlot: pickDrawnSlot,
     pickPanelSlot: pickPanelSlot,
     nearestDropTarget: nearestDropTarget,
