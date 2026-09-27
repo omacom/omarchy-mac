@@ -1,15 +1,15 @@
 #!/bin/bash -p
 
-# omarchy:summary=Run a fixed boot lifecycle operation through the platform's boot package
+# omarchy:summary=Run a fixed lifecycle operation through the platform's own packages
 # omarchy:args=[--resolve] <operation> [arguments...]
 # omarchy:requires-sudo=true
 # omarchy:hidden=true
 
-# Provisioning, factory reset, update and the platform migration call a fixed
-# set of operations here. A platform whose boot chain needs its own handling
-# registers a directory of root-owned entrypoints below; on every other
-# platform each operation is a no-op and the caller keeps its generic path. The
-# contract is docs/lifecycle-dispatch.md.
+# Provisioning, factory reset, update, the platform migration and boot, system
+# and user setup call a fixed set of operations here. A platform that needs its
+# own handling registers directories of root-owned entrypoints below; on every
+# other platform each operation is a no-op and the caller keeps its generic
+# path. The contract is docs/lifecycle-dispatch.md.
 #
 # --resolve prints the entrypoint an operation would run, or nothing when it is
 # a no-op here, so a caller can choose between a platform implementation and
@@ -32,7 +32,11 @@ operations=(
   update-verify
   luks-slots
   migrate
+  setup-boot setup-system setup-user
 )
+
+# Runs as the user being set up, never as root, with that user's session.
+user_operations=(setup-user)
 
 usage() {
   echo "Usage: omarchy-lifecycle-dispatch [--resolve] <operation> [arguments...]" >&2
@@ -59,6 +63,11 @@ operation=${1:-}
 shift
 listed "$operation" "${operations[@]}" || usage
 
+if listed "$operation" "${user_operations[@]}" && (( EUID == 0 )); then
+  echo "Error: $operation runs as the user being set up, never as root" >&2
+  exit 1
+fi
+
 # A privileged caller must not let its environment choose what runs as root:
 # root resolves only the fixed paths below, and the detector beside this file
 # ignores its fixture roots. Fixture roots exist for unprivileged tests.
@@ -82,17 +91,25 @@ if ! platform=$("${detect[@]}"); then
   exit 1
 fi
 
-# Generic, generic-aarch64 and Qualcomm machines have no registered boot
-# package: every operation is a no-op there and callers keep their generic path.
-# Apple Silicon's is omarchy-mac-boot (omacom/omarchy-mac). Provisioning and
-# factory reset have no other path on a Mac, only update-verify checks what an
-# update left in its boot chain, and its boot checks prove the kept LUKS slots
-# that luks-slots records, so those operations are required. migrate is
-# optional. Moving an operation to required also changes apple_optional in
+# Generic, generic-aarch64 and Qualcomm machines have no registered package:
+# every operation is a no-op there and callers keep their generic path.
+# Apple Silicon's boot operations belong to omarchy-mac-boot and its system and
+# user setup to omarchy-mac (both omacom/omarchy-mac). Provisioning and factory
+# reset have no other path on a Mac, only update-verify checks what an update
+# left in its boot chain, its boot checks prove the kept LUKS slots that
+# luks-slots records, and hardware setup has no other way to run the Mac's boot
+# setup (setup-boot), so those operations are required. migrate is optional,
+# and so are system and user setup: a Mac without omarchy-mac keeps Omarchy's
+# generic setup. Moving an operation to required also changes apple_optional in
 # test/shell.d/lifecycle-dispatch-test.sh and the Apple column and registration
 # table in docs/lifecycle-dispatch.md.
-case $platform in
-  apple-silicon)
+case $platform:$operation in
+  apple-silicon:setup-system | apple-silicon:setup-user)
+    implementation=/usr/lib/omarchy/mac
+    package=omarchy-mac
+    required=()
+    ;;
+  apple-silicon:*)
     implementation=/usr/lib/omarchy/mac-boot
     package=omarchy-mac-boot
     required=(
@@ -100,6 +117,7 @@ case $platform in
       reset-prepare reset-verify reset-commit reset-rollback
       update-verify
       luks-slots
+      setup-boot
     )
     ;;
   *)
@@ -163,6 +181,15 @@ fi
 
 if (( resolve )); then
   printf '%s\n' "$entrypoint"
-else
-  exec /usr/bin/env -i PATH="$fixed_path" "$entrypoint" "$@"
+  exit 0
 fi
+
+# A user operation also gets the user's home and session, when there is one,
+# and nothing else.
+environment=(PATH="$fixed_path")
+if listed "$operation" "${user_operations[@]}"; then
+  for name in HOME USER XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS WAYLAND_DISPLAY OMARCHY_PATH; do
+    [[ -z ${!name:-} ]] || environment+=("$name=${!name}")
+  done
+fi
+exec /usr/bin/env -i "${environment[@]}" "$entrypoint" "$@"

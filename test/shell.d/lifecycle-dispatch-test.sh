@@ -8,7 +8,7 @@ dispatch="$ROOT/bin/omarchy-lifecycle-dispatch"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback update-verify luks-slots migrate)
+operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback update-verify luks-slots migrate setup-boot)
 apple_optional=(migrate)
 
 for platform in apple-silicon qualcomm generic-aarch64 generic; do
@@ -225,4 +225,103 @@ if unshare --user --map-root-user true 2>/dev/null; then
   pass "root runs no code from BASH_ENV or exported functions"
 else
   skip "no unprivileged user namespace; skipping the root override probe"
+fi
+
+# ── setup operations ─────────────────────────────────────────────────────────
+
+# System and user setup resolve in omarchy-mac's directory on a Mac, never in
+# omarchy-mac-boot's, and are optional everywhere.
+setup_operations=(setup-system setup-user)
+setup_implementation=usr/lib/omarchy/mac
+install_setup() {
+  local root=$1 dir=$2 operation
+  mkdir -p "$root/$dir"
+  for operation in "${setup_operations[@]}"; do
+    cat >"$root/$dir/$operation" <<SH
+#!/bin/bash
+{ printf '%s' "$operation"; (( \$# == 0 )) || printf ' %q' "\$@"; echo; } >>"$tmp/ran"
+env >"$tmp/env"
+[[ ! -e $tmp/fail-with ]] || exit "\$(cat "$tmp/fail-with")"
+SH
+    chmod 755 "$root/$dir/$operation"
+  done
+  chmod -R go-w "$root"
+}
+
+with_mac=$tmp/with-mac
+rm -rf "$with_mac"
+install_setup "$with_mac" "$setup_implementation"
+boot_only=$tmp/boot-only
+rm -rf "$boot_only"
+install_setup "$boot_only" "$implementation"
+
+echo 9 >"$tmp/fail-with"
+for platform in generic generic-aarch64 qualcomm; do
+  for operation in "${setup_operations[@]}"; do
+    rm -f "$tmp/ran"
+    output=$(on "$platform" "$with_mac" "$operation" 2>&1) && [[ -z $output && ! -e $tmp/ran ]] ||
+      fail "$platform: $operation is a no-op" "$output"
+    output=$(on "$platform" "$with_mac" --resolve "$operation" 2>&1) && [[ -z $output ]] ||
+      fail "$platform: $operation resolves to nothing" "$output"
+  done
+done
+rm -f "$tmp/fail-with"
+pass "x86, generic aarch64 and Qualcomm: setup operations are no-ops, even with Mac entrypoints on disk"
+
+for operation in "${setup_operations[@]}"; do
+  rm -f "$tmp/ran"
+  resolved=$(on apple-silicon "$with_mac" --resolve "$operation") && [[ $resolved == "$with_mac/$setup_implementation/$operation" ]] ||
+    fail "apple: $operation resolves to omarchy-mac's entrypoint" "$resolved"
+  output=$(on apple-silicon "$empty" "$operation" 2>&1) && [[ -z $output ]] ||
+    fail "apple: $operation is a no-op without omarchy-mac" "$output"
+  output=$(on apple-silicon "$boot_only" "$operation" 2>&1) && [[ -z $output && ! -e $tmp/ran ]] ||
+    fail "apple: $operation never runs from omarchy-mac-boot's directory" "$output"
+done
+pass "apple: setup resolves in omarchy-mac's directory, and is a no-op without omarchy-mac"
+
+session=(CALLER_SECRET=leak HOME=/home/owner USER=owner XDG_RUNTIME_DIR=/run/user/1000
+  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus OMARCHY_PATH=/usr/share/omarchy)
+rm -f "$tmp/ran"
+env -u WAYLAND_DISPLAY "${session[@]}" OMARCHY_PROC_ROOT="$tmp/apple-silicon/proc" OMARCHY_LIFECYCLE_ROOT="$with_mac" \
+  PATH="$tmp/apple-silicon/bin:$PATH" "$dispatch" setup-system image-first-boot || fail "apple: setup-system runs"
+[[ $(cat "$tmp/ran") == "setup-system image-first-boot" ]] || fail "apple: setup-system gets its argument" "$(cat "$tmp/ran")"
+[[ $(grep -Ev '^(_|PWD|OLDPWD|SHLVL)=' "$tmp/env" | sort) == "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin" ]] ||
+  fail "apple: setup-system gets PATH alone" "$(cat "$tmp/env")"
+rm -f "$tmp/ran"
+env -u WAYLAND_DISPLAY "${session[@]}" OMARCHY_PROC_ROOT="$tmp/apple-silicon/proc" OMARCHY_LIFECYCLE_ROOT="$with_mac" \
+  PATH="$tmp/apple-silicon/bin:$PATH" "$dispatch" setup-user || fail "apple: setup-user runs"
+[[ $(cat "$tmp/ran") == "setup-user" ]] || fail "apple: setup-user runs its entrypoint" "$(cat "$tmp/ran")"
+expected=$(printf '%s\n' DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus HOME=/home/owner OMARCHY_PATH=/usr/share/omarchy \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/bin USER=owner XDG_RUNTIME_DIR=/run/user/1000)
+[[ $(grep -Ev '^(_|PWD|OLDPWD|SHLVL)=' "$tmp/env" | sort) == "$expected" ]] ||
+  fail "apple: setup-user gets its home and session, and nothing else" "$(cat "$tmp/env")"
+echo 3 >"$tmp/fail-with"
+status=0
+on apple-silicon "$with_mac" setup-user || status=$?
+(( status == 3 )) || fail "apple: a setup entrypoint's own status 3 passes through" "status $status"
+rm -f "$tmp/fail-with"
+pass "apple: setup-system gets PATH alone and setup-user its home and session, with the entrypoint's status"
+
+chmod o+w "$with_mac/$setup_implementation/setup-user"
+rm -f "$tmp/ran"
+if output=$(on apple-silicon "$with_mac" setup-user 2>&1); then
+  fail "apple: a world-writable setup entrypoint is refused"
+fi
+[[ ! -e $tmp/ran && $output == *"refusing /usr/lib/omarchy/mac/setup-user"* ]] ||
+  fail "apple: a world-writable setup entrypoint never runs" "$output"
+chmod o-w "$with_mac/$setup_implementation/setup-user"
+pass "apple: a setup entrypoint that fails the trust rules never runs"
+
+if unshare --user --map-root-user true 2>/dev/null; then
+  for arguments in "setup-user" "--resolve setup-user"; do
+    rm -f "$tmp/ran"
+    status=0
+    output=$(OMARCHY_PROC_ROOT="$tmp/apple-silicon/proc" OMARCHY_LIFECYCLE_ROOT="$with_mac" \
+      unshare --user --map-root-user "$dispatch" $arguments 2>&1) || status=$?
+    (( status == 1 )) && [[ ! -e $tmp/ran && $output == "Error: setup-user runs as the user being set up, never as root" ]] ||
+      fail "root is refused '$arguments'" "status $status: $output"
+  done
+  pass "setup-user refuses root"
+else
+  skip "no unprivileged user namespace; skipping the root refusal of setup-user"
 fi
