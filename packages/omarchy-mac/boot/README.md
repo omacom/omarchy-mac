@@ -8,6 +8,8 @@ While first boot keeps the splash up, a laptop with its lid open shows it on the
 
 The implementation was moved from runtime integration `e82fe3c8850b184dfa22eefd571646ad85446122`, preserving Marcelo's provenance recorded in the runtime source-port ledger. The payload in `files/` comes from the boot recipe paired with #503 (omarchy-mac/omarchy-pkgs-aarch64#65 at `617a907f99a1`) with maralcbr/omarchy-pkgs#202 applied (omarchy-mac-boot 20260921-10: the owner's keyboard layout and dock keyboards at the disk prompt). The owner wizard, recovery-slot operations, journal/retry handling and shared Limine menu/hash operations remain core code. Owner provisioning, factory reset and `omarchy-drive-password` reach this package only through `omarchy-lifecycle-dispatch`, which runs the `entrypoints/` staged in `/usr/lib/omarchy/mac-boot` and fails on Apple Silicon when they are missing.
 
+The package-owned `92-omarchy-mac-hid.conf` also includes the `sn201202x` USB-PD and `dwc3_apple` controller modules for USB input before root unlock. It selects loadable modules from mkinitcpio's target kernel, leaves absent or built-in drivers alone for other kernel configurations, and lets mkinitcpio resolve module dependencies. It appends to `MODULES` without replacing `HOOKS`. This does not enable a driver omitted from the kernel configuration: M3 candidates must separately verify SN201202x support and inspect both the generated initramfs and UKI for its dependency closure. USB storage after login does not qualify a keyboard at the encrypted-root prompt.
+
 ## Temporary adaptations
 
 - Deploy ARM64 Limine to U-Boot's `EFI/BOOT/BOOTAA64.EFI` slot until the shared Limine installer supports that target.

@@ -109,7 +109,10 @@ while [ $# -gt 0 ]; do
       [ "$2" = filename ] && want_filename=1
       shift 2
       ;;
-    -k) shift 2 ;;
+    -k)
+      [ "$2" = "$EXPECTED_KERNEL" ] || exit 64
+      shift 2
+      ;;
     *) module=$1; shift ;;
   esac
 done
@@ -136,13 +139,15 @@ write_modinfo() {
 
 source_hid() {
   write_modinfo "$@"
-  export MODINFO_DIR=$tmp/modinfo
+  export MODINFO_DIR=$tmp/modinfo EXPECTED_KERNEL=fixture-target-kernel
   PATH="$stub:$PATH" bash -c '
     MODULES=(btrfs)
     FILES=()
+    HOOKS=(base systemd custom-hook sd-encrypt filesystems)
+    KERNELVERSION=$EXPECTED_KERNEL
     source "$1"
     status=$?
-    printf "%s\n" "$status" "${MODULES[*]}" "$(declare -p _omarchy_mac_hid_module 2>/dev/null || echo unset)"
+    printf "%s\n" "$status" "${MODULES[*]}" "$(declare -p _omarchy_mac_hid_module 2>/dev/null || echo unset)" "${HOOKS[*]}"
   ' bash "$hid_conf"
 }
 
@@ -165,6 +170,30 @@ mapfile -t sourced < <(source_hid hid_apple=/lib/modules/x/hid-apple.ko)
 [[ ${sourced[1]} == "btrfs hid_apple" ]] ||
   fail "a driver the kernel does not build is left out" "MODULES=(${sourced[1]})"
 echo 'ok - a driver the kernel does not build is left out'
+
+# M3 modules must be selected from the target kernel even on a different
+# build host. Keep the existing M1/M2 input and user-provided hook/module lists.
+mapfile -t sourced < <(source_hid \
+  hid_apple=/lib/modules/x/hid-apple.ko \
+  sn201202x=/lib/modules/x/sn201202x.ko.zst \
+  dwc3_apple=/lib/modules/x/dwc3-apple.ko.zst)
+[[ ${sourced[0]} == 0 ]] || fail "M3 USB modules source cleanly"
+[[ ${sourced[1]} == "btrfs hid_apple sn201202x dwc3_apple" ]] ||
+  fail "target-kernel USB controllers are early-loaded alongside existing modules" "MODULES=(${sourced[1]})"
+[[ ${sourced[3]} == "base systemd custom-hook sd-encrypt filesystems" ]] ||
+  fail "USB inclusion must not change HOOKS" "HOOKS=(${sourced[3]})"
+echo 'ok - M3 USB controllers use the target kernel and preserve existing MODULES and HOOKS'
+
+mapfile -t sourced < <(source_hid sn201202x='(builtin)' dwc3_apple='(builtin)')
+[[ ${sourced[0]} == 0 && ${sourced[1]} == btrfs ]] ||
+  fail "built-in USB controllers must not become MODULES entries" "MODULES=(${sourced[1]})"
+mapfile -t sourced < <(source_hid sn201202x=/lib/modules/x/sn201202x.ko dwc3_apple='(builtin)')
+[[ ${sourced[0]} == 0 && ${sourced[1]} == "btrfs sn201202x" ]] ||
+  fail "mixed built-in/modular USB controllers are handled independently" "MODULES=(${sourced[1]})"
+mapfile -t sourced < <(source_hid)
+[[ ${sourced[0]} == 0 && ${sourced[1]} == btrfs ]] ||
+  fail "kernels without Apple modules keep their configuration" "MODULES=(${sourced[1]})"
+echo 'ok - built-in, mixed and absent USB controller configurations are accepted'
 
 if [[ ${OMARCHY_DISPOSABLE_BOOT_TESTS:-0} != "1" && ${IN_OMARCHY_MAC_HID_TEST:-0} != "1" ]]; then
   echo 'ok - source checks passed; disposable initramfs/block tests not run (OMARCHY_DISPOSABLE_BOOT_TESTS=1 opts in)'
@@ -253,7 +282,7 @@ mint_ko() {
 }
 
 for module in hid-apple hid-magicmouse dockchannel-hid usbhid thunderbolt thunderbolt_apple \
-  crypto_lzo crypto_lz4 dm_crypt dm_integrity; do
+  sn201202x dwc3_apple crypto_lzo crypto_lz4 dm_crypt dm_integrity; do
   mint_ko "$module"
 done
 # HID drop-in looks under drivers/hid as well as extra/.
@@ -314,6 +343,8 @@ grep -Eq 'dockchannel-hid|dockchannel_hid' "$list" || fail "lsinitcpio lists doc
 grep -Eq 'usbhid' "$list" || fail "lsinitcpio lists usbhid" "$(cat "$list")"
 grep -Eq '(^|/)thunderbolt\.ko' "$list" || fail "lsinitcpio lists thunderbolt (dock keyboards, omarchy-mx-mac#86)" "$(cat "$list")"
 grep -Eq '(^|/)thunderbolt[-_]apple\.ko' "$list" || fail "lsinitcpio lists thunderbolt_apple, the Apple Silicon USB4 host router" "$(cat "$list")"
+grep -Eq '(^|/)sn201202x\.ko' "$list" || fail "lsinitcpio lists sn201202x" "$(cat "$list")"
+grep -Eq '(^|/)dwc3[-_]apple\.ko' "$list" || fail "lsinitcpio lists dwc3_apple" "$(cat "$list")"
 grep -Fq 'omarchy-vendorfw.sh' "$list" || fail "lsinitcpio lists the late vendorfw script"
 grep -Fq 'omarchy-vendorfw-initrd.sh' "$list" || fail "lsinitcpio lists the early vendorfw helper"
 grep -Fq 'omarchy-vendorfw.service' "$list" || fail "lsinitcpio lists the late vendorfw unit"

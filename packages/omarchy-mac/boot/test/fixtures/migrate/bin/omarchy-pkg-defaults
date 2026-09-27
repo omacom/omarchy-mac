@@ -1,4 +1,20 @@
 #!/bin/bash
-# Stands in for the target omarchy's command: this repository's own lists.
-repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../../../../.." && pwd)
-OMARCHY_PATH=$repo exec "$repo/bin/omarchy-pkg-defaults" "$@"
+# Target runtime command boundary, like the pacman fixture beside this script.
+# Use representative defaults, not the surrounding desktop checkout: the boot
+# package's tests also run after this directory is extracted on its own.
+# obs-studio exercises preserving base applications; zram-generator exercises
+# an already installed ARM default; the Apple entries exercise available and
+# unavailable additions, including retry after their package hooks run.
+set -euo pipefail
+case ${1:-} in
+  generic)
+    printf '%s\n' obs-studio
+    ;;
+  apple-silicon)
+    printf '%s\n' obs-studio zram-generator vulkan-asahi avd-fw libva-v4l2_request-avd
+    ;;
+  *)
+    echo "fixture omarchy-pkg-defaults: unexpected platform ${1:-}" >&2
+    exit 1
+    ;;
+esac

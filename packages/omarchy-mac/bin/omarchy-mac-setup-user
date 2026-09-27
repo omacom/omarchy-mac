@@ -31,6 +31,27 @@ LUA
   install -Dm644 /dev/null "$cursor_marker"
 fi
 
+# Seed a panel-specific scale only into the unchanged Omarchy monitor defaults.
+# A marker preserves subsequent edits/removal, including a return to auto scale.
+monitors="$config/hypr/monitors.lua"
+scale_marker="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/mac-scale-configured"
+if [[ -n ${OMARCHY_PATH:-} && ! -e $scale_marker && ! -L $scale_marker && -f $monitors && ! -L $monitors ]]; then
+  if [[ -f $OMARCHY_PATH/config/hypr/monitors.lua ]] && cmp -s "$monitors" "$OMARCHY_PATH/config/hypr/monitors.lua"; then
+    outputs=$("$root/usr/lib/omarchy-mac/retina-outputs")
+    if [[ -n $outputs ]]; then
+      printf '\n-- omarchy-mac: initial MacBook output scale. Edit or remove as desired.\n' >>"$monitors"
+      printf '%s\n' '-- simpledrm cannot identify the panel: external/clamshell firmware boot may need a different scale.' >>"$monitors"
+      while IFS= read -r output; do
+        printf 'hl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = 2 })\n' "$output" >>"$monitors"
+      done <<<"$outputs"
+      install -Dm644 /dev/null "$scale_marker"
+    fi
+  else
+    # A pre-existing custom configuration is an explicit owner choice too.
+    install -Dm644 /dev/null "$scale_marker"
+  fi
+fi
+
 # A matching user copy hides future vendor updates. Modified files and links stay.
 retire() {
   local file=$1 original=$2

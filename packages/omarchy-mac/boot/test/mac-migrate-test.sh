@@ -746,12 +746,6 @@ finish
 grep -q "^omarchy-mac-setup-user HOME=$home$" "$F/boot.log" || fail "the Mac user setup still runs"
 pass "a plan frozen before the unit record enables no user unit"
 
-first_run_units=$(sed -n '/systemctl --user enable --now/,/[^\\]$/p' "$ROOT/../../../install/user/first-run/enable-user-units.sh" | grep -o '[a-z0-9-]*\.service' | xargs)
-engine_units=$(sed -n 's/^fresh_user_units="\(.*\)"$/\1/p' "$ROOT/lib/migrate-engine.sh")
-[[ -n $first_run_units && $first_run_units == "$engine_units" ]] ||
-  fail "the migration enables the user units first run enables" "first run: $first_run_units; migration: $engine_units"
-pass "the migration's user units are first run's"
-
 # --- A tester already on Aurora and Limine ------------------------------------
 
 # The converged image's state (the M2 Max): Aurora, m1n1-aurora, Limine in the
