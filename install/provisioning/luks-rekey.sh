@@ -22,6 +22,20 @@
 # caller removes the journal with the rest of its provisioning state, so until
 # then a retry can only use the password the disk holds.
 
+# The LUKS partition beneath /, or nothing when / is not encrypted. Fails when
+# it cannot tell, including a crypt layer whose LUKS partition lsblk cannot name.
+root_luks_device() {
+  local root_source ancestry device
+  root_source=$(findmnt -no SOURCE /) && [[ -n $root_source ]] || return 1
+  ancestry=$(lsblk -nsrpo NAME,TYPE,FSTYPE "${root_source%%[*}") || return 1
+  device=$(awk '$3 == "crypto_LUKS" { print $1; exit }' <<<"$ancestry")
+  if [[ -n $device ]]; then
+    readlink -f "$device"
+  elif awk '$2 == "crypt" { found = 1 } END { exit !found }' <<<"$ancestry"; then
+    return 1
+  fi
+}
+
 # cryptsetup open tries enrolled tokens (TPM2, FIDO2, keyring) before the key
 # and reports a token's slot whatever key it was given. Restricting it to a
 # token type no token has leaves only the key to decide.
