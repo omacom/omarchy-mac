@@ -47,6 +47,15 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
   else
     ! grep -Fxq linux-firmware-qcom "$work/$platform.packages" || fail "$platform: no Qualcomm firmware"
   fi
+  # The Mac's packages, and wf-recorder, which records its screen: nothing else
+  # captures on Apple Silicon.
+  for package in omarchy-mac omarchy-mac-boot wf-recorder; do
+    if [[ $platform == "apple-silicon" ]]; then
+      grep -Fxq "$package" "$work/$platform.packages" || fail "Apple Silicon adds $package"
+    else
+      ! grep -Fxq "$package" "$work/$platform.packages" || fail "$platform: no $package"
+    fi
+  done
 done
 pass "each platform composes the base, architecture and platform lists"
 

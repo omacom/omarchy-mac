@@ -1,0 +1,38 @@
+# Apple Silicon additions, composed after omarchy-base.packages and
+# omarchy-aarch64.packages (omarchy-pkg-defaults apple-silicon); never on Intel
+# Macs or other aarch64 machines. The kernel and boot chain come with the
+# Mac's image, as the kernel and bootloader do from the ISO on x86_64. Every
+# package the Mac's setup installs is here too, so an image's first boot, often
+# offline, finishes that setup without the network.
+
+# The Mac's runtime and boot packages (omacom/omarchy-mac).
+omarchy-mac
+omarchy-mac-boot
+
+# Picks the startup volume (macOS or Omarchy) from Linux.
+asahi-bless
+
+# Audio: PipeWire's PulseAudio server and realtime scheduling, which x86_64
+# gets from its installer, and the speaker stack that keeps the Mac's speakers
+# within their limits.
+alsa-ucm-conf-asahi
+asahi-audio
+pipewire-alsa
+pipewire-pulse
+rtkit
+speakersafetyd
+
+# The GPU's Vulkan driver.
+vulkan-asahi
+
+# Hardware video decode.
+avd-fw
+libva-v4l2_request-avd
+
+# Widevine for DRM streaming.
+widevine
+
+# Screen recording: gpu-screen-recorder finds no display device to capture on
+# Apple Silicon, whose display and GPU are separate DRM devices, so recording
+# falls back to wf-recorder (omarchy-capture-screenrecording).
+wf-recorder
