@@ -9,6 +9,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 baseline_conf="$ROOT/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf"
 hooks_conf="$ROOT/etc/mkinitcpio.conf.d/omarchy_hooks.conf"
+fake_platform "$tmp_dir/generic" generic
 
 # Each argument is a PCI device as "vendor:class", in sysfs's own format.
 write_pci_devices() {
@@ -38,7 +39,8 @@ resolved_hooks() {
   # The vconsole block sources the host's /etc/vconsole.conf, which may set
   # only KEYMAP; predefine XKBLAYOUT so its expansion survives set -u and the
   # test stays independent of the machine it runs on.
-  OMARCHY_PCI_DEVICES_PATH="$tmp_dir/devices" bash -uc "
+  OMARCHY_PCI_DEVICES_PATH="$tmp_dir/devices" OMARCHY_PROC_ROOT="$tmp_dir/generic/proc" \
+    PATH="$tmp_dir/generic/bin:$ROOT/bin:$PATH" bash -uc "
     FILES=()
     XKBLAYOUT=us
     source '$baseline_conf'
@@ -123,8 +125,8 @@ migration_rebuilds() {
   rm -f "$tmp_dir/rebuilds" "$tmp_dir/rebuild-marker"
   OMARCHY_MKINITCPIO_BASELINE_CONF="${1:-$baseline_conf}" OMARCHY_MKINITCPIO_HOOKS_CONF="$hooks_conf" \
     OMARCHY_MKINITCPIO_NVIDIA_CONF="$tmp_dir/nvidia.conf" OMARCHY_KMS_REBUILD_MARKER="$tmp_dir/rebuild-marker" \
-    OMARCHY_PCI_DEVICES_PATH="$tmp_dir/devices" XKBLAYOUT=us \
-    PATH="$stub_bin:$ROOT/bin:$PATH" bash -euo pipefail "$ROOT/migrations/1786605598.sh" >/dev/null
+    OMARCHY_PCI_DEVICES_PATH="$tmp_dir/devices" OMARCHY_PROC_ROOT="$tmp_dir/generic/proc" XKBLAYOUT=us \
+    PATH="$stub_bin:$tmp_dir/generic/bin:$ROOT/bin:$PATH" bash -euo pipefail "$ROOT/migrations/1786605598.sh" >/dev/null
   [[ -f $tmp_dir/rebuilds ]] && echo yes || echo no
 }
 
