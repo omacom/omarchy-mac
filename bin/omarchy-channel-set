@@ -102,9 +102,6 @@ case "$channel" in
     packages=(omarchy-dev omarchy-settings-dev)
     ;;
   dev)
-    confirm_dev || { echo "Cancelled."; exit 0; }
-    dev_checkout="$HOME/omarchy"
-    validate_dev_checkout "$dev_checkout"
     pacman_channel=edge
     packages=(omarchy-dev omarchy-settings-dev)
     ;;
@@ -114,6 +111,18 @@ case "$channel" in
     exit 1
     ;;
 esac
+
+# A channel this machine's platform has no qualified packages on is refused
+# before anything changes (install/helpers/pacman.sh).
+source "$OMARCHY_PATH/install/helpers/pacman.sh"
+platform=$(omarchy-hw-platform) || fail "Cannot tell this machine's platform; nothing changed."
+omarchy_pacman_channel_qualified "$pacman_channel" "$platform" || exit 1
+
+if [[ $channel == "dev" ]]; then
+  confirm_dev || { echo "Cancelled."; exit 0; }
+  dev_checkout="$HOME/omarchy"
+  validate_dev_checkout "$dev_checkout"
+fi
 
 # A failure past this point leaves the channel switch half-applied, so say how
 # to pick it back up rather than dying silently under set -e.

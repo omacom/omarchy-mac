@@ -15,7 +15,7 @@ require_platform_fixtures "omarchy update's boot check on platform fixtures"
 copy_boundary_file bin/omarchy-update
 rm "$SUDO_TEST_ROOT/bin/omarchy-update-boot"
 for command in omarchy-update-boot omarchy-lifecycle-dispatch omarchy-hw-platform; do
-  ln -s "$ROOT/bin/$command" "$SUDO_TEST_ROOT/bin/$command"
+  ln -sfn "$ROOT/bin/$command" "$SUDO_TEST_ROOT/bin/$command"
 done
 export OMARCHY_UPDATE_LOGGED=1
 

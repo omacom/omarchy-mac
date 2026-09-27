@@ -1,6 +1,6 @@
 #!/bin/bash -p
 
-# omarchy:summary=Overwrite the package configuration for /etc/pacman with the Omarchy default of using its dedicated mirrors and repositories, then update all packages.
+# omarchy:summary=Reset the pacman config to the Omarchy channel defaults (keeping platform repositories on ARM), then update all packages.
 # omarchy:requires-sudo=true
 
 if [[ $- != *p* ]]; then
@@ -30,11 +30,33 @@ if [[ $channel != "stable" && $channel != "rc" && $channel != "edge" ]]; then
   exit 2
 fi
 
-sudo cp -f /etc/pacman.conf /etc/pacman.conf.bak
-sudo cp -f /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak
-echo "Setting channel to $channel"
-sudo cp -f "$OMARCHY_PATH/default/pacman/pacman-$channel.conf" /etc/pacman.conf
-sudo cp -f "$OMARCHY_PATH/default/pacman/mirrorlist-$channel" /etc/pacman.d/mirrorlist
+source "$OMARCHY_PATH/install/helpers/pacman.sh"
+if ! platform=$(omarchy-hw-platform); then
+  echo "Cannot tell this machine's platform. No repository configuration changed." >&2
+  exit 1
+fi
+
+if [[ $platform == "generic" ]]; then
+  sudo cp -f /etc/pacman.conf /etc/pacman.conf.bak
+  sudo cp -f /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak
+  echo "Setting channel to $channel"
+  sudo cp -f "$OMARCHY_PATH/default/pacman/pacman-$channel.conf" /etc/pacman.conf
+  sudo cp -f "$OMARCHY_PATH/default/pacman/mirrorlist-$channel" /etc/pacman.d/mirrorlist
+else
+  # An aarch64 machine keeps its own repositories and mirrors, and only the
+  # Omarchy channel changes: to one qualified for this platform, and only once
+  # it publishes what this machine runs (install/helpers/pacman.sh). The new
+  # configuration goes straight from this process to root, never through a
+  # file another process could change first.
+  omarchy_pacman_channel_qualified "$channel" "$platform" || exit 1
+  # The dot keeps the file's trailing newlines through the substitution.
+  config=$(omarchy_pacman_swap_channel "$channel" "$platform" /etc/pacman.conf && printf .) || exit 1
+  config=${config%.}
+  omarchy_pacman_preflight "$channel" "$platform" || exit 1
+  sudo cp -f /etc/pacman.conf /etc/pacman.conf.bak
+  echo "Setting channel to $channel"
+  printf '%s' "$config" | sudo tee /etc/pacman.conf >/dev/null
+fi
 
 # Allow user customization of /etc/pacman.conf before the upgrade runs, so
 # custom repositories and IgnorePkg entries shape the downgrade-capable

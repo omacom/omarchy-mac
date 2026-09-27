@@ -69,6 +69,20 @@ for channel in stable rc edge dev; do
   pass "$channel starts cold, authorizes the switch per command, runs the refresh hook cold, hands off to one update authorization and exits cold"
 done
 
+# A channel with no qualified packages for the platform stops before anything,
+# the dev confirmation included.
+for platform in apple-silicon qualcomm generic-aarch64; do
+  for channel in stable rc edge dev; do
+    [[ $platform != "apple-silicon" && ( $channel == "edge" || $channel == "dev" ) ]] && continue
+    reset_boundary
+    if SUDO_TEST_PLATFORM=$platform run_channel "$channel"; then fail "$platform refused $channel"; fi
+    if grep -Eq '^step:|^sudo -N ' "$SUDO_TEST_LOG"; then fail "$platform: $channel was refused before any change" "$(<"$SUDO_TEST_LOG")"; fi
+    grep -q "not qualified for $platform" "$boundary_tmp/output" || fail "$platform: the refusal says why" "$(<"$boundary_tmp/output")"
+    assert_boundary_cold "$platform $channel"
+  done
+done
+pass "aarch64 platforms refuse a channel not qualified for them before any change, Apple Silicon every one for now"
+
 reset_boundary
 wrapper="$SUDO_TEST_HOME/omarchy/default/omarchy/sudo-no-update/sudo"
 mv "$wrapper" "$boundary_tmp/saved-wrapper"

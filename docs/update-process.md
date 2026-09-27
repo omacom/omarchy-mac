@@ -277,6 +277,20 @@ Channel switching runs the `pre-refresh-pacman` hook once, during its refresh
 step: cold, behind the no-update wrapper, after the package config is re-synced
 and before the refresh transaction. It does not run if the switch fails earlier.
 
+On aarch64 a machine's repositories are its own (Arch Linux ARM, a platform's
+repositories, inline servers or its mirrorlist), so a channel change keeps
+them and rewrites only the `[omarchy]` server, backing up `pacman.conf` alone
+(`install/helpers/pacman.sh`). It takes only a channel qualified for the
+platform: edge on Snapdragon and other aarch64 machines, none yet on Apple
+Silicon, whose packages are qualified there first. Before touching `/etc` it
+checks, as the user, that the channel's `omarchy.db` publishes the runtime
+pair, and on Apple Silicon `omarchy-mac` and `omarchy-mac-boot`.
+`omarchy-channel-set` refuses an unqualified channel before anything else,
+the dev confirmation included. Install finalization writes a whole
+template instead: the channel's on x86_64, Arch Linux ARM with Omarchy on a
+qualified channel on other aarch64 platforms, and `omarchy-mac`'s template
+(`/usr/share/omarchy-mac/pacman`) on Apple Silicon.
+
 There is no version file at runtime. `omarchy-version` derives the version from
 `pacman -Q` on whichever package is installed, or reports `dev (<hash>)` for a
 linked checkout, and `omarchy-version-channel` sniffs the mirrorlist and
