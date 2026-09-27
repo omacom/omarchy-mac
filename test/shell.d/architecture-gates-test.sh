@@ -18,6 +18,17 @@ reviewed_exceptions=$(cat <<'LIST'
 # The detector: a vendor device tree only counts on the CPU it belongs to.
 bin/omarchy-hw-platform if ! machine=$(uname -m) || [[ -z $machine ]]; then
 
+# Vendor browser and VPN builds exist only for these CPU architectures.
+default/omarchy/omarchy-menu.jsonc 'omarchy-install-browser chrome'","when":"[[ $(uname -m) == \"x86_64\" || $(uname -m) == \"aarch64\" ]]"}
+default/omarchy/omarchy-menu.jsonc 'omarchy-install-browser edge'","when":"[[ $(uname -m) == \"x86_64\" ]]"}
+default/omarchy/omarchy-menu.jsonc 'omarchy-install-browser brave'","when":"[[ $(uname -m) == \"x86_64\" || $(uname -m) == \"aarch64\" ]]"}
+default/omarchy/omarchy-menu.jsonc 'omarchy-install-browser brave-origin'","when":"[[ $(uname -m) == \"x86_64\" || $(uname -m) == \"aarch64\" ]]"}
+default/omarchy/omarchy-menu.jsonc 'omarchy-install-browser zen'","when":"[[ $(uname -m) == \"x86_64\" || $(uname -m) == \"aarch64\" ]]"}
+default/omarchy/omarchy-menu.jsonc omarchy-install-service-nordvpn","when":"[[ $(uname -m) == \"x86_64\" || $(uname -m) == \"aarch64\" ]]"}
+
+# The menu reads uname once per guard batch for the rows above; it decides nothing.
+shell/plugins/menu/MenuModel.js "uname -m"
+
 # linux-omarchy is an x86_64 kernel package.
 migrations/1789325478.sh [[ $(uname -m) == "x86_64" ]] || exit 0
 LIST
