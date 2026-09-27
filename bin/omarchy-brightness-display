@@ -40,7 +40,20 @@ use_apple_display() {
 }
 
 use_ddc_display() {
-  [[ -n $monitor ]] && ! monitor_is_internal
+  [[ -n $monitor ]] && ! monitor_is_internal && monitor_may_have_ddc
+}
+
+# Apple's display driver registers no per-connector ddc node, so on a Mac a DDC
+# probe walks the SoC's SMBus (USB-PD, speaker amp) for about 3 s and changes
+# nothing. Other platforms keep probing every external monitor.
+monitor_may_have_ddc() {
+  ! omarchy-hw-apple-silicon || compgen -G "${OMARCHY_DRM_CLASS:-/sys/class/drm}/card*-$monitor/ddc" >/dev/null
+}
+
+# The kernel backlight is the built-in panel's, so an external monitor without
+# DDC fails rather than dimming the panel.
+use_backlight_display() {
+  [[ -z $monitor ]] || monitor_is_internal
 }
 
 if (( $# == 0 )); then
@@ -50,6 +63,8 @@ if (( $# == 0 )); then
   elif use_ddc_display; then
     omarchy-brightness-display-ddc "$monitor"
     exit
+  elif ! use_backlight_display; then
+    exit 1
   fi
 
   device="$(omarchy-hw-display)" || exit 1
@@ -85,6 +100,8 @@ if use_apple_display; then
 elif use_ddc_display; then
   brightness="$(omarchy-brightness-display-ddc "$monitor" "$step")" || exit 1
   (( no_osd )) || omarchy-osd -i brightness -p "$brightness"
+elif ! use_backlight_display; then
+  exit 1
 else
   # Current device highlighted
   device="$(omarchy-hw-display)" || exit 1

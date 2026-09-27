@@ -3,9 +3,23 @@
 # omarchy:summary=Returns true when the laptop lid is closed
 # omarchy:hidden=true
 
-for state in /proc/acpi/button/lid/*/state; do
+# Apple Silicon has no ACPI lid sysfs. logind still answers LidClosed from the
+# SMC switch. Prefer that when it responds; fall through only when it does not.
+lid_state=$(busctl get-property org.freedesktop.login1 \
+  /org/freedesktop/login1 org.freedesktop.login1.Manager LidClosed 2>/dev/null || true)
+case $lid_state in
+  "b true") exit 0 ;;
+  "b false") exit 1 ;;
+esac
+
+acpi_lid="${OMARCHY_ACPI_LID_PATH:-/proc/acpi/button/lid}"
+shopt -s nullglob
+acpi_states=("$acpi_lid"/*/state)
+shopt -u nullglob
+
+for state in "${acpi_states[@]}"; do
   [[ -r $state ]] || continue
-  [[ $(< "$state") == *"closed"* ]] && exit 0
+  [[ $(<"$state") == *"closed"* ]] && exit 0
 done
 
 exit 1
