@@ -22,8 +22,18 @@ fi
 
 # Ensure we have the latest archlinux-keyring, maintainer keys might have changed
 # Always reinstall, as the keyring can be updated without a package version bump.
+# An aarch64 machine's Arch Linux ARM repositories are signed with keys of
+# their own, so its keyring is kept current the same way.
+keyrings=(archlinux-keyring)
+case $(omarchy-hw-platform 2>/dev/null) in
+  apple-silicon | qualcomm | generic-aarch64)
+    if omarchy-pkg-present archlinuxarm-keyring; then
+      keyrings+=(archlinuxarm-keyring)
+    fi
+    ;;
+esac
 echo -e "\e[32m\nUpdate Arch signing keys\e[0m"
-sudo pacman -Sy --noconfirm archlinux-keyring >/dev/null 2> >(grep -vE '^warning: archlinux-keyring-[^ ]+ is up to date -- reinstalling$' >&2)
+sudo pacman -Sy --noconfirm "${keyrings[@]}" >/dev/null 2> >(grep -vE '^warning: archlinux(arm)?-keyring-[^ ]+ is up to date -- reinstalling$' >&2)
 
 # Say "correct" only once the key verifiably is: before the failure checks
 # above, a failed recv or reinstall still ended here with exit 0.

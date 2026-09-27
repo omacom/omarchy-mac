@@ -58,6 +58,22 @@ exit "${KEYRING_TEST_PKG_MISSING:-1}"
 SH
 chmod +x "$stub_bin/omarchy-pkg-missing"
 
+# KEYRING_TEST_ARM=1: Arch Linux ARM's keyring is installed.
+# KEYRING_TEST_PLATFORM: the platform (default generic).
+cat >"$stub_bin/omarchy-pkg-present" <<'SH'
+#!/bin/bash
+
+[[ $* == "archlinuxarm-keyring" && ${KEYRING_TEST_ARM:-0} == 1 ]]
+SH
+chmod +x "$stub_bin/omarchy-pkg-present"
+
+cat >"$stub_bin/omarchy-hw-platform" <<'SH'
+#!/bin/bash
+
+echo "${KEYRING_TEST_PLATFORM:-generic}"
+SH
+chmod +x "$stub_bin/omarchy-hw-platform"
+
 cat >"$stub_bin/omarchy-pkg-add" <<'SH'
 #!/bin/bash
 
@@ -85,6 +101,23 @@ pass "update-keyring reports success when the keyring is healthy"
 grep -Eq $'^sudo\tpacman\t-Sy\t--noconfirm\tarchlinux-keyring$' "$log_file" ||
   fail "update-keyring still reinstalls archlinux-keyring" "$(cat "$log_file")"
 pass "update-keyring still reinstalls archlinux-keyring"
+
+# An aarch64 machine keeps Arch Linux ARM's keyring current alongside Arch's.
+: >"$log_file"
+rm -f "$test_tmp/list-calls"
+for platform in apple-silicon qualcomm generic-aarch64; do
+  : >"$log_file"
+  rm -f "$test_tmp/list-calls"
+  KEYRING_TEST_ARM=1 KEYRING_TEST_PLATFORM=$platform run_keyring >"$test_tmp/arm.out"
+  grep -Eq $'^sudo\tpacman\t-Sy\t--noconfirm\tarchlinux-keyring\tarchlinuxarm-keyring$' "$log_file" ||
+    fail "update-keyring also reinstalls Arch Linux ARM's keyring on $platform" "$(cat "$log_file")"
+done
+: >"$log_file"
+rm -f "$test_tmp/list-calls"
+KEYRING_TEST_ARM=1 run_keyring >"$test_tmp/x86.out"
+grep -Eq $'^sudo\tpacman\t-Sy\t--noconfirm\tarchlinux-keyring$' "$log_file" ||
+  fail "x86 reinstalls only Arch's keyring, even with Arch Linux ARM's installed" "$(cat "$log_file")"
+pass "aarch64 machines also reinstall Arch Linux ARM's keyring where it is installed, x86 never"
 
 # Key and package missing: the full populate path runs and verifies at the end.
 : >"$log_file"
