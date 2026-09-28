@@ -32,6 +32,13 @@ case "$*" in
     fi
     printf '%s\n' "${GRAPHICAL_STATE:-inactive}"
     ;;
+  '--user show --property=LoadState --value omarchy-sleep-lock.service')
+    if [[ ${FAIL_SYSTEMCTL_ACTION:-} == "show-loadstate" ]]; then
+      echo "load state lookup failed" >&2
+      exit 1
+    fi
+    printf '%s\n' "${SLEEP_LOCK_LOAD_STATE:-loaded}"
+    ;;
   '--user show --property=ActiveState --value omarchy-sleep-lock.service')
     printf '%s\n' "${SLEEP_LOCK_STATE:-inactive}"
     ;;
@@ -47,7 +54,12 @@ case "$*" in
       exit 1
     fi
     ;;
-  '--user reset-failed omarchy-sleep-lock.service') ;;
+  '--user reset-failed omarchy-sleep-lock.service')
+    if [[ ${FAIL_SYSTEMCTL_ACTION:-} == "reset-failed" ]]; then
+      echo "Failed to reset failed state of unit omarchy-sleep-lock.service: Unit omarchy-sleep-lock.service not loaded." >&2
+      exit 1
+    fi
+    ;;
   *) exit 1 ;;
 esac
 STUB
@@ -145,6 +157,37 @@ fi
 grep -F 'Could not inspect graphical-session.target' "$test_tmp/state-failed-output" >/dev/null ||
   fail "sleep lock migration does not report a failed session-state inspection"
 pass "sleep lock migration keeps an indeterminate session repair retryable"
+
+# reset-failed on a unit that never loaded is a normal no-op, not a repair
+# problem: the migration must still drive the restart that actually repairs.
+reset_failed_calls="$test_tmp/reset-failed-calls"
+run_migration "$test_tmp/reset-failed-home" "$reset_failed_calls" \
+  env GRAPHICAL_STATE=active SLEEP_LOCK_STATE=active FAIL_SYSTEMCTL_ACTION=reset-failed >/dev/null ||
+  fail "sleep lock migration fails an update over a never-loaded unit"
+grep -Fx -- '--user restart omarchy-sleep-lock.service' "$reset_failed_calls" >/dev/null ||
+  fail "sleep lock migration does not restart the monitor after a benign reset-failed"
+pass "sleep lock migration tolerates reset-failed on a never-loaded unit"
+
+# A unit the manager cannot load at all — never packaged here, or masked by the
+# user — has nothing to repair and must not be restarted.
+for absent_state in not-found masked; do
+  absent_calls="$test_tmp/absent-$absent_state-calls"
+  run_migration "$test_tmp/absent-$absent_state-home" "$absent_calls" \
+    env GRAPHICAL_STATE=active SLEEP_LOCK_LOAD_STATE="$absent_state" >/dev/null ||
+    fail "sleep lock migration fails on a $absent_state unit"
+  grep -F -- '--user restart omarchy-sleep-lock.service' "$absent_calls" >/dev/null &&
+    fail "sleep lock migration restarts a $absent_state unit"
+  pass "sleep lock migration skips the repair when the unit is $absent_state"
+done
+
+loadstate_failed_calls="$test_tmp/loadstate-failed-calls"
+if run_migration "$test_tmp/loadstate-failed-home" "$loadstate_failed_calls" \
+  env FAIL_SYSTEMCTL_ACTION=show-loadstate >"$test_tmp/loadstate-failed-output" 2>&1; then
+  fail "sleep lock migration ignores a failed unit-load inspection"
+fi
+grep -F 'will be retried by omarchy-migrate' "$test_tmp/loadstate-failed-output" >/dev/null ||
+  fail "sleep lock migration does not report a failed load-state inspection"
+pass "sleep lock migration keeps a failed load-state inspection retryable"
 
 deferred_home="$test_tmp/deferred-home"
 deferred_calls="$test_tmp/deferred-calls"
