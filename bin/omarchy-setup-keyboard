@@ -1,41 +1,50 @@
 #!/bin/bash
+
 # omarchy:summary=Configure the keyboard layout
 # Setup keyboard layout for Omarchy
-# Provides interactive keyboard layout configuration using the first-run script
+# Re-runs the provisioning layout picker on a running system and persists the
+# choice through localectl: the console keymap and XKB layout land in
+# /etc/vconsole.conf, which default/hypr/input.lua reads for kb_layout.
 
 set -euo pipefail
 
-OMARCHY_PATH="${HOME}/.local/share/omarchy"
-KEYBOARD_SCRIPT="${OMARCHY_PATH}/install/first-run/keyboard-layout.sh"
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 
-# Check if the keyboard layout script exists
-if [[ ! -f "$KEYBOARD_SCRIPT" ]]; then
-  echo "Error: Keyboard layout setup script not found at:"
-  echo "  $KEYBOARD_SCRIPT"
-  exit 1
-fi
-
-# Check if gum is installed
 if ! omarchy-cmd-present gum; then
   echo "Error: gum is not installed. Please install it first:"
   echo "  sudo pacman -S gum"
   exit 1
 fi
 
-# Display current keyboard layout
+# The picker and layout table are shared with first-boot provisioning so this
+# command can never offer a layout that setup could not have applied.
+source "$OMARCHY_PATH/install/provisioning/setup-form.sh"
+
 echo "Current keyboard layout configuration:"
 echo ""
 localectl status | grep -E "X11 Layout|VC Keymap" || echo "  Layout: (unset or default)"
 echo ""
-echo "Starting keyboard layout configuration..."
-echo ""
 
-# Run the keyboard layout configuration script
-# This always prompts so Menu > Setup > Keyboard Layout can change layouts later
-bash "$KEYBOARD_SCRIPT" --force
+# Esc and Ctrl+C both leave the current layout in place.
+omarchy_prompt_keyboard || exit 0
+
+# Apply the console keymap to the live VT when the command runs on one.
+[[ $(tty 2>/dev/null) == /dev/tty* ]] && loadkeys "$keyboard" 2>/dev/null || true
+
+if localectl --no-pager list-keymaps 2>/dev/null | grep -qix "$keyboard"; then
+  localectl set-keymap "$keyboard"
+else
+  echo "Warning: keymap '$keyboard' is unknown to localectl; keeping the current console keymap"
+fi
+
+# --no-convert keeps the console keymap set above instead of deriving one from
+# the XKB layout.
+localectl --no-convert set-x11-keymap "$keyboard_xkb_layout" "" "$keyboard_xkb_variant"
+
+# input.lua re-reads vconsole.conf on every config evaluation, so a reload
+# applies the new layout without relaunching the session.
+hyprctl reload >/dev/null 2>&1 || true
 
 echo ""
-echo "✓ Keyboard layout setup complete"
-echo ""
-echo "Note: The new layout will apply immediately to new applications."
-echo "For Hyprland keybindings, you may need to restart Hyprland (Super+Shift+E > Relaunch)"
+echo "✓ Keyboard layout set to $keyboard_label"
+echo "  Console keymap: $keyboard   XKB: $keyboard_xkb_layout${keyboard_xkb_variant:+/$keyboard_xkb_variant}"
