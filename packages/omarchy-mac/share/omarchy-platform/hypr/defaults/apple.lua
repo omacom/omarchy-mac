@@ -32,6 +32,10 @@ if _G.omarchy_default_bindings ~= false then
   -- Omarchy's display maximum and minimum.
   o.bind("SHIFT + XF86MonBrightnessUp", "Keyboard brightness up", "omarchy-brightness-keyboard up", { locked = true, repeating = true })
   o.bind("SHIFT + XF86MonBrightnessDown", "Keyboard brightness down", "omarchy-brightness-keyboard down", { locked = true, repeating = true })
+
+  -- The moon key is Do Not Disturb, not sleep, though the kernel reports it as
+  -- KEY_SLEEP. The package's logind drop-in stops it suspending the Mac.
+  o.bind("XF86Sleep", "Do not disturb", "omarchy-toggle-notification-silencing")
 end
 
 -- A menu or panel pressed on the MacBook's own keyboard opens on the MacBook's
