@@ -1,0 +1,20 @@
+# checkout-relative source<TAB>absolute destination<TAB>copy or link
+default/uwsm/env.d/10-omarchy	/usr/share/uwsm/env.d/10-omarchy	copy
+default/environment.d/10-omarchy-fcitx.conf	/usr/lib/environment.d/10-omarchy-fcitx.conf	copy
+default/fontconfig/conf.avail/50-omarchy.conf	/usr/share/fontconfig/conf.avail/50-omarchy.conf	copy
+default/fontconfig/conf.avail/50-omarchy.conf	/etc/fonts/conf.d/50-omarchy.conf	link
+default/xdg-terminal-exec/hyprland-xdg-terminals.list	/usr/share/xdg-terminal-exec/hyprland-xdg-terminals.list	copy
+default/applications/mimeapps.list	/usr/share/applications/mimeapps.list	copy
+etc/fastfetch/config.jsonc	/etc/fastfetch/config.jsonc	copy
+default/systemd/user/bt-agent.service	/usr/lib/systemd/user/bt-agent.service	link
+default/systemd/user/omarchy-sleep-lock.service	/usr/lib/systemd/user/omarchy-sleep-lock.service	link
+default/systemd/user/omarchy-recover-internal-monitor.service	/usr/lib/systemd/user/omarchy-recover-internal-monitor.service	link
+default/systemd/user/omarchy-migrate-notify.service	/usr/lib/systemd/user/omarchy-migrate-notify.service	link
+default/systemd/user/omarchy-migrate-notify.service	/usr/lib/systemd/user/omarchy-update-user-notify.service	link
+default/systemd/user/omarchy-tailscale-receive.service	/usr/lib/systemd/user/omarchy-tailscale-receive.service	link
+default/systemd/user/omarchy-fcitx5.service	/usr/lib/systemd/user/omarchy-fcitx5.service	link
+default/systemd/user/omarchy-crash-watch.service	/usr/lib/systemd/user/omarchy-crash-watch.service	link
+default/systemd/user/app.slice.d/10-oomd.conf	/usr/lib/systemd/user/app.slice.d/10-oomd.conf	link
+default/systemd/zram-generator.conf.d/90-omarchy.conf	/usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf	copy
+default/fonts/omarchy/omarchy.ttf	/usr/share/fonts/omarchy/omarchy.ttf	copy
+default/snapper/root	/etc/snapper/config-templates/omarchy	copy
