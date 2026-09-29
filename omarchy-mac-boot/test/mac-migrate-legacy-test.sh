@@ -2,6 +2,7 @@
 
 set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+requires_runtime "the legacy migration" || exit 0
 
 # omarchy-mac-migrate moves a legacy omarchy-mac Mac (the quattro fork) onto
 # the official packages. Each case stages the package into a fixture root and
@@ -596,7 +597,7 @@ pass "a failed transaction puts the checkout's links and a dev link's paths back
 
 luks_uuid=5b1f0c2e-8a44-4f1d-9d7e-3c2a1b0e9f11
 fs_uuid=0a1b2c3d-4e5f-4061-8a9b-c0d1e2f3a4b5
-baseline_hooks=$ROOT/../../../etc/mkinitcpio.conf.d/00-omarchy-hooks.conf
+baseline_hooks=$OMARCHY_TEST_RUNTIME/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf
 converged_hooks="base systemd plymouth autodetect microcode modconf kms keyboard sd-vconsole block asahi omarchy-vendorfw omarchy-mac-encrypt sd-encrypt filesystems fsck"
 
 # The ESP mounted at /boot, as omarchy-system-boot-to-esp leaves it: GRUB, the

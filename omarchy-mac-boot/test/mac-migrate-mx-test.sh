@@ -2,6 +2,7 @@
 
 set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+requires_runtime "the mx-mac migration" || exit 0
 
 # omarchy-mac-migrate moves an mx-mac Mac, as the M1 Pro runs it, onto a signed
 # target set: the fork's omarchy-dev pair and bundle, its signed [omarchy] and

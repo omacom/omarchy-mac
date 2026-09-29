@@ -2,6 +2,7 @@
 
 set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+requires_runtime "the quattro-upstream migration" || exit 0
 
 # omarchy-mac-migrate moves a quattro-upstream tester Mac onto a signed target
 # set. Each case stages the package into a fixture root (the tester's pacman
@@ -746,7 +747,7 @@ finish
 grep -q "^omarchy-mac-setup-user HOME=$home$" "$F/boot.log" || fail "the Mac user setup still runs"
 pass "a plan frozen before the unit record enables no user unit"
 
-first_run_units=$(sed -n '/systemctl --user enable --now/,/[^\\]$/p' "$ROOT/../../../install/user/first-run/enable-user-units.sh" | grep -o '[a-z0-9-]*\.service' | xargs)
+first_run_units=$(sed -n '/systemctl --user enable --now/,/[^\\]$/p' "$OMARCHY_TEST_RUNTIME/install/user/first-run/enable-user-units.sh" | grep -o '[a-z0-9-]*\.service' | xargs)
 engine_units=$(sed -n 's/^fresh_user_units="\(.*\)"$/\1/p' "$ROOT/lib/migrate-engine.sh")
 [[ -n $first_run_units && $first_run_units == "$engine_units" ]] ||
   fail "the migration enables the user units first run enables" "first run: $first_run_units; migration: $engine_units"
@@ -757,7 +758,7 @@ pass "the migration's user units are first run's"
 # A runtime leaf the target's omarchy carries, from this repository.
 stage_leaf() { # path
   mkdir -p "$(dirname "$R/usr/share/omarchy/$1")"
-  cp "$ROOT/../../../$1" "$R/usr/share/omarchy/$1"
+  cp "$OMARCHY_TEST_RUNTIME/$1" "$R/usr/share/omarchy/$1"
 }
 
 broadcom_block="# Broadcom's firmware supplicant and authenticator fail the WPA four-way

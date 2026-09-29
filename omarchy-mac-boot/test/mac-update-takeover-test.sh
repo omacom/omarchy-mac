@@ -46,9 +46,11 @@ printf '%s\n' '#HOOKS=(base udev asahi encrypt filesystems)' 'HOOKS=(base system
   >"$fixture/etc/mkinitcpio.conf.d/omarchy_hooks.conf"
 "$takeover" /etc/mkinitcpio.conf.d/omarchy_hooks.conf || fail 'commented hooks do not count'
 # The HOOKS baseline's own lines sit in its branches.
-cp "$ROOT/../../../etc/mkinitcpio.conf.d/00-omarchy-hooks.conf" "$fixture/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf"
-grep -q '^ .*HOOKS=(.* encrypt ' "$fixture/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf" || fail 'the baseline fixture has its busybox branch'
-"$takeover" /etc/mkinitcpio.conf.d/00-omarchy-hooks.conf || fail 'an unowned copy of the HOOKS baseline may be taken over'
+if requires_runtime "an unowned copy of the runtime's HOOKS baseline may be taken over"; then
+  cp "$OMARCHY_TEST_RUNTIME/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf" "$fixture/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf"
+  grep -q '^ .*HOOKS=(.* encrypt ' "$fixture/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf" || fail 'the baseline fixture has its busybox branch'
+  "$takeover" /etc/mkinitcpio.conf.d/00-omarchy-hooks.conf || fail 'an unowned copy of the HOOKS baseline may be taken over'
+fi
 pass 'the memory, USB and mkinitcpio drop-ins omarchy-settings ships on aarch64 may be taken over'
 
 # A legacy Mac whose drop-in carries its unlock: the baseline sorts first, so
