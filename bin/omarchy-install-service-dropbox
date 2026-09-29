@@ -1,13 +1,44 @@
 #!/bin/bash
 
-# omarchy:summary=Install and start the Dropbox service. Must then be authenticated via the web.
+# omarchy:summary=Install Dropbox and enable its bar plugin. Must then be authenticated via the web.
+
+set -euo pipefail
+
+if [[ $(uname -m) == "aarch64" ]]; then
+  echo "Dropbox is unavailable on aarch64; no changes were made." >&2
+  exit 1
+fi
 
 echo "Installing all dependencies..."
-omarchy-pkg-add dropbox dropbox-cli libappindicator-gtk3 python-gpgme nautilus-dropbox
+if ! omarchy-pkg-add dropbox dropbox-cli libappindicator-gtk3 python-gpgme nautilus-dropbox; then
+  echo "Failed to install Dropbox dependencies; no plugin or launch changes were made." >&2
+  exit 1
+fi
+
+if ! omarchy-pkg-present dropbox dropbox-cli; then
+  echo "Dropbox core packages are unavailable; no plugin or launch changes were made." >&2
+  exit 1
+fi
+
+if ! omarchy-cmd-present dropbox-cli uwsm-app; then
+  echo "Dropbox core commands are unavailable; no plugin or launch changes were made." >&2
+  exit 1
+fi
 
 echo "Adding Dropbox to the bar..."
-omarchy-plugin-enable omarchy.dropbox
+if ! omarchy-plugin-enable omarchy.dropbox; then
+  echo "Failed to enable the Dropbox bar plugin; no launch was requested." >&2
+  exit 1
+fi
 
-echo "Starting Dropbox..."
+plugin_state=$(omarchy-plugin-list --json) || {
+  echo "Dropbox plugin state could not be verified after enablement; partial state may remain. Retry installation or remove the plugin manually." >&2
+  exit 1
+}
+if ! jq -e 'any(.[]; .id == "omarchy.dropbox" and .enabled == true)' <<<"$plugin_state" >/dev/null; then
+  echo "Dropbox plugin is not enabled after enablement; partial state may remain. Retry installation or remove the plugin manually." >&2
+  exit 1
+fi
+
+echo "Dropbox launch requested; authenticate via the web to complete setup."
 uwsm-app -- dropbox-cli start &>/dev/null &
-echo "See Dropbox icon behind  hover tray in top right and right-click for setup."
