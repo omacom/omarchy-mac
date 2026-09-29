@@ -93,7 +93,13 @@ function key_text(key,   count, parts, i, text) {
   text = ""
 
   for (i = 1; i <= count; i++) {
-    text = text (text == "" ? "" : " + ") toupper(parts[i])
+    part = toupper(parts[i])
+    if (part == "SUPER") part = "⌘"
+    else if (part == "ALT") part = "⌥"
+    else if (part == "CTRL" || part == "CONTROL") part = "⌃"
+    else if (part == "SHIFT") part = "⇧"
+
+    text = text (text == "" ? "" : " + ") part
   }
 
   return text
@@ -132,6 +138,14 @@ function describe(action,   text) {
   text = toupper(substr(action, 1, 1)) substr(action, 2)
 
   return text
+}
+
+function padded(text, width,   measured) {
+  measured = text
+  gsub(/⌘|⌥|⌃|⇧/, "x", measured)
+  if (length(measured) >= width) return text
+
+  return text sprintf("%*s", width - length(measured), "")
 }
 
 function remember(action) {
@@ -200,7 +214,7 @@ FNR == NR {
 
 END {
   if ("prefix" in combos) {
-    printf "%-32s → %s\n", "PREFIX", combos["prefix"]
+    printf "%s → %s\n", padded("PREFIX", 32), combos["prefix"]
   }
 
   for (i = 1; i <= count; i++) {
@@ -208,7 +222,7 @@ END {
     if (action == "prefix") continue
     if (!(action in combos)) continue
 
-    printf "%-32s → %s\n", combos[action], describe(action)
+    printf "%s → %s\n", padded(combos[action], 32), describe(action)
   }
 }
 ' - "$config_file"

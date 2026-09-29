@@ -575,8 +575,39 @@ output_binding_records() {
   fi
 }
 
+format_display_records() {
+  awk -F '\t' '
+  BEGIN { OFS = "\t" }
+  {
+    delimiter = index($1, "→")
+    display = substr($1, 1, delimiter - 1)
+    sub(/[[:space:]]+$/, "", display)
+
+    count = split(display, parts, /[[:space:]]+/)
+    display = ""
+    for (i = 1; i <= count; i++) {
+      if (parts[i] == "SUPER") parts[i] = "⌘"
+      else if (parts[i] == "ALT") parts[i] = "⌥"
+      else if (parts[i] == "CTRL" || parts[i] == "CONTROL") parts[i] = "⌃"
+      else if (parts[i] == "SHIFT") parts[i] = "⇧"
+
+      display = display (display == "" ? "" : " ") parts[i]
+    }
+
+    action = substr($1, delimiter + length("→"))
+    sub(/^[[:space:]]+/, "", action)
+    measured = display
+    gsub(/⌘|⌥|⌃|⇧/, "x", measured)
+    padding = 35 - length(measured)
+    if (padding > 0) display = display sprintf("%*s", padding, "")
+
+    $1 = display " → " action
+    print
+  }'
+}
+
 output_keybindings() {
-  output_binding_records | cut -f1
+  output_binding_records | format_display_records | cut -f1
 }
 
 trim() {
@@ -661,7 +692,7 @@ dispatch_binding() {
 if [[ $1 == "--print" || $1 == "-p" ]]; then
   output_keybindings
 else
-  records=$(output_binding_records)
+  records=$(output_binding_records | format_display_records)
   selection=$(cut -f1 <<<"$records" |
     omarchy-menu-select 'Keybindings' -- --width 800 --height 500)
 
