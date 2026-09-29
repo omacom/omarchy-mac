@@ -480,6 +480,10 @@ def rpc_request(proc, request_id, method, params=None, timeout=8):
   proc.stdin.flush()
   deadline = time.time() + timeout
   while time.time() < deadline:
+    # A child that already exited never produces output; poll so the caller
+    # gets the exit status and stderr instead of burning the full timeout.
+    if proc.poll() is not None:
+      break
     ready, _, _ = select.select([proc.stdout], [], [], 0.25)
     if not ready:
       continue
@@ -492,7 +496,24 @@ def rpc_request(proc, request_id, method, params=None, timeout=8):
       continue
     if message.get("id") == request_id:
       return message
-  raise TimeoutError(method)
+  raise TimeoutError(rpc_failure_detail(proc, method))
+
+
+def rpc_failure_detail(proc, method):
+  detail = method
+  status = proc.poll()
+  if status is not None:
+    detail = f"{method}: app-server exited with status {status}"
+    stderr_text = ""
+    if proc.stderr is not None:
+      try:
+        stderr_text = proc.stderr.read() or ""
+      except Exception:
+        stderr_text = ""
+    tail = " ".join(stderr_text.split()[-12:])
+    if tail:
+      detail = f"{detail}: {tail}"
+  return detail
 
 
 def limit_window(window):
@@ -531,7 +552,10 @@ def fetch_codex_rpc():
       [codex, "-s", "read-only", "-a", "on-request", "app-server"],
       stdin=subprocess.PIPE,
       stdout=subprocess.PIPE,
-      stderr=subprocess.DEVNULL,
+      # Kept readable rather than DEVNULL: a CLI that refuses our arguments
+      # names the problem on stderr, and authHelpText is the only place the
+      # panel can show it (#232).
+      stderr=subprocess.PIPE,
       text=True,
       env=ENV,
     )
