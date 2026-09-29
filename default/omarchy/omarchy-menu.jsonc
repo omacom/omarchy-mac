@@ -219,7 +219,7 @@
   "install.browser.zen": {"icon":"󰖟","label":"Zen","disabled":"omarchy-pkg-present zen-browser-bin","action":"omarchy-launch-floating-terminal-with-presentation 'omarchy-install-browser zen'"},
   "install.service.1password": {"icon":"󰢁","label":"1Password","disabled":"omarchy-pkg-present 1password","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-service-1password"},
   "install.service.dropbox": {"icon":"","label":"Dropbox","disabled":"omarchy-pkg-present dropbox","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-service-dropbox"},
-  "install.service.spotify": {"icon":"󰓇","label":"Spotify","disabled":"omarchy-pkg-present spotify","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-service-spotify"},
+  "install.service.spotify": {"icon":"󰓇","label":"Spotify","disabled":"omarchy-pkg-present spotify || [[ -f $HOME/.local/share/applications/Spotify.desktop ]]","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-service-spotify"},
   "install.service.signal": {"icon":"󰭹","label":"Signal","disabled":"omarchy-pkg-present signal-desktop","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-service-signal"},
   "install.service.tailscale": {"icon":"","label":"Tailscale","disabled":"omarchy-pkg-present tailscale","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-service-tailscale"},
   "install.service.nordvpn": {"icon":"󱇱","label":"NordVPN","disabled":"omarchy-pkg-present nordvpn-bin","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-service-nordvpn"},

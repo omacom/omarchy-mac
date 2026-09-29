@@ -6,10 +6,26 @@
 set -e
 
 echo "Installing Spotify..."
-omarchy-pkg-add spotify
 
-echo "Opening Spotify..."
-setsid uwsm-app -- /usr/bin/spotify >/dev/null 2>&1 &
+if pacman -Q spotify &>/dev/null || pacman -Si spotify &>/dev/null; then
+  omarchy-pkg-add spotify
 
-echo ""
-echo "Spotify has been installed."
+  echo "Opening Spotify..."
+  setsid uwsm-app -- /usr/bin/spotify >/dev/null 2>&1 &
+
+  echo ""
+  echo "Spotify has been installed."
+else
+  # No aarch64 Spotify client exists, so on systems the repos cannot serve the
+  # web app is the client. omarchy-launch-spotify already matches a window
+  # whose class or title contains "spotify", so the SUPER+SHIFT+M binding
+  # focuses this app the same as the native one.
+  echo "No native Spotify client is available on this system; installing the web app."
+  omarchy-webapp-install "Spotify" "https://open.spotify.com" "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/spotify.png"
+
+  echo "Opening Spotify..."
+  setsid omarchy-launch-webapp "https://open.spotify.com" >/dev/null 2>&1 &
+
+  echo ""
+  echo "Spotify has been installed as a web app."
+fi
