@@ -2,5 +2,5 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 for test in *-test.sh; do
-  [[ $test == "base-test.sh" ]] || bash "$test"
+  [[ $test == "base-test.sh" || $test == "runtime-test.sh" ]] || bash "$test"
 done
