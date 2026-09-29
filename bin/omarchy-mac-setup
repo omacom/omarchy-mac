@@ -150,8 +150,13 @@ valid_keymap() {
 # and the machine rejects a passphrase its owner is typing correctly. The x86
 # ISO asks for this; nothing on the Mac path did.
 apply_keymap() {
-  local keymap="$1"
+  local keymap="$1" vconsole=${OMARCHY_VCONSOLE_CONF:-/etc/vconsole.conf} font_records
   [[ -n $keymap ]] || return 0
+
+  font_records=""
+  if [[ -f $vconsole ]]; then
+    font_records=$(sed -n -E '/^[[:space:]]*FONT(_MAP|_UNIMAP)?[[:space:]]*=/p' "$vconsole")
+  fi
 
   log "Setting the console keymap to $keymap"
   loadkeys "$keymap" 2>/dev/null || true
@@ -161,11 +166,17 @@ apply_keymap() {
 
   # localectl writes vconsole.conf itself, but not on every path, and the
   # initramfs reads that file rather than asking localectl.
-  touch /etc/vconsole.conf
-  if grep -q '^KEYMAP=' /etc/vconsole.conf; then
-    sed -i "s|^KEYMAP=.*|KEYMAP=$keymap|" /etc/vconsole.conf
+  touch "$vconsole"
+  if grep -q '^KEYMAP=' "$vconsole"; then
+    sed -i "s|^KEYMAP=.*|KEYMAP=$keymap|" "$vconsole"
   else
-    printf 'KEYMAP=%s\n' "$keymap" >>/etc/vconsole.conf
+    printf 'KEYMAP=%s\n' "$keymap" >>"$vconsole"
+  fi
+
+  if [[ -n $font_records ]]; then
+    # --force rewrites vconsole.conf from its keymap conversion and drops fonts.
+    sed -Ei '/^[[:space:]]*FONT(_MAP|_UNIMAP)?[[:space:]]*=/d' "$vconsole"
+    printf '%s\n' "$font_records" >>"$vconsole"
   fi
 }
 current_hostname() {
