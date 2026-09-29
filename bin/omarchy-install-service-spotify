@@ -5,11 +5,31 @@
 
 set -e
 
-echo "Installing Spotify..."
-omarchy-pkg-add spotify
+if [[ $(uname -m) == "aarch64" ]]; then
+  echo "Installing Spotify web player..."
+  omarchy-webapp-install "Spotify" "https://open.spotify.com" "Spotify.png"
+  desktop_file="$HOME/.local/share/applications/Spotify.desktop"
+  if [[ ! -f $desktop_file ]]; then
+    echo "Spotify web player launcher was not created." >&2
+    exit 1
+  fi
 
-echo "Opening Spotify..."
-setsid uwsm-app -- /usr/bin/spotify >/dev/null 2>&1 &
+  echo "Opening Spotify web player..."
+  setsid omarchy-launch-webapp "https://open.spotify.com" >/dev/null 2>&1 &
 
-echo ""
-echo "Spotify has been installed."
+  echo ""
+  echo "Spotify web player is ready."
+else
+  echo "Installing Spotify..."
+  omarchy-pkg-add spotify
+  if ! omarchy-cmd-present spotify; then
+    echo "Spotify was not installed." >&2
+    exit 1
+  fi
+
+  echo "Opening Spotify..."
+  setsid uwsm-app -- /usr/bin/spotify >/dev/null 2>&1 &
+
+  echo ""
+  echo "Spotify has been installed."
+fi
