@@ -1,12 +1,12 @@
 #!/bin/bash
 # speakersafetyd has one owner across the two Mac packages: this package's
-# preset. The boot package (../boot, omarchy-mac-boot) no longer enables it from
+# preset. The boot package (omarchy-mac-boot) no longer enables it from
 # its preset or its first-boot hand-off. A fresh image and an upgrade from
 # omarchy-mac-boot 20260925-3/-4, which enabled it from both, must each end with
 # it enabled by exactly one link, checked with real systemctl --root.
 set -euo pipefail
 source "$(dirname "$0")/base-test.sh"
-boot=$ROOT/boot
+boot=$BOOT
 first_boot=$boot/files/usr/lib/omarchy/mac-first-boot/omarchy-mac-first-boot
 real_systemctl=$(command -v systemctl) || fail 'systemctl is available'
 work=$(mktemp -d)
@@ -34,7 +34,7 @@ enable omarchy-mac-first-boot.service'
 # disables every unit no preset names.
 image() {
   local root=$1 unit
-  "$ROOT/install" "$root"
+  "$MAC/install" "$root"
   "$boot/install" "$root"
   mkdir -p "$root/usr/lib/systemd/system" "$root/usr/share/omarchy/install/provisioning" "$root/var/log"
   for unit in speakersafetyd NetworkManager systemd-resolved systemd-timesyncd sddm; do
@@ -115,7 +115,7 @@ old_mac() {
 }
 
 upgrade() {
-  "$ROOT/install" "$1"
+  "$MAC/install" "$1"
   "$boot/install" "$1"
 }
 
