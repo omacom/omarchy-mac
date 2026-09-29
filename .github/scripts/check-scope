@@ -1,0 +1,50 @@
+#!/bin/bash
+# Fails when a tracked file lies outside what this repository holds, or a package
+# directory misses part of the package contract. CONTRIBUTING.md says where other changes go.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+
+root_files=" README.md CONTRIBUTING.md AGENTS.md CLAUDE.md LICENSE .editorconfig .gitignore "
+shared_directories=" .github mac-manual tools "
+
+is_package() {
+  [[ -x $1/install && -x $1/test/all ]]
+}
+
+outside=()
+while IFS= read -r path; do
+  top=${path%%/*}
+  if [[ $path != */* ]]; then
+    [[ $root_files == *" $path "* ]] || outside+=("$path")
+  elif [[ $top == "test" ]]; then
+    [[ $path == test/integration/* ]] || outside+=("$path")
+  elif [[ $shared_directories != *" $top "* ]] && ! is_package "$top"; then
+    outside+=("$path")
+  fi
+done < <(git ls-files)
+
+incomplete=()
+for directory in */; do
+  directory=${directory%/}
+  if is_package "$directory"; then
+    for required in README.md LICENSE; do
+      [[ -f $directory/$required ]] || incomplete+=("$directory/$required")
+    done
+  fi
+done
+
+if (( ${#outside[@]} > 0 )); then
+  printf 'These files are outside what this repository holds:\n' >&2
+  printf '  %s\n' "${outside[@]}" >&2
+  printf 'It holds Apple Silicon packages (directories with install and test/all), mac-manual/, tools/ and test/integration/.\n' >&2
+  printf 'Desktop changes belong in omacom/omarchy; see CONTRIBUTING.md for everything else.\n' >&2
+fi
+if (( ${#incomplete[@]} > 0 )); then
+  printf 'These packages miss part of the package contract:\n' >&2
+  printf '  missing %s\n' "${incomplete[@]}" >&2
+fi
+if (( ${#outside[@]} + ${#incomplete[@]} > 0 )); then
+  exit 1
+else
+  echo "Every file is in scope and every package meets the contract."
+fi

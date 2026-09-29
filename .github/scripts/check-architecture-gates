@@ -1,0 +1,23 @@
+#!/bin/bash
+# Package code decides platforms through omarchy-hw-platform, never the CPU
+# architecture. Tests may stub uname, and prose may mention it, so both are skipped.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+
+architecture_pattern='uname[^|;&)`]*[[:space:]](-[[:alpha:]]*[am]|--machine|--all)|(\$\(|`)[[:space:]]*(command[[:space:]]+|/usr/bin/)?arch[[:space:]]*(\)|`)|HOSTTYPE|MACHTYPE|CARCH|process\.arch|platform\.machine|os\.uname|/proc/sys/kernel/arch|pacman-conf.*Architecture|ConditionArchitecture'
+
+packages=()
+for directory in */; do
+  directory=${directory%/}
+  [[ -x $directory/install && -x $directory/test/all ]] && packages+=("$directory")
+done
+
+gates=$({ grep -rnIE "$architecture_pattern" "${packages[@]}" || true; } |
+  grep -vE '^[^:]*/test/|^[^:]*\.md:|^[^:]*:[0-9]+:[[:space:]]*(#|//|--)' || true)
+
+if [[ -n $gates ]]; then
+  printf 'Package code checks the CPU architecture; ask omarchy-hw-platform instead:\n%s\n' "$gates" >&2
+  exit 1
+else
+  echo "No architecture gates in ${packages[*]}."
+fi

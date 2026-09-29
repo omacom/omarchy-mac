@@ -1,0 +1,107 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, proposal/main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  scope:
+    name: Scope and architecture gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Every file is in scope and every package meets the contract
+        run: .github/scripts/check-scope
+
+      - name: Package code decides platforms without the CPU architecture
+        run: .github/scripts/check-architecture-gates
+
+  suites:
+    name: Package, integration and tooling suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ARCH_IMAGE: archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
+    steps:
+      - name: Check out omarchy-mac
+        uses: actions/checkout@v7
+        with:
+          path: omarchy-mac
+          persist-credentials: false
+
+      - name: Read the pinned runtime
+        id: runtime
+        run: |
+          read -r repository commit < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' omarchy-mac/test/integration/runtime)
+          echo "repository=$repository" >>"$GITHUB_OUTPUT"
+          echo "commit=$commit" >>"$GITHUB_OUTPUT"
+
+      - name: Check out the runtime
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.runtime.outputs.repository }}
+          ref: ${{ steps.runtime.outputs.commit }}
+          path: runtime
+          persist-credentials: false
+
+      - name: Start Arch container
+        id: arch
+        run: |
+          docker run -d --init --name arch \
+            -v "$GITHUB_WORKSPACE:/work" -w /work/omarchy-mac \
+            "$ARCH_IMAGE" sleep infinity
+          docker exec arch pacman -Syu --noconfirm --needed \
+            git jq lua python python-yaml nodejs npm ripgrep shellcheck imagemagick ffmpeg kitty \
+            gum plocate openssh unzip bc libarchive libxkbcommon desktop-file-utils glib2 sqlite
+          docker exec arch bash -c 'echo "en_US.UTF-8 UTF-8" >/etc/locale.gen && locale-gen'
+          docker exec arch useradd --create-home --uid "$(id -u)" tester
+
+      - name: Package suites
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' }}
+        run: |
+          status=0
+          for package in omarchy-mac/*/; do
+            package=$(basename "$package")
+            [[ -x omarchy-mac/$package/install && -x omarchy-mac/$package/test/all ]] || continue
+            echo "::group::$package"
+            if ! docker exec -u tester -e HOME=/home/tester -e OMARCHY_TEST_RUNTIME=/work/runtime arch "$package/test/all"; then
+              status=1
+              echo "::error::$package suite failed"
+            fi
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Integration suite
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' }}
+        run: |
+          docker exec -u tester -e HOME=/home/tester -e OMARCHY_TEST_RUNTIME=/work/runtime \
+            arch test/integration/all
+
+      # hardware/test/all and release/test/fork-parity also fail on quattro-upstream,
+      # where CI never ran them; they join this list once fixed.
+      - name: Tooling suites
+        if: ${{ !cancelled() && steps.arch.outcome == 'success' }}
+        run: |
+          for suite in tools/acceptance/test/mac-image-run-test.sh tools/acceptance/test/asahi-fresh-run-test.sh \
+            tools/release/test/omacom-lane tools/release/test/candidate-set; do
+            echo "::group::$suite"
+            docker exec -u tester -e HOME=/home/tester arch bash "$suite"
+            echo "::endgroup::"
+          done
