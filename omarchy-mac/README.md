@@ -1,10 +1,10 @@
 # omarchy-mac
 
-Apple Silicon defaults and support services for Omarchy. Version: `0.1.0` (candidate). This add-on complements `omarchy` and `omarchy-settings`; it selects no kernel and contains no installer or repository trust configuration.
+Apple Silicon defaults and support services for Omarchy. Version: `0.1.0` (candidate). This add-on complements `omarchy` and `omarchy-settings`; it selects no kernel and contains no installer or repository trust configuration. It covers what stays on an installed Mac; installing one is the job of the [Omarchy Installer](https://github.com/omacom/omarchy-mac-installer), and boot support is the separate `omarchy-mac-boot` package beside this one.
 
 ## Build and stage
 
-This directory is self-contained. Copy it anywhere, run `./test/all`, then `./install /absolute/staging/root`. Staging requires Bash, coreutils and findutils; tests also use Python and systemd. Nothing is enabled or started by staging. The Arch recipe lives in `omarchy-mac/omarchy-pkgs-aarch64`, on `feature/omarchy-mac-package`, and pins a full collaboration-repository commit.
+This directory is self-contained. Copy it anywhere, run `./test/all`, then `./install /absolute/staging/root`. Staging requires Bash, coreutils and findutils; tests also use Python and systemd. Nothing is enabled or started by staging. Its Arch recipe lives in [omacom/omarchy-pkgs](https://github.com/omacom/omarchy-pkgs) and pins a full commit of this repository.
 
 Runtime dependencies: `omarchy` (the `omarchy-hw-platform` detector and its Apple predicate), Bash, coreutils, diffutils (cmp), grep, sed, gawk, systemd, pciutils, kmod, mkinitcpio, NetworkManager, iwd, Python, PipeWire, pipewire-pulse, libpulse (pactl, parec), WirePlumber, the protected Asahi speaker stack: asahi-audio, speakersafetyd (whose unit this package presets), alsa-ucm-conf-asahi, rtkit and pipewire-alsa; vulkan-asahi, the GPU's Vulkan driver; and asahi-alarm-keyring, for the Asahi repository its pacman templates configure. Upgrading this package brings all of them to machines set up before it named them. The hardware video decode stack (avd-fw, libva-v4l2_request-avd), wf-recorder and widevine are defaults in the runtime's Apple package list instead, which an owner may remove. See `ORIGINS.md` for extraction attribution.
 

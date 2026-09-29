@@ -2,7 +2,7 @@
 
 End-user documentation for Omarchy on Apple Silicon Macs. It is a static site with no JavaScript framework and no Node toolchain: fourteen Markdown pages, four generated SVG diagrams and one stylesheet.
 
-It covers only what differs on a Mac and links to [Omarchy's manual](https://omarchy.org/manual/) for everything else. Omarchy's own manual stays in `../manual/`. This tree is Mac-only, so like `packages/` and `tools/` it stays out of upstream desktop submissions.
+It covers only what differs on a Mac and links to [Omarchy's manual](https://omarchy.org/manual/) for everything else. Omarchy's own manual lives in [omacom/omarchy](https://github.com/omacom/omarchy/tree/quattro/manual).
 
 ## Build it
 
