@@ -1,0 +1,197 @@
+#!/bin/bash
+# omarchy:summary=Identify the Apple Silicon generation from device-tree data
+# omarchy:hidden=true
+
+# This command deliberately keeps the device-tree parser in one sourceable
+# function. The executable entry point below supplies the only production path;
+# tests source this file and pass a fixture path to the same function.
+
+omarchy_apple_silicon_generation_escape() {
+  local value="$1"
+  local index
+  local byte
+  local decimal
+  local hex
+
+  OMARCHY_APPLE_SILICON_ESCAPED=""
+  for (( index = 0; index < ${#value}; index++ )); do
+    byte=${value:index:1}
+    printf -v decimal '%d' "'${byte}"
+    decimal=$((decimal & 255))
+    printf -v hex '%02x' "$decimal"
+    OMARCHY_APPLE_SILICON_ESCAPED+="\\x${hex}"
+  done
+}
+
+omarchy_apple_silicon_generation_key() {
+  case "$1" in
+  apple,t8103) OMARCHY_APPLE_SILICON_KEY="m1" ;;
+  apple,t6000) OMARCHY_APPLE_SILICON_KEY="m1-pro" ;;
+  apple,t6001) OMARCHY_APPLE_SILICON_KEY="m1-max" ;;
+  apple,t6002) OMARCHY_APPLE_SILICON_KEY="m1-ultra" ;;
+  apple,t8112) OMARCHY_APPLE_SILICON_KEY="m2" ;;
+  apple,t6020) OMARCHY_APPLE_SILICON_KEY="m2-pro" ;;
+  apple,t6021) OMARCHY_APPLE_SILICON_KEY="m2-max" ;;
+  apple,t6022) OMARCHY_APPLE_SILICON_KEY="m2-ultra" ;;
+  apple,t8122) OMARCHY_APPLE_SILICON_KEY="m3" ;;
+  apple,t6030) OMARCHY_APPLE_SILICON_KEY="m3-pro" ;;
+  apple,t6031 | apple,t6034) OMARCHY_APPLE_SILICON_KEY="m3-max" ;;
+  apple,t6032) OMARCHY_APPLE_SILICON_KEY="m3-ultra" ;;
+  apple,t8132) OMARCHY_APPLE_SILICON_KEY="m4" ;;
+  *) OMARCHY_APPLE_SILICON_KEY="unknown" ;;
+  esac
+}
+
+omarchy_apple_silicon_generation_report() {
+  local source="$1"
+  local mode="$2"
+  local reason="$3"
+  local key="$4"
+  local index
+
+  if [[ $mode == "diagnose" ]]; then
+    printf 'source=%s\n' "$source" >&2
+    for (( index = 0; index < OMARCHY_APPLE_SILICON_RECORD_COUNT; index++ )); do
+      omarchy_apple_silicon_generation_escape "${OMARCHY_APPLE_SILICON_RECORDS[index]}"
+      printf 'record[%d]=%s\n' "$index" "$OMARCHY_APPLE_SILICON_ESCAPED" >&2
+    done
+    printf 'key=%s\nreason=%s\n' "$key" "$reason" >&2
+  elif [[ $reason != "identity-confirmed" ]]; then
+    printf '%s\n' "$reason" >&2
+  else
+    printf '%s\n' "$key"
+  fi
+
+  [[ $reason == "identity-confirmed" ]]
+}
+
+omarchy_apple_silicon_generation_parse() {
+  (
+    export LC_ALL=C
+    set -o pipefail
+
+    local source="$1"
+    local mode="$2"
+    local size
+    local last_byte
+    local record
+    local selector_count=0
+    local distinct_selector=0
+    local first_selector=""
+    local reason=""
+    local key="unknown"
+    local fd_open=0
+    local saw_empty=0
+    local saw_non_ascii=0
+    local saw_malformed=0
+
+    OMARCHY_APPLE_SILICON_RECORD_COUNT=0
+    OMARCHY_APPLE_SILICON_RECORDS=()
+
+    if [[ ! -e $source ]]; then
+      reason="missing-compatible"
+      omarchy_apple_silicon_generation_report "$source" "$mode" "$reason" "$key"
+      return
+    fi
+    if [[ ! -r $source || ! -f $source ]]; then
+      reason="unreadable-compatible"
+      omarchy_apple_silicon_generation_report "$source" "$mode" "$reason" "$key"
+      return
+    fi
+    if ! size=$(wc -c < "$source"); then
+      reason="unreadable-compatible"
+      omarchy_apple_silicon_generation_report "$source" "$mode" "$reason" "$key"
+      return
+    fi
+    if (( size == 0 )); then
+      reason="empty-compatible"
+      omarchy_apple_silicon_generation_report "$source" "$mode" "$reason" "$key"
+      return
+    fi
+    if ! last_byte=$(od -An -t x1 -j "$((size - 1))" -N 1 "$source" | tr -d '[:space:]'); then
+      reason="unreadable-compatible"
+      omarchy_apple_silicon_generation_report "$source" "$mode" "$reason" "$key"
+      return
+    fi
+    if [[ $last_byte != "00" ]]; then
+      reason="truncated-record"
+      omarchy_apple_silicon_generation_report "$source" "$mode" "$reason" "$key"
+      return
+    fi
+    if ! exec 3<"$source"; then
+      reason="unreadable-compatible"
+      omarchy_apple_silicon_generation_report "$source" "$mode" "$reason" "$key"
+      return
+    fi
+    fd_open=1
+
+    while IFS= read -r -d '' record <&3; do
+      OMARCHY_APPLE_SILICON_RECORDS[$((OMARCHY_APPLE_SILICON_RECORD_COUNT))]="$record"
+      OMARCHY_APPLE_SILICON_RECORD_COUNT=$((OMARCHY_APPLE_SILICON_RECORD_COUNT + 1))
+
+      if [[ -z $record ]]; then
+        saw_empty=1
+      elif [[ $record =~ [^[:print:]] ]]; then
+        saw_non_ascii=1
+      elif [[ $record == apple,t* ]] && [[ ! $record =~ ^apple,t[0-9]{4}$ ]]; then
+        saw_malformed=1
+      elif [[ $record =~ ^apple,t[0-9]{4}$ ]]; then
+        selector_count=$((selector_count + 1))
+        if (( selector_count == 1 )); then
+          first_selector="$record"
+        elif [[ $record != "$first_selector" ]]; then
+          distinct_selector=1
+        fi
+      fi
+    done
+    exec 3<&-
+    fd_open=0
+
+    if (( saw_empty )); then
+      reason="empty-compatible"
+    elif (( saw_non_ascii )); then
+      reason="non-ascii-compatible"
+    elif (( saw_malformed )); then
+      reason="malformed-compatible"
+    else
+      if (( selector_count == 0 )); then
+        reason="unrecognized-compatible"
+      elif (( distinct_selector )); then
+        reason="conflicting-compatible"
+      elif (( selector_count > 1 )); then
+        reason="ambiguous-compatible"
+      else
+        omarchy_apple_silicon_generation_key "$first_selector"
+        key="$OMARCHY_APPLE_SILICON_KEY"
+        if [[ $key == "unknown" ]]; then
+          case "$first_selector" in
+          apple,t6040 | apple,t6041) reason="unconfirmed-compatible" ;;
+          *) reason="unrecognized-compatible" ;;
+          esac
+        else
+          reason="identity-confirmed"
+        fi
+      fi
+    fi
+
+    if (( fd_open )); then
+      exec 3<&-
+    fi
+    omarchy_apple_silicon_generation_report "$source" "$mode" "$reason" "$key"
+  )
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  if (( $# != 1 )); then
+    printf 'usage: %s --key|--diagnose\n' "${0##*/}" >&2
+    exit 2
+  fi
+  case "${1:-}" in
+  --key) omarchy_apple_silicon_generation_parse "/proc/device-tree/compatible" "key" ;;
+  --diagnose) omarchy_apple_silicon_generation_parse "/proc/device-tree/compatible" "diagnose" ;;
+  *)
+    printf 'usage: %s --key|--diagnose\n' "${0##*/}" >&2
+    exit 2
+    ;;
+  esac
+fi
