@@ -1,0 +1,43 @@
+#!/bin/bash
+# Warns when upstream Omarchy's test copies of omarchy-mac-boot's mkinitcpio drop-ins
+# differ from the real ones. Never fails the build: upstream may simply lag.
+set -uo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+
+fixtures=test/shell.d/fixtures/omarchy-mac-boot-mkinitcpio
+drop_ins=omarchy-mac-boot/files/etc/mkinitcpio.conf.d
+upstream=$(mktemp -d)
+trap 'rm -rf "$upstream"' EXIT
+git init -q --bare "$upstream"
+
+# Upstream quattro once the Apple Silicon submission has merged, its pull request until then.
+source_ref=""
+for ref in quattro refs/pull/13362/head; do
+  if git -C "$upstream" fetch -q --depth 1 https://github.com/omacom/omarchy.git "$ref" 2>/dev/null &&
+    git -C "$upstream" cat-file -e "FETCH_HEAD:$fixtures" 2>/dev/null; then
+    source_ref=$ref
+    break
+  fi
+done
+
+if [[ -z $source_ref ]]; then
+  echo "::warning::Could not read upstream Omarchy's copies of the boot drop-ins; drift was not checked"
+  exit 0
+fi
+
+drifted=()
+for real in "$drop_ins"/*.conf; do
+  name=$(basename "$real")
+  if ! git -C "$upstream" show "FETCH_HEAD:$fixtures/$name" 2>/dev/null | cmp -s - "$real"; then
+    drifted+=("$name")
+  fi
+done
+while IFS= read -r name; do
+  [[ -e $drop_ins/$name ]] || drifted+=("$name (only upstream)")
+done < <(git -C "$upstream" ls-tree --name-only "FETCH_HEAD:$fixtures")
+
+if (( ${#drifted[@]} > 0 )); then
+  echo "::warning::Upstream Omarchy's fixture copies ($source_ref) differ from omarchy-mac-boot's drop-ins: ${drifted[*]}. Update $fixtures in omacom/omarchy."
+else
+  echo "Upstream Omarchy's fixture copies ($source_ref) match omarchy-mac-boot's drop-ins."
+fi
