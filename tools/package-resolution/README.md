@@ -8,7 +8,7 @@ tools/package-resolution/check generic-aarch64 # one platform
 tools/package-resolution/test/check-test.sh    # the checks against synthetic repositories
 ```
 
-It runs on any Arch Linux or Arch Linux ARM host or container, as a normal user, and needs `pacman`, `bsdtar` and `curl` (the self-test also needs `repo-add`). Mac hardware is never needed: `Architecture = aarch64` is forced, so an x86 Arch container resolves aarch64 databases the same way. CI runs both scripts in `.github/workflows/package-resolution.yml`, daily as well, since the databases move.
+Platforms name the runtime's own package lists (`install/omarchy-*.packages`), read from the Omarchy checkout `--runtime` names, by default `$OMARCHY_PATH`, which on an installed Omarchy is its packaged tree. It runs on any Arch Linux or Arch Linux ARM host or container, as a normal user, and needs `pacman`, `bsdtar` and `curl` (the self-test also needs `repo-add`). Mac hardware is never needed: `Architecture = aarch64` is forced, so an x86 Arch container resolves aarch64 databases the same way. CI runs both scripts in `.github/workflows/package-resolution.yml`, daily as well, since the databases move.
 
 ## Checks per platform
 

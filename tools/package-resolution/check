@@ -6,11 +6,10 @@ set -euo pipefail
 export LC_ALL=C
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd -- "$HERE/../.." && pwd)
 
 usage() {
   cat <<'EOF'
-Usage: tools/package-resolution/check [--platforms DIR] [--work DIR] [PLATFORM...]
+Usage: tools/package-resolution/check [--runtime DIR] [--platforms DIR] [--work DIR] [PLATFORM...]
 
 Resolves each platform fixture's package set against the live databases of the
 repositories in its pacman.conf, inside a disposable pacman root, and checks:
@@ -19,16 +18,20 @@ dependencies, single file ownership, and equal-version and locally-newer
 transitions. Needs pacman, bsdtar and curl (any Arch Linux or Arch Linux ARM
 host or container); runs as a normal user and writes only to the work directory.
 
+  --runtime DIR    the Omarchy checkout whose install/*.packages lists the
+                   platforms name (default: $OMARCHY_PATH)
   --platforms DIR  platform fixtures (default: tools/package-resolution/platforms)
   --work DIR       keep databases and roots in DIR and reuse downloaded databases
 EOF
 }
 
+runtime=${OMARCHY_PATH:-}
 platforms_dir=$HERE/platforms
 work=""
 selected=()
 while (( $# > 0 )); do
   case $1 in
+    --runtime) runtime=${2:?--runtime needs a directory}; shift 2 ;;
     --platforms) platforms_dir=${2:?--platforms needs a directory}; shift 2 ;;
     --work) work=${2:?--work needs a directory}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -208,7 +211,12 @@ check_platform() {
 
   local wanted=() list entry
   for list in "${lists[@]}"; do
-    [[ $list == /* ]] || list=$ROOT/$list
+    if [[ $list != /* && -z $runtime ]]; then
+      echo "$platform names $list; pass --runtime or set OMARCHY_PATH" >&2
+      exit 2
+    elif [[ $list != /* ]]; then
+      list=$runtime/$list
+    fi
     if [[ ! -f $list ]]; then
       failed "$platform: package list $list does not exist"
       continue

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)/test/shell.d/base-test.sh"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 harness="$ROOT/tools/acceptance/mac-image/run"
 test_tmp=$(mktemp -d)
