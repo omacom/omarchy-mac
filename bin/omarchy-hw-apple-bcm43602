@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# omarchy:summary=Detect Apple BCM43602 Wi-Fi hardware
+# omarchy:group=hardware
+# omarchy:hidden=true
+
+set -euo pipefail
+
+apple_bcm43602_matches() {
+  local arch="$1" sys_vendor="$2" product_name="$3" pci_info="$4"
+
+  [[ $arch == "x86_64" && $sys_vendor == "Apple Inc." &&
+    $product_name == "MacBookPro12,1" &&
+    $pci_info == *"[14e4:43ba]"* && $pci_info == *"[106b:0133]"* ]]
+}
+
+apple_bcm43602_ready() {
+  local limine_dir="${OMARCHY_BCM43602_LIMINE_DIR:-/etc/limine-entry-tool.d}"
+  local limine_conf="${OMARCHY_BCM43602_LIMINE_CONF:-/boot/limine.conf}"
+  local candidate_uki="${OMARCHY_BCM43602_CANDIDATE_UKI:-/boot/EFI/Linux/omarchy_linux-bcm43602.efi}"
+  local stock_uki="${OMARCHY_BCM43602_STOCK_UKI:-/boot/EFI/Linux/omarchy_linux.efi}"
+
+  omarchy-pkg-present linux linux-bcm43602 linux-bcm43602-headers &&
+    grep -Fxq 'BOOT_ORDER="linux-bcm43602*, linux*, *fallback, Snapshots"' "$limine_dir/zz-apple-bcm43602.conf" 2>/dev/null &&
+    [[ -s $candidate_uki && -s $stock_uki ]] &&
+    grep -Fq '/EFI/Linux/omarchy_linux-bcm43602.efi' "$limine_conf" 2>/dev/null &&
+    grep -Fq '/EFI/Linux/omarchy_linux.efi' "$limine_conf" 2>/dev/null
+}
+
+apple_bcm43602_main() {
+  local arch sys_vendor product_name pci_info
+
+  arch=$(/usr/bin/uname -m)
+  sys_vendor=$(/usr/bin/cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)
+  product_name=$(/usr/bin/cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+  pci_info=$(/usr/bin/lspci -vnn -d 14e4:43ba 2>/dev/null || true)
+
+  apple_bcm43602_matches "$arch" "$sys_vendor" "$product_name" "$pci_info" || exit 1
+
+  case ${1:-} in
+    "")
+      exit 0
+      ;;
+    --ready)
+      apple_bcm43602_ready
+      ;;
+    *)
+      echo "Usage: omarchy-hw-apple-bcm43602 [--ready]" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  apple_bcm43602_main "$@"
+fi
