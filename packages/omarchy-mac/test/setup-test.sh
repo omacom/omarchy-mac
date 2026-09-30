@@ -213,6 +213,21 @@ done
 [[ -f $stage/usr/share/wireplumber/wireplumber.conf.d/asahi-audio-no-suspend.conf ]] || fail 'the vendor speaker policy ships'
 pass 'the vendor speaker no-suspend policy replaces exact mx-mac user copies'
 
+# The speaker DSP graph keeps running between streams; the mic chains do not.
+dsp="$stage/usr/share/pipewire/pipewire.conf.d/asahi-audio-no-suspend.conf"
+[[ -f $dsp ]] || fail 'the speaker DSP no-suspend policy ships'
+grep -q 'node.always-process = true' "$dsp" || fail 'the speaker DSP graph keeps processing'
+mapfile -t patterns < <(sed -n 's/.*node\.name = "~\([^"]*\)".*/\1/p' "$dsp")
+(( ${#patterns[@]} == 2 )) || fail 'the DSP policy matches both halves of the speaker chain'
+matches() { local name=$1 pattern; for pattern in "${patterns[@]}"; do grep -Eq "$pattern" <<<"$name" && return 0; done; return 1; }
+for name in audio_effect.j416-convolver effect_output.j416-convolver audio_effect.mini-convolver effect_output.j274-convolver; do
+  matches "$name" || fail "the DSP policy keeps $name running"
+done
+for name in audio_effect.j413-mic effect_output.j413-mic alsa_output.platform-sound.HiFi__Headphones__sink effect_output.rnnoise; do
+  ! matches "$name" || fail "the DSP policy leaves $name alone"
+done
+pass 'the speaker DSP graph stays running while mic chains still suspend'
+
 # sudo -i clears XDG_RUNTIME_DIR while the owner's session bus still exists at
 # /run/user/UID. systemctl --user cannot reach it then, so setup must not try.
 python3 - "$user_setup" "$stage" "$work" <<'PY'
