@@ -1,3 +1,0 @@
-# Qualcomm (Snapdragon) additions, composed after omarchy-base.packages and
-# omarchy-aarch64.packages (omarchy-pkg-defaults qualcomm).
-linux-firmware-qcom
