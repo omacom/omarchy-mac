@@ -1,0 +1,75 @@
+#!/bin/bash
+# Gives iwd the Wi-Fi networks NetworkManager saved before it drove iwd.
+#
+# NetworkManager writes an iwd profile only for a connection created while it
+# runs on iwd. When iwd asks for the key of a WPA connection NetworkManager has
+# used before, it asks a secret agent for a new key instead of passing the one
+# it stores (nm_device_iwd_agent_query, nm-device-iwd.c), so without an agent
+# every network saved under wpa_supplicant fails as a wrong password. Each
+# saved infrastructure WPA-PSK or SAE network whose key NetworkManager stores
+# itself gets the profile NetworkManager writes for a new connection
+# (nm_wifi_utils_connection_to_iwd_config, nm-wifi-utils.c). A profile iwd
+# already has stays, and of several connections for one network the most
+# recently used wins. Runs as root on the live machine, and changes nothing
+# unless NetworkManager's configuration selects iwd.
+set -euo pipefail
+export LC_ALL=C
+
+dir=${OMARCHY_MAC_IWD_STATE:-/var/lib/iwd}
+
+[[ $(omarchy-hw-platform) == "apple-silicon" ]] || exit 0
+NetworkManager --print-config 2>/dev/null | grep -x 'wifi.backend=iwd' >/dev/null || exit 0
+
+# iwd reads the file like a GKeyFile: a backslash and a leading space escape.
+escape() {
+  local value=${1//\\/\\\\}
+  [[ $value != ' '* ]] || value="\\s${value:1}"
+  printf '%s' "$value"
+}
+
+while IFS=: read -r _ uuid type; do
+  [[ $type == 802-11-wireless ]] || continue
+  mapfile -t value < <(nmcli --escape no --show-secrets --get-values \
+    connection.id,802-11-wireless.ssid,802-11-wireless.mode,802-11-wireless.hidden,connection.autoconnect,connection.permissions,802-11-wireless-security.key-mgmt,802-11-wireless-security.psk-flags,802-11-wireless-security.psk \
+    connection show uuid "$uuid")
+  id=${value[0]:-} ssid=${value[1]:-} mode=${value[2]:-} hidden=${value[3]:-}
+  autoconnect=${value[4]:-} permissions=${value[5]:-} key_mgmt=${value[6]:-}
+  flags=${value[7]:-} psk=${value[8]:-}
+
+  [[ -n $ssid && ${#ssid} -le 32 && $mode =~ ^(infrastructure)?$ && $key_mgmt =~ ^(wpa-psk|sae)$ ]] || continue
+  # iwd offers every profile to every user, so NetworkManager writes none for a
+  # connection limited to some users.
+  [[ -z $permissions ]] || continue
+  # Agent-owned and unsaved keys are not NetworkManager's to hand over.
+  [[ $flags =~ ^[0-9]+$ ]] && (( (flags & 3) == 0 )) && [[ -n $psk ]] || continue
+  if [[ $key_mgmt == sae ]] || (( ${#psk} >= 8 && ${#psk} <= 63 )); then
+    key=Passphrase
+  elif [[ $psk =~ ^[0-9A-Fa-f]{64}$ ]]; then
+    key=PreSharedKey
+  else
+    continue
+  fi
+
+  if [[ $ssid =~ ^[A-Za-z0-9\ _-]+$ ]]; then
+    file="$dir/$ssid.psk"
+  else
+    file="$dir/=$(printf '%s' "$ssid" | od -An -v -tx1 | tr -d ' \n').psk"
+  fi
+  [[ ! -e $file ]] || continue
+
+  install -d -m 700 "$dir"
+  # iwd only reads names ending in .psk, so the temporary file is ignored.
+  tmp=$(mktemp "$dir/.omarchy-mac.XXXXXX")
+  {
+    printf '# Carried over from NetworkManager connection "%s" by omarchy-mac\n' "$id"
+    if [[ $autoconnect == no || $hidden == yes ]]; then
+      printf '[Settings]\n'
+      [[ $autoconnect != no ]] || printf 'AutoConnect=false\n'
+      [[ $hidden != yes ]] || printf 'Hidden=true\n'
+      printf '\n'
+    fi
+    printf '[Security]\n%s=%s\n' "$key" "$(escape "$psk")"
+  } >"$tmp"
+  mv -f -- "$tmp" "$file"
+  echo "Gave iwd the saved Wi-Fi network $ssid"
+done < <(nmcli --escape no --terse --fields TIMESTAMP,UUID,TYPE connection show 2>/dev/null | sort -t: -k1,1nr)
