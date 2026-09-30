@@ -53,6 +53,10 @@ Two branches remain from when this repository carried the whole Mac desktop. Eac
 
 The Omarchy 3.8 tree that used to be `main` is kept, read-only, as `archive/omarchy-3.8`.
 
+## Credits
+
+Omarchy Mac was started by [Naeem Malik](https://github.com/malik-na) in September 2025, when he first brought Omarchy to Apple Silicon Macs, and it grew from there into the community project these packages come from. Thanks to everyone who has contributed since, to Asahi Linux and Asahi Alarm for making Linux on Apple Silicon possible, and to DHH for creating Omarchy.
+
 ## License
 
 MIT, as Omarchy. See [LICENSE](LICENSE).
