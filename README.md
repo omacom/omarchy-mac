@@ -42,7 +42,7 @@ CI runs all of them, with the runtime pinned to a reviewed commit.
 
 ## Contributing
 
-Package changes come here as pull requests against `main`. Desktop, installer and packaging changes each have their own home: [CONTRIBUTING.md](CONTRIBUTING.md) says which.
+Package changes come here as pull requests against `main`. The rule of thumb: if a change only means something on an Apple Silicon Mac, it belongs in a package here; if Omarchy needs a new place for a platform to plug in, or the fix helps other machines too, it belongs upstream in [omacom/omarchy](https://github.com/omacom/omarchy). Installer and packaging changes have homes of their own. [CONTRIBUTING.md](CONTRIBUTING.md) explains each, with examples.
 
 ## Transitional branches
 
