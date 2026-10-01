@@ -1,14 +1,15 @@
-# Palm rejection for the Asahi MTP trackpad (#100).
+# Device matching and measured fallback size for the Asahi MTP trackpad (#100).
 #
 # libinput's shipped [Apple Laptop Touchpad (MTP)] sets AttrSizeHint=104x75, a
 # 13-inch pad. 14" and 16" Apple Silicon pads report their real size via udev
-# (a 16-inch M2 Max is 157x96 mm). The undersized hint makes palm detection
-# map onto the wrong physical area, so resting palms while typing move the
-# cursor and click.
+# (a 16-inch M2 Max is 157x96 mm). libinput uses AttrSizeHint only when the
+# kernel does not report axis resolution; it does not change size math or
+# palm rejection on an MTP pad that already reports that resolution.
 #
-# /etc/libinput is read after /usr/share/libinput, so this override wins.
-# AttrSizeHint cannot be unset, only replaced, which is why the hint is
-# measured from the device rather than copied from the 13-inch default.
+# /etc/libinput is read after /usr/share/libinput. Match without a vendor so
+# the existing Apple palm-size and keyboard-integration quirks also apply to
+# Asahi platform devices without ID_VENDOR. Measure the fallback size rather
+# than copying the 13-inch hint; the palm-size thresholds are not retuned here.
 
 quirks_dir="${OMARCHY_LIBINPUT_QUIRKS_DIR:-/etc/libinput}"
 input_root="${OMARCHY_INPUT_SYSFS:-/sys/class/input}"
