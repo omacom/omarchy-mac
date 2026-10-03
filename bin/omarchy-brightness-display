@@ -31,16 +31,37 @@ backlight_brightness() {
 
 [[ -n $monitor ]] || monitor="$(omarchy-hyprland-monitor-focused 2>/dev/null || true)"
 
+# Hyprland monitor names are DRM connector names, so a backlight the kernel registers on the
+# connector itself (e.g. an external display whose brightness the GPU driver controls) belongs
+# to this monitor. It wins over the Apple and DDC fallbacks, which go through slower side channels.
+connector_backlight() {
+  local subsystem
+
+  [[ -n $monitor ]] || return 1
+
+  for subsystem in "${OMARCHY_DRM_PATH:-/sys/class/drm}"/card*-"$monitor"/*/subsystem; do
+    if [[ $(readlink "$subsystem") == */class/backlight ]]; then
+      subsystem="${subsystem%/subsystem}"
+      printf '%s\n' "${subsystem##*/}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+device="$(connector_backlight)"
+
 monitor_is_internal() {
   [[ $monitor =~ ^(eDP|LVDS|DSI)- ]]
 }
 
 use_apple_display() {
-  omarchy-hyprland-monitor-focused-apple "$monitor"
+  [[ -z $device ]] && omarchy-hyprland-monitor-focused-apple "$monitor"
 }
 
 use_ddc_display() {
-  [[ -n $monitor ]] && ! monitor_is_internal
+  [[ -z $device && -n $monitor ]] && ! monitor_is_internal
 }
 
 if (( $# == 0 )); then
@@ -52,7 +73,7 @@ if (( $# == 0 )); then
     exit
   fi
 
-  device="$(omarchy-hw-display)" || exit 1
+  [[ -n $device ]] || device="$(omarchy-hw-display)" || exit 1
   backlight_brightness "$device"
   exit
 fi
@@ -86,8 +107,8 @@ elif use_ddc_display; then
   brightness="$(omarchy-brightness-display-ddc "$monitor" "$step")" || exit 1
   (( no_osd )) || omarchy-osd -i brightness -p "$brightness"
 else
-  # Current device highlighted
-  device="$(omarchy-hw-display)" || exit 1
+  # The focused connector's backlight, else the most likely panel backlight
+  [[ -n $device ]] || device="$(omarchy-hw-display)" || exit 1
 
   # Current brightness percentage
   current=$(backlight_brightness "$device") || exit 1
