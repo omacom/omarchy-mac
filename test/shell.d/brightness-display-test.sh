@@ -14,9 +14,11 @@ drm_dir="$test_tmp/drm"
 mkdir -p "$mock_bin" "$runtime_dir"
 
 # DP-3 has a kernel backlight registered on its connector, as external displays that support it do.
-# DP-1's connector only has a non-backlight child.
-mkdir -p "$drm_dir/card2-DP-3/apple-DP-3-bl" "$drm_dir/card2-DP-1/power"
+# DP-1's connector only has a non-backlight child. eDP-1's connector has a GPU backlight, as i915
+# registers, which must not override omarchy-hw-display's pick for the internal panel.
+mkdir -p "$drm_dir/card2-DP-3/apple-DP-3-bl" "$drm_dir/card2-DP-1/power" "$drm_dir/card0-eDP-1/intel_backlight"
 ln -s ../../../../class/backlight "$drm_dir/card2-DP-3/apple-DP-3-bl/subsystem"
+ln -s ../../../../class/backlight "$drm_dir/card0-eDP-1/intel_backlight/subsystem"
 ln -s ../../../../bus/platform "$drm_dir/card2-DP-1/power/subsystem"
 
 cat >"$mock_bin/omarchy-hyprland-monitor-focused-apple" <<'SH'
