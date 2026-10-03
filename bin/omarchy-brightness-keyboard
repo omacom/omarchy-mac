@@ -25,11 +25,19 @@ if [[ -z $device ]]; then
   exit 1
 fi
 
+# A restore only undoes a blank. Every unlock and wake runs one, and
+# brightnessctl keeps its save, so an unpaired restore would bring back
+# whatever an old blank saved.
+blanked="${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-keyboard-blanked"
+
 if [[ $direction == "off" ]]; then
-  brightnessctl -sd "$device" set 0 >/dev/null
+  brightnessctl -sd "$device" set 0 >/dev/null && touch "$blanked"
   exit 0
 elif [[ $direction == "restore" ]]; then
-  brightnessctl -rd "$device" >/dev/null
+  if [[ -e $blanked ]]; then
+    brightnessctl -rd "$device" >/dev/null
+    rm -f "$blanked"
+  fi
   exit 0
 fi
 
@@ -54,8 +62,11 @@ else
 fi
 
 # Record the level chosen by hand before setting it, so the ambient light loop
-# can tell keys turned off on purpose from lock blanking or a leftover.
-{ printf '%s\n' "$new_brightness" >"${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-keyboard-manual"; } 2>/dev/null || true
+# can tell keys turned off on purpose from lock blanking or a leftover. A press
+# that changes nothing (down at 0) chose nothing.
+if (( new_brightness != current_brightness )); then
+  { printf '%s\n' "$new_brightness" >"${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-keyboard-manual"; } 2>/dev/null || true
+fi
 
 # Set the new brightness.
 brightnessctl -d "$device" set "$new_brightness" >/dev/null
