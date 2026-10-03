@@ -15,6 +15,13 @@ end
 -- a Mac starts with tapping off too.
 hl.config({ input = { touchpad = { tap_to_click = false } } })
 
+-- Apple's display controller runs its own firmware, and a hardware cursor plane
+-- makes every pointer update a round trip into it, so the pointer lags the
+-- hand. Draw it in the frame the compositor renders anyway. The user's
+-- looknfeel.lua turns it back on with
+-- hl.config({ cursor = { no_hardware_cursors = false } }).
+hl.config({ cursor = { no_hardware_cursors = true } })
+
 -- A workspace swipe steps by number, so it reaches empty workspaces as Spaces
 -- do in macOS. Hyprland's default steps only through workspaces that exist and
 -- never out of an empty one into a new one. The user's input.lua turns it off

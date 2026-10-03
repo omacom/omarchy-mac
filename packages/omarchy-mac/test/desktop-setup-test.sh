@@ -20,7 +20,7 @@ done
 [[ -x $stage/usr/bin/omarchy-hw-apple && $(readlink "$stage/usr/share/omarchy/bin/omarchy-hw-apple") == /usr/bin/omarchy-hw-apple ]] ||
   fail 'the legacy alias is staged in /usr/bin and linked from the runtime tree'
 platform=$stage/usr/share/omarchy-platform
-for file in hypr/defaults/apple.lua hypr/settings/apple.lua hypr/gestures/apple-gestures.lua key-names display-cutouts.json displays.conf keyrings audio.json; do
+for file in hypr.conf hypr/defaults/apple.lua hypr/settings/apple.lua hypr/gestures/apple-gestures.lua key-names display-cutouts.json displays.conf keyrings audio.json; do
   [[ -f $platform/$file && ! -L $platform/$file ]] || fail "$file is staged in the platform root"
 done
 [[ $(grep -v '^#' "$platform/keyrings") == asahi-alarm-keyring ]] ||
@@ -141,20 +141,36 @@ input="$HOME/.config/hypr/input.lua"
 "$setup_user" "$stage"
 [[ ! -e $input ]] || fail 'a user without a Hyprland input file gets none'
 ! grep -q '^wrap\|^repair' "$CALLS" || fail 'a staging root skips the Electron desktop entries'
+# The trackpad and cursor defaults come from the platform's hypr.conf, which
+# the user's files replace; user setup never edits the user's Hyprland files,
+# and leaves alone a block an earlier setup appended.
 mkdir -p "${input%/*}"
 printf '%s\n' '-- personal overrides' >"$input"
-PLATFORM=generic-aarch64 "$setup_user" "$stage"
-! grep -q 'omarchy-apple-touchpad' "$input" || fail 'other platforms keep their trackpad defaults'
 "$setup_user" "$stage"
-grep -Fq 'natural_scroll = true' "$input" && grep -Fq 'tap_to_click = false' "$input" || fail 'Apple trackpads scroll naturally and click physically'
+[[ $(<"$input") == '-- personal overrides' ]] || fail "Apple user setup leaves the user's input.lua alone" "$(cat "$input")"
+printf '%s\n' '-- omarchy-apple-touchpad: natural scrolling and physical clicks.' 'hl.config({ input = { touchpad = { natural_scroll = true, tap_to_click = false } } })' >"$input"
 before=$(<"$input")
 "$setup_user" "$stage"
-[[ $(<"$input") == "$before" ]] || fail 'trackpad setup is idempotent'
-printf '%s\n' 'hl.config({' '  input = {' '    touchpad = {' '      natural_scroll = false,' '    },' '  },' '})' >"$input"
-before=$(<"$input")
-"$setup_user" "$stage"
-[[ $(<"$input") == "$before" ]] || fail 'an explicit trackpad choice is preserved' "$(cat "$input")"
-pass 'Apple trackpads get natural scrolling and physical clicks once, keeping explicit choices'
+[[ $(<"$input") == "$before" ]] || fail "a block an earlier setup appended stays the user's" "$(cat "$input")"
+pass "user setup writes no Hyprland settings into the user's files"
+
+# hypr.conf is the runtime's data format (docs/lifecycle-dispatch.md, Platform
+# Hyprland defaults): a header, then only the hardware settings and binds it
+# allows. The runtime's own tests parse it; here, nothing in it may be a line
+# the runtime would refuse, which would drop the whole file.
+conf=$platform/hypr.conf
+[[ $(grep -cx 'version 1' "$conf") == 1 && $(grep -cx 'platform apple-silicon' "$conf") == 1 ]] ||
+  fail 'hypr.conf names version 1 and apple-silicon once each'
+allowed='input.touchpad.tap_to_click|input.touchpad.disable_while_typing|input.touchpad.clickfinger_behavior|input.touchpad.scroll_factor|cursor.no_hardware_cursors'
+while IFS= read -r line; do
+  [[ -z ${line//[[:space:]]/} || $line =~ ^[[:space:]]*# || $line == 'version 1' || $line == 'platform apple-silicon' ]] && continue
+  [[ $line =~ ^set\ ($allowed)\ (true|false|-?[0-9]+(\.[0-9]+)?)$ ]] ||
+    [[ $line =~ ^bind(\ (locked|repeating)(,(locked|repeating))?)?\ \|\ ((SUPER|SHIFT|CTRL|ALT)\ \+\ )*[A-Za-z0-9_]+\ \|\ [^|]+\ \|\ .+$ ]] ||
+    fail 'hypr.conf: a line the runtime would refuse' "$line"
+done <"$conf"
+! grep -Eq 'natural_scroll|kb_|gestures\.|SHIFT \+ XF86MonBrightness' "$conf" ||
+  fail "hypr.conf leaves the user's preferences and Omarchy's Shift+brightness alone"
+pass 'hypr.conf holds only hardware settings and free-chord binds the runtime accepts'
 
 flags="$HOME/.config/brave-flags.conf"
 printf '%s\n' '--ozone-platform=wayland' >"$flags"

@@ -68,23 +68,30 @@ LUA
 }
 
 "$user_setup" "$stage"
-[[ ! -e $marker && -L $wants ]] || fail 'without a Hyprland config the cursor waits and the microphone is still set up'
+[[ -L $wants ]] || fail 'without a Hyprland config the microphone is still set up'
 mkdir -p "${looknfeel%/*}"
 printf '%s\n' '-- User look and feel' >"$looknfeel"
-APPLE=0 "$user_setup" "$stage"
-software_cursor && fail 'other platforms keep the hardware cursor'
 "$user_setup" "$stage"
-software_cursor || fail 'Apple Silicon draws the cursor in software'
-"$user_setup" "$stage"
-(( $(grep -c no_hardware_cursors "$looknfeel") == 1 )) || fail 'cursor setup is idempotent'
-pass 'Apple Silicon users get a software cursor once'
-
-printf '%s\n' '-- User look and feel' >"$looknfeel"
-"$user_setup" "$stage"
-software_cursor && fail 'a removed software cursor stays removed'
-rm "$marker"
-printf '%s\n' 'hl.config({ cursor = { no_hardware_cursors = false } })' >"$looknfeel"
-"$user_setup" "$stage"
-[[ $(<"$looknfeel") == 'hl.config({ cursor = { no_hardware_cursors = false } })' && -f $marker ]] ||
-  fail 'an existing cursor choice is kept'
-pass 'a removed or existing cursor choice survives repeated setup'
+[[ $(<"$looknfeel") == '-- User look and feel' && ! -e $marker ]] ||
+  fail "user setup leaves the user's looknfeel.lua alone" "$(cat "$looknfeel")"
+software_cursor && fail 'the software cursor is not written into the user file'
+# The platform's defaults draw it in software instead, where the user's
+# looknfeel.lua replaces them: hypr.conf, and settings/apple.lua for a runtime
+# without hypr.conf's reader.
+grep -qx 'set cursor.no_hardware_cursors true' "$stage/usr/share/omarchy-platform/hypr.conf" ||
+  fail 'hypr.conf draws the cursor in software'
+legacy_settings=$stage/usr/share/omarchy/default/hypr/platform/settings/apple.lua
+software_cursor_settings() {
+  lua - "$legacy_settings" <<'LUA'
+o = { shell_succeeds = function() return true end }
+hl = { config = function(c) software = c.cursor and c.cursor.no_hardware_cursors or software end }
+dofile(arg[1])
+os.exit(software == true and 0 or 1)
+LUA
+}
+if command -v lua >/dev/null; then
+  software_cursor_settings || fail "an older runtime's settings draw the cursor in software"
+else
+  grep -q 'no_hardware_cursors = true' "$legacy_settings" || fail "an older runtime's settings draw the cursor in software"
+fi
+pass 'the software cursor comes from the platform defaults, not the user file'
