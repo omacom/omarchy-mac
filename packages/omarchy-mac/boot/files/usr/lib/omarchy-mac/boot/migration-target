@@ -1,0 +1,4 @@
+# Activates the Mac migration (ticket 53): Macs move onto Omarchy's stable channel.
+format=1
+type=repository
+channel=stable
