@@ -17,6 +17,12 @@ for target in suspend hibernate hybrid-sleep suspend-then-hibernate; do
 done
 pass 'real systemctl upgrade repairs generated enablement links' 
 
+# The moon key is Do Not Disturb on a Mac; logind must not suspend on it.
+dropin="$work/root/usr/lib/systemd/logind.conf.d/20-omarchy-mac-sleep-key.conf"
+grep -qx 'HandleSuspendKey=ignore' "$dropin" && grep -qx 'HandleSuspendKeyLongPress=ignore' "$dropin" ||
+  fail 'the vendor logind drop-in stops the moon key suspending'
+pass 'the package ships a logind drop-in that ignores the sleep key'
+
 # speakersafetyd is enabled by this package's preset alone, applied once.
 root="$work/speakers"
 "$ROOT"/install "$root"

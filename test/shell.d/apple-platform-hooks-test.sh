@@ -139,7 +139,8 @@ if [[ -f $runtime/default/hypr/platform.lua ]]; then
   [[ -n $trackpad_line && -n $terminal_line ]] && (( trackpad_line > terminal_line )) ||
     fail "with the settings slot, the Mac's trackpad settings follow Omarchy's defaults" "$apple"
 fi
-pass "a Mac gets its lid switch, capture chords, keyboard backlight chords and trackpad from omarchy-mac"
+bound "$apple" "XF86Sleep" "omarchy-toggle-notification-silencing" || fail "a Mac's moon key toggles Do Not Disturb" "$apple"
+pass "a Mac gets its lid switch, capture chords, keyboard backlight chords, moon key and trackpad from omarchy-mac"
 
 tapping=$(load_config apple "$packaged" 'hl.config({ input = { touchpad = { tap_to_click = true } } })') ||
   fail "the config loads with the user's tap-to-click" "$tapping"
@@ -148,7 +149,7 @@ tapping=$(load_config apple "$packaged" 'hl.config({ input = { touchpad = { tap_
 pass "the user's input.lua replaces the Mac's trackpad settings"
 
 for output in "$other" "$bare"; do
-  ! grep -q 'Apple SMC\|omarchy-capture-screenshot \(fullscreen\|region\|windows\)$\|SHIFT + XF86MonBrightness.*brightness-keyboard\|^device\|^tap_to_click\|focus apple' <<<"$output" ||
+  ! grep -q 'Apple SMC\|omarchy-capture-screenshot \(fullscreen\|region\|windows\)$\|SHIFT + XF86MonBrightness.*brightness-keyboard\|XF86Sleep\|^device\|^tap_to_click\|focus apple' <<<"$output" ||
     fail "no Mac default without a Mac or without omarchy-mac" "$output"
   bound "$output" "SHIFT + XF86MonBrightnessUp" "omarchy-brightness-display 100%" || fail "Omarchy's Shift+brightness stays elsewhere" "$output"
   bound "$output" "PRINT" "omarchy-capture-screenshot" || fail "Omarchy's own capture bind stays" "$output"
