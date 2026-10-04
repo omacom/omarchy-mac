@@ -1492,10 +1492,13 @@ migrate_run() {
     esac
   done
 
-  platform=$(hardware_platform) || die "cannot determine the hardware platform"
-  if [[ $platform != "apple-silicon" ]]; then
-    say "Not an Apple Silicon Mac: nothing to migrate."
-    return 0
+  # A migration past its switch is this Mac's, whatever a detector says now.
+  if ! past_boundary; then
+    platform=$(hardware_platform) || die "cannot determine the hardware platform"
+    if [[ $platform != "apple-silicon" ]]; then
+      say "Not an Apple Silicon Mac: nothing to migrate."
+      return 0
+    fi
   fi
   take_lock
   if [[ -f $journal && $(step_state preflight) == "done" && ! -f $complete ]]; then

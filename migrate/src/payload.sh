@@ -52,8 +52,17 @@ fetch_payload() {
     { echo "the archive is not omarchy-mac-boot $version"; return 1; }
   [[ -z $(find "$dir" ! -type l \( ! -uid "$EUID" -o -perm /022 \) -print -quit) ]] ||
     { echo "the unpacked omarchy-mac-boot is writable by others"; return 1; }
+  # Its commands, and nothing a link could point elsewhere, run first.
+  [[ -z $(find "$dir/usr/bin" -type l -print -quit 2>/dev/null) ]] || { echo "omarchy-mac-boot's commands include a link"; return 1; }
+  for name in $payload_commands; do
+    [[ -f $dir/usr/bin/$name && ! -L $dir/usr/bin/$name && -x $dir/usr/bin/$name ]] ||
+      { echo "omarchy-mac-boot $version has no $name"; return 1; }
+  done
   printf '%s\n' "$version"
 }
+
+# What preflight runs from the target's omarchy-mac-boot.
+payload_commands="omarchy-mac-initramfs-hooks omarchy-apple-silicon-boot-check omarchy-mac-esp omarchy-mac-kernel"
 
 # The HOOKS the Mac's mkinitcpio configuration gives once the transaction has
 # put the new settings and boot packages' drop-ins in place.
@@ -62,6 +71,12 @@ future_hooks() {
   rm -rf "$dir"
   install -d -m 700 "$dir"
   [[ ! -d $R/etc/mkinitcpio.conf.d ]] || cp -a "$R/etc/mkinitcpio.conf.d/." "$dir/" || { echo "cannot copy the drop-ins"; return 1; }
+  # The drop-ins of the packages the transaction replaces go with them.
+  for name in omarchy omarchy-settings omarchy-dev omarchy-settings-dev omarchy-mac-boot; do
+    LC_ALL=C pacman --config "$pacman_conf" --dbpath "$pacman_db" -Qlq "$name" 2>/dev/null
+  done | sed -n 's|^/etc/mkinitcpio.conf.d/\([^/][^/]*\)$|\1|p' | while IFS= read -r name; do
+    rm -f -- "$dir/$name"
+  done
   pair=$(channel_pair "$target_channel")
   for name in "${pair#* }" omarchy-mac-boot; do
     archive=$(fetch_archive "$resolved" "$name" "$conf" "$db") || { echo "$archive"; return 1; }

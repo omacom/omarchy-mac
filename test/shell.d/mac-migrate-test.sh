@@ -517,6 +517,17 @@ printf 'pkgname = omarchy-mac-boot\npkgver = 20260927-1\n' >"$tmp/oldboot/.PKGIN
 : >"$tmp/oldboot/usr/lib/omarchy/mac-boot/update-verify"
 bsdtar -czf "$F/archives/omarchy-mac-boot" -C "$tmp/oldboot" .PKGINFO usr
 refused "an omarchy-mac-boot with its own migration engine" "not built from omacom/omarchy-mac-pkgs yet"
+repository_fixture edge-linked-tool
+mkdir -p "$tmp/linkboot/usr/lib/omarchy/mac-boot" "$tmp/linkboot/usr/bin"
+printf 'pkgname = omarchy-mac-boot\npkgver = 20260927-1\n' >"$tmp/linkboot/.PKGINFO"
+: >"$tmp/linkboot/usr/lib/omarchy/mac-boot/setup-boot"
+: >"$tmp/linkboot/usr/lib/omarchy/mac-boot/update-verify"
+for command in omarchy-mac-initramfs-hooks omarchy-apple-silicon-boot-check omarchy-mac-kernel; do
+  install -m 755 /dev/null "$tmp/linkboot/usr/bin/$command"
+done
+ln -s /tmp/elsewhere "$tmp/linkboot/usr/bin/omarchy-mac-esp"
+bsdtar -czf "$F/archives/omarchy-mac-boot" -C "$tmp/linkboot" .PKGINFO usr
+refused "an omarchy-mac-boot whose boot tool is a link" "omarchy-mac-boot's commands include a link"
 repository_fixture edge-ready
 output=$(migrate run 2>&1) || fail "a ready repository target migrates" "$output"
 grep -q "^omarchy-dev 4.0.0.r6713.ga85e29a-1$" "$R/var/lib/pacman/local/packages" && grep -q "^omarchy-mac-boot 20260927-1$" "$R/var/lib/pacman/local/packages" ||
@@ -870,6 +881,24 @@ output=$(migrate verify 2>&1) || fail "a boot retries pending user setup" "$outp
 [[ ! -e $(state_dir)/user-pending && ! -e $R/etc/systemd/system/omarchy-mac-migrate-verify.service && ! -e $(state_dir)/tool ]] ||
   fail "once nothing is pending the unit and the tool's copy go"
 pass "a user's unit or setup that fails stays pending, runs again at each boot until it succeeds, then releases the unit"
+
+# A user's setup that succeeds on a retry before the reboot step keeps the unit
+# that resumes the migration.
+new_fixture user-pending-mid
+printf 'tester:x:1000:1000::/home/tester:/bin/bash\n' >"$R/etc/passwd"
+mkdir -p "$R/home/tester/.local/state/omarchy"
+: >"$F/setup-user-fail"
+kill_after defaults
+grep -q setup-user "$(state_dir)/user-pending" || fail "the failed setup-user is pending"
+rm "$F/setup-user-fail"
+: >"$F/update-verify-fail"
+status=0
+output=$(migrate verify 2>&1) || status=$?
+(( status == 1 )) && [[ ! -e $(state_dir)/user-pending && -f $R/etc/systemd/system/omarchy-mac-migrate-verify.service ]] ||
+  fail "a boot that retries user setup and then fails keeps the unit that resumes the migration" "status $status: $output"
+rm "$F/update-verify-fail"
+finish
+pass "the unit that resumes a migration stays until the migration no longer needs it"
 
 # --- A tester already on Aurora and Limine ------------------------------------
 

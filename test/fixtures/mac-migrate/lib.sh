@@ -54,7 +54,9 @@ make_archive() {
     omarchy-mac-boot)
       install -D -m 755 /dev/null "$dir/usr/lib/omarchy/mac-boot/setup-boot"
       install -D -m 755 /dev/null "$dir/usr/lib/omarchy/mac-boot/update-verify"
-      install -D -m 755 /dev/null "$dir/usr/bin/omarchy-mac-esp"
+      for command in omarchy-mac-initramfs-hooks omarchy-apple-silicon-boot-check omarchy-mac-esp omarchy-mac-kernel; do
+        install -D -m 755 /dev/null "$dir/usr/bin/$command"
+      done
       ;;
   esac
   if [[ $name == omarchy-dev || $name == omarchy || $name == omarchy-mac-boot ]]; then

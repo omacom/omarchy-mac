@@ -110,7 +110,8 @@ retry_user_pending() {
 # waiting for its reboot.
 retry_user_pending_now() {
   [[ -s $user_pending ]] || return 0
-  if retry_user_pending && [[ ! -e $reboot_pending ]]; then
+  # A migration still under way keeps the unit that resumes it.
+  if retry_user_pending && [[ ! -e $reboot_pending ]] && ! past_boundary; then
     release_verify_unit
   fi
 }
