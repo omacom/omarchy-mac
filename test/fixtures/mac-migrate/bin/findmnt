@@ -1,0 +1,7 @@
+#!/bin/bash
+fixture=${MIGRATE_FIXTURE:?}
+case "$*" in
+  *--mountpoint*) grep -Fxq "${!#}" "$fixture/mounts" ;;
+  *SOURCE*) cat "$fixture/root-source" ;;
+  *) exit 1 ;;
+esac

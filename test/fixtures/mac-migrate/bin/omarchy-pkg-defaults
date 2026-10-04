@@ -1,0 +1,8 @@
+#!/bin/bash
+# Stands in for the target runtime's command: the generic list's applications
+# and the Apple Silicon additions (#13362's install/omarchy-apple-silicon.packages).
+case ${1:-} in
+  generic) printf '%s\n' obs-studio zram-generator hyprland ;;
+  apple-silicon) printf '%s\n' omarchy-mac omarchy-mac-boot asahi-bless avd-fw libva-v4l2_request-avd widevine wf-recorder ;;
+  *) exit 2 ;;
+esac

@@ -1,0 +1,23 @@
+#!/bin/bash
+# mount MOUNTPOINT, as fstab describes it. The fixture's only mountable device
+# is the ESP ($MIGRATE_FIXTURE/esp-device), whose files live in
+# $MIGRATE_FIXTURE/esp: mounting it links the mountpoint there and keeps the
+# directory it covers in $MIGRATE_FIXTURE/covered.
+set -euo pipefail
+fixture=${MIGRATE_FIXTURE:?}
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+target=${!#}
+relative=${target#"$root"}
+echo "mount $relative" >>"$fixture/boot.log"
+device=$(awk -v point="$relative" '$1 !~ /^#/ && $2 == point { print $1; exit }' "$root/etc/fstab")
+[[ -n $device ]] || { echo "mount: $relative: can't find in /etc/fstab" >&2; exit 1; }
+[[ $device == "$(cat "$fixture/esp-device")" ]] || { echo "mount: $device: special device does not exist" >&2; exit 32; }
+if grep -q . "$fixture/mounts" 2>/dev/null; then
+  echo "mount: the ESP is already mounted at $(head -n 1 "$fixture/mounts")" >&2
+  exit 32
+fi
+[[ -d $target && ! -L $target ]] || { echo "mount: $relative: mount point does not exist" >&2; exit 32; }
+mkdir -p "$fixture/covered"
+mv "$target" "$fixture/covered/${relative//\//_}"
+ln -s "$fixture/esp" "$target"
+echo "$target" >>"$fixture/mounts"

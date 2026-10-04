@@ -1,0 +1,6 @@
+#!/bin/bash
+# The mx-mac fork's channel command: `current` prints $MIGRATE_FIXTURE/channel
+# and fails, as the fork's does, when there is no channel record.
+fixture=${MIGRATE_FIXTURE:?}
+[[ ${1:-} == "current" && -f $fixture/channel ]] || exit 1
+cat "$fixture/channel"

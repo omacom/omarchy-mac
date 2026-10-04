@@ -1,0 +1,7 @@
+#!/bin/bash
+fixture=${MIGRATE_FIXTURE:?}
+echo "boot-check ${OMARCHY_BOOT_CHECK_ALLOW_PENDING_REBOOT:+pending }$*" >>"$fixture/boot.log"
+if [[ -e $fixture/boot-check-fail ]]; then
+  echo "Apple Silicon boot check: $(cat "$fixture/boot-check-fail")" >&2
+  exit 1
+fi
