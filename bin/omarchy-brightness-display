@@ -40,6 +40,7 @@ monitor_is_internal() {
 # over the Apple and DDC fallbacks, which go through slower side channels. Internal panels keep
 # omarchy-hw-display's heuristic: GPU drivers also register on the eDP connector a backlight that
 # may not be the one driving the panel (gmux on dual-GPU Macs).
+# Only a connected connector counts: another card can expose a connector with the same name.
 connector_backlight() {
   local subsystem
 
@@ -48,7 +49,7 @@ connector_backlight() {
   fi
 
   for subsystem in "${OMARCHY_DRM_PATH:-/sys/class/drm}"/card*-"$monitor"/*/subsystem; do
-    if [[ $(readlink "$subsystem") == */class/backlight ]]; then
+    if [[ $(<"${subsystem%/*/subsystem}/status") == "connected" && $(readlink "$subsystem") == */class/backlight ]]; then
       subsystem="${subsystem%/subsystem}"
       printf '%s\n' "${subsystem##*/}"
       return 0

@@ -15,11 +15,18 @@ mkdir -p "$mock_bin" "$runtime_dir"
 
 # DP-3 has a kernel backlight registered on its connector, as external displays that support it do.
 # DP-1's connector only has a non-backlight child. eDP-1's connector has a GPU backlight, as i915
-# registers, which must not override omarchy-hw-display's pick for the internal panel.
-mkdir -p "$drm_dir/card2-DP-3/apple-DP-3-bl" "$drm_dir/card2-DP-1/power" "$drm_dir/card0-eDP-1/intel_backlight"
+# registers, which must not override omarchy-hw-display's pick for the internal panel. card1 has a
+# disconnected DP-3 of its own with a backlight, which must not be mistaken for the focused DP-3.
+mkdir -p "$drm_dir/card2-DP-3/apple-DP-3-bl" "$drm_dir/card2-DP-1/power" "$drm_dir/card0-eDP-1/intel_backlight" \
+  "$drm_dir/card1-DP-3/other-DP-3-bl"
 ln -s ../../../../class/backlight "$drm_dir/card2-DP-3/apple-DP-3-bl/subsystem"
 ln -s ../../../../class/backlight "$drm_dir/card0-eDP-1/intel_backlight/subsystem"
 ln -s ../../../../bus/platform "$drm_dir/card2-DP-1/power/subsystem"
+ln -s ../../../../class/backlight "$drm_dir/card1-DP-3/other-DP-3-bl/subsystem"
+for connector in card2-DP-3 card2-DP-1 card0-eDP-1; do
+  printf 'connected\n' >"$drm_dir/$connector/status"
+done
+printf 'disconnected\n' >"$drm_dir/card1-DP-3/status"
 
 cat >"$mock_bin/omarchy-hyprland-monitor-focused-apple" <<'SH'
 #!/bin/bash
