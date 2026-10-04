@@ -237,3 +237,77 @@ keys off
 tick
 (( $(led) == 226 )) || fail "a level auto changed forgets the earlier key press" "got $(led)"
 pass "any level auto sets forgets an earlier key press"
+
+# Start from the room's level with no key press on record, like a fresh loop.
+fresh_loop() {
+  lux 26
+  printf '226\n' >"$loop/leds/kbd_backlight/brightness"
+  rm -f "$MANUAL_LEVEL_FILE"
+  last_set=""
+  paused=0
+  tick
+}
+
+# Stepping down from 226 stops at 1/255, where the keys are already dark and the
+# OSD reads 0%. A lock blank then reads 0, which is still that choice.
+fresh_loop
+for _ in {1..12}; do
+  (( $(led) * 100 <= 255 * EFFECTIVELY_OFF_PERCENT )) && break
+  keys down
+  tick
+done
+(( $(led) == 1 )) || fail "stepping down from 226 stops at 1" "got $(led)"
+keys off
+LOCKED=1 tick
+tick
+(( $(led) == 0 )) || fail "a lock blank relights keys stepped down to 1" "got $(led)"
+keys restore
+tick
+(( $(led) == 1 )) || fail "the wake restores the level chosen with the keys" "got $(led)"
+pass "keys stepped down to 1 stay off through a lock blank"
+
+fresh_loop
+for _ in {1..12}; do
+  (( $(led) * 100 <= 255 * EFFECTIVELY_OFF_PERCENT )) && break
+  keys down
+done
+keys off
+LOCKED=1 tick
+tick
+(( $(led) == 0 )) || fail "locking before the next poll relights keys turned off by hand" "got $(led)"
+pass "keys turned off right before locking stay off"
+
+fresh_loop
+keys off
+keys down
+keys restore
+tick
+keys off
+LOCKED=1 tick
+tick
+(( $(led) == 226 )) || fail "a press that changed nothing made a later lock blank look deliberate" "got $(led)"
+pass "a key press that changes nothing is not a deliberate off"
+
+printf 'max[$(touch %s)]\n' "$loop/injected" >"$MANUAL_LEVEL_FILE"
+( left_off 0 ) || fail "a non-numeric record counts as a key press"
+[[ ! -e $loop/injected ]] || fail "the key-press record was evaluated as arithmetic"
+pass "the key-press record is read as a number, never evaluated"
+
+# A loop that starts on the room's level writes nothing, but it has still taken
+# the keys over: a key press from before it ran no longer stands. --once leaves
+# a running loop's record alone.
+export OMARCHY_IIO_DEVICES_DIR="$loop/iio"
+printf '226\n' >"$loop/leds/kbd_backlight/brightness"
+printf '0\n' >"$MANUAL_LEVEL_FILE"
+"$auto" --once
+[[ -e $MANUAL_LEVEL_FILE ]] || fail "--once dropped a running loop's key press"
+"$auto" >/dev/null 2>&1 &
+daemon=$!
+for _ in {1..50}; do
+  [[ -e $MANUAL_LEVEL_FILE ]] || break
+  sleep 0.1
+done
+kill "$daemon" 2>/dev/null || true
+wait "$daemon" 2>/dev/null || true
+[[ ! -e $MANUAL_LEVEL_FILE ]] || fail "a started loop kept a key press from before it ran"
+pass "a started loop forgets key presses from before it ran"
