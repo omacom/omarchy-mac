@@ -355,7 +355,7 @@ interrupt() { # when step
   if [[ $when == "after" ]]; then
     [[ $last == "$recorded done"* ]] || fail "the journal ends with $step done" "$last"
   else
-    [[ $last == "$recorded begin"* ]] || fail "the journal ends with $step begun" "$last"
+    [[ $last == "$recorded begin"* || $last == "repositories boundary" ]] || fail "the journal ends with $step begun" "$last"
   fi
   finish
   [[ $(outcome) == "$baseline" ]] || fail "killed $when $step, the resumed migration ends where an uninterrupted one does" "$(diff <(echo "$baseline") <(outcome))"

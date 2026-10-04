@@ -54,10 +54,12 @@ awk -v from="$move" 'NR > from && /move_status == 75/ { found = 1 } found && /up
 pass "omarchy update moves a marked Mac before any fork update, stops once it moved, and goes on when the move defers"
 
 # The update hook's three outcomes, run for real against a stand-in tool.
-for outcome in 0 75 1; do
+for outcome in 0 75 1 nothing; do
   work=$tmp/update-$outcome
   mkdir -p "$work/bin" "$work/omarchy/bin"
-  printf '#!/bin/bash\necho "migrate $*" >>"%s/ran"\nexit %s\n' "$work" "$outcome" >"$work/omarchy/bin/omarchy-mac-migrate"
+  code=$outcome
+  [[ $outcome != nothing ]] || code=0
+  printf '#!/bin/bash\necho "migrate $*" >>"%s/ran"\nexit %s\n' "$work" "$code" >"$work/omarchy/bin/omarchy-mac-migrate"
   for command in omarchy-update-lock omarchy-update-requires-free-space omarchy-update-confirm omarchy-update-pkg-prune omarchy-snapshot \
     omarchy-update-stay-awake omarchy-update-dev omarchy-update-keyring omarchy-update-system-pkgs omarchy-migrate omarchy-hook \
     omarchy-update-aur-pkgs omarchy-update-mise omarchy-update-orphan-pkgs omarchy-update-analyze-logs omarchy-update-status omarchy-update-restart; do
@@ -67,9 +69,15 @@ for outcome in 0 75 1; do
   chmod 755 "$work/bin"/* "$work/omarchy/bin"/*
   : >"$work/marker"
   status=0
-  OMARCHY_UPDATE_LOGGED=1 OMARCHY_MAC_MOVE_MARKER=$work/marker OMARCHY_PATH=$work/omarchy PATH="$work/bin:$PATH" \
+  mkdir -p "$work/state"
+  if [[ $outcome == 0 ]]; then
+    : >"$work/state/reboot-pending"
+  fi
+  OMARCHY_UPDATE_LOGGED=1 OMARCHY_MAC_MOVE_MARKER=$work/marker OMARCHY_MAC_MOVE_STATE=$work/state OMARCHY_PATH=$work/omarchy PATH="$work/bin:$PATH" \
     bash "$update" -y >"$work/out" 2>&1 || status=$?
   case $outcome in
+    nothing) (( status == 0 )) && grep -q '^omarchy-update-system-pkgs' "$work/ran" ||
+      fail "a run that moved nothing lets the fork update go on" "$(cat "$work/ran" "$work/out")" ;;
     0) (( status == 0 )) && ! grep -q '^omarchy-update-dev\|^omarchy-update-system-pkgs' "$work/ran" && grep -q "now runs Omarchy's official packages" "$work/out" ||
       fail "a moved Mac's update stops before any fork step" "$(cat "$work/ran" "$work/out")" ;;
     75) (( status == 0 )) && grep -q '^omarchy-update-system-pkgs' "$work/ran" && grep -q '^omarchy-migrate' "$work/ran" ||
@@ -78,4 +86,4 @@ for outcome in 0 75 1; do
       fail "a failed move stops the update" "$(cat "$work/ran" "$work/out")" ;;
   esac
 done
-pass "omarchy update stops after a move, goes on after a deferral and stops on a failure"
+pass "omarchy update stops after a move, goes on after a deferral or a run that moved nothing, and stops on a failure"

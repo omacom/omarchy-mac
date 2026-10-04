@@ -54,3 +54,21 @@ fetch_payload() {
     { echo "the unpacked omarchy-mac-boot is writable by others"; return 1; }
   printf '%s\n' "$version"
 }
+
+# The HOOKS the Mac's mkinitcpio configuration gives once the transaction has
+# put the new settings and boot packages' drop-ins in place.
+future_hooks() {
+  local resolved=$1 conf=$2 db=$3 dir=$work/future-conf.d name archive pair
+  rm -rf "$dir"
+  install -d -m 700 "$dir"
+  [[ ! -d $R/etc/mkinitcpio.conf.d ]] || cp -a "$R/etc/mkinitcpio.conf.d/." "$dir/" || { echo "cannot copy the drop-ins"; return 1; }
+  pair=$(channel_pair "$target_channel")
+  for name in "${pair#* }" omarchy-mac-boot; do
+    archive=$(fetch_archive "$resolved" "$name" "$conf" "$db") || { echo "$archive"; return 1; }
+    install -d -m 700 "$work/future-root-$name"
+    # A package without drop-ins extracts nothing.
+    bsdtar -xpf "$archive" -C "$work/future-root-$name" --include 'etc/mkinitcpio.conf.d/*' 2>/dev/null || true
+    [[ ! -d $work/future-root-$name/etc/mkinitcpio.conf.d ]] || cp -a "$work/future-root-$name/etc/mkinitcpio.conf.d/." "$dir/"
+  done
+  OMARCHY_MKINITCPIO_CONF_DIR=$dir omarchy-mac-initramfs-hooks 2>/dev/null || { echo "the HOOKS composer failed"; return 1; }
+}

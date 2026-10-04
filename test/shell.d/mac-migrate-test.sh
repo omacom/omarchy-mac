@@ -266,7 +266,7 @@ interrupt() { # when step
   if [[ $when == "after" ]]; then
     [[ $last == "${step%-leaf} done"* ]] || fail "the journal ends with $step done" "$last"
   else
-    [[ $last == "${step%-leaf} begin"* ]] || fail "the journal ends with $step begun" "$last"
+    [[ $last == "${step%-leaf} begin"* || $last == "repositories boundary" ]] || fail "the journal ends with $step begun" "$last"
   fi
   finish
   [[ $(outcome) == "$baseline" ]] || fail "killed $when $step, the resumed migration ends where an uninterrupted one does" "$(diff <(echo "$baseline") <(outcome))"
@@ -703,12 +703,26 @@ pass "after preflight only the verified copy of the set is used, and the origina
 
 new_fixture enable
 : >"$F/systemctl-fail"
+conf_before=$(cat "$R/etc/pacman.conf")
 status=0
 output=$(migrate run 2>&1) || status=$?
-(( status == 1 )) && grep -q "cannot install omarchy-mac-migrate-verify.service" <<<"$output" || fail "a unit that cannot be enabled fails the run" "$output"
+(( status == 75 )) && grep -q "cannot install omarchy-mac-migrate-verify.service" <<<"$output" && [[ $(cat "$R/etc/pacman.conf") == "$conf_before" ]] ||
+  fail "a unit that cannot be enabled stops the run before the switch, deferred" "status $status: $output"
+[[ ! -e $R/etc/systemd/system/omarchy-mac-migrate-verify.service ]] || fail "the deferred attempt takes its unit with it"
 rm "$F/systemctl-fail"
 finish
 pass "the unit that resumes the migration must be enabled before the switch goes ahead"
+
+# A reset back to prefetch before the switch is still before it.
+new_fixture reset-before-switch
+kill_after prefetch
+sed -i 's/^hyprland .*/hyprland 0.52-1/' "$R/var/lib/pacman/local/packages"
+echo "omarchy-mac-boot widget-extra" >>"$F/conflicts"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 75 )) && grep -q "would also remove widget-extra" <<<"$output" && [[ ! -e $(state_dir)/journal ]] ||
+  fail "a refusal after a reset before the switch defers" "status $status: $output"
+pass "the boundary is the switch's first write, not its step's start: a reset and a refusal before it still defer"
 
 # --- A fresh install's defaults ----------------------------------------------------
 

@@ -407,7 +407,7 @@ interrupt() { # when point step
   if [[ $when == "after" ]]; then
     [[ $last == "$step done"* ]] || fail "killed $when $point, the journal ends with $step done" "$last"
   else
-    [[ $last == "$step begin"* ]] || fail "killed $when $point, the journal ends with $step begun" "$last"
+    [[ $last == "$step begin"* || $last == "repositories boundary" ]] || fail "killed $when $point, the journal ends with $step begun" "$last"
   fi
   finish
   # pacman's own half-extracted files are backed up too, beside the originals.
@@ -775,7 +775,7 @@ switch_interrupt() { # when point step
   if [[ $when == "after" ]]; then
     [[ $last == "$step done"* ]] || fail "killed $when $point, the journal ends with $step done" "$last"
   else
-    [[ $last == "$step begin"* ]] || fail "killed $when $point, the journal ends with $step begun" "$last"
+    [[ $last == "$step begin"* || $last == "repositories boundary" ]] || fail "killed $when $point, the journal ends with $step begun" "$last"
   fi
   if [[ ! -e $R/var/lib/omarchy/limine.enabled || $(cat "$F/esp/EFI/BOOT/BOOTAA64.EFI") == "grub" ]]; then
     grub_boots_esp || fail "killed $when $point before Limine took the slot, GRUB's chain still unlocks the root" "$(cd "$F/esp" && find . -type f)"

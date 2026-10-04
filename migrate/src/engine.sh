@@ -90,9 +90,10 @@ die() {
 }
 
 # The repository switch is the first change that cannot be left in place: from
-# its start on, the migration only goes forward.
+# the boundary its step records just before it writes, the migration only
+# goes forward.
 before_boundary() {
-  [[ -f $journal ]] && ! awk '$2 == "repositories" { found = 1 } END { exit !found }' "$journal"
+  [[ -f $journal ]] && ! awk '$3 == "boundary" { found = 1 } END { exit !found }' "$journal"
 }
 
 abort_migration() {
@@ -101,6 +102,11 @@ abort_migration() {
   install -d -m 700 "$destination"
   mv "$journal" "$plan" "$state/format" "$destination/" 2>/dev/null
   rm -rf "$cache" "$backup" "$set_copy" "$start" "$expected" "$state/installed.now" "$state/tool"
+  if [[ -f $verify_unit_file ]]; then
+    systemctl disable "$verify_unit" >/dev/null 2>&1 || true
+    rm -f "$verify_unit_file"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
   printf '%s %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" | durable_write "$state/deferred" 2>/dev/null || true
   say "Nothing on this Mac changed; the next run starts the migration over." >&2
 }
@@ -690,6 +696,15 @@ preflight() {
   elif [[ -n $luks && " $hooks " == *" encrypt "* ]] && (( ! staged )); then
     reasons+=("the root unlocks through busybox encrypt, which only the legacy omarchy-mac migration moves")
   fi
+  # Until the loader step moves the unlock, the image GRUB boots is built from
+  # the new packages' HOOKS drop-ins: they must keep busybox encrypt.
+  if [[ -n $luks && " $hooks " == *" encrypt "* ]] && (( staged )); then
+    if ! problem=$(future_hooks "$resolved" "$transaction" "$work/db"); then
+      reasons+=("cannot tell the HOOKS the new packages give: $problem")
+    elif [[ " $problem " != *" encrypt "* ]]; then
+      reasons+=("the new packages' HOOKS drop-ins would drop busybox encrypt before the boot switch moves the unlock: $problem")
+    fi
+  fi
   # Installed boot files, not the running kernel: an update that just replaced
   # the kernel leaves a reboot pending, and the migration replaces it anyway.
   if ! check_output=$(boot_check_pending 2>&1); then
@@ -723,6 +738,7 @@ preflight() {
     "${cohort//-/_}_plan" "$installed" "$work" "$luks" "$hooks" >"$work/adapter-targets" || die "the $cohort adapter could not plan this Mac"
   fi
 
+  gpgconf --homedir "$gpgdir" --kill all >/dev/null 2>&1 || true
   gpgdir=""
   if already_on_target "$installed" "$resolved" "$targets_file" "$future"; then
     say "This Mac already runs the target set ($target_id): nothing to migrate."
@@ -1078,6 +1094,8 @@ step_repositories() {
   # resumes whatever is left.
   keep_tool && write_verify_unit && systemctl enable "$verify_unit" >/dev/null 2>&1 ||
     die "cannot install $verify_unit, which resumes the migration at boot"
+  # The boundary: recorded before the first change that is not set aside.
+  before_boundary && journal_write repositories "boundary"
   if ! cmp -s "$plan/pacman.guarded.conf" "$pacman_conf"; then
     durable_write "$pacman_conf" 644 <"$plan/pacman.guarded.conf" || die "cannot write $pacman_conf"
   fi
