@@ -1,0 +1,14 @@
+# A package added, changed or removed a device tree overlay: rebuild m1n1
+# stage 2 the way 95-m1n1-install.hook does after a kernel update, so the
+# next boot and the boot check read the same device trees.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/share/omarchy-platform/dtb-overlays/*
+
+[Action]
+Description = Updating m1n1 image for device tree overlays...
+When = PostTransaction
+Exec = /usr/bin/update-m1n1

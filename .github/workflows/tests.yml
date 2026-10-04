@@ -55,7 +55,7 @@ jobs:
             "$ARCH_IMAGE" sleep infinity
           docker exec arch pacman -Syu --noconfirm --needed \
             git jq lua python python-yaml nodejs npm ripgrep shellcheck imagemagick ffmpeg kitty \
-            gum plocate openssh unzip bc libarchive libxkbcommon desktop-file-utils glib2 sqlite
+            gum plocate openssh unzip bc libarchive libxkbcommon desktop-file-utils glib2 sqlite dtc
           docker exec arch bash -c 'echo "en_US.UTF-8 UTF-8" >/etc/locale.gen && locale-gen'
           docker exec arch useradd --create-home --uid "$(id -u)" tester
 

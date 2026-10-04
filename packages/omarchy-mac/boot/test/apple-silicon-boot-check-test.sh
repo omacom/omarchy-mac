@@ -58,6 +58,16 @@ case "$*" in
         printf '%s: 2 total files, 1 altered files\n' "$2"
         exit 1
         ;;
+      "$2:depmod-size")
+        printf 'warning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.dep (Modification time mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.dep (Size mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.dep (SHA256 checksum mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.alias (Modification time mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.alias (Size mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.alias (SHA256 checksum mismatch)\n' "$2" "$2" "$2" "$2" "$2" "$2" >&2
+        printf '%s: 2353 total files, 2 altered files\n' "$2"
+        exit 1
+        ;;
+      "$2:builtin-size")
+        printf 'warning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.builtin (Size mismatch)\n' "$2" >&2
+        printf '%s: 2 total files, 1 altered files\n' "$2"
+        exit 1
+        ;;
       "$2:missing")
         printf 'warning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.dep (No such file or directory)\n' "$2" >&2
         printf '%s: 2 total files, 1 altered files\n' "$2"
@@ -71,6 +81,11 @@ case "$*" in
       exit 1
     fi
     printf '%s: 2 total files, 0 altered files\n' "$2"
+    ;;
+  "-Qoq "*)
+    owner=$(awk -v path="$2" '$1 == path { print $2 }' "$TEST_FILES/owners" 2>/dev/null)
+    [[ -n $owner ]] || exit 1
+    echo "$owner"
     ;;
   "-Q "*)
     [[ -f $TEST_FILES/version-$2 ]] || exit 1
@@ -153,6 +168,31 @@ case "$*" in
   "-ndo UUID "*) [[ -z ${TEST_LUKS_UUID:-} ]] || echo "$TEST_LUKS_UUID" ;;
 esac
 exit 0
+SH
+# The dtc tools on the fixture's device trees (magic, size, then a text body):
+# fdtoverlay appends "overlay NAME" to the body, dtc prints or accepts it, and
+# no fixture overlay names skip-if-compatible.
+cat >"$stub_bin/fdtoverlay" <<'SH'
+#!/bin/bash
+[[ $1 == -i && $3 == -o ]] || exit 1
+body="$(tail -c +9 "$2")"$'\n'"overlay ${5##*/}"$'\n'
+size=$(( 8 + ${#body} ))
+{
+  printf '\xd0\x0d\xfe\xed'
+  printf "$(printf '\\x%02x' $(( size >> 24 & 255 )) $(( size >> 16 & 255 )) $(( size >> 8 & 255 )) $(( size & 255 )))"
+  printf '%s' "$body"
+} >"$4"
+SH
+cat >"$stub_bin/dtc" <<'SH'
+#!/bin/bash
+[[ $1 != --version ]] || { echo "Version: DTC v1.8.1"; exit 0; }
+file=${!#}
+[[ $(od -An -tx1 -N4 "$file" | tr -d ' \n') == d00dfeed ]] || exit 1
+[[ " $* " != *" -O dts "* ]] || tail -c +9 "$file"
+SH
+cat >"$stub_bin/fdtget" <<'SH'
+#!/bin/bash
+exit 1
 SH
 chmod +x "$stub_bin"/*
 
@@ -509,6 +549,37 @@ run_check
 expect_fail "a device tree the kernel does not own" "device tree /lib/modules/$kver/dtbs/zz-stray.dtb is not owned by linux-aurora"
 pass "a stale kernel, initramfs, GRUB entry or m1n1 image, disabled m1n1 updates and a stray device tree all fail"
 
+# A package-owned overlay: update-m1n1 applies it to the kernel's device trees
+# (dtb-overlays.sh), and the rebuild applies it the same way.
+system linux-aurora
+mkdir -p "$root/usr/share/omarchy-platform/dtb-overlays/t8103"
+printf 'overlay\n' >"$root/usr/share/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo"
+printf '/usr/share/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo omarchy-ane\n' >"$test_tmp/files/owners"
+run_check --boot-chain
+expect_fail "an overlay update-m1n1 has not applied yet" "m1n1/boot.bin on the system ESP (/boot/efi) is not m1n1"
+overlaid="$test_tmp/t8103-j274.dtb"
+body="device tree t8103-j274.dtb"$'\n'"overlay omarchy-ane.dtbo"$'\n'
+size=$(( 8 + ${#body} ))
+{
+  printf '\xd0\x0d\xfe\xed'
+  printf "$(printf '\\x%02x' $(( size >> 24 & 255 )) $(( size >> 16 & 255 )) $(( size >> 8 & 255 )) $(( size & 255 )))"
+  printf '%s' "$body"
+} >"$overlaid"
+{
+  cat "$root/usr/lib/asahi-boot/m1n1.bin" "$root${dtbs[0]}" "$root${dtbs[1]}" "$overlaid"
+  gzip -c "$root/usr/lib/asahi-boot/u-boot-nodtb.bin"
+  printf 'chosen.asahi,efi-system-partition=1234\ndisplay=2560x1600\nmitigations=off\n'
+} >"$esp/m1n1/boot.bin"
+run_check --boot-chain
+expect_pass "an m1n1 image update-m1n1 built with the overlaid device tree"
+run_check
+expect_pass "an m1n1 image with the overlaid device tree, in the full check"
+[[ -z $(ls -A "$root/run") ]] || fail "the rebuild writes the overlaid device tree only to its own work directory"
+: >"$test_tmp/files/owners"
+run_check --boot-chain
+expect_fail "an overlay no package owns" "device tree overlay /usr/share/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo is not owned by a package"
+pass "package-owned device tree overlays are rebuilt into m1n1 stage 2, and an unowned one fails"
+
 # update-m1n1's defaults: := fills unset and empty settings alike.
 for config in '' 'DTBS=\nSOURCE=""\n' 'CONFIG=\nM1N1=\nU_BOOT=\n' 'M1N1_UPDATE_DISABLED=\n'; do
   system linux-aurora
@@ -665,6 +736,21 @@ TEST_QKK_FAIL=linux-aurora:missing run_check
 expect_fail "a missing modules.* file" "linux-aurora files do not match the package mtree"
 TEST_QKK_FAIL=linux-aurora:silent run_check
 expect_fail "a pacman -Qkk that fails without a word" "pacman -Qkk linux-aurora failed"
+# A DKMS module leaves depmod's maps rewritten: the mtree's size and checksum
+# no longer match, and only depmod itself may vouch for them.
+mkdir -p "$modules/kernel/drivers/net/xone"
+printf 'fake module\n' >"$modules/kernel/drivers/net/xone/xone_dongle.ko"
+TEST_QKK_FAIL=linux-aurora:depmod-size run_check
+expect_fail "depmod maps that have not been regenerated after a DKMS module" "linux-aurora files do not match the package mtree"
+depmod -b "$root" -o "$test_tmp/depmod" "$kver" 2>/dev/null
+cp -a "$test_tmp/depmod/lib/modules/$kver/." "$modules/"
+TEST_QKK_FAIL=linux-aurora:depmod-size run_check
+expect_pass "depmod maps regenerated after a DKMS module"
+printf 'corrupt\n' >>"$modules/modules.dep"
+TEST_QKK_FAIL=linux-aurora:depmod-size run_check
+expect_fail "a corrupted modules.dep beside a DKMS module" "linux-aurora files do not match the package mtree"
+TEST_QKK_FAIL=linux-aurora:builtin-size run_check
+expect_fail "modules.builtin, which depmod reads but does not write" "linux-aurora files do not match the package mtree"
 unset TEST_QKK_FAIL
 
 TEST_QKK_NODB=1 run_check

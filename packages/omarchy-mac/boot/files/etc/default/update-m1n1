@@ -5,3 +5,10 @@
 # hook inherits the caller's. The C locale gives the same boot.bin however it
 # is rebuilt, which the boot check can then reproduce byte for byte.
 export LC_ALL=C
+
+# Package-owned device tree overlays under /usr/share/omarchy-platform/dtb-overlays
+# (dtb-overlays.sh). With none installed, DTBS keeps update-m1n1's default.
+if [ -r /usr/lib/omarchy-mac/boot/dtb-overlays.sh ]; then
+  . /usr/lib/omarchy-mac/boot/dtb-overlays.sh
+  dtb_overlays_update_m1n1 || :
+fi

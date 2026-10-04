@@ -114,18 +114,47 @@ for package in "${rivals[@]}"; do
   [[ $package == "$kernel" || $package == "$bootloader" ]] || ! is_installed "$package" ||
     fail "$kernel boots with $bootloader, but $package is installed too"
 done
+# True when every size or checksum mismatch pacman reports on a modules.* file
+# of this kernel is what depmod itself writes: a fresh depmod run over the
+# installed modules reproduces the file byte for byte. depmod regenerates
+# modules.dep and its siblings whenever a module is installed or removed, so
+# after any DKMS module they no longer match the package mtree; what it does
+# not regenerate (modules.builtin, modules.builtin.modinfo) never passes.
+depmod_maps_match() {
+  local fresh=$workdir/depmod kver line rel
+  local flagged
+  flagged=$(grep -E '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \((Size|SHA256 checksum) mismatch\)$' <<<"$1") || return 0
+  kver=${flagged#*/usr/lib/modules/}
+  kver=${kver%%/*}
+  mkdir -p "$fresh"
+  if [[ -n $root ]]; then
+    depmod -b "$root" -o "$fresh" "$kver" 2>/dev/null || return 1
+  else
+    depmod -o "$fresh" "$kver" 2>/dev/null || return 1
+  fi
+  while IFS= read -r line; do
+    rel=${line#warning: *: }
+    rel=${rel%% (*}
+    cmp -s "$fresh/lib/modules/${rel#/usr/lib/modules/}" "$(path "$rel")" || return 1
+  done <<<"$flagged"
+}
+
 # The mtree check, minus the depmod outputs: the kernel package ships
-# modules.* and the depmod hook rewrites them on every install, so their
-# modification times never match. Anything else altered or missing fails.
+# modules.* and the depmod hook rewrites them on every install and after any
+# DKMS module, so their modification times never match and their size and
+# checksum match only while they are depmod's own (depmod_maps_match).
+# Anything else altered or missing fails.
 for package in "$kernel" "$bootloader"; do
   set +e
   mtree_output=$(LC_ALL=C pacman -Qkk "$package" 2>&1)
   mtree_status=$?
   set -e
+  modules_drop='\(Modification time mismatch\)$'
+  depmod_maps_match "$mtree_output" && modules_drop='\((Modification time|Size|SHA256 checksum) mismatch\)$'
   # A fresh image ships no sync databases; pacman warns about each on stderr.
   altered=$(grep -Ev ' altered files$' <<<"$mtree_output" |
     grep -Ev "^warning: database file for '[^']+' does not exist" |
-    grep -Ev '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \(Modification time mismatch\)$' || true)
+    grep -Ev "^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ $modules_drop" || true)
   # --boot-chain holds only the files the boot files are built from against
   # the mtree: the kernel image, its device trees and m1n1. Drift in any other
   # file of the package is left out; everything else pacman reports counts.
@@ -513,6 +542,13 @@ if (( has_crypttab_root || busybox_luks )) && [[ -f $host_vconsole ]]; then
   fi
 fi
 
+# Package-owned device tree overlays, applied the way /etc/default/update-m1n1
+# applies them (dtb-overlays.sh).
+overlay_lib=$(dirname -- "$(realpath -- "$0")")/../lib/omarchy-mac/boot/dtb-overlays.sh
+[[ -r $overlay_lib ]] || overlay_lib=$(dirname -- "$(realpath -- "$0")")/../lib/dtb-overlays.sh
+# shellcheck source=../lib/dtb-overlays.sh
+source "$overlay_lib"
+
 # m1n1 stage 2, built the way this update-m1n1 builds it.
 script=$(path /usr/bin/update-m1n1)
 [[ -r $script ]] || fail "/usr/bin/update-m1n1 is not installed"
@@ -550,7 +586,7 @@ done
 SOURCE="" M1N1="" U_BOOT="" CONFIG="" DTBS="" disabled=""
 config_file=$(path /etc/default/update-m1n1)
 if [[ -e $config_file ]]; then
-  env -i PATH=/usr/bin:/bin bash --noprofile --norc -c '
+  env -i PATH=/usr/bin:/bin OMARCHY_DTB_OVERLAYS=0 bash --noprofile --norc -c '
     unset DTBS SOURCE M1N1 U_BOOT CONFIG M1N1_UPDATE_DISABLED
     . "$1" >/dev/null 2>&1 || exit 1
     for name in DTBS SOURCE M1N1 U_BOOT CONFIG M1N1_UPDATE_DISABLED; do
@@ -650,6 +686,33 @@ for dtb in "${dtbs[@]}"; do
   grep -Fxq -- "$owned" "$workdir/kernel-files" || fail "device tree $dtb is not owned by $kernel"
 done
 
+# The file each device tree is read from: the kernel's, or the copy that
+# carries the package-owned overlays update-m1n1 applies to it.
+paths=()
+for dtb in "${dtbs[@]}"; do
+  paths+=("$root$dtb")
+done
+export OMARCHY_DTB_OVERLAYS_ROOT=$root
+mapfile -t overlays < <(dtb_overlays_list)
+if (( ${#overlays[@]} )); then
+  for overlay in "${overlays[@]}"; do
+    pacman -Qoq "${overlay#"$root"}" >/dev/null 2>&1 ||
+      fail "device tree overlay ${overlay#"$root"} is not owned by a package"
+  done
+  if ! dtb_overlays_supported "$script"; then
+    echo "Apple Silicon boot check: warning: /usr/bin/update-m1n1 has a DTBS default the device tree overlays do not follow, so it leaves them out" >&2
+  elif ! dtb_overlays_tools; then
+    echo "Apple Silicon boot check: warning: device tree overlays are installed, but update-m1n1 leaves them out without dtc 1.7.1 or newer (dtc, fdtoverlay and fdtget); install or update dtc" >&2
+  else
+    mkdir "$workdir/dtbs"
+    mapfile -t paths < <(dtb_overlays_apply "$workdir/dtbs" "${paths[@]}")
+  fi
+fi
+declare -A dtb_file=()
+for i in "${!dtbs[@]}"; do
+  dtb_file[${dtbs[$i]}]=${paths[$i]}
+done
+
 m1n1_options() {
   local line
   [[ -e $root$CONFIG ]] || return 0
@@ -667,7 +730,7 @@ build_image() {
   local image=$1 dtb paths=()
   shift
   for dtb; do
-    paths+=("$root$dtb")
+    paths+=("${dtb_file[$dtb]}")
   done
   {
     cat "$root$M1N1" "${paths[@]}"
@@ -686,7 +749,7 @@ dtb_order() {
   local image=$1 offset=$2 end magic size hash dtb
   local -A by_hash=() left=()
   for dtb in "${dtbs[@]}"; do
-    hash=$(sha256sum <"$root$dtb")
+    hash=$(sha256sum <"${dtb_file[$dtb]}")
     hash=${hash%% *}
     by_hash[$hash]=$dtb
     left[$hash]=$(( ${left[$hash]:-0} + 1 ))
