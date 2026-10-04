@@ -95,8 +95,17 @@ if [[ $op == "Q" && $flags == *l* ]]; then
     base=${base%-*}
     base=${base%-*}
     [[ ! -f $fixture/files/${base%-*} ]] || cat "$fixture/files/${base%-*}"
-  elif [[ -f $files_db ]]; then
-    if [[ $flags == *q* ]]; then sed 's/^[^ ]* //' "$files_db"; else cat "$files_db"; fi
+  else
+    # Like pacman, a named package that is not installed is an error.
+    for name in ${args[@]+"${args[@]}"}; do
+      [[ -n ${version[$name]:-} ]] || { echo "error: package '$name' was not found" >&2; exit 1; }
+    done
+    if [[ -f $files_db ]]; then
+      if (( ${#args[@]} )); then
+        awk 'NR == FNR { want[$0]; next } $1 in want' <(printf '%s\n' "${args[@]}") "$files_db" |
+          if [[ $flags == *q* ]]; then sed 's/^[^ ]* //'; else cat; fi
+      elif [[ $flags == *q* ]]; then sed 's/^[^ ]* //' "$files_db"; else cat "$files_db"; fi
+    fi
   fi
   exit 0
 fi

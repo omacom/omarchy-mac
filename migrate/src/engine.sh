@@ -1554,9 +1554,11 @@ archive_state() {
 # Run by omarchy-mac-migrate-verify.service at boot: continues a migration that
 # is waiting for, or past, its reboot, and does nothing otherwise.
 migrate_verify() {
-  platform=$(hardware_platform) || die "cannot determine the hardware platform"
-  [[ $platform == "apple-silicon" ]] || return 0
   past_boundary || [[ -s $user_pending ]] || return 0
+  if ! past_boundary; then
+    platform=$(hardware_platform) || die "cannot determine the hardware platform"
+    [[ $platform == "apple-silicon" ]] || return 0
+  fi
   take_lock
   if past_boundary; then
     hand_over "${original_args[@]}"

@@ -73,7 +73,7 @@ future_hooks() {
   [[ ! -d $R/etc/mkinitcpio.conf.d ]] || cp -a "$R/etc/mkinitcpio.conf.d/." "$dir/" || { echo "cannot copy the drop-ins"; return 1; }
   # The drop-ins of the packages the transaction replaces go with them.
   for name in omarchy omarchy-settings omarchy-dev omarchy-settings-dev omarchy-mac-boot; do
-    LC_ALL=C pacman --config "$pacman_conf" --dbpath "$pacman_db" -Qlq "$name" 2>/dev/null
+    LC_ALL=C pacman --config "$pacman_conf" --dbpath "$pacman_db" -Qlq "$name" 2>/dev/null || true
   done | sed -n 's|^/etc/mkinitcpio.conf.d/\([^/][^/]*\)$|\1|p' | while IFS= read -r name; do
     rm -f -- "$dir/$name"
   done
