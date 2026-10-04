@@ -1,5 +1,7 @@
 # Omarchy
 
+> **This branch is frozen.** The Apple Silicon packages, `omarchy-mac` and `omarchy-mac-boot`, moved to [omacom/omarchy-mac-pkgs](https://github.com/omacom/omarchy-mac-pkgs), with their history: send package work there. Desktop work goes to [omacom/omarchy](https://github.com/omacom/omarchy), through [#13362](https://github.com/omacom/omarchy/pull/13362) while it is open. `quattro-upstream` takes no new changes.
+
 Omarchy is a beautiful, fun & agentic Linux distribution by DHH.
 
 Read more at [omarchy.org](https://omarchy.org).
