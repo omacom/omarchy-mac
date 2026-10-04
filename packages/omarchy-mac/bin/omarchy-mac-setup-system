@@ -127,6 +127,9 @@ fi
 # The Electron launchers and Steam's FEX launcher are the live machine's, so a
 # staging root skips them. Last, so a failure here leaves the services done.
 if [[ -z $root ]]; then
+  # iwd needs the saved networks before the backend switch applies at
+  # NetworkManager's next start, and only the running daemon can list them.
+  "$root/usr/lib/omarchy-mac/wifi-iwd-profiles"
   "$root/usr/lib/omarchy-mac/electron-launchers"
   "$root/usr/lib/omarchy-mac/steam-launcher"
 fi
