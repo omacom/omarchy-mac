@@ -38,6 +38,27 @@ if [[ ${1:-} == "-y" ]] || omarchy-update-confirm; then
 
   omarchy-update-stay-awake start
 
+  # omarchy-mac's last quattro release: once migration 1791080196 marked this
+  # Mac, the update moves it onto Omarchy's official packages before any fork
+  # step, and stops there; from the next boot on, omarchy update is Omarchy's
+  # own. A move that cannot start yet (75) leaves the Mac on the fork and updates
+  # it as before; one that failed part way stops the update, and the next update
+  # or boot resumes it.
+  if [[ -e ${OMARCHY_MAC_MOVE_MARKER:-/var/lib/omarchy/migrations/1791080196} ]]; then
+    move_status=0
+    sudo "$OMARCHY_PATH/bin/omarchy-mac-migrate" run || move_status=$?
+    if (( move_status == 0 )); then
+      echo -e "\e[32m\nThis Mac now runs Omarchy's official packages. Reboot to finish the move.\e[0m"
+      omarchy-update-stay-awake stop
+      trap - EXIT
+      exit 0
+    elif (( move_status == 75 )); then
+      echo "The move onto Omarchy's official packages cannot start yet; updating this Mac as before." >&2
+    else
+      (exit "$move_status")
+    fi
+  fi
+
   if [[ -z ${OMARCHY_UPDATE_CHANNEL:-} ]]; then
     omarchy-update-dev
     omarchy-update-keyring

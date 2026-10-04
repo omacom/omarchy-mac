@@ -10,6 +10,20 @@ in one command, full-disk encryption included.
 Already running Omarchy 3.x? This page is the fresh install — to upgrade in
 place, see [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md).
 
+## Moving to Omarchy's official packages
+
+Omarchy's own packages now support Apple Silicon, so this fork's quattro line ends. Macs move onto the official packages of the channel they follow (on edge: `omarchy-dev`, `omarchy-mac`, `omarchy-mac-boot` and the Aurora kernel) with `omarchy-mac-migrate`, which keeps the encryption, snapshots and data, changes nothing until a check passes, and resumes if it is cut short.
+
+- **Macs installed from this repository:** nothing to do. One update marks the Mac; the next `omarchy update` moves it and asks for a reboot. A channel without a Mac release yet (stable and rc today) keeps updating as before until it has one.
+- **Test images and other Macs:** run this on the Mac, then reboot when it says so:
+
+<!-- omarchy-mac-migrate one-liner: migrate/build --check keeps the checksum current -->
+```bash
+d=$(mktemp -d) && curl -fsSLo "$d/omarchy-mac-migrate" https://github.com/omacom/omarchy-mac/releases/download/mac-migrate-v1/omarchy-mac-migrate && echo "a387acd49605155b3e8e39a561affc3e4afc493096c3a4c3c9f513c976a15631  $d/omarchy-mac-migrate" | sha256sum -c - && sudo bash "$d/omarchy-mac-migrate" run
+```
+
+`sudo omarchy-mac-migrate check` says what a run would do without changing anything, and `sudo omarchy-mac-migrate status` where a run stands. How it works: [migrate/README.md](migrate/README.md).
+
 ---
 
 ## Before you begin
