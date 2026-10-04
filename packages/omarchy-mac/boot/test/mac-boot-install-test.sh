@@ -63,4 +63,7 @@ hook=$ROOT/files/usr/share/libalpm/hooks/91-omarchy-mac-boot-initramfs.hook
 for dropin in "$ROOT"/files/etc/mkinitcpio.conf.d/*.conf; do
   grep -Fxq "Target = etc/mkinitcpio.conf.d/${dropin##*/}" "$hook" || fail "the ALPM hook matches ${dropin##*/}"
 done
-pass "the ALPM hook rebuilds the initramfs for every shipped drop-in"
+while read -r target; do
+  [[ -f $ROOT/files/$target ]] || fail "the ALPM hook names only shipped drop-ins, not $target"
+done < <(sed -n 's|^Target = \(etc/mkinitcpio\.conf\.d/.*\)|\1|p' "$hook")
+pass "the ALPM hook rebuilds the initramfs for every shipped drop-in, and only those"

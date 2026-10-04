@@ -1,0 +1,5 @@
+#!/bin/bash
+# Stands in for omarchy's detector, which this package's tests run without.
+# Unset is an Apple Silicon Mac; "fail" is a detector that cannot place the machine.
+[[ ${OMARCHY_TEST_HW_PLATFORM-} != fail ]] || exit 1
+printf '%s\n' "${OMARCHY_TEST_HW_PLATFORM-apple-silicon}"

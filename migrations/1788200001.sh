@@ -15,8 +15,8 @@ ready="${OMARCHY_APPLE_HID_READY:-/var/lib/omarchy/apple-hid-initramfs-ready}"
 [[ -f $ready ]] && exit 0
 
 # The leaf carries both the hardware gate and the drop-in content; sourcing it
-# keeps that to one copy. Anything that is not an Apple Silicon Mac writes
-# nothing and falls out below.
+# keeps that to one copy. Anything that is not an Apple Silicon Mac, or a Mac
+# whose omarchy-mac-boot loads the drivers, writes nothing and falls out below.
 [[ -f $conf ]] || source "$hid_race_script"
 [[ -f $conf ]] || exit 0
 
