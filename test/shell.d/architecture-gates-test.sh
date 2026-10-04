@@ -35,6 +35,9 @@ default/omarchy/omarchy-menu.jsonc 'omarchy-install-browser brave-origin'","when
 default/omarchy/omarchy-menu.jsonc 'omarchy-install-browser zen'","when":"[[ $(uname -m) == \"x86_64\" || $(uname -m) == \"aarch64\" ]]"}
 default/omarchy/omarchy-menu.jsonc omarchy-install-service-nordvpn","when":"[[ $(uname -m) == \"x86_64\" || $(uname -m) == \"aarch64\" ]]"}
 
+# GeForce NOW's installer and the Flatpak it installs are x86_64 only.
+default/omarchy/omarchy-menu.jsonc omarchy-install-gaming-geforce-now","when":"[[ $(uname -m) == \"x86_64\" ]] && omarchy-pkg-available flatpak"}
+
 # The menu reads uname once per guard batch for the rows above; it decides nothing.
 shell/plugins/menu/MenuModel.js "uname -m"
 
