@@ -5,8 +5,22 @@
 
 monitors_json=$(hyprctl monitors all -j)
 focused_monitor=$(printf '%s\n' "$monitors_json" | jq -r '[.[] | select(.focused == true)][0].name // ""')
+internal_on=$(printf '%s\n' "$monitors_json" | jq -r '[.[] | select((.name | test("^(eDP|LVDS|DSI)-")) and .disabled != true)][0].name // ""')
 
-{ omarchy-brightness-display --monitor "$focused_monitor" 2>/dev/null; echo; } | head -n 1
+brightness_of() {
+  { omarchy-brightness-display --monitor "$1" 2>/dev/null; echo; } | head -n 1
+}
+
+# The focused display's brightness, or the built-in panel's when the focused
+# display can't be dimmed (an external without DDC, as every one on a Mac), so
+# the panel has a brightness to set whichever display it opens on.
+brightness_monitor=$focused_monitor
+brightness=$(brightness_of "$focused_monitor")
+if [[ ! $brightness =~ ^[0-9]+$ && -n $internal_on && $internal_on != "$focused_monitor" ]]; then
+  brightness_monitor=$internal_on
+  brightness=$(brightness_of "$internal_on")
+fi
+printf '%s\n' "$brightness"
 
 printf '%s\n' "$monitors_json" | jq -r '
   def internal: test("^(eDP|LVDS|DSI)-");
@@ -20,4 +34,7 @@ printf '%s\n' "$focused_monitor"
 omarchy-hyprland-monitor-scaling 2>/dev/null || echo
 
 printf '%s\n' "$monitors_json" | jq -c \
-  '[.[] | {name, enabled:(.disabled != true), focused:(.focused == true), width, height}]'
+  '[.[] | {name, model:(.model // ""), enabled:(.disabled != true), focused:(.focused == true), width, height}]'
+
+# The display the brightness above is for.
+printf '%s\n' "$brightness_monitor"

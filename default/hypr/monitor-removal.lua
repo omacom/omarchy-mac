@@ -69,7 +69,9 @@ end)
 hl.on("monitor.removed", function()
   local workspace = left_behind
   left_behind = nil
-  if not workspace then
+  -- With per-display workspaces the display module brings the windows over to
+  -- the built-in panel's own workspace instead (default/hypr/displays.lua).
+  if not workspace or (omarchy_displays and omarchy_displays.own_workspaces) then
     return
   end
 

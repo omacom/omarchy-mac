@@ -89,6 +89,16 @@ set_scale() {
   fi
 
   local new_scale="$(clean_scale "$requested_scale" "$width" "$height")"
+
+  # While the display arrangement (default/hypr/displays.lua) is loaded it
+  # owns monitor rules: hand it the scale, so the display keeps its place and
+  # its neighbours follow. It remembers the scale itself.
+  if [[ $(hyprctl repl 'return omarchy_displays ~= nil' 2>/dev/null) == true ]]; then
+    hyprctl eval "omarchy_displays.set_scale(\"$active_monitor\", $new_scale)" >/dev/null
+    audit_scale_change "$requested" "$active_monitor" "$current_scale" "$new_scale"
+    return
+  fi
+
   # GTK only honors integer GDK_SCALE values, so persist the nearest whole
   # factor even when the monitor scale itself is fractional.
   local new_gdk_scale="$(awk -v scale="$new_scale" 'BEGIN { printf "%d", int(scale + 0.5) }')"

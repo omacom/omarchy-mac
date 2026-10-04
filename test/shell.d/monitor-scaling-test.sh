@@ -23,6 +23,8 @@ if [[ $1 == "monitors" && $2 == "-j" ]]; then
     "${OMARCHY_TEST_MONITOR_SCALE:-2}" "${OMARCHY_TEST_MONITOR_WIDTH:-2880}" "${OMARCHY_TEST_MONITOR_HEIGHT:-1800}"
 elif [[ $1 == "eval" ]]; then
   printf '%s\n' "$2" >"$OMARCHY_TEST_HYPRCTL_EVAL_OUT"
+elif [[ $1 == "repl" ]]; then
+  echo "${OMARCHY_TEST_DISPLAYS_LOADED:-false}"
 else
   exit 1
 fi
@@ -42,6 +44,7 @@ run_scaling() {
     PATH="$stub_bin:$PATH" \
     OMARCHY_TEST_HYPRCTL_EVAL_OUT="$eval_out" \
     OMARCHY_TEST_MONITOR_SCALE="${OMARCHY_TEST_MONITOR_SCALE:-2}" \
+    OMARCHY_TEST_DISPLAYS_LOADED="${OMARCHY_TEST_DISPLAYS_LOADED:-false}" \
     "$ROOT/bin/omarchy-hyprland-monitor-scaling" "$@"
 }
 
@@ -129,3 +132,11 @@ grep -F 'scale = 2' "$eval_out" >/dev/null || fail "monitor scaling down skips d
 grep -Fx 'local omarchy_monitor_scale = 2' "$monitor_lua" >/dev/null ||
   fail "monitor scaling down persists 2x after skipping duplicate approximation"
 pass "monitor scaling down skips duplicate approximation"
+
+# While the display arrangement is loaded, the scale goes to it and
+# monitors.lua is left untouched.
+write_monitor_config
+OMARCHY_TEST_MONITOR_SCALE=2 OMARCHY_TEST_DISPLAYS_LOADED=true run_scaling up
+grep -Fx 'omarchy_displays.set_scale("eDP-1", 3)' "$eval_out" >/dev/null || fail "monitor scaling hands the scale to the display arrangement"
+grep -Fx 'local omarchy_monitor_scale = 2' "$monitor_lua" >/dev/null || fail "monitor scaling leaves monitors.lua alone under the display arrangement"
+pass "monitor scaling hands the scale to the display arrangement"

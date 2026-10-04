@@ -31,6 +31,8 @@ elif [[ $1 == "reload" ]]; then
   printf 'reload\n' >>"$OMARCHY_TEST_HYPRCTL_EVAL_LOG"
 elif [[ $1 == "dispatch" ]]; then
   printf 'dispatch %s\n' "$2" >>"$OMARCHY_TEST_HYPRCTL_EVAL_LOG"
+elif [[ $1 == "repl" ]]; then
+  echo "${OMARCHY_TEST_DISPLAYS_LOADED:-false}"
 else
   exit 1
 fi
@@ -222,6 +224,7 @@ run_clamshell() {
     OMARCHY_TEST_INTERNAL_DISABLED="${OMARCHY_TEST_INTERNAL_DISABLED:-false}" \
     OMARCHY_TEST_EXTERNAL_ACTIVE="${OMARCHY_TEST_EXTERNAL_ACTIVE:-false}" \
     OMARCHY_TEST_CLAMSHELL="${OMARCHY_TEST_CLAMSHELL:-false}" \
+    OMARCHY_TEST_DISPLAYS_LOADED="${OMARCHY_TEST_DISPLAYS_LOADED:-false}" \
     "$ROOT/bin/omarchy-hyprland-monitor-clamshell"
 }
 
@@ -257,6 +260,14 @@ write_internal_monitor_config
 OMARCHY_TEST_INTERNAL_SCALE=3 run_clamshell
 grep -F 'scale = 1.25' "$eval_log" >/dev/null || fail "clamshell recovery corrects a drifted numeric scale"
 pass "clamshell recovery corrects a drifted numeric scale"
+
+# While the display arrangement is loaded it owns the panel's scale, so a
+# scale that differs from monitors.lua is left alone.
+write_internal_monitor_config
+: >"$eval_log"
+OMARCHY_TEST_INTERNAL_SCALE=3 OMARCHY_TEST_DISPLAYS_LOADED=true run_clamshell
+! grep -F 'scale = ' "$eval_log" >/dev/null || fail "clamshell recovery leaves the scale to the display arrangement"
+pass "clamshell recovery leaves the scale to the display arrangement"
 
 write_auto_monitor_config
 : >"$eval_log"

@@ -1,0 +1,3 @@
+-- Leave displays to Hyprland and your own configuration: Omarchy doesn't
+-- arrange, scale or give displays their own workspaces
+-- (default/hypr/displays.lua checks for this file).

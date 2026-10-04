@@ -67,9 +67,14 @@ for (const edge of ['top', 'bottom', 'left', 'right']) {
 // must not build its modules or every center widget exists twice.
 const moduleList = barSource.slice(barSource.indexOf('component ModuleList'), barSource.indexOf('component ModuleSlot'))
 assert(
-  /active: visible && entries\.length > 0/.test(moduleList),
+  /active: shown && entries\.length > 0/.test(moduleList),
   'bar builds only the module list it is showing'
 )
+// Items read as invisible while their window is hidden, and the bar is
+// hidden for a moment whenever its monitor moves: a list that followed its
+// own visibility would rebuild every widget, closing any open panel.
+assert(!/active: [^\n]*visible/.test(moduleList), 'bar keeps its widgets while the bar window is remapped')
+assert(!/ModuleList \{\s*visible:/.test(barSource), 'bar picks the center arrangement on show with shown, not visible')
 
 // A center module is mounted twice — drawn copy plus zero-size placeholder —
 // and the order they register in is not stable across a live reconfiguration,

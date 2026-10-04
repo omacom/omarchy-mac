@@ -175,6 +175,9 @@ enable_internal_output() {
 
 sync_internal_scale() {
   [[ -n $INTERNAL ]] || return 0
+  # The display arrangement brings the panel back at its remembered scale and
+  # place, so there is nothing to correct while it's loaded.
+  [[ $(hyprctl repl 'return omarchy_displays ~= nil' 2>/dev/null) == true ]] && return 0
   local configured_scale
   local desired_scale
   local active_scale

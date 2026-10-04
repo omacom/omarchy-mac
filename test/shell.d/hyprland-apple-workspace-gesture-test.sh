@@ -46,6 +46,11 @@ load_config() {
   mkdir -p "$home/.config"
   cp -R "$runtime/config/hypr" "$home/.config/hypr"
   [[ -z $edit ]] || printf '%s\n' "$edit" >>"$home/.config/hypr/input.lua"
+  local toggle
+  for toggle in ${TOGGLES:-}; do
+    mkdir -p "$home/.local/state/omarchy/toggles/hypr"
+    : >"$home/.local/state/omarchy/toggles/hypr/$toggle.lua"
+  done
 
   HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_STATE_HOME="$home/.local/state" OMARCHY_PATH="$omarchy_path" \
     PATH="$tmpdir/$platform-bin:$PATH" env "${platform_vars[@]}" lua <<'LUA'
@@ -175,11 +180,11 @@ output=$(load_config apple 'omarchy_workspace_gesture = false')
 [[ -z $output ]] || fail "omarchy_workspace_gesture = false turns the default off" "$output"
 pass "omarchy_workspace_gesture = false turns the default off"
 
-[[ $(SHOW_USE_R=1 load_config apple) == "$swipe"$'\nworkspace_swipe_use_r true' ]] ||
-  fail "a Mac swipe steps by number, into empty workspaces" "$(SHOW_USE_R=1 load_config apple)"
+[[ $(SHOW_USE_R=1 TOGGLES=display-workspaces-off load_config apple) == "$swipe"$'\nworkspace_swipe_use_r true' ]] ||
+  fail "a Mac swipe steps by number, into empty workspaces" "$(SHOW_USE_R=1 TOGGLES=display-workspaces-off load_config apple)"
 [[ $(SHOW_USE_R=1 load_config other) == "workspace_swipe_use_r false" ]] ||
   fail "x86 and Snapdragon keep Hyprland's own workspace stepping" "$(SHOW_USE_R=1 load_config other)"
-output=$(SHOW_USE_R=1 load_config apple "$shipped_line")
+output=$(SHOW_USE_R=1 TOGGLES=display-workspaces-off load_config apple "$shipped_line")
 [[ $output == "$swipe"$'\nworkspace_swipe_use_r true' ]] ||
   fail "a user's own workspace gesture on a Mac steps by number too" "$output"
 use_r_off='hl.config({ gestures = { workspace_swipe_use_r = false } })'
@@ -190,6 +195,20 @@ output=$(SHOW_USE_R=1 load_config apple "$shipped_line"$'\n'"$use_r_off")
 [[ $output == "$swipe"$'\nworkspace_swipe_use_r false' ]] ||
   fail "the user's workspace_swipe_use_r = false keeps Hyprland's stepping with their own gesture" "$output"
 pass "a Mac's workspace swipes step into empty workspaces; the user's workspace_swipe_use_r = false wins"
+
+# Another runtime layout (OMARCHY_TEST_RUNTIME) may have no per-display workspaces.
+if [[ -e $runtime/default/hypr/displays.lua ]]; then
+  [[ $(SHOW_USE_R=1 load_config apple) == "$swipe"$'\nworkspace_swipe_use_r false' ]] ||
+    fail "per-display workspaces keep the swipe on the display's own workspaces" "$(SHOW_USE_R=1 load_config apple)"
+  output=$(SHOW_USE_R=1 load_config apple "$shipped_line")
+  [[ $output == "$swipe"$'\nworkspace_swipe_use_r false' ]] ||
+    fail "per-display workspaces keep a user's own workspace gesture on the display's workspaces" "$output"
+  use_r_on='hl.config({ gestures = { workspace_swipe_use_r = true } })'
+  output=$(SHOW_USE_R=1 load_config apple "$use_r_on")
+  [[ $output == "$swipe"$'\nworkspace_swipe_use_r true' ]] ||
+    fail "the user's workspace_swipe_use_r = true wins over per-display workspaces" "$output"
+  pass "per-display workspaces keep the swipe on the display's own workspaces; the user's setting wins"
+fi
 
 grep -Fq 'omarchy_workspace_gesture = false' "$ROOT/mac-manual/content/06-keyboard.md" ||
   fail "the manual documents how to turn the Mac gesture off"

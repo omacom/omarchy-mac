@@ -18,11 +18,23 @@ o.bind("SUPER + RIGHT", "Focus on right window", hl.dsp.focus({ direction = "r" 
 o.bind("SUPER + UP", "Focus on above window", hl.dsp.focus({ direction = "u" }))
 o.bind("SUPER + DOWN", "Focus on below window", hl.dsp.focus({ direction = "d" }))
 
+local function displays()
+  return require("default.hypr.displays")
+end
+
+-- Workspaces belong to a display: 1..0 are the slots of the display that has
+-- focus.
 for workspace = 1, 10 do
   local key = "code:" .. tostring(workspace + 9)
-  o.bind("SUPER + " .. key, "Switch to workspace " .. workspace, hl.dsp.focus({ workspace = tostring(workspace) }))
-  o.bind("SUPER + SHIFT + " .. key, "Move window to workspace " .. workspace, hl.dsp.window.move({ workspace = tostring(workspace) }))
-  o.bind("SUPER + SHIFT + ALT + " .. key, "Move window silently to workspace " .. workspace, hl.dsp.window.move({ workspace = tostring(workspace), follow = false }))
+  o.bind("SUPER + " .. key, "Switch to workspace " .. workspace, function()
+    hl.dispatch(hl.dsp.focus({ workspace = displays().slot(workspace) }))
+  end)
+  o.bind("SUPER + SHIFT + " .. key, "Move window to workspace " .. workspace, function()
+    hl.dispatch(hl.dsp.window.move({ workspace = displays().slot(workspace, true) }))
+  end)
+  o.bind("SUPER + SHIFT + ALT + " .. key, "Move window silently to workspace " .. workspace, function()
+    hl.dispatch(hl.dsp.window.move({ workspace = displays().slot(workspace, true), follow = false }))
+  end)
 end
 
 o.bind("SUPER + S", "Toggle scratchpad", hl.dsp.workspace.toggle_special("scratchpad"))
@@ -30,14 +42,27 @@ o.bind("SUPER + ALT + S", "Move window to scratchpad", hl.dsp.window.move({ work
 o.bind("SUPER + grave", "Toggle scratchpad", hl.dsp.workspace.toggle_special("scratchpad"))
 o.bind("SUPER + SHIFT + grave", "Move window to scratchpad", hl.dsp.window.move({ workspace = "special:scratchpad", follow = false }))
 
-o.bind("SUPER + TAB", "Next workspace", hl.dsp.focus({ workspace = "e+1" }))
-o.bind("SUPER + SHIFT + TAB", "Previous workspace", hl.dsp.focus({ workspace = "e-1" }))
+o.bind("SUPER + TAB", "Next workspace", hl.dsp.focus({ workspace = "m+1" }))
+o.bind("SUPER + SHIFT + TAB", "Previous workspace", hl.dsp.focus({ workspace = "m-1" }))
 o.bind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = "previous" }))
 
-o.bind("SUPER + SHIFT + ALT + LEFT", "Move workspace to left monitor", hl.dsp.workspace.move({ monitor = "l" }))
-o.bind("SUPER + SHIFT + ALT + RIGHT", "Move workspace to right monitor", hl.dsp.workspace.move({ monitor = "r" }))
-o.bind("SUPER + SHIFT + ALT + UP", "Move workspace to up monitor", hl.dsp.workspace.move({ monitor = "u" }))
-o.bind("SUPER + SHIFT + ALT + DOWN", "Move workspace to down monitor", hl.dsp.workspace.move({ monitor = "d" }))
+-- SUPER+D, then a display's number (display 1 is the leftmost), with or without
+-- SUPER held, sends the window there. Modifier keys alone keep the submap
+-- open; any other key leaves it and is swallowed, and so does waiting 1.5 s.
+o.bind("SUPER + D", "Send window to display (then its number)", function()
+  displays().choose_display()
+end)
+hl.define_submap("display", function()
+  for number = 1, 9 do
+    hl.bind("code:" .. tostring(number + 9), function()
+      displays().send_window(number)
+    end, { ignore_mods = true })
+  end
+  for _, modifier in ipairs({ "Super_L", "Super_R", "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R" }) do
+    hl.bind(modifier, hl.dsp.no_op(), { ignore_mods = true })
+  end
+  hl.bind("catchall", hl.dsp.submap("reset"), { ignore_mods = true })
+end)
 
 o.bind("SUPER + CTRL + ALT + LEFT", "Move window to left monitor", hl.dsp.window.move({ monitor = "l" }))
 o.bind("SUPER + CTRL + ALT + RIGHT", "Move window to right monitor", hl.dsp.window.move({ monitor = "r" }))
@@ -72,8 +97,8 @@ o.bind("SUPER + CTRL + code:21", "Shrink window left a lot", hl.dsp.window.resiz
 o.bind("SUPER + CTRL + SHIFT + code:20", "Shrink window up a lot", hl.dsp.window.resize({ x = 0, y = -300, relative = true }))
 o.bind("SUPER + CTRL + SHIFT + code:21", "Expand window down a lot", hl.dsp.window.resize({ x = 0, y = 300, relative = true }))
 
-o.bind("SUPER + mouse_down", "Scroll active workspace forward", hl.dsp.focus({ workspace = "e+1" }))
-o.bind("SUPER + mouse_up", "Scroll active workspace backward", hl.dsp.focus({ workspace = "e-1" }))
+o.bind("SUPER + mouse_down", "Scroll active workspace forward", hl.dsp.focus({ workspace = "m+1" }))
+o.bind("SUPER + mouse_up", "Scroll active workspace backward", hl.dsp.focus({ workspace = "m-1" }))
 
 o.bind("SUPER + mouse:272", "Move window", hl.dsp.window.drag(), { mouse = true })
 o.bind("SUPER + mouse:273", "Resize window", hl.dsp.window.resize(), { mouse = true })
@@ -99,5 +124,15 @@ for index = 1, 5 do
   o.bind("SUPER + ALT + code:" .. tostring(index + 9), "Switch to group window " .. index, hl.dsp.group.active({ index = index }))
 end
 
-o.bind("SUPER + SLASH", "Monitor scaling up", "omarchy-hyprland-monitor-scaling up")
-o.bind("SUPER + ALT + SLASH", "Monitor scaling down", "omarchy-hyprland-monitor-scaling down")
+-- Scaling goes through the display arrangement, so the display keeps its
+-- place and its neighbours follow the new size. With Linked displays, the
+-- others follow it to the same real size.
+o.bind("SUPER + SLASH", "Monitor scaling up", function()
+  displays().step_scale(1)
+end)
+o.bind("SUPER + ALT + SLASH", "Monitor scaling down", function()
+  displays().step_scale(-1)
+end)
+o.bind("SUPER + CTRL + SLASH", "Match all monitors to the main one", function()
+  displays().match_all()
+end)

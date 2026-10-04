@@ -178,6 +178,15 @@ end
 turn_ends()
 assert(#dispatched == 1 and dispatched[1] == "5", "restoring focus does not queue a second restore")
 
+-- Per-display workspaces: the display module brings the windows over instead,
+-- so the gone display's workspace isn't put in front of the built-in panel.
+reset()
+omarchy_displays = { own_workspaces = true }
+focus_moves("USB-2"); turn_ends()
+unplug()
+assert(#dispatched == 0, "per-display workspaces leave the built-in panel on its own workspace")
+omarchy_displays = nil
+
 -- A Hyprland that records focus before announcing it leaves nothing to restore
 -- from, so the handler stays out of the way rather than guessing.
 reset()

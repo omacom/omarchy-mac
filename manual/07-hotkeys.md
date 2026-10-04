@@ -20,16 +20,16 @@ You can see all the main keyboard bindings with `Super + K` (Tmux bindings with 
 | `Super + F`                 | Go full screen              |
 | `Super + Alt + F`                 | Go full width              |
 | `Super + Ctrl + F`                 | Go full screen inside window              |
-| `Super + 1/2/3/4`         | Jump to specific workspace     |
-| `Super + Tab` | Jump to next workspace |
-| `Super + Shift + Tab` | Jump to previous workspace |
+| `Super + 1/2/3/4`         | Jump to specific workspace on the focused screen |
+| `Super + Tab` | Jump to next workspace on this screen |
+| `Super + Shift + Tab` | Jump to previous workspace on this screen |
 | `Super + Ctrl + Tab` | Jump to former workspace |
-| `Super + Shift + 1/2/3/4` | Move window to workspace |
-| `Super + Shift + Alt + 1/2/3/4` | Move window to workspace without following |
+| `Super + Shift + 1/2/3/4` | Move window to workspace on its screen |
+| `Super + Shift + Alt + 1/2/3/4` | Move window to workspace on its screen without following |
 | `Super + S` / `Super + Grave` | Toggle scratchpad |
 | `Super + Alt + S` / `Super + Shift + Grave` | Move window to scratchpad |
-| `Super + Shift + Alt + Arrows` | Move workspaces to directional monitor |
 | `Super + Ctrl + Alt + Arrows` | Move window to directional monitor |
+| `Super + D`, then `1/2/3` | Move window to monitor 1/2/3 (numbered left to right) |
 | `Super + Arrow`  | Move focus to window in direction of arrow              |
 | `Super + Shift + Arrow`  | Swap window with another in direction of arrow     |
 | `Super + Minus` | Expand window left |
@@ -42,7 +42,7 @@ You can see all the main keyboard bindings with `Super + K` (Tmux bindings with 
 | `Super + Home` | Restore saved window width |
 | `Super + Left Mouse` | Drag window around |
 | `Super + Right Mouse` | Resize window |
-| `Super + Scroll Wheel` | Scroll through workspaces |
+| `Super + Scroll Wheel` | Scroll through workspaces on this screen |
 | `Super + G`               | Toggle window grouping      |
 | `Super + Alt + G`               | Move window out of grouping      |
 | `Super + Alt + Tab`               | Cycle between windows in grouping      |
@@ -52,8 +52,9 @@ You can see all the main keyboard bindings with `Super + K` (Tmux bindings with 
 | `Super + Ctrl + Left/Right`  | Move between windows inside a tiling group |
 | `Super + Ctrl + Z` | Zoom in on screen (repeat for more zoom) |
 | `Super + Ctrl + Alt + Z` | Zoom fully out from screen |
-| `Super + /` | Step forward through monitor scaling options |
+| `Super + /` | Step forward through monitor scaling options (other displays follow in Linked mode) |
 | `Super + Alt + /` | Step backward through monitor scaling options |
+| `Super + Ctrl + /` | Match every monitor's scaling to the main monitor |
 | `Alt + Tab` | Cycle forward through windows on the active workspace |
 | `Alt + Shift + Tab` | Cycle backward through windows on the active workspace |
 | `Ctrl + Alt + Tab`| Cycle focus forward through monitors |

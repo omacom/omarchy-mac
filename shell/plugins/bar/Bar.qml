@@ -1615,14 +1615,14 @@ Item {
         }
 
         ModuleList {
-          visible: !centerRoot.hasAnchor
+          shown: !centerRoot.hasAnchor
           entries: centerRoot.entries
           region: "center"
           anchors.centerIn: parent
         }
 
         ModuleList {
-          visible: centerRoot.hasAnchor
+          shown: centerRoot.hasAnchor
           entries: root.entriesBefore(centerRoot.entries, root.centerAnchor)
           region: "center"
           anchors.right: centerAnchorModule.left
@@ -1638,7 +1638,7 @@ Item {
         }
 
         ModuleList {
-          visible: centerRoot.hasAnchor
+          shown: centerRoot.hasAnchor
           entries: root.entriesAfter(centerRoot.entries, root.centerAnchor)
           region: "center"
           anchors.left: centerAnchorModule.right
@@ -1660,14 +1660,14 @@ Item {
         }
 
         ModuleList {
-          visible: !centerRoot.hasAnchor
+          shown: !centerRoot.hasAnchor
           entries: centerRoot.entries
           region: "center"
           anchors.centerIn: parent
         }
 
         ModuleList {
-          visible: centerRoot.hasAnchor
+          shown: centerRoot.hasAnchor
           entries: root.entriesBefore(centerRoot.entries, root.centerAnchor)
           region: "center"
           anchors.bottom: centerAnchorModule.top
@@ -1683,7 +1683,7 @@ Item {
         }
 
         ModuleList {
-          visible: centerRoot.hasAnchor
+          shown: centerRoot.hasAnchor
           entries: root.entriesAfter(centerRoot.entries, root.centerAnchor)
           region: "center"
           anchors.top: centerAnchorModule.bottom
@@ -1780,14 +1780,21 @@ Item {
 
     property var entries: []
     property string region: ""
+    // Whether this list is the arrangement on show.
+    property bool shown: true
 
-    visible: entries.length > 0
+    visible: shown && entries.length > 0
     // A hidden list must not build its modules. The center section declares
     // both an anchored and an unanchored arrangement and shows whichever
     // fits, so leaving the other one loaded mounts every center module
     // twice — two IPC handlers registered for the same target, two clocks
     // ticking, two of every timer and fetch behind them.
-    active: visible && entries.length > 0
+    //
+    // It follows `shown`, not `visible`: an item reads as invisible while
+    // its window is hidden, and ScreenMoveRemap hides the bar each time its
+    // monitor moves. Following `visible` rebuilt every widget on that bar,
+    // closing any panel open from it.
+    active: shown && entries.length > 0
     sourceComponent: root.vertical ? verticalModuleList : horizontalModuleList
     width: item ? item.implicitWidth : 0
     height: item ? item.implicitHeight : 0

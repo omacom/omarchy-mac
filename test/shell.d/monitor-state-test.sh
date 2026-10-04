@@ -17,8 +17,10 @@ cat >"$test_bin/hyprctl" <<'EOF'
 cat "$FAKE_MONITORS"
 EOF
 
+# FAKE_UNDIMMABLE names a display whose brightness can't be set.
 cat >"$test_bin/omarchy-brightness-display" <<'EOF'
 #!/bin/bash
+[[ $1 == --monitor && -n ${FAKE_UNDIMMABLE:-} && $2 == "$FAKE_UNDIMMABLE" ]] && exit 1
 echo 42
 EOF
 
@@ -52,8 +54,8 @@ assert_line() {
 assert_line_count() {
   local description="$1"
 
-  (( ${#state_lines[@]} == 8 )) ||
-    fail "$description" "expected 8 lines, got ${#state_lines[@]}"
+  (( ${#state_lines[@]} == 9 )) ||
+    fail "$description" "expected 9 lines, got ${#state_lines[@]}"
 }
 
 extended='[
@@ -88,7 +90,19 @@ assert_line 3 eDP-1 "monitor state reports the internal monitor enabled"
 assert_line 4 "" "monitor state reports no mirror while extended"
 assert_line 5 DP-1 "monitor state reports the focused monitor"
 assert_line 6 1.5 "monitor state reports the scale"
+assert_line 8 DP-1 "monitor state reports the brightness of the focused display"
 pass "monitor state keeps its lines aligned when nothing is mirrored"
+
+FAKE_UNDIMMABLE=DP-1 monitor_state "$extended"
+assert_line_count "monitor state answers every line when the focused display can't be dimmed"
+assert_line 0 42 "monitor state reports the laptop panel's brightness instead"
+assert_line 5 DP-1 "monitor state still reports the focused monitor"
+assert_line 8 eDP-1 "monitor state names the laptop panel as the display the brightness is for"
+FAKE_UNDIMMABLE=DP-1 monitor_state "$clamshell"
+assert_line_count "monitor state answers every line with no display to dim"
+assert_line 0 "" "monitor state reports no brightness with the laptop panel off"
+assert_line 8 DP-1 "monitor state keeps the focused display for the brightness"
+pass "monitor state falls back to the laptop panel's brightness when the focused display can't be dimmed"
 
 monitor_state "$mirrored"
 assert_line_count "monitor state answers every line while mirroring"
@@ -109,9 +123,9 @@ assert_line 4 "" "monitor state reports no mirror while clamshelled"
 pass "monitor state separates a disabled internal monitor from a missing one"
 
 monitor_state "$extended"
-[[ ${state_lines[7]-} == '[{"name":"eDP-1","enabled":true,"focused":false,"width":1920,"height":1080},{"name":"DP-1","enabled":true,"focused":true,"width":2560,"height":1440}]' ]] ||
+[[ ${state_lines[7]-} == '[{"name":"eDP-1","model":"","enabled":true,"focused":false,"width":1920,"height":1080},{"name":"DP-1","model":"","enabled":true,"focused":true,"width":2560,"height":1440}]' ]] ||
   fail "monitor state lists every display for the panel" "actual: ${state_lines[7]-<missing>}"
 monitor_state "$clamshell"
-[[ ${state_lines[7]-} == '[{"name":"eDP-1","enabled":false,"focused":false,"width":0,"height":0},{"name":"DP-1","enabled":true,"focused":true,"width":2560,"height":1440}]' ]] ||
+[[ ${state_lines[7]-} == '[{"name":"eDP-1","model":"","enabled":false,"focused":false,"width":0,"height":0},{"name":"DP-1","model":"","enabled":true,"focused":true,"width":2560,"height":1440}]' ]] ||
   fail "monitor state lists every display for the panel" "actual: ${state_lines[7]-<missing>}"
 pass "monitor state lists every display with its enabled and focused state"

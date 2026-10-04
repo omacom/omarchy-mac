@@ -41,8 +41,9 @@ local function proxy()
 end
 hl = {
   dsp = proxy(),
+  define_submap = function() end,
   bind = function(keys, dispatcher, opts)
-    if dispatcher.monitor then
+    if type(dispatcher) == "table" and dispatcher.monitor then
       print(keys .. "\t" .. dispatcher.monitor .. "\t" .. tostring(dispatcher.follow) .. "\t" .. opts.description)
     end
   end,

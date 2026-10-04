@@ -1,0 +1,3 @@
+-- Keep workspaces global, as they are without Omarchy's display handling:
+-- displays are still arranged and scaled, but Super + 1..0 means workspace
+-- 1..0 wherever it is (default/hypr/displays.lua checks for this file).

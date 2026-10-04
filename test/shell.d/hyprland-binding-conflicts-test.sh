@@ -203,6 +203,14 @@ while read -r signature; do
 done < <(duplicate_signatures <<<"$apple_bindings")
 pass "keyboard-scoped binds do not read as a conflict"
 
+# A chord omarchy-mac binds replaces Omarchy's default for it instead of
+# stacking, so a default added on such a chord would go missing on a Mac
+# without reading as a conflict. Only Shift+brightness is meant to.
+replaced=$(grep -vxFf <(printf '%s\n' "$apple_bindings") <<<"$bindings" | cut -f1 | sort -u)
+[[ $replaced == $'SHIFT+XF86MONBRIGHTNESSDOWN\nSHIFT+XF86MONBRIGHTNESSUP' ]] ||
+  fail "omarchy-mac replaces only the default chords it means to" "$replaced"
+pass "omarchy-mac replaces only the default chords it means to"
+
 # Guard the guard: a keysym that lands on an already bound keycode has to be
 # caught, or the check above passes by simply not looking.
 probe=$(PATH="$stub_bin:$PATH" list_bindings "$home" \
@@ -212,8 +220,8 @@ grep -Fqx "SUPER+1" <<<"$probe" ||
 
 # Modifier order is cosmetic; Hyprland binds the same chord either way.
 probe=$(PATH="$stub_bin:$PATH" list_bindings "$home" \
-  'o.bind("SUPER + ALT + SHIFT + RIGHT", "Conflict probe", "true")' | duplicate_signatures)
-grep -Fqx "ALT+SHIFT+SUPER+RIGHT" <<<"$probe" ||
+  'o.bind("SUPER + ALT + CTRL + RIGHT", "Conflict probe", "true")' | duplicate_signatures)
+grep -Fqx "ALT+CTRL+SUPER+RIGHT" <<<"$probe" ||
   fail "the conflict check ignores modifier order"
 pass "the conflict check catches collisions across keycodes and modifier order"
 
