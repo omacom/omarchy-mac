@@ -1,0 +1,3 @@
+#!/bin/bash
+# Runtime leaves call sudo when they do not run as root; the fixture is theirs.
+exec "$@"

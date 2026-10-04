@@ -1,0 +1,44 @@
+#!/bin/bash
+# The new runtime's dispatcher, with omarchy-mac-boot's and omarchy-mac's
+# operations standing in: logs the call and fails while the fixture holds
+# <operation>-fail. setup-boot activates Limine on a Mac that opted in (the
+# gate file), as the package's limine-boot.sh does; setup-user runs as the
+# user, never as root.
+set -euo pipefail
+fixture=${MIGRATE_FIXTURE:?}
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+operation=${1:?}
+shift
+if [[ $operation == "setup-user" ]]; then
+  echo "dispatch $operation HOME=$HOME" >>"$fixture/boot.log"
+else
+  echo "dispatch $operation${*:+ $*}" >>"$fixture/boot.log"
+fi
+[[ ! -e $fixture/$operation-fail ]] || { echo "$operation: failed in the fixture" >&2; exit 1; }
+case $operation in
+  setup-boot)
+    [[ -e $root/var/lib/omarchy/limine.enabled ]] || exit 0
+    if [[ -e $fixture/limine-activation-fail ]]; then
+      echo "limine-boot: limine-update failed; activation failed" >&2
+      exit 1
+    fi
+    # A fixture holding setup-boot-leaf activates Limine with that script
+    # instead (the legacy suite's, which reads the real boot files).
+    [[ ! -f $fixture/setup-boot-leaf ]] || exec bash "$fixture/setup-boot-leaf"
+    echo "limine-boot activate" >>"$fixture/boot.log"
+    printf 'KERNEL_CMDLINE[default]="root=UUID=x"\n' >"$root/etc/default/limine"
+    # Killed half way through the switch, before the UKI exists.
+    if [[ ${OMARCHY_MAC_MIGRATE_KILL_MID:-} == "loader-leaf" && ! -e $fixture/killed-in-leaf ]]; then
+      : >"$fixture/killed-in-leaf"
+      kill -9 "$PPID" $$
+    fi
+    limine-update
+    cp "$root/usr/share/limine/BOOTAA64.EFI" "$root/boot/efi/EFI/BOOT/BOOTAA64.EFI"
+    ;;
+  update-verify)
+    if [[ -e $fixture/boot-check-fail ]]; then
+      echo "Apple Silicon boot check: $(cat "$fixture/boot-check-fail")" >&2
+      exit 1
+    fi
+    ;;
+esac

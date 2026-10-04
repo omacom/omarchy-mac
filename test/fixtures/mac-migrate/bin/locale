@@ -1,0 +1,3 @@
+#!/bin/bash
+# locale -a: the locales the fixture has generated.
+cat "${MIGRATE_FIXTURE:?}/locales" 2>/dev/null || printf 'C\nPOSIX\n'
