@@ -89,7 +89,9 @@ recipe_dir() {
   mkdir -p "$dir"
   while IFS=$'\t' read -r _ entry; do
     mkdir -p "$dir/$(dirname "${entry#pkgbuilds/$name/}")"
-    git -C "$pkgs" show "$pkgs_head:$entry" >"$dir/${entry#pkgbuilds/$name/}" 2>/dev/null ||
+    # Without core.commitGraph=false, a lazy blob fetch from this partial clone can fail with
+    # "in the commit graph file but not in the object database" (git 2.50).
+    git -C "$pkgs" -c core.commitGraph=false show "$pkgs_head:$entry" >"$dir/${entry#pkgbuilds/$name/}" 2>/dev/null ||
       die "could not read $entry on $omacom_branch"
   done < <(git -C "$pkgs" ls-tree -r "$pkgs_head" -- "pkgbuilds/$name/" | awk -F'\t' '$1 ~ / blob / { print "x\t" $2 }')
   [[ -f $dir/PKGBUILD ]] || die "pkgbuilds/$name has no PKGBUILD on $omacom_branch"
@@ -338,8 +340,8 @@ open_pr() {
 checkout_sparse() {
   local branch=$1
   shift
-  git -C "$pkgs" sparse-checkout set "$@" 2>"$work/git.err" &&
-    git -C "$pkgs" checkout --quiet -B "$branch" "$pkgs_head" 2>>"$work/git.err" ||
+  git -C "$pkgs" -c core.commitGraph=false sparse-checkout set "$@" 2>"$work/git.err" &&
+    git -C "$pkgs" -c core.commitGraph=false checkout --quiet -B "$branch" "$pkgs_head" 2>>"$work/git.err" ||
     die "could not check out $omacom_branch: $(tail -n 3 "$work/git.err")"
 }
 
