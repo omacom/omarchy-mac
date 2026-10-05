@@ -92,8 +92,8 @@ pass "x86: browser installs run no hook, even with Mac entrypoints on disk"
 # ── Steam ────────────────────────────────────────────────────────────────────
 
 run apple "$ROOT/bin/omarchy-install-gaming-steam" || fail "apple: Steam installs" "$(cat "$tmp/output")"
-[[ $(cat "$tmp/calls") == $'omarchy-pkg-add steam\npost-install steam\nomarchy-install-gaming-gpu-lib32 ' ]] ||
-  fail "apple: Steam's hook runs after the package and before the 32-bit drivers" "$(cat "$tmp/calls")"
+[[ $(cat "$tmp/calls") == $'omarchy-install-gaming-gpu-lib32 \nomarchy-pkg-add steam\npost-install steam' ]] ||
+  fail "apple: Steam's hook runs right after the package, which follows the 32-bit drivers" "$(cat "$tmp/calls")"
 run apple "$ROOT/bin/omarchy-remove-gaming-steam" || fail "apple: Steam is removed" "$(cat "$tmp/output")"
 [[ $(head -n 2 "$tmp/calls") == $'pre-remove steam\nomarchy-pkg-drop steam' ]] ||
   fail "apple: Steam's pre-remove hook runs before the package goes" "$(cat "$tmp/calls")"
@@ -108,8 +108,8 @@ fi
 pass "apple: Steam's install and removal run their hooks in order, and fail with them"
 
 run x86 "$ROOT/bin/omarchy-install-gaming-steam" || fail "x86: Steam installs" "$(cat "$tmp/output")"
-[[ $(cat "$tmp/calls") == $'omarchy-pkg-add steam\nomarchy-install-gaming-gpu-lib32 ' ]] ||
-  fail "x86: Steam installs as before" "$(cat "$tmp/calls")"
+[[ $(cat "$tmp/calls") == $'omarchy-install-gaming-gpu-lib32 \nomarchy-pkg-add steam' ]] ||
+  fail "x86: Steam installs after its 32-bit drivers" "$(cat "$tmp/calls")"
 run x86 "$ROOT/bin/omarchy-remove-gaming-steam" || fail "x86: Steam is removed" "$(cat "$tmp/output")"
 [[ $(cat "$tmp/calls") == "omarchy-pkg-drop steam" ]] || fail "x86: Steam is removed as before" "$(cat "$tmp/calls")"
 rm -f "$tmp/fail"
