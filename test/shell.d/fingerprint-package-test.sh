@@ -60,14 +60,15 @@ cat > "$scratch/bin/fprintd-verify" <<'STUB'
 echo verify >> "$CALL_LOG"
 exit 1
 STUB
-# fprintd on D-Bus: SCAN_TYPE is the default reader's scan type; unset, fprintd
-# doesn't answer. Never the host's own fprintd.
+# fprintd on D-Bus: SCAN_TYPE is the default reader's scan type and READER_NAME
+# its name; with SCAN_TYPE unset, fprintd doesn't answer. Never the host's own fprintd.
 cat > "$scratch/bin/busctl" <<'STUB'
 #!/bin/bash
 [[ -n ${SCAN_TYPE:-} ]] || exit 1
 case "$*" in
   *GetDefaultDevice*) echo 'o "/net/reactivated/Fprint/Device/0"' ;;
   *"/net/reactivated/Fprint/Device/0 net.reactivated.Fprint.Device scan-type"*) echo "s \"$SCAN_TYPE\"" ;;
+  *"/net/reactivated/Fprint/Device/0 net.reactivated.Fprint.Device name"*) echo "s \"${READER_NAME:-Some USB reader}\"" ;;
   *) exit 1 ;;
 esac
 STUB
@@ -129,14 +130,15 @@ for scan_type in swipe ""; do
 done
 pass "a press sensor is told to touch again, and any other keeps the moving-finger instruction"
 
-# fprintd-enroll's raw results become instructions. The duplicate check's stage
-# comes before any sample, so it prints nothing; later stages count as steps,
-# never touches, since one stage can take several.
+# fprintd-enroll's raw results become instructions. Touch ID's duplicate check
+# stage prints nothing; later stages count as steps, never touches, since one
+# stage can take several.
 enroll_lines=$'Using device /net/reactivated/Fprint/Device/0\nEnrolling right-index-finger finger.'
 for result in stage-passed stage-passed retry-scan stage-passed unknown-error; do
   enroll_lines+=$'\nEnroll result: enroll-'$result
 done
-INSTALLED=$'libfprint-git\nfprintd\nusbutils' SCAN_TYPE=press ENROLL_OUTPUT=$enroll_lines run_setup
+INSTALLED=$'libfprint-git\nfprintd\nusbutils' SCAN_TYPE=press READER_NAME='Apple secure enclave fingerprint sensor' \
+  ENROLL_OUTPUT=$enroll_lines run_setup
 expected=$'  \u2713 Step 1 done. Keep lifting your finger and touching the sensor.
   That one didn\'t read. Keep lifting your finger and touching the sensor.
   \u2713 Step 2 done. Keep lifting your finger and touching the sensor.
@@ -159,6 +161,19 @@ source <(sed -n '/^fprintd_chatter()/,/^}/p;/^enroll_progress()/,/^}/p;/^verify_
 [[ $(printf '%s\n' 'Verify result: verify-no-match (done)' | verify_progress "Touch again.") == $'  \u2717 No match.' ]] ||
   fail "a failed verify says so"
 pass "verify results read as instructions"
+
+# Only Touch ID's first stage is its duplicate check. On any other reader, one
+# that doesn't identify or one whose duplicate check took a touch, the first
+# stage to pass is step 1.
+INSTALLED=$'libfprint-git\nfprintd\nusbutils' SCAN_TYPE=press ENROLL_OUTPUT=$enroll_lines run_setup
+[[ $(grep -c 'Step [0-9] done' "$scratch/output") == 3 ]] ||
+  fail "another reader's first stage is step 1" "$(cat "$scratch/output")"
+INSTALLED=$'libfprint-git\nfprintd\nusbutils' ENROLL_OUTPUT=$enroll_lines run_setup
+[[ $(grep -c 'Step [0-9] done' "$scratch/output") == 3 ]] ||
+  fail "a reader fprintd can't name has its first stage counted" "$(cat "$scratch/output")"
+[[ $(printf '%s\n' 'Enroll result: enroll-stage-passed' 'Enroll result: enroll-stage-passed' | enroll_progress "Again." 1) == \
+  $'  \u2713 Step 1 done. Again.' ]] || fail "with a duplicate check, the first stage is not a step"
+pass "only a reader with a duplicate check leaves its first stage out of the steps"
 
 # sudo's own prompt comes first and is named as such; with sudo already
 # authenticated there is no prompt to explain.
@@ -190,9 +205,9 @@ pass "a failed sudo stops setup with a reason, before enrolling"
 
 # Every retry fprintd 1.94.5 can send keeps enrollment going; only a failure
 # says it stopped, and a result fprintd adds later is shown, not called a stop.
-[[ $(printf '%s\n' 'Enroll result: enroll-stage-passed' 'Enroll result: enroll-too-fast' \
+[[ $(printf '%s\n' 'Enrolling right-index-finger finger.' 'Enroll result: enroll-stage-passed' 'Enroll result: enroll-too-fast' \
   'Enroll result: enroll-swipe-too-short' 'Enroll result: enroll-stage-passed' 'Enroll result: enroll-some-new-result' \
-  'Enroll result: enroll-completed' | enroll_progress "Swipe it again.") == $'  Too fast. Swipe it again.\n  Too short. Swipe it again.\n  \u2713 Step 1 done. Swipe it again.\n  enroll-some-new-result\n  \u2713 Enrolled.' ]] ||
+  'Enroll result: enroll-completed' | enroll_progress "Swipe it again." 1) == $'  Too fast. Swipe it again.\n  Too short. Swipe it again.\n  \u2713 Step 1 done. Swipe it again.\n  enroll-some-new-result\n  \u2713 Enrolled.' ]] ||
   fail "enrollment retries keep going, and an unknown result is shown"
 [[ $(printf '%s\n' 'Verify result: verify-too-fast (not done)' 'Verify result: verify-some-new-retry (not done)' \
   'Verify result: verify-disconnected (done)' | verify_progress "Swipe it again.") == $'  Too fast. Swipe it again.\n  That one didn\'t read. Swipe it again.\n  \u2717 The check stopped.' ]] ||
