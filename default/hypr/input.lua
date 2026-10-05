@@ -65,10 +65,14 @@ hl.config({
       -- Match macOS: natural scrolling, and physical clicks instead of taps.
       -- On the Asahi touchpad, disable_while_typing alone does not stop stray
       -- taps while typing; turning off tap_to_click does.
+      -- install/hardware/apple/fix-mtp-trackpad.sh installs Apple MTP quirks
+      -- and a measured size hint used only without kernel axis resolution.
+      -- The size hint does not change palm rejection on pads with resolution.
       natural_scroll = true,
       tap_to_click = false,
       clickfinger_behavior = true,
       scroll_factor = 0.4,
+      disable_while_typing = true,
     },
   },
 
