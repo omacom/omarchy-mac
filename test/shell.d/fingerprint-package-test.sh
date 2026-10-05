@@ -2,8 +2,9 @@
 #
 # The fingerprint setup installs libfprint-git in place of stock libfprint. The
 # two conflict, so the swap has to happen inside one --ask 4 transaction, and a
-# rerun with everything installed must not touch pacman at all. The real
-# omarchy-pkg-missing runs; pacman and the privileged calls are stubbed.
+# rerun with everything installed must not touch pacman at all. A platform that
+# names its readers keeps its own libfprint. The real omarchy-pkg-missing runs;
+# pacman and the privileged calls are stubbed.
 
 set -euo pipefail
 
@@ -14,6 +15,12 @@ trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/bin"
 export CALL_LOG="$scratch/calls"
 export PATH="$scratch/bin:$ROOT/bin:$PATH"
+
+# The setup reads the platform root from a fixture: no platform file unless a
+# case writes one, whatever the machine running the suite has installed.
+platform_root="$scratch/platform"
+mkdir -p "$platform_root"
+platform_root_copy "$ROOT/bin/omarchy-setup-security-fingerprint" "$scratch/setup" "$platform_root"
 
 cat > "$scratch/bin/omarchy-hw-fingerprint" <<'STUB'
 #!/bin/bash
@@ -60,7 +67,7 @@ chmod +x "$scratch/bin/"*
 
 run_setup() {
   : > "$CALL_LOG"
-  if "$ROOT/bin/omarchy-setup-security-fingerprint" > "$scratch/output" 2>&1; then
+  if "$scratch/setup" > "$scratch/output" 2>&1; then
     fail "setup stops on the simulated enrollment or installation failure"
   fi
   if grep -q 'Unexpected privileged call' "$CALL_LOG"; then
@@ -98,3 +105,19 @@ pass "a failed installation stops before enrollment"
 HARDWARE_STATUS=1 run_setup
 [[ ! -s $CALL_LOG ]] || fail "missing hardware stops before package operations"
 pass "missing hardware performs no package operations"
+
+# A platform that names its readers supplies their libfprint: setup adds only
+# fprintd, and never swaps in libfprint-git, which lacks the platform's driver.
+printf '/sys/bus/platform/drivers/apple_sep/*/diag/touchid ready\n' >"$platform_root/fingerprint-readers"
+INSTALLED=$'libfprint' run_setup
+grep -qx 'pacman -S --needed --noconfirm --ask 4 -- fprintd' "$CALL_LOG" ||
+  fail "a platform-named reader installs fprintd alone" "$(cat "$CALL_LOG")"
+grep -qx enroll "$CALL_LOG" || fail "a platform-named reader reaches enrollment"
+pass "a platform-named reader keeps the platform's libfprint and installs fprintd alone"
+
+INSTALLED=$'libfprint\nfprintd' run_setup
+if grep -q '^pacman' "$CALL_LOG"; then
+  fail "a platform-named reader with fprintd installed does not touch pacman"
+fi
+pass "a platform-named reader with fprintd installed goes straight to enrollment"
+rm -f "$platform_root/fingerprint-readers"
