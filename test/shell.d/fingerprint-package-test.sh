@@ -25,6 +25,8 @@ case "$1" in
   -n) exit "${SUDO_CACHED:-1}" ;;
   -v) echo "sudo authenticated" >> "$CALL_LOG"; exit "${SUDO_V_STATUS:-0}" ;;
   pacman | fprintd-enroll) exec "$@" ;;
+  # PAM edits are logged, never made; tee's input is read and dropped.
+  sed | tee) echo "privileged $*" >> "$CALL_LOG"; [[ $1 != "tee" ]] || cat > /dev/null ;;
   *) echo "Unexpected privileged call: $*" >> "$CALL_LOG"; exit 99 ;;
 esac
 STUB
@@ -47,18 +49,18 @@ case "$1" in
   *) printf 'pacman %s\n' "$*" >> "$CALL_LOG"; exit 99 ;;
 esac
 STUB
+# Both fail unless ENROLL_STATUS or VERIFY_STATUS says otherwise, stopping
+# before PAM. ENROLL_OUTPUT is what fprintd-enroll prints first.
 cat > "$scratch/bin/fprintd-enroll" <<'STUB'
 #!/bin/bash
-# Stop before verification/PAM; no host authentication files may be changed.
-# ENROLL_OUTPUT is what fprintd-enroll prints first.
 echo enroll >> "$CALL_LOG"
 [[ -z ${ENROLL_OUTPUT:-} ]] || printf '%s\n' "$ENROLL_OUTPUT"
-exit 1
+exit "${ENROLL_STATUS:-1}"
 STUB
 cat > "$scratch/bin/fprintd-verify" <<'STUB'
 #!/bin/bash
 echo verify >> "$CALL_LOG"
-exit 1
+exit "${VERIFY_STATUS:-1}"
 STUB
 # fprintd on D-Bus: SCAN_TYPE is the default reader's scan type and READER_NAME
 # its name; with SCAN_TYPE unset, fprintd doesn't answer. Never the host's own fprintd.
@@ -79,8 +81,8 @@ run_setup() {
   if "$ROOT/bin/omarchy-setup-security-fingerprint" > "$scratch/output" 2>&1; then
     fail "setup stops on the simulated enrollment or installation failure"
   fi
-  if grep -q 'Unexpected privileged call' "$CALL_LOG"; then
-    fail "setup does not change PAM after failed enrollment"
+  if grep -q -e 'Unexpected privileged call' -e '^privileged ' "$CALL_LOG"; then
+    fail "setup does not change PAM after a failed enrollment, installation or verify"
   fi
 }
 
@@ -148,6 +150,25 @@ expected=$'  \u2713 Step 1 done. Keep lifting your finger and touching the senso
 ! grep -q 'Enroll result:' "$scratch/output" || fail "no raw fprintd result reaches the owner" "$(cat "$scratch/output")"
 grep -q 'Enrollment failed' "$scratch/output" || fail "a failed enrollment still fails setup" "$(cat "$scratch/output")"
 pass "enrollment results read as instructions, and a failed enrollment still fails setup"
+
+# PAM changes only after an enrolled print verifies; a failed verify fails setup.
+: > "$CALL_LOG"
+if INSTALLED=$'libfprint-git\nfprintd\nusbutils' SCAN_TYPE=press ENROLL_STATUS=0 VERIFY_STATUS=1 \
+  "$ROOT/bin/omarchy-setup-security-fingerprint" > "$scratch/output" 2>&1; then
+  fail "a failed verify fails setup" "$(cat "$scratch/output")"
+fi
+grep -qx verify "$CALL_LOG" && ! grep -q '^privileged ' "$CALL_LOG" ||
+  fail "a failed verify leaves PAM alone" "$(cat "$CALL_LOG")"
+: > "$CALL_LOG"
+INSTALLED=$'libfprint-git\nfprintd\nusbutils' SCAN_TYPE=press ENROLL_STATUS=0 VERIFY_STATUS=0 \
+  "$ROOT/bin/omarchy-setup-security-fingerprint" > "$scratch/output" 2>&1 ||
+  fail "a verified print completes setup" "$(cat "$scratch/output")"
+# Only the lock-screen file is written whatever the host's /etc/pam.d holds.
+verified=$(grep -nx verify "$CALL_LOG" | cut -d: -f1)
+lock_pam=$(grep -n '^privileged tee /etc/pam.d/omarchy-lock-fingerprint$' "$CALL_LOG" | cut -d: -f1)
+[[ -n $verified && -n $lock_pam ]] && (( verified < lock_pam )) ||
+  fail "PAM is written after verify" "$(cat "$CALL_LOG")"
+pass "PAM is written only after a print verifies, and a failed verify fails setup"
 
 # The verify step's results, in fprintd-verify's own format (each with " (done)"
 # or " (not done)"), through the functions setup uses.
