@@ -65,6 +65,88 @@ account    include                     system-local-login
 EOF
 }
 
+# fprintd's scan type for the default reader: "press" for a sensor that takes
+# separate touches (a Mac's Touch ID, most current readers), "swipe" for one
+# that reads a moving finger. Empty when fprintd can't be asked.
+fingerprint_scan_type() {
+  local device
+  device=$(busctl --system call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
+    net.reactivated.Fprint.Manager GetDefaultDevice 2>/dev/null) || return 0
+  device=${device#o \"}
+  device=${device%\"}
+  busctl --system get-property net.reactivated.Fprint "$device" net.reactivated.Fprint.Device scan-type 2>/dev/null |
+    sed -n 's/^s "\(.*\)"$/\1/p'
+}
+
+# fprintd's own lines that carry nothing for the owner; anything else it
+# prints that isn't a result, such as why a claim or start failed, is shown.
+fprintd_chatter() {
+  [[ $1 == "Using device "* || $1 == "Enrolling "*" finger." || $1 == "Listing enrolled fingers:" ||
+    $1 == " - #"* || $1 == "Verify started!" || $1 == "Verifying: "* ]]
+}
+
+# fprintd-enroll's results as instructions, AGAIN asking for more. On a reader
+# that identifies, fprintd's duplicate check sends one stage before enrollment
+# starts, with no touch on an empty Touch ID gallery and one otherwise, so it
+# prints nothing; later stages are steps, as one can take several touches.
+enroll_progress() {
+  local again=$1 line steps=-1
+  while IFS= read -r line; do
+    if [[ $line != "Enroll result: "* ]]; then
+      fprintd_chatter "$line" || echo "  $line"
+      continue
+    fi
+    case ${line#Enroll result: } in
+      enroll-stage-passed)
+        if (( ++steps > 0 )); then
+          echo "  ✓ Step $steps done. $again"
+        fi
+        ;;
+      enroll-retry-scan) echo "  That one didn't read. $again" ;;
+      enroll-swipe-too-short) echo "  Too short. $again" ;;
+      enroll-finger-not-centered) echo "  Not centered: use the middle of the sensor. $again" ;;
+      enroll-remove-and-retry) echo "  Lift your finger off the sensor, then: $again" ;;
+      enroll-too-fast) echo "  Too fast. $again" ;;
+      enroll-completed) echo "  ✓ Enrolled." ;;
+      enroll-duplicate) echo "  ✗ That finger is already enrolled." ;;
+      enroll-data-full) echo "  ✗ The reader has no room for another fingerprint." ;;
+      enroll-disconnected) echo "  ✗ The reader was disconnected." ;;
+      enroll-failed | enroll-unknown-error)
+        echo "  ✗ Enrollment stopped. If you stopped before it said Enrolled, run this again and keep going." ;;
+      *) echo "  ${line#Enroll result: }" ;;
+    esac
+  done
+}
+
+# fprintd-verify's results the same way.
+# fprintd-verify suffixes each result with " (done)" or " (not done)"; a
+# result that isn't done is a retry, whatever its name.
+verify_progress() {
+  local again=$1 line
+  while IFS= read -r line; do
+    if [[ $line != "Verify result: "* ]]; then
+      fprintd_chatter "$line" || echo "  $line"
+      continue
+    fi
+    line=${line#Verify result: }
+    if [[ $line == *" (not done)" ]]; then
+      case ${line% (*} in
+        verify-swipe-too-short) echo "  Too short. $again" ;;
+        verify-finger-not-centered) echo "  Not centered: use the middle of the sensor. $again" ;;
+        verify-remove-and-retry) echo "  Lift your finger off the sensor, then: $again" ;;
+        verify-too-fast) echo "  Too fast. $again" ;;
+        *) echo "  That one didn't read. $again" ;;
+      esac
+      continue
+    fi
+    case ${line% (*)} in
+      verify-match) echo "  ✓ Matched." ;;
+      verify-no-match) echo "  ✗ No match." ;;
+      *) echo "  ✗ The check stopped." ;;
+    esac
+  done
+}
+
 
 echo -e "\e[32mSetting up fingerprint scanner for authentication.\n\e[0m"
 
@@ -84,15 +166,37 @@ if omarchy-pkg-missing libfprint-git fprintd usbutils; then
 fi
 
 # Enroll first fingerprint
-echo -e "\e[32m\nLet's setup your right index finger as the first fingerprint.\e[0m"
-echo -e "Keep moving the finger around on sensor until the process completes.\n"
+# Authenticate sudo first, and say so: with fingerprint sudo already set up it
+# asks for a touch of its own, which must not pass for the first sample.
+if ! sudo -n true 2>/dev/null; then
+  echo -e "\nFirst, confirm it's you. Setup needs administrator rights to enroll."
+  if ! sudo -v; then
+    echo -e "\e[31mSetup needs administrator rights to enroll a fingerprint.\e[0m"
+    exit 1
+  fi
+fi
 
-if sudo fprintd-enroll "$USER"; then
+echo -e "\e[32m\nLet's set up your right index finger as the first fingerprint.\e[0m"
+# A press sensor needs a touch for each sample; a swipe sensor a moving finger.
+if [[ $(fingerprint_scan_type) == "press" ]]; then
+  start="Touch the sensor." again="Keep lifting your finger and touching the sensor."
+  echo -e "Touch the sensor, lift your finger and touch it again, and keep going until it says Enrolled. A step can take a few touches.\n"
+else
+  start="Swipe your finger across the sensor." again="Swipe it again."
+  echo -e "Keep moving the finger around on sensor until it says Enrolled.\n"
+fi
+
+# The filters only print; the exit status is fprintd's.
+sudo fprintd-enroll "$USER" | enroll_progress "$again"
+enroll_status=${PIPESTATUS[0]}
+if (( enroll_status == 0 )); then
   echo -e "\e[32m\nFingerprint enrolled successfully!\e[0m"
 
   # Verify
-  echo -e "\nNow let's verify that it's working correctly.\n"
-  if fprintd-verify; then
+  echo -e "\nNow let's verify that it's working correctly. $start\n"
+  fprintd-verify | verify_progress "$again"
+  verify_status=${PIPESTATUS[0]}
+  if (( verify_status == 0 )); then
     # PAM comes last, once a print is enrolled and verified. Detection only
     # proves a reader is there, not that libfprint can drive it — an Elan MOC
     # sensor outside the elanmoc table gets this far and then fails to enroll.
