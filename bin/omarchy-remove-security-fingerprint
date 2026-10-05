@@ -34,11 +34,6 @@ remove_pam_config
 remove_lock_fingerprint_pam
 
 echo "Removing fingerprint packages..."
-# A platform that names its readers owns their libfprint, as in the setup.
-if [[ -s /usr/share/omarchy-platform/fingerprint-readers ]]; then
-  omarchy-pkg-drop fprintd
-else
-  omarchy-pkg-drop fprintd libfprint libfprint-git
-fi
+omarchy-pkg-drop fprintd libfprint libfprint-git
 
 echo -e "\e[32mFingerprint authentication has been completely removed.\e[0m"
