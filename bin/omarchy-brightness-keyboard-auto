@@ -7,6 +7,8 @@
 # Inverse of display auto-brightness: dark rooms need the keys lit, bright
 # rooms do not. Manual Shift+F1/F2 (or any other write to the LED) pauses
 # auto until ambient light moves enough that the old choice no longer fits.
+# A write while locked, while the lid is closed, or across a gap long enough
+# to be suspend is not a manual choice.
 
 set -euo pipefail
 
@@ -143,6 +145,21 @@ max=$(<"$kbd_path/max_brightness")
 last_set=""
 paused=0
 pause_lux=0
+last_tick_at=""
+
+# Suspend freezes this process, so the next poll is late. A brightness-key
+# change lands between normal polls. Forget a manual pause after a late poll
+# so a controller that woke at 0 is driven from the sensor again.
+note_tick_time() {
+  local now
+  now=$(date +%s) || return 0
+  [[ $now =~ ^[0-9]+$ ]] || return 0
+  if [[ -n $last_tick_at ]] && (( now - last_tick_at > POLL_SECONDS * 3 )); then
+    last_set=""
+    paused=0
+  fi
+  last_tick_at=$now
+}
 
 session_locked() {
   omarchy-hyprland-session-locked >/dev/null 2>&1
@@ -183,9 +200,13 @@ apply_percent() {
 tick() {
   local lux current delta threshold
 
+  note_tick_time
+
   lux=$(read_lux) || return 0
 
   if session_locked || lid_closed; then
+    last_set=""
+    paused=0
     return 0
   fi
 
