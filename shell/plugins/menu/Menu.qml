@@ -70,6 +70,8 @@ Item {
   property int applySerial: 0
   property var items: ({})
   property var itemOrder: []
+  // Each entry is { menu, selectedIndex } so going back lands the cursor
+  // where it was when the submenu was entered, not back at the top.
   property var navStack: []
   property var providersLoaded: ({})
   property var providerQueue: []
@@ -726,13 +728,15 @@ Item {
     root.rebuildDisplay()
   }
 
-  function setActiveMenu(id, pushHistory, fromPointer) {
+  function setActiveMenu(id, pushHistory, fromPointer, restoreIndex) {
     panel.freezeCardTop()
     if (!root.item(id)) id = "root"
-    if (pushHistory && id !== root.activeMenu) root.navStack = root.navStack.concat([root.activeMenu])
+    if (pushHistory && id !== root.activeMenu) {
+      root.navStack = root.navStack.concat([{ menu: root.activeMenu, selectedIndex: root.selectedIndex }])
+    }
     root.activeMenu = id
     root.filterText = ""
-    root.selectedIndex = 0
+    root.selectedIndex = (restoreIndex === undefined || restoreIndex < 0) ? 0 : restoreIndex
     root.cursorActive = true
     if (fromPointer) pointerGate.allowInitialSample()
     else root.disarmPointer()
@@ -747,7 +751,7 @@ Item {
     if (root.navStack.length > 0) {
       var previous = root.navStack[root.navStack.length - 1]
       root.navStack = root.navStack.slice(0, root.navStack.length - 1)
-      root.setActiveMenu(previous, false)
+      root.setActiveMenu(previous.menu, false, false, previous.selectedIndex)
       return true
     }
 
