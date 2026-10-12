@@ -19,9 +19,17 @@ import tempfile
 import time
 import uuid
 
-SINK = 'omarchy_asahi_mic'
-MONITOR = SINK + '.monitor'
+# The mapping is a virtual source. It used to be a null sink whose monitor was
+# the default input, but pipewire-pulse clients that name no device (parecord,
+# and most apps) are then linked by WirePlumber to the default *sink's* monitor
+# instead, and record silence (#672). A virtual source routes like any
+# microphone, and it can never become the default output (#700).
+MAPPING = 'omarchy_asahi_mic'
+LEGACY_MONITOR = MAPPING + '.monitor'
 OWNER = 'omarchy.asahi-mic.owner'
+MEDIA_CLASS = 'Audio/Source/Virtual'
+DSP = re.compile(r'effect_output\.j[0-9]+-mic')
+MODEL = Path('/proc/device-tree/model')
 
 
 class Deferred(Exception):
@@ -31,7 +39,8 @@ class Deferred(Exception):
 class Audio:
     def run(self, *args):
         try:
-            return subprocess.run(args, check=True, capture_output=True, text=True, timeout=5).stdout.strip()
+            return subprocess.run(args, check=True, capture_output=True, text=True, timeout=5,
+                                  env=dict(os.environ, LC_ALL='C')).stdout.strip()
         except subprocess.CalledProcessError as error:
             raise RuntimeError(' '.join(args[:2]) + ': ' + error.stderr.strip()) from error
 
@@ -44,11 +53,13 @@ class Audio:
     def modules(self):
         # PipeWire's pactl JSON module rows omit the numeric index. The short
         # format retains the load-module identity needed for scoped rollback.
+        # A multi-line module argument (module-rt from asahi-audio's PipeWire
+        # config) continues on lines without an index; they are not modules.
         result = []
         for line in self.run('pactl', 'list', 'short', 'modules').splitlines():
             fields = line.split('\t')
             if len(fields) < 3 or not fields[0].isdecimal():
-                raise ValueError('Invalid PulseAudio module identity')
+                continue
             result.append(dict(index=fields[0], name=fields[1], argument=fields[2]))
         return result
 
@@ -87,12 +98,33 @@ def gain(obj):
     return dict(volume=values, mute=obj['mute'])
 
 
-def save_state(audio, path):
-    sinks = {obj['name']: obj for obj in audio.objects('sinks')}
-    sources = {obj['name']: obj for obj in audio.objects('sources')}
-    if SINK not in sinks or MONITOR not in sources:
-        return
-    data = json.dumps(dict(sink=gain(sinks[SINK]), monitor=gain(sources[MONITOR])), sort_keys=True)
+def legacy_gain(sink, monitor):
+    # The null-sink mapping applied its sink gain and its monitor gain in turn;
+    # the product is what apps heard, so that is what the source inherits.
+    return dict(volume=[min(a * b // 65536, 2**31 - 1) for a, b in zip(sink['volume'], monitor['volume'])],
+                mute=sink['mute'] or monitor['mute'])
+
+
+def description():
+    # The name apps show for the microphone, as macOS words it: the family, not
+    # the board code asahi-audio puts in its own nodes.
+    try:
+        model = MODEL.read_bytes().decode(errors='replace')
+    except OSError:
+        model = ''
+    return ('MacBook' if 'MacBook' in model else 'Built-in') + ' Microphone'
+
+
+def find_dsp(sources):
+    return next((obj['name'] for obj in sources if DSP.fullmatch(obj['name'])), None)
+
+
+def mapping_source(audio):
+    return next((obj for obj in audio.objects('sources') if obj['name'] == MAPPING), None)
+
+
+def write_state(path, state):
+    data = json.dumps(dict(source=state), sort_keys=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and path.read_text() == data:
         return
@@ -101,24 +133,85 @@ def save_state(audio, path):
     os.replace(temporary.name, path)
 
 
-def restore_gain(audio, path):
-    if not path.exists():
+def save_state(audio, path):
+    source = mapping_source(audio)
+    if source is None:
         return
-    saved = json.loads(path.read_text())
-    for kind, name, key in (('sink', SINK, 'sink'), ('source', MONITOR, 'monitor')):
-        state = saved[key]
+    write_state(path, gain(source))
+
+
+def load_state(path):
+    # A state file this service cannot read is treated as absent: the mapping
+    # matters more than a remembered gain, and the next save replaces it.
+    if not path.exists():
+        return None
+
+    def validated(state):
         # Validate persisted values before using them as pactl arguments.
-        validated = gain(dict(volume={str(i): {'value': value} for i, value in enumerate(state['volume'])}, mute=state['mute']))
-        audio.run('pactl', 'set-' + kind + '-volume', name, *(str(value) for value in validated['volume']))
-        audio.run('pactl', 'set-' + kind + '-mute', name, '1' if validated['mute'] else '0')
+        return gain(dict(volume={str(i): {'value': value} for i, value in enumerate(state['volume'])}, mute=state['mute']))
+    try:
+        saved = json.loads(path.read_text())
+        if 'source' in saved:
+            return validated(saved['source'])
+        return legacy_gain(validated(saved['sink']), validated(saved['monitor']))
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        print('Ignoring unreadable microphone mapping state ' + str(path) + ': ' + str(error), file=sys.stderr)
+        return None
 
 
-def restore_output(audio, previous):
-    if previous and previous != SINK and audio.run('pactl', 'get-default-sink') == SINK:
-        if previous in {obj['name'] for obj in audio.objects('sinks')}:
-            # Check again immediately before changing a default the module took.
-            if audio.run('pactl', 'get-default-sink') == SINK:
-                audio.run('pactl', 'set-default-sink', previous)
+def restore_gain(audio, path):
+    state = load_state(path)
+    if state is None:
+        return
+    audio.run('pactl', 'set-source-volume', MAPPING, *(str(value) for value in state['volume']))
+    audio.run('pactl', 'set-source-mute', MAPPING, '1' if state['mute'] else '0')
+
+
+def owned(module, media_class=None):
+    argument = module.get('argument', '')
+    return (module.get('name') == 'module-null-sink' and 'sink_name=' + MAPPING + ' ' in argument + ' '
+            and OWNER + '=' in argument and (media_class is None or ('media.class=' + media_class) in argument))
+
+
+def retire_legacy(audio, state, dsp):
+    # An earlier version mapped into a null sink. Keep its gain and mute, then
+    # remove it: its sink could become the default output and its monitor fails
+    # untargeted captures. Returns whether it was the selected input, which the
+    # new mapping then takes over. No default is written here: WirePlumber
+    # falls back by priority on its own, and its configured default keeps the
+    # monitor's name, which the adopt rule recognises on every retry.
+    sinks = {obj['name']: obj for obj in audio.objects('sinks')}
+    if MAPPING not in sinks:
+        return False
+    modules = [module for module in audio.modules() if owned(module) and 'media.class=' + MEDIA_CLASS not in module['argument']]
+    if len(modules) != 1:
+        raise RuntimeError(MAPPING + ' is a sink this service does not own; not replacing it')
+    sources = {obj['name']: obj for obj in audio.objects('sources')}
+    if LEGACY_MONITOR in sources:
+        write_state(state, legacy_gain(gain(sinks[MAPPING]), gain(sources[LEGACY_MONITOR])))
+    selected = audio.run('pactl', 'get-default-source') == LEGACY_MONITOR
+    audio.run('pactl', 'unload-module', modules[0]['index'])
+    return selected
+
+
+def configured_source(audio):
+    # The input somebody chose, as WirePlumber remembers it (pactl
+    # set-default-source and the audio panel both write it). Empty when the
+    # default is only WirePlumber's own pick by priority, which is what a fresh
+    # session has: that pick is the DSP, and the mapping may take it over. A
+    # DSP the user chose on purpose is left alone.
+    try:
+        text = audio.run('pw-metadata', '-n', 'default', '0', 'default.configured.audio.source')
+    except Exception:
+        return ''
+    match = re.search(r"value:'(.*)' type:", text)
+    if not match:
+        return ''
+    try:
+        value = json.loads(match.group(1))
+    except ValueError:
+        return ''
+    return value.get('name', '') if isinstance(value, dict) else ''
 
 
 def reconcile(audio, state, save_only=False):
@@ -126,45 +219,62 @@ def reconcile(audio, state, save_only=False):
         save_state(audio, state)
         return
     sources = audio.objects('sources')
-    original_input = audio.run('pactl', 'get-default-source')
-    original_output = audio.run('pactl', 'get-default-sink')
-    dsp = next((obj['name'] for obj in sources if re.fullmatch(r'effect_output\.j[0-9]+-mic', obj['name'])), None)
+    dsp = find_dsp(sources)
     if not dsp:
         raise Deferred('No Asahi DSP microphone is present; user service will retry if an array appears')
-    sinks = audio.objects('sinks')
+    # Read before anything here writes a default of its own, which WirePlumber
+    # would remember as a choice: a retried mapping must still take over.
+    configured = configured_source(audio)
+    legacy_selected = retire_legacy(audio, state, dsp)
+    sources = audio.objects('sources')
+    original_input = audio.run('pactl', 'get-default-source')
+    # The mapping takes over an unset default, the legacy monitor's place, the
+    # mapping's own place (WirePlumber fell back while it was missing), or a
+    # DSP that only WirePlumber picked; a DSP somebody chose stays.
+    # Never rewritten when it already is the default: pactl set-default-source
+    # raises a server event, which is what wakes this watcher.
+    adopt = original_input != MAPPING and (legacy_selected or original_input == '' or configured in (MAPPING, LEGACY_MONITOR)
+                                           or (original_input == dsp and configured != dsp))
     owner = uuid.uuid4().hex
     module = None
     changed_input = False
+
     def restore_input():
-        if original_input and audio.run('pactl', 'get-default-source') == MONITOR:
+        # A mapping WirePlumber re-selected because it is the configured
+        # default is the choice being honoured, not a temporary one.
+        if configured == MAPPING:
+            return
+        if original_input and audio.run('pactl', 'get-default-source') == MAPPING:
             if original_input in {obj['name'] for obj in audio.objects('sources')}:
-                if audio.run('pactl', 'get-default-source') == MONITOR:
+                if audio.run('pactl', 'get-default-source') == MAPPING:
                     audio.run('pactl', 'set-default-source', original_input)
     try:
-        if not any(obj['name'] == SINK for obj in sinks):
-            module = audio.run('pactl', 'load-module', 'module-null-sink', 'sink_name=' + SINK,
-                               'channels=2', 'channel_map=front-left,front-right',
-                               'sink_properties=device.description=AsahiMicrophone node.virtual=true priority.session=1 ' + OWNER + '=' + owner)
+        if not any(obj['name'] == MAPPING for obj in sources):
+            # The value is quoted whole so the description keeps its space.
+            module = audio.run('pactl', 'load-module', 'module-null-sink', 'media.class=' + MEDIA_CLASS,
+                               'sink_name=' + MAPPING, 'channels=2', 'channel_map=front-left,front-right',
+                               'sink_properties="device.description=\'' + description() + '\' node.virtual=true priority.session=1 ' + OWNER + '=' + owner + '"')
             if not module.isdecimal():
                 raise RuntimeError('PulseAudio did not return a module identity')
-            # Some policy managers auto-select a newly created monitor. Undo
+            # Some policy managers auto-select a newly created source. Undo
             # only that owned temporary choice before waiting for its links.
             restore_input()
         for attempt in range(30):
             graph = audio.graph()
             output = port(graph, dsp, 'capture_AUX0')
-            inputs = [port(graph, SINK, 'playback_' + channel) for channel in ('FL', 'FR')]
-            monitor_exists = any(obj['name'] == MONITOR for obj in audio.objects('sources'))
-            if output is not None and all(value is not None for value in inputs) and monitor_exists:
+            inputs = [port(graph, MAPPING, 'input_' + channel) for channel in ('FL', 'FR')]
+            mapping_exists = any(obj['name'] == MAPPING for obj in audio.objects('sources'))
+            if output is not None and all(value is not None for value in inputs) and mapping_exists:
                 break
             audio.pause()
         else:
             raise RuntimeError('Asahi AUX0 and both stereo mapping ports must be ready')
         if module is not None:
             restore_gain(audio, state)
+
         def validate_endpoints(graph):
             if port(graph, dsp, 'capture_AUX0') != output or [
-                port(graph, SINK, 'playback_' + channel) for channel in ('FL', 'FR')
+                port(graph, MAPPING, 'input_' + channel) for channel in ('FL', 'FR')
             ] != inputs:
                 raise RuntimeError('Asahi microphone endpoints changed during mapping')
         for input_ in inputs:
@@ -181,7 +291,6 @@ def reconcile(audio, state, save_only=False):
             audio.pause()
         else:
             raise RuntimeError('Asahi microphone stereo links did not become ready')
-        restore_output(audio, original_output)
         graph = audio.graph()
         validate_endpoints(graph)
         if not all(links(graph, output, input_) for input_ in inputs):
@@ -189,11 +298,11 @@ def reconcile(audio, state, save_only=False):
         # Read the user's choice after the final graph query so a device change
         # during that query is not overwritten. Pulse has no atomic compare/set.
         current_input = audio.run('pactl', 'get-default-source')
-        if original_input in ('', dsp) and current_input == original_input:
+        if adopt and current_input == original_input:
             changed_input = True
-            audio.run('pactl', 'set-default-source', MONITOR)
-        # Existing DSP, monitor and sink gain/mute are never reset. Save only
-        # the owned mapping so a new module after daemon restart can recover it.
+            audio.run('pactl', 'set-default-source', MAPPING)
+        # Existing DSP and user device gain/mute are never reset. Save only the
+        # owned mapping so a new module after daemon restart can recover it.
         save_state(audio, state)
     except Exception:
         def cleanup(action):
@@ -201,13 +310,16 @@ def reconcile(audio, state, save_only=False):
                 action()
             except Exception as error:
                 print('Asahi microphone rollback incomplete: ' + str(error), file=sys.stderr)
+
         def restore_changed_input():
             if changed_input or module is not None:
                 restore_input()
+
         def remove_links():
             for obj in audio.graph():
                 if obj.get('type', '').endswith(':Link') and obj.get('info', {}).get('props', {}).get(OWNER) == owner:
                     audio.run('pw-link', '-d', str(obj['id']))
+
         def remove_module():
             if module is not None:
                 for obj in audio.modules():
@@ -215,7 +327,7 @@ def reconcile(audio, state, save_only=False):
                         audio.run('pactl', 'unload-module', module)
         # A dead PipeWire graph must not prevent removing a module still owned
         # by PulseAudio, or restoring a default that this invocation changed.
-        for action in (restore_changed_input, lambda: restore_output(audio, original_output), remove_links, remove_module):
+        for action in (restore_changed_input, remove_links, remove_module):
             cleanup(action)
         raise
 
