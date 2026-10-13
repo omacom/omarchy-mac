@@ -9,6 +9,21 @@ components.
 
 Run `omarchy-restart-shell` after making changes to QML files.
 
+## Palette
+
+Qt 6.12 adds `QtQuick.Color`. A file that `import QtQuick` must not read the
+shell palette as an unqualified `Color`, including `Connections.target`.
+Import the module twice and qualify the palette:
+
+```qml
+import qs.Commons
+import qs.Commons as Commons
+```
+
+Use `Commons.Color`. Keep the unqualified import for `Style`, `Border`, and
+`Util`. Third-party plugins have their own QML scope, so this host fix does
+not update them. See `docs/omarchy-shell.md`.
+
 ## Plugin contract
 
 - First-party plugins live directly under `shell/plugins/` or one category
