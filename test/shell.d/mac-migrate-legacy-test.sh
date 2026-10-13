@@ -637,6 +637,8 @@ esp_at_boot() {
 root=$OMARCHY_MAC_MIGRATE_ROOT
 [[ -d $root/boot/efi/EFI/BOOT ]] || { echo "limine-boot: the ESP is not mounted at /boot/efi" >&2; exit 1; }
 echo "limine-boot activate" >>"$MIGRATE_FIXTURE/boot.log"
+# Asahi's update-grub, retargeted off U-Boot's slot, as limine-boot.sh runs it.
+update-grub || exit 1
 printf 'ESP_PATH="/boot/efi"\nKERNEL_CMDLINE[default]=""\n' >"$root/etc/default/limine"
 OMARCHY_GRUB_DEFAULT=$root/etc/default/grub OMARCHY_LIMINE_DEFAULT=$root/etc/default/limine OMARCHY_FSTAB=$root/etc/fstab \
   "$root/usr/bin/omarchy-mac-limine-cmdline" || exit 1
@@ -730,7 +732,7 @@ uki=$(cat "$F/esp/EFI/Linux/omarchy_linux-aurora.efi")
 grep -q "^HOOKS $fork_hooks$" "$F/esp/initramfs-linux-aurora.img" && grep -qx hooks/encrypt "$F/esp/initramfs-linux-aurora.img" ||
   fail "the transaction still built the busybox image GRUB boots" "$(cat "$F/esp/initramfs-linux-aurora.img")"
 [[ $(grep -E '^(mkinitcpio|update-grub|boot-check|umount|mount|dispatch setup-boot|limine-boot)' "$F/boot.log" | tr '\n' '|') == \
-  "boot-check pending --boot-chain|mkinitcpio -p linux-aurora|update-grub |boot-check pending --boot-chain linux-aurora|umount /boot|mount /boot/efi|mkinitcpio -p linux-aurora|dispatch setup-boot|limine-boot activate|boot-check pending --boot-chain linux-aurora|boot-check pending --boot-chain linux-aurora|" ]] ||
+  "boot-check pending --boot-chain|mkinitcpio -p linux-aurora|update-grub |boot-check pending --boot-chain linux-aurora|umount /boot|mount /boot/efi|mkinitcpio -p linux-aurora|dispatch setup-boot|limine-boot activate|update-grub |boot-check pending --boot-chain linux-aurora|boot-check pending --boot-chain linux-aurora|" ]] ||
   fail "the busybox image and GRUB are rebuilt and checked, then the ESP moves and the new image is built, before setup-boot gives Limine the slot" "$(cat "$F/boot.log")"
 [[ $(grep '^cryptsetup' "$F/pacman.log" | cut -d' ' -f2 | sort -u | xargs) == "luksHeaderBackup luksUUID" ]] ||
   fail "the LUKS header, keyslots and passphrase are never changed, only backed up and read" "$(grep cryptsetup "$F/pacman.log")"
@@ -749,6 +751,21 @@ encrypted_baseline=$(switch_outcome)
 output=$(migrate run 2>&1) || fail "a second run succeeds" "$output"
 [[ $(switch_outcome) == "$encrypted_baseline" ]] || fail "a second run changes nothing" "$(diff <(echo "$encrypted_baseline") <(switch_outcome))"
 pass "after the verified reboot the moved ESP's old kernels and GRUB are retired, and a second run changes nothing"
+
+# The fork's omarchy-mac-setup gave GRUB a HiDPI font on the ESP. Off /boot the
+# path is gone and grub-mkconfig, which the Limine activation still runs, fails
+# on it: the font leaves GRUB's defaults, the original kept.
+encrypted_fixture encrypted-font checkout
+mkdir -p "$F/esp/grub/fonts"
+echo "font" >"$F/esp/grub/fonts/unicode32.pf2"
+echo 'GRUB_FONT=/boot/grub/fonts/unicode32.pf2' >>"$R/etc/default/grub"
+output=$(migrate run 2>&1) || fail "a legacy Mac with the fork's GRUB font migrates to its reboot" "$output"
+grep -q "Reboot to finish" <<<"$output" || fail "the GRUB font Mac's run asks for a reboot" "$output"
+! grep -q '^GRUB_FONT=' "$R/etc/default/grub" || fail "GRUB_FONT leaves GRUB's defaults once the ESP is off /boot" "$(cat "$R/etc/default/grub")"
+grep -qx 'GRUB_FONT=/boot/grub/fonts/unicode32.pf2' "$(state_dir)/backup/boot-switch/files/etc/default/grub" ||
+  fail "the switch keeps the GRUB defaults with their font"
+[[ $(cat "$F/esp/EFI/BOOT/BOOTAA64.EFI") == "limine 12.9" ]] || fail "Limine takes U-Boot's slot on the GRUB font Mac"
+pass "the fork's GRUB font on the ESP does not stop the Limine activation"
 
 # A channel install, whose fork omarchy-settings owned omarchy_hooks.conf: the
 # transaction takes it away with the package.

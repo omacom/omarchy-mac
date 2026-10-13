@@ -337,7 +337,7 @@ legacy_stage_restore() {
 # The ESP moves from /boot to /boot/efi: fstab first, then the mounts. Each
 # part is skipped once done, so a run cut short continues where it was.
 legacy_move_esp() {
-  local fstab=$R/etc/fstab
+  local fstab=$R/etc/fstab font
   if legacy_fstab_esp >/dev/null; then
     legacy_stage_keep /etc/fstab || return 1
     legacy_esp_fstab <"$fstab" | durable_write "$fstab" 644 || return 1
@@ -355,6 +355,14 @@ legacy_move_esp() {
   # Asahi's update-grub, which the Limine activation still runs, resolves its
   # directory before creating it: without one it fails.
   install -d -m 755 "$R/boot/grub" || { echo "cannot create /boot/grub" >&2; return 1; }
+  # The fork's omarchy-mac-setup points GRUB_FONT at a HiDPI font it wrote to
+  # the ESP's grub/fonts. Off /boot that path is gone, and grub-mkconfig fails
+  # on it, so the font leaves GRUB's defaults: GRUB is retired with the switch.
+  font=$(legacy_grub_value GRUB_FONT)
+  if [[ -n $font && ! -e $R$font ]]; then
+    legacy_stage_keep /etc/default/grub || return 1
+    grep -v '^GRUB_FONT=' "$R/etc/default/grub" | durable_write "$R/etc/default/grub" 644 || return 1
+  fi
 }
 
 # The ESP goes back to /boot. What the switch put on the root's /boot is
