@@ -877,6 +877,8 @@ output=$(migrate verify 2>&1) || fail "verify completes the migration with user 
   fail "the unit and the tool's copy stay while user setup is pending"
 chmod 755 "$home/.config/systemd/user"
 rm "$F/setup-user-fail"
+# The migrated runtime's detector names the platform aarch64-apple.
+echo aarch64-apple >"$F/platform"
 output=$(migrate verify 2>&1) || fail "a boot retries pending user setup" "$output"
 [[ ! -e $(state_dir)/user-pending && ! -e $R/etc/systemd/system/omarchy-mac-migrate-verify.service && ! -e $(state_dir)/tool ]] ||
   fail "once nothing is pending the unit and the tool's copy go"
