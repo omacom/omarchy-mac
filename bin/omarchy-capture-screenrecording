@@ -122,7 +122,10 @@ start_webcam_overlay() {
     renderer_options=(--vo=gpu --gpu-api=opengl)
   fi
 
+  # --load-scripts=no keeps mpv-mpris off the overlay. Otherwise dictation
+  # (voxtype's pause_media) pauses the camera as a media player while it listens.
   mpv "av://v4l2:$WEBCAM_DEVICE" "${renderer_options[@]}" \
+    --load-scripts=no \
     --profile=low-latency --untimed --no-cache \
     --demuxer-lavf-o="$capture_options" \
     '--vf=lavfi=[crop=ih*8/9:ih]' \

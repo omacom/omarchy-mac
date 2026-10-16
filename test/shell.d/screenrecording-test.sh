@@ -299,3 +299,7 @@ grep -F 'move = { "(monitor_w-monitor_h*2/9-40)", "(monitor_h-monitor_h/4-40)" }
 grep -F 'move = { "(monitor_w-monitor_h*3/10-40)", "(monitor_h-monitor_h*27/80-40)" }' "$webcam_rules" >/dev/null || \
   fail "large webcam starts at its final corner position"
 pass "webcam size rules place the initial window in its final corner"
+
+grep -Fq -- '--load-scripts=no' "$ROOT/bin/omarchy-capture-screenrecording" ||
+  fail "the webcam overlay loads no mpv scripts, so mpv-mpris can't expose it"
+pass "dictation's media pause leaves the webcam overlay playing"
