@@ -12,9 +12,11 @@ omarchy_arm_package_targets() {
 omarchy_arm_package_upgrade_args() {
   local target package names=() targets=()
   mapfile -t targets < <(omarchy_arm_package_targets)
-  # These defaults exist only in the explicit upstream repository. Continue
-  # updating installed copies, without reinstalling deliberately removed apps.
-  for package in asdcontrol tobi-try; do
+  # These exist only in the explicit upstream repository: the asdcontrol and
+  # tobi-try defaults, and Dropbox with the box64 emulator its x86_64 client
+  # runs under. Continue updating installed copies, without reinstalling
+  # deliberately removed apps.
+  for package in asdcontrol tobi-try box64 dropbox dropbox-cli nautilus-dropbox; do
     if pacman --config "${OMARCHY_PACMAN_CONFIG:-/etc/pacman.conf}" -Q "$package" >/dev/null 2>&1; then
       targets+=("omarchy/$package")
     fi

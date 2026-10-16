@@ -2,17 +2,22 @@
 
 # omarchy:summary=Install Arch packages if they are missing
 # omarchy:args=<packages...>
-# omarchy:examples=omarchy pkg add jq ripgrep
+# omarchy:examples=omarchy pkg add jq ripgrep | omarchy pkg add omarchy/dropbox
 # omarchy:requires-sudo=true
 
 # Mac fork: upstream migrations sometimes install packages that don't exist in
 # Arch Linux ARM's repos (e.g. x86-only packages). Filter to what is actually
 # installable here so those installs skip cleanly with a warning instead of
 # hard-failing the whole migration.
+#
+# A target may name its repository (omarchy/dropbox) for packages that only a
+# Usage = Sync repository carries; pacman -Q takes the bare package name.
 to_install=()
+names=()
 for pkg in "$@"; do
-  if pacman -Q "$pkg" &>/dev/null || pacman -Si "$pkg" &>/dev/null; then
+  if pacman -Q "${pkg##*/}" &>/dev/null || pacman -Si "$pkg" &>/dev/null; then
     to_install+=("$pkg")
+    names+=("${pkg##*/}")
   else
     echo -e "\033[33mSkipping '$pkg': not available in the repos on this system\033[0m" >&2
   fi
@@ -20,7 +25,7 @@ done
 
 ((${#to_install[@]})) || exit 0
 
-if omarchy-pkg-missing "${to_install[@]}"; then
+if omarchy-pkg-missing "${names[@]}"; then
   if (( EUID == 0 )); then
     pacman -S --noconfirm --needed "${to_install[@]}" || exit 1
   else
@@ -28,7 +33,7 @@ if omarchy-pkg-missing "${to_install[@]}"; then
   fi
 fi
 
-for pkg in "${to_install[@]}"; do
+for pkg in "${names[@]}"; do
   # Secondary check to handle states where pacman doesn't actually register an error
   if ! pacman -Q "$pkg" &>/dev/null; then
     echo -e "\033[31mError: Package '$pkg' did not install\033[0m" >&2

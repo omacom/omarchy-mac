@@ -68,3 +68,16 @@ for config in "$ROOT"/default/pacman/pacman*.conf; do
   [[ $section == *"Usage = Sync"* && $section == *"SigLevel = Required DatabaseOptional"* ]] || fail "restricted signed edge in $config"
 done
 pass 'all shipped channels preserve restricted signed edge'
+
+# Dropbox and the box64 it runs under only come from the explicit repository,
+# so updates must keep selecting installed copies from there.
+pacman() { [[ $3 == "-Q" && " box64 dropbox dropbox-cli nautilus-dropbox " == *" $4 "* ]]; }
+mapfile -t upgrade_args < <(omarchy_arm_package_upgrade_args)
+for package in box64 dropbox dropbox-cli nautilus-dropbox; do
+  [[ " ${upgrade_args[*]} " == *" omarchy/$package "* ]] || fail "installed $package updates from the explicit repository" "${upgrade_args[*]}"
+done
+[[ ${upgrade_args[1]} == *",dropbox,"* ]] || fail 'regular repositories cannot replace installed Dropbox' "${upgrade_args[*]}"
+pacman() { return 1; }
+mapfile -t upgrade_args < <(omarchy_arm_package_upgrade_args)
+[[ " ${upgrade_args[*]} " != *"dropbox"* ]] || fail 'Dropbox is not installed by updates' "${upgrade_args[*]}"
+pass 'installed Dropbox keeps updating from the explicit repository'

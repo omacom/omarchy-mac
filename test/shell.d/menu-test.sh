@@ -269,7 +269,7 @@ assertDeepEqual(
   defaultItems
     .filter(item => item.id.startsWith('install.') && item.action && item.when)
     .map(item => item.id),
-  ['install.service.chromium-account', 'install.gaming.steam'],
+  ['install.service.dropbox', 'install.service.chromium-account', 'install.gaming.steam'],
   'menu never hides an Install row because the software is already there'
 )
 assert(
@@ -277,6 +277,10 @@ assert(
     id => defaultById[id].disabled && !defaultById[id].when
   ) && defaultById['install.gaming.steam'].disabled && defaultById['install.gaming.steam'].when.includes('omarchy-pkg-available omarchy-steam-fex'),
   'menu dims the Install rows for software that is already installed'
+)
+assert(
+  defaultById['install.service.dropbox'].when.includes('getconf PAGESIZE') && !defaultById['install.service.dropbox'].when.includes('pkg-present'),
+  'menu hides Dropbox only where box64 cannot run it, not once it is installed'
 )
 assertEqual(
   defaultById['install.browser.zen'].disabled,
