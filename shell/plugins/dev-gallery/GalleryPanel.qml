@@ -66,10 +66,10 @@ Item {
   property var shell: null
 
   // ---- theme --------------------------------------------------------------
-  readonly property color foreground: Color.foreground
-  readonly property color background: Color.background
-  readonly property color accent: Color.accent
-  readonly property color urgent: Color.urgent
+  readonly property color foreground: Theme.foreground
+  readonly property color background: Theme.background
+  readonly property color accent: Theme.accent
+  readonly property color urgent: Theme.urgent
   readonly property string fontFamily: "monospace"
 
   // Fake `bar` for components that take a whole bar object (e.g. Slider).
@@ -407,7 +407,7 @@ Item {
                   color: Qt.darker(root.foreground, 1.4)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
-                  text: "Theme. qs.Commons.Style exposes cornerRadius plus shared normal / hover-cursor / selected / focus state tokens (state colors, fill alphas, border widths, and border alphas), spacing tokens, typography, and bar dimensions. Focus defaults to hover-cursor; selected borders are off by default. Border widths are the theme-level on/off switch for state borders. qs.Commons.Color exposes foreground / background / accent / urgent plus per-surface roles. Components default-bind to these so a caller with no overrides matches the active theme."
+                  text: "Theme. qs.Commons.Style exposes cornerRadius plus shared normal / hover-cursor / selected / focus state tokens (state colors, fill alphas, border widths, and border alphas), spacing tokens, typography, and bar dimensions. Focus defaults to hover-cursor; selected borders are off by default. Border widths are the theme-level on/off switch for state borders. qs.Commons.Theme exposes foreground / background / accent / urgent plus per-surface roles. Components default-bind to these so a caller with no overrides matches the active theme."
                 }
                 Text {
                   width: parent.width

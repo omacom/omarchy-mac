@@ -7,7 +7,7 @@ import qs.Commons
 // placeholderText, accepted, editingFinished, validator, ...) is available
 // to callers without re-exposing each property.
 //
-// Defaults bind to qs.Commons.Color so a caller with no theme overrides
+// Defaults bind to qs.Commons.Theme so a caller with no theme overrides
 // just works; foreground / accent / selectionTint can be overridden per
 // instance. activeFocus and mouse hover / panel cursor use the same
 // hover-cursor defaults, so text inputs match Button, Toggle, and Dropdown.
@@ -18,8 +18,8 @@ import qs.Commons
 TextField {
   id: root
 
-  property color foreground: Color.foreground
-  property color accent: Color.accent
+  property color foreground: Theme.foreground
+  property color accent: Theme.accent
   property color selectionTint: Style.selectionFillFor(foreground, accent)
   property bool password: false
   property real horizontalPadding: Style.spacing.controlPaddingX
