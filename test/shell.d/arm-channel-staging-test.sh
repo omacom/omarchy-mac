@@ -26,10 +26,13 @@ else
   /usr/bin/stat "$@"
 fi
 SCRIPT
+# The disposable tree lives under mktemp, which is tmpfs on a stock Arch /tmp.
+# Model it as disk-backed, like its ownership above, so only the ram case
+# exercises the RAM-backed refusal.
 cat >"$test_tmp/bin/findmnt" <<'SCRIPT'
 #!/bin/bash
-if [[ -n ${TEST_STAGE_FSTYPE:-} ]]; then
-  printf '%s\n' "$TEST_STAGE_FSTYPE"
+if [[ $* == '-n -o FSTYPE -T '* && ( ${@: -1} == "$TEST_STAGE_ROOT"/* || ${@: -1} == / ) ]]; then
+  printf '%s\n' "${TEST_STAGE_FSTYPE:-ext4}"
 else
   /usr/bin/findmnt "$@"
 fi
