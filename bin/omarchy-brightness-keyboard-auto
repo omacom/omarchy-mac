@@ -148,6 +148,7 @@ max=$(<"$kbd_path/max_brightness")
 last_set=""
 paused=0
 pause_lux=0
+set_refused=0
 
 session_locked() {
   omarchy-hyprland-session-locked >/dev/null 2>&1
@@ -181,7 +182,18 @@ apply_percent() {
     return 0
   fi
 
-  brightnessctl -d "$device" set "$target" >/dev/null
+  # logind refuses the write (EPERM) while another of the user's sessions owns
+  # the seat. Exiting would let Restart=on-failure restart the loop every few
+  # seconds for as long as both sessions exist, so skip this tick, say so once,
+  # and try again at the next poll.
+  if ! brightnessctl -d "$device" set "$target" >/dev/null 2>&1; then
+    if (( ! set_refused )); then
+      echo "Keyboard backlight write refused; retrying every ${POLL_SECONDS}s" >&2
+      set_refused=1
+    fi
+    return 0
+  fi
+  set_refused=0
   # Auto has overridden any level set by hand, so that record is stale.
   rm -f "$MANUAL_LEVEL_FILE"
   last_set=$(brightnessctl -d "$device" get || echo "$target")

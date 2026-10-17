@@ -130,6 +130,10 @@ case ${1:-} in
   get) cat "$led/brightness" ;;
   max) cat "$led/max_brightness" ;;
   set)
+    if [[ -n ${REFUSE_SET:-} ]]; then
+      echo "Failed to set brightness: Operation not permitted" >&2
+      exit 1
+    fi
     (( ! save )) || cp "$led/brightness" "$led/saved"
     printf '%s\n' "$2" >"$led/brightness"
     ;;
@@ -146,7 +150,7 @@ SH
 chmod +x "$loop/bin/"*
 
 export PATH="$loop/bin:$PATH" OMARCHY_LEDS_DIR="$loop/leds" XDG_RUNTIME_DIR="$loop/runtime"
-eval "$(grep -E '^(DARK_LUX|BRIGHT_LUX|DEADBAND_PERCENT|OVERRIDE_LUX_DELTA|OVERRIDE_LUX_RATIO|EFFECTIVELY_OFF_PERCENT|MANUAL_LEVEL_FILE)=' "$auto")"
+eval "$(grep -E '^(POLL_SECONDS|DARK_LUX|BRIGHT_LUX|DEADBAND_PERCENT|OVERRIDE_LUX_DELTA|OVERRIDE_LUX_RATIO|EFFECTIVELY_OFF_PERCENT|MANUAL_LEVEL_FILE)=' "$auto")"
 for fn in lux_to_percent read_lux session_locked lid_closed apply_percent left_off tick; do
   eval "$(sed -n "/^$fn()/,/^}/p" "$auto")"
 done
@@ -156,6 +160,7 @@ max=255
 last_set=""
 paused=0
 pause_lux=0
+set_refused=0
 
 keys() { "$ROOT/bin/omarchy-brightness-keyboard" --no-osd "$1"; }
 # Step down with the keys, letting the loop see each press, until they are off.
@@ -237,3 +242,18 @@ keys off
 tick
 (( $(led) == 226 )) || fail "a level auto changed forgets the earlier key press" "got $(led)"
 pass "any level auto sets forgets an earlier key press"
+
+# Another of the user's sessions owning the seat makes logind refuse the write.
+# The loop skips that tick instead of exiting, and catches up once it may write.
+lux 26
+printf '0\n' >"$loop/leds/kbd_backlight/brightness"
+last_set=""
+paused=0
+REFUSE_SET=1 tick 2>"$loop/refused"
+(( $(led) == 0 )) || fail "a refused write leaves the keys as they were" "got $(led)"
+grep -Fq "refused" "$loop/refused" || fail "a refused write is reported" "$(<"$loop/refused")"
+REFUSE_SET=1 tick 2>"$loop/refused-again"
+[[ ! -s $loop/refused-again ]] || fail "a refused write is reported only once" "$(<"$loop/refused-again")"
+tick
+(( $(led) == 226 )) || fail "the loop writes again once logind allows it" "got $(led)"
+pass "a write logind refuses skips the tick instead of ending the loop"
