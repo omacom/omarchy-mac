@@ -37,6 +37,15 @@ mapfile -t targets < <(omarchy_arm_package_targets)
 [[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'only approved packages selected'
 pass 'Aquamarine remains a regular-repository dependency'
 
+pacman() { [[ $* == *"-Slq omarchy" ]] && printf '%s\n' hyprland asdcontrol; }
+mapfile -t targets < <(omarchy_arm_package_targets | omarchy_arm_available_package_targets)
+[[ ${targets[*]} == "omarchy/hyprland" ]] || fail 'targets missing from edge are dropped' "${targets[*]}"
+pacman() { return 1; }
+mapfile -t targets < <(omarchy_arm_package_targets | omarchy_arm_available_package_targets)
+[[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'unsynced edge keeps every target'
+unset -f pacman
+pass 'only targets the edge repository still carries are requested'
+
 # Exercise the real default-package loop after the compatibility transaction.
 # The three selected packages must never reach yay as unqualified targets.
 eval "$(sed -n '/^install_default_package_set() {/,/^seed_user_defaults() {/p' "$ROOT/install.sh" | sed '$d')"

@@ -5,13 +5,28 @@ omarchy_arm_package_targets() {
   printf '%s\n' omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils
 }
 
+# The edge repository drops packages once the regular repositories carry a
+# usable build (hyprtoolkit and hyprland-guiutils left it for extra). Asking for
+# omarchy/<name> then fails the whole transaction with "target not found", so
+# keep only targets the synced edge database still lists. Without a synced
+# database every target is kept, as before.
+omarchy_arm_available_package_targets() {
+  local target available
+  available=$(pacman --config "${OMARCHY_PACMAN_CONFIG:-/etc/pacman.conf}" -Slq omarchy 2>/dev/null) || available=
+  while read -r target; do
+    if [[ -z $available ]] || grep -qxF "${target#*/}" <<<"$available"; then
+      printf '%s\n' "$target"
+    fi
+  done
+}
+
 # --needed drops unchanged explicit targets before sysupgrade considers the
 # regular repositories. Exclude those names from that implicit upgrade so a
 # newer regular build cannot replace the selected stack in the same transaction.
 # Explicit targets still install normally (pacman's IgnorePkg prompt defaults yes).
 omarchy_arm_package_upgrade_args() {
   local target package names=() targets=()
-  mapfile -t targets < <(omarchy_arm_package_targets)
+  mapfile -t targets < <(omarchy_arm_package_targets | omarchy_arm_available_package_targets)
   # These defaults exist only in the explicit upstream repository. Continue
   # updating installed copies, without reinstalling deliberately removed apps.
   for package in asdcontrol tobi-try; do
