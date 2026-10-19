@@ -109,7 +109,7 @@ fi
 # shellcheck source=install/helpers/arm-package-sources.sh
 source "$helper"
 
-mapfile -t targets < <(omarchy_arm_package_targets)
+mapfile -t targets < <(OMARCHY_PACMAN_CONFIG="$PACMAN_CONF" omarchy_arm_package_targets)
 
 if (( dry_run )); then
   preview=$(mktemp)
