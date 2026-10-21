@@ -16,6 +16,8 @@ Panel {
   // permits — needed for the toggleBluetooth method below.
   manageIpc: false
 
+  property string omarchyPath: Quickshell.env("OMARCHY_PATH")
+
   // Address -> "connecting" | "disconnecting" | "forgetting".
   // The actual Bluetooth sequencing lives in bin/omarchy-bluetooth-device;
   // this map only keeps the panel responsive while BlueZ catches up.
@@ -909,12 +911,59 @@ Panel {
     fill: root.hoverFill
     currentFill: root.selectedFill
 
+    // Charge for devices whose battery never reaches BlueZ. BlueZ keeps
+    // priority — the probe runs only for connected rows it reports no battery
+    // for. Two families need it: classic HID (Apple keyboards, most mice)
+    // publishes charge as a kernel power_supply node whose sysfs path embeds
+    // the MAC, while AirPods push levels over the proprietary AAP L2CAP
+    // channel and get the plugin-local airpods-battery.py one-shot probe.
+    readonly property bool probesHidBattery: isConnected && !!dev && !dev.batteryAvailable
+    readonly property bool airpodsRow: probesHidBattery && Model.looksLikeAirPods(dev ? dev.name : "")
+    readonly property string hidBatteryGlob: airpodsRow ? "" : Model.hidBatteryGlob(dev ? dev.address : "")
+    readonly property string airpodsProbePath: (root.omarchyPath || "") + "/shell/plugins/panels/bluetooth/airpods-battery.py"
+    property string hidCapacityText: ""
+    readonly property int hidBattery: Model.hidBatteryCapacity(hidCapacityText)
+    property var airpodsLevels: null
+    readonly property string airpodsText: Model.airpodsText(airpodsLevels)
+
+    Process {
+      id: hidBatteryProbe
+      command: row.airpodsRow
+        ? ["python3", row.airpodsProbePath, row.dev ? row.dev.address : ""]
+        : ["sh", "-c", "cat " + row.hidBatteryGlob]
+      stdout: StdioCollector {
+        waitForEnd: true
+        onStreamFinished: function() {
+          var data = this.data.toString().trim()
+          if (row.airpodsRow) row.airpodsLevels = Model.airpodsLevels(data)
+          else row.hidCapacityText = data
+        }
+      }
+    }
+
+    Timer {
+      // Fast retry until the first read lands (the sysfs node shows up a few
+      // seconds after connect; AAP needs its connect+handshake round trip),
+      // then a slow cadence — the kernel refreshes the value in roughly
+      // minute-sized steps and AirPods push deltas at similar granularity.
+      interval: (row.airpodsRow && row.airpodsText === "") || (!row.airpodsRow && row.hidBattery < 0) ? 5000 : 45000
+      repeat: true
+      triggeredOnStart: true
+      running: row.probesHidBattery && (row.airpodsRow ? root.omarchyPath !== "" : row.hidBatteryGlob !== "")
+      onTriggered: {
+        hidBatteryProbe.running = false
+        hidBatteryProbe.running = true
+      }
+    }
+
     readonly property string statusText: {
       if (!dev) return ""
       if (action === "forgetting") return "Forgetting…"
       if (action === "disconnecting" || devState === 2) return "Disconnecting…"
       if (isConnected) {
         if (dev.batteryAvailable) return Math.round(dev.battery * 100) + "%"
+        if (hidBattery >= 0) return hidBattery + "%"
+        if (airpodsText !== "") return airpodsText
         return sectionName === "connected" ? "" : "Connected"
       }
       if (action === "connecting" || devState === 3 || dev.pairing === true) return "Connecting…"

@@ -50,11 +50,54 @@ assert(/sibling\.owesDiscoveryStop = true/.test(stopTimer[0]), 'bluetooth moves 
 assert(/onDiscoveringChanged[\s\S]{0,120}owesDiscoveryStop = false/.test(panelSource), 'bluetooth settles the stop it owes once discovery is confirmed down')
 assert(/Component\.onDestruction: \{[\s\S]{0,400}owesDiscoveryStop = true[\s\S]{0,200}discovering = false/.test(panelSource), 'bluetooth passes the stop it owes to a sibling when an instance is destroyed')
 
+// Classic HID devices publish charge through the kernel, not through the GATT
+// Battery Service BlueZ reads battery from. The panel falls back to that node
+// for connected rows, and only for those rows.
+assert(/probesHidBattery: isConnected && !!dev && !dev\.batteryAvailable/.test(panelSource), 'bluetooth probes the HID battery only for connected rows without a BlueZ battery')
+assert(/if \(hidBattery >= 0\) return hidBattery \+ "%"/.test(panelSource), 'bluetooth renders the HID battery as a plain percentage')
+
+// AirPods push battery over the proprietary AAP L2CAP channel that no BlueZ
+// surface exposes. AirPods-named rows run the plugin-local airpods-battery.py
+// one-shot probe through the panel's poll timer instead of the sysfs cat.
+assert(/airpodsRow: probesHidBattery && Model\.looksLikeAirPods\(dev \? dev\.name : ""\)/.test(panelSource), 'bluetooth routes AirPods rows to the AAP probe by name')
+assert(/hidBatteryGlob: airpodsRow \? "" : Model\.hidBatteryGlob/.test(panelSource), 'bluetooth skips the sysfs glob on AirPods rows')
+assert(/command: row\.airpodsRow[\s\S]{0,200}\["python3", row\.airpodsProbePath/.test(panelSource), 'bluetooth runs the AAP probe on AirPods rows')
+assert(/\["python3", row\.airpodsProbePath, row\.dev \? row\.dev\.address : ""\]/.test(panelSource), 'bluetooth runs the AAP probe through python3 by plugin path')
+assert(/airpodsProbePath: \(root\.omarchyPath \|\| ""\) \+ "\/shell\/plugins\/panels\/bluetooth\/airpods-battery\.py"/.test(panelSource), 'bluetooth resolves the AAP probe through OMARCHY_PATH')
+assert(/if \(row\.airpodsRow\) row\.airpodsLevels = Model\.airpodsLevels\(data\)/.test(panelSource), 'bluetooth parses AAP probe stdout on AirPods rows')
+assert(/if \(airpodsText !== ""\) return airpodsText/.test(panelSource), 'bluetooth renders AAP levels on AirPods rows')
+assert(/running: row\.probesHidBattery && \(row\.airpodsRow \? root\.omarchyPath !== "" : row\.hidBatteryGlob !== ""\)/.test(panelSource), 'bluetooth runs the fallback probe for either battery family')
+
 assert(bluetooth.isUuidLike('0000110b-0000-1000-8000-00805f9b34fb'), 'bluetooth detects UUID-like names')
 assert(bluetooth.isAddressLike('AA:BB:CC:DD:EE:FF'), 'bluetooth detects address-like names')
 assertEqual(bluetooth.normalizedAddress('AA:BB_CC-dd-ee-ff'), 'aabbccddeeff', 'bluetooth normalizes BlueZ and PipeWire address formats')
 assert(!bluetooth.hasHumanName({ name: 'AA:BB:CC:DD:EE:FF' }), 'bluetooth rejects address-only device labels')
 assert(bluetooth.hasHumanName({ deviceName: 'MX Master 3S' }), 'bluetooth accepts human device labels')
+
+assertEqual(bluetooth.hidBatteryGlob('AA:BB:CC:DD:EE:FF'),
+  '/sys/class/power_supply/hid-aa:bb:cc:dd:ee:ff-battery-*/capacity',
+  'bluetooth builds the HID battery glob from a device address')
+assertEqual(bluetooth.hidBatteryGlob('MX Master 3'), '', 'bluetooth refuses a HID battery glob for a non-address')
+assertEqual(bluetooth.hidBatteryCapacity('98\n'), 98, 'bluetooth parses the HID capacity file')
+assertEqual(bluetooth.hidBatteryCapacity(''), -1, 'bluetooth treats an unreadable HID battery as unknown')
+assertEqual(bluetooth.hidBatteryCapacity('144'), -1, 'bluetooth rejects an out-of-range HID capacity')
+
+assert(bluetooth.looksLikeAirPods('My AirPods Pro'), 'bluetooth matches AirPods-named devices for the AAP probe')
+assert(bluetooth.looksLikeAirPods('AirPods Max'), 'bluetooth matches every AirPods family name for the AAP probe')
+assert(!bluetooth.looksLikeAirPods('MX Master 3'), 'bluetooth leaves non-AirPods devices on the HID fallback')
+assert(!bluetooth.looksLikeAirPods(''), 'bluetooth refuses the AAP probe for unnamed rows')
+
+const aapLevels = bluetooth.airpodsLevels(
+  '{"address":"AA:BB:CC:DD:EE:FF","left":86,"right":80,"case":100}')
+assert(aapLevels.left === 86 && aapLevels.right === 80 && aapLevels.case === 100, 'bluetooth parses the AAP probe JSON levels')
+assertEqual(bluetooth.airpodsText(aapLevels), '86/80/100', 'bluetooth prints AAP levels as left/right/case percentages')
+assertEqual(bluetooth.airpodsText(bluetooth.airpodsLevels('{"left":86,"right":null,"case":null}')), '86', 'bluetooth prints only the AAP levels the device answered')
+assertEqual(bluetooth.airpodsText(bluetooth.airpodsLevels('{"left":null,"right":null,"case":100}')), '100', 'bluetooth prints a case-only AAP answer')
+assertEqual(bluetooth.airpodsText(bluetooth.airpodsLevels('{"left":144,"right":80,"case":100}')), '80/100', 'bluetooth drops out-of-range AAP levels')
+assert(bluetooth.airpodsLevels('{"error":"not a battery message"}') === null, 'bluetooth treats an AAP probe failure as unknown')
+assert(bluetooth.airpodsLevels('{broken') === null, 'bluetooth treats unparsable AAP stdout as unknown')
+assert(bluetooth.airpodsLevels('{"left":null,"right":null,"case":null}') === null, 'bluetooth refuses an AAP answer with no levels')
+assertEqual(bluetooth.airpodsText(null), '', 'bluetooth renders an unknown AAP battery as an empty status')
 
 const devices = [
   { name: 'Speaker', connected: false, paired: true, address: '2' },
@@ -141,6 +184,25 @@ assert(
   'bluetooth ignores non-sink nodes when matching audio outputs'
 )
 JS
+
+# The AAP probe is a stateless one-shot: given a real battery status message
+# it prints the levels as one JSON line, and anything else is a quiet failure.
+probe="$ROOT/shell/plugins/panels/bluetooth/airpods-battery.py"
+aap_output=$(python3 "$probe" --self-test 04000400040003"040156005c02015001570802640060") ||
+  fail "airpods probe parses a full battery message" "$aap_output"
+[[ $aap_output == '{"address":"SELF-TEST","left":86,"right":80,"case":100}' ]] ||
+  fail "airpods probe mirrors left/right/case levels as JSON" "$aap_output"
+pass "airpods probe mirrors left/right/case levels as JSON"
+
+aap_error=$(python3 "$probe" --self-test 040004000400010401500457 2>/dev/null) && \
+  fail "airpods probe rejects a gone-only message" "$aap_error"
+[[ $aap_error == '{"error":"not a battery message"}' ]] ||
+  fail "airpods probe reports a gone-only message as an error" "$aap_error"
+pass "airpods probe reports a gone-only message as an error"
+
+aap_error=$(python3 "$probe" --self-test 00ff00ff00ff0001 2>/dev/null) && \
+  fail "airpods probe rejects a non-battery message" "$aap_error"
+pass "airpods probe rejects a non-battery message"
 
 # Turning Bluetooth off is an rfkill soft block, not a bluetoothctl power off,
 # because only the block survives a reboot. These mocks stand in for that pair:
