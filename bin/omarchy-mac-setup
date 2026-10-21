@@ -555,25 +555,55 @@ require_network() {
 # console is where the disk passphrase is typed and the GRUB editor is where
 # you end up when a boot has gone wrong. Both are set to something legible
 # before the first reboot.
-setup_console_font() {
-  command -v setfont >/dev/null || return 0
+console_utf8_leaf() {
+  local dir candidate
+  if [[ -n ${BASH_SOURCE[0]:-} ]]; then
+    dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+    candidate=$dir/../install/hardware/apple/fix-console-utf8.sh
+    if [[ -f $candidate ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+  for candidate in \
+    "${SRC:-}/install/hardware/apple/fix-console-utf8.sh" \
+    "${OMARCHY_PATH:-}/install/hardware/apple/fix-console-utf8.sh"
+  do
+    if [[ -f $candidate ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
 
-  if ! pacman -Sy --noconfirm --needed terminus-font >/dev/null 2>&1; then
-    warn "Could not install terminus-font; leaving the console font alone."
+setup_console_font() {
+  local leaf root
+  if command -v setfont >/dev/null; then
+    if ! pacman -Sy --noconfirm --needed terminus-font >/dev/null 2>&1; then
+      warn "Could not install terminus-font; leaving the console font alone."
+    else
+      touch /etc/vconsole.conf
+      if grep -q '^FONT=' /etc/vconsole.conf; then
+        sed -i 's|^FONT=.*|FONT=ter-132b|' /etc/vconsole.conf
+      else
+        printf 'FONT=ter-132b\n' >>/etc/vconsole.conf
+      fi
+
+      # Immediately, so the rest of this run is readable too. The initramfs picks
+      # it up from vconsole.conf at the next mkinitcpio, which the encryption step
+      # runs anyway — so the passphrase prompt gets it as well.
+      setfont ter-132b 2>/dev/null || true
+    fi
+  fi
+
+  leaf=$(console_utf8_leaf) || true
+  if [[ -z $leaf ]]; then
+    warn "Console UTF-8 hook is not in this checkout."
     return 0
   fi
-
-  touch /etc/vconsole.conf
-  if grep -q '^FONT=' /etc/vconsole.conf; then
-    sed -i 's|^FONT=.*|FONT=ter-132b|' /etc/vconsole.conf
-  else
-    printf 'FONT=ter-132b\n' >>/etc/vconsole.conf
-  fi
-
-  # Immediately, so the rest of this run is readable too. The initramfs picks
-  # it up from vconsole.conf at the next mkinitcpio, which the encryption step
-  # runs anyway — so the passphrase prompt gets it as well.
-  setfont ter-132b 2>/dev/null || true
+  root=$(cd -- "$(dirname -- "$leaf")/../../.." && pwd)
+  OMARCHY_PATH=$root bash "$leaf"
 }
 
 setup_grub_font() {
