@@ -147,6 +147,7 @@ for failing_stage in none system repositories; do
   setup_status=0
   setup_output=$(SETUP_BODY="$setup_body" FAILING_STAGE="$failing_stage" bash -c '
     set -euo pipefail
+    unset XDG_RUNTIME_DIR
     USER=fixture
     install_channel=""
     log() { :; }
@@ -161,6 +162,7 @@ for failing_stage in none system repositories; do
     }
     omarchy-provision-user() {
       [[ $* == "--first-install" ]]
+      [[ $XDG_RUNTIME_DIR == "/run/user/$UID" ]]
       echo user
     }
     eval "$SETUP_BODY"
