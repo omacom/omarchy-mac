@@ -50,10 +50,9 @@ for lane, version in [('stable', '4.0.2-2'), ('rc', '4.0.3rc1-1'), ('edge', '4.0
     pkg(lane, 'omarchy', version, 'depend = newlib')
     pkg(lane, 'omarchy-settings', version)
     run(['repo-add', str(lanes / lane / 'omarchy-aarch64.db.tar.gz'), *map(str, (lanes / lane).glob('*.pkg.tar.zst'))])
-for name in ['hyprland', 'hyprtoolkit', 'hyprland-guiutils']:
-    pkg('graphics', name, '2-1', 'depend = aquamarine=2-1')
+pkg('graphics', 'hyprland', '2-1', 'depend = aquamarine=2-1')
 run(['repo-add', str(lanes / 'graphics/omarchy.db.tar.gz'), *map(str, (lanes / 'graphics').glob('*.pkg.tar.zst'))])
-for name in ['aquamarine', 'ordinary', 'newlib']:
+for name in ['hyprtoolkit', 'hyprland-guiutils', 'aquamarine', 'ordinary', 'newlib']:
     pkg('regular', name, '2-1')
 pkg('regular', 'new-widget', '2-1', 'replaces = old-widget', 'conflict = old-widget')
 run(['repo-add', str(lanes / 'regular/extra.db.tar.gz'), *map(str, (lanes / 'regular').glob('*.pkg.tar.zst'))])
