@@ -1,6 +1,6 @@
 pragma Singleton
 import Quickshell
-import QtQuick
+import QtQuick 6.11
 
 // Shared utility helpers used across plugins. Pure functions only — no
 // state. Anything stateful belongs on Color, Style, or a service.

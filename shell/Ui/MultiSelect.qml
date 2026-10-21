@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.11
 import QtQuick.Controls as QQC
 import QtQuick.Window
 import Quickshell.Io

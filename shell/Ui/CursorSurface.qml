@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.11
 import qs.Commons
 
 // Shared visual chrome for keyboard-and-mouse-navigable items inside a panel.

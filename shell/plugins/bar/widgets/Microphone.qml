@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.11
 import Quickshell
 import Quickshell.Services.Pipewire
 import qs.Ui

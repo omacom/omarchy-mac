@@ -1,7 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
-import QtQuick
+import QtQuick 6.11
 import QtQuick.Effects
 import QtQuick.Shapes
 import qs.Commons

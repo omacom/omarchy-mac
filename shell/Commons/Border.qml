@@ -1,5 +1,5 @@
 pragma Singleton
-import QtQuick
+import QtQuick 6.11
 import "BorderGeometry.js" as Geometry
 
 // Central border-spec factory for shell surfaces and controls. A spec carries

@@ -1,7 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
-import QtQuick
+import QtQuick 6.11
 import qs.Commons
 import qs.Ui
 import "MenuModel.js" as MenuModel

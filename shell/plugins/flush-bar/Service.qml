@@ -1,6 +1,6 @@
 import Quickshell
 import Quickshell.Hyprland
-import QtQuick
+import QtQuick 6.11
 
 // Keeps the window gap on the bar's edge in step with the bar: 0 when the bar
 // is transparent (windows sit flush under it) or the same as the other edges
