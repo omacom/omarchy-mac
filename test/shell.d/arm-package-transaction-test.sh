@@ -25,7 +25,7 @@ write_package() {
   mkdir -p "$directory"
   write_desc "$2" "$3" > "$directory/desc"
 }
-for package in hyprland hyprtoolkit hyprland-guiutils asdcontrol normal; do
+for package in hyprland asdcontrol normal; do
   write_package "$test_tmp/db/local" "$package" '2-1'
   : > "$test_tmp/db/local/$package-2-1/files"
   write_package "$test_tmp/extra" "$package" '4-1'
@@ -52,7 +52,7 @@ export OMARCHY_PACMAN_CONFIG="$test_tmp/pacman.conf"
 mapfile -t targets < <(omarchy_arm_package_upgrade_args)
 for version in 2-1 3-1 1-1; do
   rm -rf "$test_tmp/omarchy"
-  for package in hyprland hyprtoolkit hyprland-guiutils asdcontrol tobi-try; do
+  for package in hyprland asdcontrol tobi-try; do
     write_package "$test_tmp/omarchy" "$package" "$version"
   done
   tar -czf "$test_tmp/db/sync/omarchy.db" -C "$test_tmp/omarchy" --transform='s|^\./||' .
@@ -65,9 +65,9 @@ for version in 2-1 3-1 1-1; do
     [[ $selected == 'extra/normal 4-1' ]] || fail 'unchanged compositor packages are not reinstalled'
     mapfile -t unprotected < <(omarchy_arm_package_targets)
     baseline=$(select_packages "${unprotected[@]}")
-    grep -qx 'extra/hyprtoolkit 4-1' <<< "$baseline" || fail 'fixture reproduces the original --needed sysupgrade bug'
+    grep -qx 'extra/hyprland 4-1' <<< "$baseline" || fail 'fixture reproduces the original --needed sysupgrade bug'
   else
-    for package in hyprland hyprtoolkit hyprland-guiutils asdcontrol; do
+    for package in hyprland asdcontrol; do
       grep -qx "omarchy/$package $version" <<< "$selected" || fail 'changed packages use the explicit repository, including downgrades'
     done
   fi
