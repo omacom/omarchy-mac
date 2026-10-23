@@ -34,7 +34,7 @@ cmp -s "$test_tmp/original-backup" "$test_tmp/pacman.conf.bak" || fail 'channel 
 pass 'preparation after channel replacement preserves the original backup'
 
 mapfile -t targets < <(omarchy_arm_package_targets)
-[[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'only approved packages selected'
+[[ ${targets[*]} == "omarchy/hyprland extra/hyprtoolkit extra/hyprland-guiutils" ]] || fail 'only approved packages selected'
 pass 'Aquamarine remains a regular-repository dependency'
 
 # Exercise the real default-package loop after the compatibility transaction.

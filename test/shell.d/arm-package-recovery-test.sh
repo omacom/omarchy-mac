@@ -29,7 +29,7 @@ pass 'dry run changes nothing on the machine'
 grep -q '^+\[omarchy\]$' <<<"$output" || fail 'dry run adds the edge section' "$output"
 grep -q '^+Usage = Sync$' <<<"$output" || fail 'dry run keeps edge out of automatic selection' "$output"
 grep -q '^+SigLevel = Required DatabaseOptional$' <<<"$output" || fail 'dry run requires signed packages' "$output"
-grep -q 'would run: sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils' <<<"$output" ||
+grep -q 'would run: sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm omarchy/hyprland extra/hyprtoolkit extra/hyprland-guiutils' <<<"$output" ||
   fail 'dry run reports the selected packages' "$output"
 grep -q 'would run: sudo pacman-key' <<<"$output" || fail 'dry run reports the key import' "$output"
 pass 'dry run reports the restricted signed edge section and the transaction'
@@ -72,7 +72,7 @@ output=$(
     OMARCHY_ARM_HELPER_URL="file://$test_tmp/published-helper.sh" \
     bash "$test_tmp/empty/fix-arm-packages.sh" --dry-run 2>&1
 ) || fail 'dry run without a local helper succeeds' "$output"
-grep -q 'omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils' <<<"$output" ||
+grep -q 'omarchy/hyprland extra/hyprtoolkit extra/hyprland-guiutils' <<<"$output" ||
   fail 'fetched helper supplies the selected packages' "$output"
 [[ -z $(find "$download_tmp" -mindepth 1 -print -quit) ]] ||
   fail 'fetched helper is removed after use' "$(find "$download_tmp" -mindepth 1 -maxdepth 1 -printf '%f\n')"
@@ -130,7 +130,7 @@ output=$(
     OMARCHY_TEST_CALL_LOG="$call_log" \
     bash -s -- --no-snapshot 2>&1
 ) || fail 'piped recovery succeeds without reading script text as prompt answers' "$output"
-grep -q $'^pacman\t-Syu\t--noconfirm\tomarchy/hyprland\tomarchy/hyprtoolkit\tomarchy/hyprland-guiutils$' "$call_log" ||
+grep -q $'^pacman\t-Syu\t--noconfirm\tomarchy/hyprland\textra/hyprtoolkit\textra/hyprland-guiutils$' "$call_log" ||
   fail 'piped recovery runs the noninteractive package transaction' "$(cat "$call_log")"
 ! grep -q '^answers' "$call_log" || fail 'piped recovery lets pacman prompt on script input' "$(cat "$call_log")"
 grep -q '^\[omarchy\]$' "$conf" || fail 'piped recovery prepares the package source' "$(cat "$conf")"

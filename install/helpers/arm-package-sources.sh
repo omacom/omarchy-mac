@@ -2,7 +2,7 @@
 
 # Shared by the standalone installer and installed package update commands.
 omarchy_arm_package_targets() {
-  printf '%s\n' omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils
+  printf '%s\n' omarchy/hyprland extra/hyprtoolkit extra/hyprland-guiutils
 }
 
 # --needed drops unchanged explicit targets before sysupgrade considers the

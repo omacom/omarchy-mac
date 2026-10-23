@@ -60,14 +60,17 @@ for version in 2-1 3-1 1-1; do
   grep -qx 'extra/normal 4-1' <<< "$selected" || fail 'ordinary packages still upgrade'
   ! grep -q 'tobi-try' <<< "$selected" || fail 'removed optional defaults remain removed'
   ! grep -q '^extra/asdcontrol' <<< "$selected" || fail 'installed upstream-only optional defaults retain their selected source'
-  ! grep -q '^extra/hypr' <<< "$selected" || fail 'regular repository cannot replace the selected stack'
+  ! grep -q '^extra/hyprland ' <<< "$selected" || fail 'regular repository cannot replace the selected stack'
+  for package in hyprtoolkit hyprland-guiutils; do
+    grep -qx "extra/$package 4-1" <<< "$selected" || fail 'support packages use extra'
+  done
   if [[ $version == "2-1" ]]; then
-    [[ $selected == 'extra/normal 4-1' ]] || fail 'unchanged compositor packages are not reinstalled'
+    ! grep -q '^omarchy/' <<< "$selected" || fail 'unchanged compositor packages are not reinstalled'
     mapfile -t unprotected < <(omarchy_arm_package_targets)
     baseline=$(select_packages "${unprotected[@]}")
-    grep -qx 'extra/hyprtoolkit 4-1' <<< "$baseline" || fail 'fixture reproduces the original --needed sysupgrade bug'
+    grep -qx 'extra/hyprland 4-1' <<< "$baseline" || fail 'fixture reproduces the original --needed sysupgrade bug'
   else
-    for package in hyprland hyprtoolkit hyprland-guiutils asdcontrol; do
+    for package in hyprland asdcontrol; do
       grep -qx "omarchy/$package $version" <<< "$selected" || fail 'changed packages use the explicit repository, including downgrades'
     done
   fi
