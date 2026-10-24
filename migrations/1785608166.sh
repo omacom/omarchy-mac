@@ -45,12 +45,34 @@ if ! graphical_state=$(systemctl --user show --property=ActiveState --value grap
   exit 1
 fi
 
-if [[ $graphical_state == "active" ]]; then
-  if ! error=$(systemctl --user reset-failed omarchy-sleep-lock.service 2>&1); then
-    echo "Could not reset omarchy-sleep-lock.service: $error"
+# A unit that was never packaged onto this machine, or that the user masked on
+# purpose, has no failed state to clear and nothing to restart, so there is
+# nothing to repair. Any other unloaded state (error, bad-setting) is a broken
+# unit the repair has not fixed yet, so keep the migration pending.
+if ! load_state=$(systemctl --user show --property=LoadState --value omarchy-sleep-lock.service 2>&1); then
+  echo "Could not inspect omarchy-sleep-lock.service: $load_state"
+  echo "The pre-suspend lock repair will be retried by omarchy-migrate."
+  exit 1
+fi
+
+case "$load_state" in
+  loaded) ;;
+  not-found|masked)
+    echo "omarchy-sleep-lock.service is $load_state here; skipping the live repair."
+    exit 0
+    ;;
+  *)
+    echo "omarchy-sleep-lock.service could not be loaded (LoadState=$load_state)."
     echo "The pre-suspend lock repair will be retried by omarchy-migrate."
     exit 1
-  elif ! error=$(systemctl --user restart omarchy-sleep-lock.service 2>&1); then
+    ;;
+esac
+
+if [[ $graphical_state == "active" ]]; then
+  # reset-failed on a unit that never failed — or never loaded — is an ordinary
+  # no-op, not a repair problem. The restart is what matters.
+  systemctl --user reset-failed omarchy-sleep-lock.service >/dev/null 2>&1 || true
+  if ! error=$(systemctl --user restart omarchy-sleep-lock.service 2>&1); then
     echo "Could not restart omarchy-sleep-lock.service: $error"
     echo "The pre-suspend lock repair will be retried by omarchy-migrate."
     exit 1
@@ -71,9 +93,6 @@ else
     echo "Could not stop stale omarchy-sleep-lock.service: $error"
     echo "The pre-suspend lock repair will be retried by omarchy-migrate."
     exit 1
-  elif ! error=$(systemctl --user reset-failed omarchy-sleep-lock.service 2>&1); then
-    echo "Could not reset omarchy-sleep-lock.service: $error"
-    echo "The pre-suspend lock repair will be retried by omarchy-migrate."
-    exit 1
   fi
+  systemctl --user reset-failed omarchy-sleep-lock.service >/dev/null 2>&1 || true
 fi

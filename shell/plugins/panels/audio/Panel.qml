@@ -6,6 +6,7 @@ import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
 import qs.Ui
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 Panel {
@@ -86,7 +87,11 @@ Panel {
 
   readonly property var rawAudioSources: {
     var list = candidateSources.slice()
-    if (source && list.indexOf(source) < 0) list.unshift(source)
+    // The default source can be a sink node (the Asahi mic mapping used a null
+    // sink whose monitor was the default input). A sink is not an input: listing
+    // it lets a click hand its id to omarchy-audio-input-set-default, which
+    // would make it the default output instead.
+    if (source && !source.isSink && list.indexOf(source) < 0) list.unshift(source)
     return list
   }
 
@@ -177,10 +182,10 @@ Panel {
   readonly property string toggleHint: anyAudible ? "Mute" : "Unmute"
 
   readonly property color hoverFill: bar
-    ? Style.hoverFillFor(bar.foreground, Color.accent)
+    ? Style.hoverFillFor(bar.foreground, Commons.Color.accent)
     : "transparent"
   readonly property color selectedFill: bar
-    ? Style.selectedFillFor(bar.foreground, Color.accent)
+    ? Style.selectedFillFor(bar.foreground, Commons.Color.accent)
     : "transparent"
 
   function sectionCount(section) {

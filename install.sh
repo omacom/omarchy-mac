@@ -185,6 +185,11 @@ ensure_arm_package_repo() {
   ensure_asahi_alarm_keyring
   ensure_omarchy_mac_keyring
   omarchy_arm_prepare_package_sources
+  # The targets follow what the synced [omarchy] database carries, and a fresh
+  # machine has not synced it yet; without this the helper falls back to every
+  # target and the transaction stops at the ones edge no longer publishes. The
+  # -Syu below follows straight after, so this is no partial upgrade.
+  sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Sy
   local -a targets
   mapfile -t targets < <(omarchy_arm_package_upgrade_args)
   log "Upgrading system packages and installing the compatible Hyprland stack"

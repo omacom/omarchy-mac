@@ -176,6 +176,18 @@ curl -fsSL https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/fix
 
 See [docs/arm-package-sources.md](docs/arm-package-sources.md) for what it changes and how to pass `--dry-run` or `--no-snapshot` to the piped script.
 
+### The update stops on `target not found: hyprtoolkit` (#741)
+
+A Mac that already stops with `error: target not found: hyprtoolkit` or
+`error: target not found: hyprland-guiutils` needs one manual transaction,
+because the installed updater still asks for packages edge no longer
+publishes. Run it once, then update normally:
+
+```bash
+sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --needed --overwrite '/usr/share/omarchy/*' omarchy/hyprland
+omarchy update
+```
+
 ---
 
 ## Removal (uninstall)

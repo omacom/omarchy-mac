@@ -74,9 +74,11 @@ if [[ ! -f $PACMAN_CONF ]]; then
 fi
 
 # One source of truth for what the repository and key must be. A checkout has
-# the helper next to this script; an installed machine has it under the package
-# once it is new enough. Neither is guaranteed on the machines this script
-# exists for, so fall back to fetching it rather than restating its contents.
+# the helper next to this script and is used as is. Otherwise fetch the
+# published copy first: the helper installed under the package is the one this
+# script exists to get past, and on a stuck machine it still selects targets edge
+# no longer publishes. The installed copy is only a fallback for when the fetch
+# fails, since a current one still recovers and a stale one fails no worse.
 resolve_helper() {
   local script_dir="" candidate
 
@@ -84,21 +86,27 @@ resolve_helper() {
     script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
   fi
 
-  for candidate in "$script_dir" "${OMARCHY_PATH:-}" /usr/share/omarchy; do
-    if [[ -n $candidate && -f "$candidate/$HELPER_RELATIVE_PATH" ]]; then
-      helper="$candidate/$HELPER_RELATIVE_PATH"
-      return 0
-    fi
-  done
+  if [[ -n $script_dir && -f "$script_dir/$HELPER_RELATIVE_PATH" ]]; then
+    helper="$script_dir/$HELPER_RELATIVE_PATH"
+    return 0
+  fi
 
   downloaded_helper=$(mktemp)
   if curl -fsSL "$HELPER_URL" -o "$downloaded_helper"; then
     helper="$downloaded_helper"
     return 0
   fi
-
   rm -f "$downloaded_helper"
   downloaded_helper=""
+
+  for candidate in "${OMARCHY_PATH:-}" /usr/share/omarchy; do
+    if [[ -n $candidate && -f "$candidate/$HELPER_RELATIVE_PATH" ]]; then
+      echo -e "\e[33mCould not fetch $HELPER_URL; using the installed $candidate/$HELPER_RELATIVE_PATH\e[0m" >&2
+      helper="$candidate/$HELPER_RELATIVE_PATH"
+      return 0
+    fi
+  done
+
   return 1
 }
 
@@ -109,9 +117,15 @@ fi
 # shellcheck source=install/helpers/arm-package-sources.sh
 source "$helper"
 
-mapfile -t targets < <(omarchy_arm_package_targets)
+# stdin is the script itself when piped, so nothing here may read it.
+choose_targets() {
+  mapfile -t targets < <(OMARCHY_PACMAN_CONFIG="$PACMAN_CONF" omarchy_arm_package_targets </dev/null)
+}
 
 if (( dry_run )); then
+  # A dry run syncs nothing, so it reports the selection the databases on the
+  # machine give now; on a machine that never synced [omarchy], that is every target.
+  choose_targets
   preview=$(mktemp)
   cp "$PACMAN_CONF" "$preview"
   # Nothing leaves the temporary copy: the helper's writes land there as this
@@ -150,6 +164,13 @@ fi
 # is that path arriving by another route, not a bypass, so it says so the same
 # way omarchy-update-system-pkgs does. Without it the hook aborts the
 # transaction and the recovery gets no further than the machine it is fixing.
+# The selection follows what the synced [omarchy] database carries, and a
+# machine that predates this policy has never synced it: without this the
+# helper selects every target and the transaction stops at the ones edge no
+# longer publishes. The -Syu follows straight after.
+sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Sy --noconfirm </dev/null
+choose_targets
+
 echo "Updating the Hyprland stack together with the system"
 sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm "${targets[@]}"
 

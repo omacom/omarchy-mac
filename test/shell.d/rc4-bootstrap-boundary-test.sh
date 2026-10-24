@@ -5,7 +5,8 @@ source "$ROOT/install/helpers/arm-channel.sh"
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
-[[ $(cat "$ROOT/version") == 4.0.3rc4 ]] || fail 'bootstrap source version is not RC4'
+# 4.0.5 ships the RC4 trust bootstrap unchanged: still unsigned, still no strict signing.
+[[ $(cat "$ROOT/version") =~ ^(4\.0\.3rc4|4\.0\.5rc[1-9][0-9]*|4\.0\.5)$ ]] || fail 'bootstrap source version is not in the RC4 trust line'
 [[ ! -e $ROOT/migrations/1789317000.sh ]] || fail 'RC5 strict migration leaked into RC4'
 [[ ! -e $ROOT/migrations/1789390468.sh ]] || fail 'redundant transition migration remains in RC4'
 for policy in 'Optional TrustAll' 'PackageRequired DatabaseRequired TrustedOnly'; do

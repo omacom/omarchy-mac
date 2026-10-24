@@ -12,7 +12,9 @@ echo -e "\e[32m\nOrphan system packages\e[0m"
 printf '  %s\n' "${orphans[@]}"
 echo
 
-if [[ ! -t 0 || ! -t 1 ]]; then
+# omarchy update -y promises not to ask. It runs under script(1), so this
+# sees a terminal anyway; the unattended flag is what tells us nobody is there.
+if [[ ${OMARCHY_UPDATE_UNATTENDED:-} == 1 || ! -t 0 || ! -t 1 ]]; then
   echo "${#orphans[@]} orphaned package(s) found. Re-run omarchy-update-orphan-pkgs in a terminal to review/remove them."
   echo
   exit 0

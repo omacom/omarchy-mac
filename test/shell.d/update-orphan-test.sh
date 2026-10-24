@@ -39,3 +39,29 @@ write_stub pacman 'if [[ $1 == "-Qtdq" ]]; then exit 0; fi; exit 1'
 run_orphan_checker >"$test_tmp/none.out" 2>"$test_tmp/none.err"
 [[ ! -s $test_tmp/none.out ]] || fail "orphan checker stays quiet when no orphans exist"
 pass "orphan checker stays quiet without orphans"
+
+require_command script
+
+write_stub pacman 'if [[ $1 == "-Qtdq" ]]; then printf "old-lib\nunused-tool\n"; exit 0; fi; exit 1'
+write_stub gum "touch '$test_tmp/gum-called'; exit 1"
+
+# script(1) gives the checker a terminal, as omarchy update does.
+run_orphan_checker_in_terminal() {
+  HOME="$test_home" PATH="$stub_bin:$PATH" script -qec "$ROOT/bin/omarchy-update-orphan-pkgs" /dev/null </dev/null
+}
+
+rm -f "$test_tmp/gum-called"
+OMARCHY_UPDATE_UNATTENDED=1 run_orphan_checker_in_terminal >"$test_tmp/unattended.out" 2>&1 ||
+  fail "unattended orphan check exits 0" "$(cat "$test_tmp/unattended.out")"
+[[ ! -e $test_tmp/gum-called ]] || fail "unattended orphan check does not ask in a terminal"
+grep -q 'old-lib' "$test_tmp/unattended.out" || fail "unattended orphan check lists orphan packages"
+grep -q 'Re-run omarchy-update-orphan-pkgs in a terminal' "$test_tmp/unattended.out" ||
+  fail "unattended orphan check says how to review them"
+pass "unattended orphan check reports orphans without asking, even in a terminal"
+
+rm -f "$test_tmp/gum-called"
+run_orphan_checker_in_terminal >"$test_tmp/interactive.out" 2>&1 ||
+  fail "interactive orphan check exits 0 when the answer is no" "$(cat "$test_tmp/interactive.out")"
+[[ -e $test_tmp/gum-called ]] || fail "interactive orphan check still asks in a terminal"
+grep -q 'Keeping orphaned packages.' "$test_tmp/interactive.out" || fail "interactive orphan check keeps packages on no"
+pass "interactive orphan check still asks in a terminal"
