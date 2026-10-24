@@ -117,11 +117,17 @@ pass "a blocked package upgrade stops the update before it migrates"
 
 # A channel update uses one system transaction under the same snapshot/lock
 # boundary; it must not first install keyrings or update an old dev checkout.
+# A linked checkout is kept, so the channel transaction does not unlink it.
 UPDATE_TEST_SCRIPT="$test_tmp/channel-update" OMARCHY_PATH="$ROOT" OMARCHY_UPDATE_CHANNEL=rc run_update -y || fail "channel update succeeds"
 [[ $(grep -c '^omarchy-update-system-pkgs ' "$test_tmp/steps") == 1 ]] || fail "channel update has one system package transaction"
 ! grep -Eq '^omarchy-update-(dev|keyring) ' "$test_tmp/steps" || fail "channel update does not mutate sources or install keyrings before staging"
-[[ $(steps_run | awk '/omarchy-update-system-pkgs/,/omarchy-migrate/') == $'omarchy-update-system-pkgs\nomarchy-dev-unlink\nomarchy-state\nomarchy-migrate' ]] || fail "channel migration follows transaction and package-backed path restoration"
+[[ $(steps_run | awk '/omarchy-update-system-pkgs/,/omarchy-migrate/') == $'omarchy-update-system-pkgs\nomarchy-migrate' ]] || fail "channel update keeps a linked checkout" "$(steps_run)"
+! grep -Eq '^(omarchy-dev-unlink|omarchy-state) ' "$test_tmp/steps" || fail "channel update must not unlink a linked checkout" "$(cat "$test_tmp/steps")"
 pass "channel update retains lock and snapshot orchestration around a single system transaction"
+
+UPDATE_TEST_SCRIPT="$test_tmp/channel-update" OMARCHY_PATH="$test_tmp/packaged" OMARCHY_UPDATE_CHANNEL=rc run_update -y || fail "package-backed channel update succeeds"
+[[ $(steps_run | awk '/omarchy-update-system-pkgs/,/omarchy-migrate/') == $'omarchy-update-system-pkgs\nomarchy-dev-unlink\nomarchy-migrate' ]] || fail "package-backed channel update restores the packaged path" "$(steps_run)"
+pass "package-backed channel update still restores the packaged path"
 
 if UPDATE_TEST_SCRIPT="$test_tmp/channel-update" OMARCHY_PATH="$ROOT" OMARCHY_UPDATE_CHANNEL=rc FAILING_STEP=omarchy-update-system-pkgs run_update -y; then
   fail "failed channel transaction cannot complete its update"

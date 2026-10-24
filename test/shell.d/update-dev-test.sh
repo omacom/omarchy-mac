@@ -31,13 +31,37 @@ case "$1" in
         [[ ${TEST_GIT_UPSTREAM:-origin/quattro} != "none" ]] || exit 1
         echo "${TEST_GIT_UPSTREAM:-origin/quattro}"
         ;;
+      --verify)
+        [[ ${TEST_GIT_UPSTREAM:-origin/quattro} != "none" ]] || exit 1
+        ;;
+      --git-path)
+        if [[ $3 == "rebase-merge" && ${TEST_GIT_REBASE_FAIL:-no} == "yes" ]]; then
+          printf '%s\n' "$TEST_GIT_REBASE_DIR"
+        else
+          printf '%s\n' "${TEST_GIT_REBASE_DIR}-missing"
+        fi
+        ;;
       *)
         exit 1
         ;;
     esac
     ;;
   pull)
-    [[ $2 == "--ff-only" ]]
+    [[ $2 == "--ff-only" ]] || exit 1
+    if [[ ${TEST_GIT_PULL_FAIL:-no} == "yes" ]]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  rebase)
+    if [[ $2 == "--abort" ]]; then
+      exit 0
+    fi
+    [[ $2 == "--autostash" && $3 == '@{upstream}' ]] || exit 1
+    if [[ ${TEST_GIT_REBASE_FAIL:-no} == "yes" ]]; then
+      exit 1
+    fi
+    exit 0
     ;;
   *)
     exit 1
@@ -62,7 +86,31 @@ pass "package-backed updates skip the dev checkout step"
 run_dev_update "$checkout"
 grep -Fx -- "-C $checkout pull --ff-only" "$git_log" >/dev/null ||
   fail "dev checkout update pulls its upstream with fast-forward only" "$(cat "$git_log")"
+if grep -q ' rebase ' "$git_log"; then
+  fail "a fast-forward does not rebase" "$(cat "$git_log")"
+fi
 pass "dev checkout update pulls its configured upstream"
+
+: >"$git_log"
+if ! TEST_GIT_PULL_FAIL=yes run_dev_update "$checkout" >"$test_tmp/diverged.out" 2>"$test_tmp/diverged.err"; then
+  fail "a dev checkout that cannot fast-forward still lets the update continue" "$(cat "$test_tmp/diverged.err")"
+fi
+grep -Fx -- "-C $checkout rebase --autostash @{upstream}" "$git_log" >/dev/null ||
+  fail "a dev checkout that cannot fast-forward rebases onto its upstream" "$(cat "$git_log")"
+pass "a dev checkout that cannot fast-forward rebases local commits onto upstream"
+
+rebase_dir="$test_tmp/rebase-merge"
+mkdir -p "$rebase_dir"
+: >"$git_log"
+if ! TEST_GIT_PULL_FAIL=yes TEST_GIT_REBASE_FAIL=yes TEST_GIT_REBASE_DIR="$rebase_dir" \
+  run_dev_update "$checkout" >"$test_tmp/rebase.out" 2>"$test_tmp/rebase.err"; then
+  fail "a conflicted dev checkout rebase still lets the update continue" "$(cat "$test_tmp/rebase.err")"
+fi
+grep -Fx -- "-C $checkout rebase --abort" "$git_log" >/dev/null ||
+  fail "a conflicted dev checkout rebase is aborted" "$(cat "$git_log")"
+grep -F "was aborted. Local commits were kept." "$test_tmp/rebase.err" >/dev/null ||
+  fail "a conflicted dev checkout rebase reports that local commits were kept" "$(cat "$test_tmp/rebase.err")"
+pass "a conflicted dev checkout rebase aborts and keeps local commits"
 
 : >"$git_log"
 TEST_GIT_UPSTREAM=none run_dev_update "$checkout"

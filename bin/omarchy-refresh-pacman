@@ -4,6 +4,12 @@
 # omarchy:requires-sudo=true
 
 if [[ $(uname -m) == "aarch64" ]]; then
+  # A linked checkout stays on its own tree. The channel form of this command
+  # installs the packaged lane and unlinks that checkout.
+  if [[ ${OMARCHY_PATH:-} != "/usr/share/omarchy" && -d ${OMARCHY_PATH:-}/.git ]]; then
+    echo "Dev checkout at $OMARCHY_PATH stays linked. Updating it in place." >&2
+    exec omarchy-update -y
+  fi
   # ARM refresh preserves custom repositories and mirror ordering. Explicit
   # refresh uses the same validated lane switch as omarchy channel set.
   exec env OMARCHY_UPDATE_CHANNEL="${1:-stable}" omarchy-update -y

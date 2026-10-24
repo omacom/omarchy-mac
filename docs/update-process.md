@@ -137,6 +137,10 @@ Important behavior:
 
 - In dev-link mode, `omarchy update` fast-forwards the active checkout from its
   configured upstream before changing system packages or running migrations.
+  When local commits prevent a fast-forward, it rebases them onto that upstream.
+  A conflict runs `git rebase --abort`, leaves the local commits in place, and
+  the package update continues. A linked checkout is not unlinked by a channel
+  refresh.
 - `-y` exports `OMARCHY_UPDATE_UNATTENDED=1` — a promise not to ask anything.
   Steps that would prompt (orphan removal, conflict handoff) report and skip
   instead of blocking.
@@ -250,7 +254,8 @@ Updates install whatever the active channel points at. `omarchy-channel-set
 which pacman repo the mirrorlist points at (and swap between the `omarchy` and
 `omarchy-dev` packages through a guard-allowed pacman run), while `dev` links
 the runtime to a git checkout via the dev-link mechanism, after which
-`omarchy update` fast-forwards that checkout instead of upgrading a package.
+`omarchy update` fast-forwards that checkout, or rebases its local commits
+onto the upstream, instead of replacing the checkout with a package.
 
 There is no version file at runtime. `omarchy-version` derives the version from
 `pacman -Q` on whichever package is installed, or reports `dev (<hash>)` for a
@@ -270,7 +275,7 @@ scripts.
 | `omarchy-update-stay-awake` | Hidden helper that starts or stops update-owned sleep and idle inhibition, restoring only the state it changed. | **Keep internal/hidden.** Keeps inhibitor ownership and cleanup together. |
 | `omarchy-update-status` | Hidden helper that refreshes or clears the shell update indicator after rechecking available updates. | **Keep internal/hidden.** Keeps shell status synchronization out of the main pipeline. |
 | `omarchy-update-confirm` | Gum confirmation copy for `omarchy update`. | **Question.** Could be inlined into `omarchy-update`; separate file only helps keep copy isolated. |
-| `omarchy-update-dev` | Fast-forwards the active dev-linked checkout from its configured upstream; no-ops for package-backed installs. | **Keep.** Runs before package updates so a checkout conflict stops the update before system mutation. |
+| `omarchy-update-dev` | Fast-forwards the active dev-linked checkout, or rebases its local commits onto the configured upstream and aborts that rebase on conflict; no-ops for package-backed installs. | **Keep.** Runs before package updates. A rebase conflict keeps the local commits and lets the package update continue. |
 | `omarchy-update-keyring` | Ensures Omarchy keyring and Arch keyring are current before the main transaction. | **Keep, but review.** It uses targeted `pacman -Sy` for keyring bootstrapping; acceptable for this special case but should remain tightly scoped. |
 | `omarchy-update-system-pkgs` | Runs `sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm` with `--overwrite '/usr/share/omarchy/*'`, capturing stderr to a report file; on failure it execs `omarchy-update-system-pkgs-when-conflicted`. | **Keep for now.** Small leaf command, clear/testable. |
 | `omarchy-update-system-pkgs-when-conflicted` | Hidden conflict handler: quarantines unowned conflicting files under `/var/lib/omarchy/replaced`, retries the upgrade once, restores files the upgrade didn't claim, and hands package-vs-package conflicts to an interactive pacman run (never under `-y`). | **Keep internal/hidden.** Keeps conflict recovery out of the happy path. |

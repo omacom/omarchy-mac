@@ -48,12 +48,17 @@ if [[ ${1:-} == "-y" ]] || omarchy-update-confirm; then
   # takes the update with it rather than migrating against what is still on disk.
   omarchy-update-system-pkgs
   if [[ -n ${OMARCHY_UPDATE_CHANNEL:-} ]]; then
-    # The channel transaction installed the package-backed migration set.
-    # Do not run migrations from the checkout we may be leaving behind.
-    omarchy-dev-unlink --no-reboot
-    [[ $OMARCHY_PATH == "/usr/share/omarchy" ]] || omarchy-state set reboot-required
-    export OMARCHY_PATH=/usr/share/omarchy
-    export PATH="$OMARCHY_PATH/bin:$PATH"
+    # A linked checkout is the source of truth while it has local work.
+    # Unlinking would point the session at /usr/share/omarchy and drop it.
+    if [[ $OMARCHY_PATH != "/usr/share/omarchy" && -d $OMARCHY_PATH/.git ]]; then
+      echo "Keeping dev checkout $OMARCHY_PATH." >&2
+    else
+      # The channel transaction installed the package-backed migration set.
+      omarchy-dev-unlink --no-reboot
+      [[ $OMARCHY_PATH == "/usr/share/omarchy" ]] || omarchy-state set reboot-required
+      export OMARCHY_PATH=/usr/share/omarchy
+      export PATH="$OMARCHY_PATH/bin:$PATH"
+    fi
     unset OMARCHY_UPDATE_CHANNEL
   fi
   omarchy-migrate

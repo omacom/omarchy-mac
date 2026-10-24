@@ -33,9 +33,20 @@ omarchy_arm_prepare_package_sources "$test_tmp/pacman.conf" preserve-backup
 cmp -s "$test_tmp/original-backup" "$test_tmp/pacman.conf.bak" || fail 'channel refresh original backup preserved'
 pass 'preparation after channel replacement preserves the original backup'
 
+edge_list=$(printf 'omarchy %s 1-1\n' aquamarine hyprland hyprtoolkit hyprland-guiutils)
+pacman() { [[ $* == *"-Sl omarchy"* ]] && printf '%s\n' "$edge_list"; }
 mapfile -t targets < <(omarchy_arm_package_targets)
 [[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'only approved packages selected'
 pass 'Aquamarine remains a regular-repository dependency'
+
+edge_list='omarchy hyprland 1-1'
+mapfile -t targets < <(omarchy_arm_package_targets)
+[[ ${targets[*]} == "omarchy/hyprland" ]] || fail 'packages edge does not publish are left to the regular repositories' "${targets[*]}"
+pacman() { return 1; }
+mapfile -t targets < <(omarchy_arm_package_targets)
+[[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'unreadable edge database selects every package'
+unset -f pacman
+pass 'only packages the synced edge database carries are selected'
 
 # Exercise the real default-package loop after the compatibility transaction.
 # The three selected packages must never reach yay as unqualified targets.

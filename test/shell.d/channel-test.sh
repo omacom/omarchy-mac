@@ -125,14 +125,12 @@ assert_log_line $'unlink\t--no-reboot' "rc restores the package-backed Omarchy p
 assert_log_line $'update\t-y\tOMARCHY_PATH=/usr/share/omarchy' "rc runs the normal update pipeline from the package-backed path"
 
 OMARCHY_TEST_PATH="$ROOT" run_channel edge
-assert_log_line $'refresh\tedge' "edge refreshes the edge pacman channel"
 assert_log_line $'sudo\tenv\tOMARCHY_UPDATE_PACMAN=1\tpacman\t-S\t--needed\t--noconfirm\t--ask\t4\tomarchy-dev\tomarchy-settings-dev' "edge installs development Omarchy packages"
-assert_log_line $'unlink\t--no-reboot' "edge unlinks dev without an early reboot prompt"
-assert_log_line $'state\tset\treboot-required' "edge marks reboot required when leaving dev"
-assert_log_line $'update\t-y\tOMARCHY_PATH=/usr/share/omarchy' "edge runs the normal update pipeline from the package-backed path"
-[[ $(grep -E '^(unlink|state|update)' "$log_file") == $'unlink\t--no-reboot\nstate\tset\treboot-required\nupdate\t-y\tOMARCHY_PATH=/usr/share/omarchy' ]] ||
-  fail "edge defers the reboot prompt until the update restart stage" "$(cat "$log_file")"
-pass "edge defers the reboot prompt until the update restart stage"
+assert_log_line $'update\t-y\tOMARCHY_PATH='"$ROOT" "edge keeps a linked checkout on the update path"
+if grep -Eq $'^(refresh|unlink|state)\t' "$log_file"; then
+  fail "edge does not refresh, unlink, or reboot away from a linked checkout" "$(cat "$log_file")"
+fi
+pass "edge keeps a linked checkout instead of refreshing pacman or unlinking it"
 
 checkout="$test_tmp/home/omarchy"
 mkdir -p "$checkout"
@@ -160,8 +158,11 @@ assert_log_line $'update\t-y\tOMARCHY_PATH='"$checkout" "dev runs the normal upd
 pass "dev activates the checkout before changing or updating packages"
 
 OMARCHY_TEST_PATH="$checkout" run_channel stable
-assert_log_line $'unlink\t--no-reboot' "switching from dev to stable unlinks without an early reboot prompt"
-assert_log_line $'state\tset\treboot-required' "switching from dev to stable marks reboot required"
+assert_log_line $'update\t-y\tOMARCHY_PATH='"$checkout" "switching from dev to stable keeps the linked checkout"
+if grep -Eq $'^(refresh|unlink|state)\t' "$log_file"; then
+  fail "switching from dev to stable does not refresh, unlink, or mark a reboot" "$(cat "$log_file")"
+fi
+pass "switching from dev to stable keeps the linked checkout"
 
 run_channel dev
 if grep -q $'^git\tclone\t' "$log_file"; then

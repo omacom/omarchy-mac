@@ -1,8 +1,22 @@
 #!/bin/bash
 
 # Shared by the standalone installer and installed package update commands.
+#
+# Edge can stop publishing one of these for aarch64, and asking for it by
+# repository then fails the whole transaction with "target not found". Select
+# only what the synced edge database carries; pacman resolves the rest from the
+# regular repositories, where its dependency checks still guard the Aquamarine
+# SONAME. With no readable edge database yet, select all of them as before.
 omarchy_arm_package_targets() {
-  printf '%s\n' omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils
+  local package edge
+  if ! edge=$(pacman --config "${OMARCHY_PACMAN_CONFIG:-/etc/pacman.conf}" -Sl omarchy 2>/dev/null) || [[ -z $edge ]]; then
+    edge=$(printf 'omarchy %s\n' hyprland hyprtoolkit hyprland-guiutils)
+  fi
+  for package in hyprland hyprtoolkit hyprland-guiutils; do
+    if awk -v name="$package" '$2 == name { found = 1 } END { exit !found }' <<< "$edge"; then
+      printf 'omarchy/%s\n' "$package"
+    fi
+  done
 }
 
 # --needed drops unchanged explicit targets before sysupgrade considers the

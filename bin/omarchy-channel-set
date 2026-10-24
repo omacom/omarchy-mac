@@ -96,11 +96,21 @@ if [[ -n $dev_checkout ]]; then
   omarchy-state set reboot-required
 fi
 
-omarchy-refresh-pacman "$pacman_channel"
+# A linked checkout stays linked. Refreshing pacman here switches the lane and
+# the following unlink would point the session at the packaged tree.
+keep_dev_checkout=0
+if [[ -z $dev_checkout && -d $OMARCHY_PATH/.git && $OMARCHY_PATH != "/usr/share/omarchy" ]]; then
+  keep_dev_checkout=1
+  echo "Keeping dev checkout $OMARCHY_PATH. Not refreshing pacman mirrors or unlinking it." >&2
+fi
+
+if (( ! keep_dev_checkout )); then
+  omarchy-refresh-pacman "$pacman_channel"
+fi
 # --ask 4 accepts omarchy <-> omarchy-dev replacement prompts without file overwrites.
 sudo env OMARCHY_UPDATE_PACMAN=1 pacman -S --needed --noconfirm --ask 4 "${packages[@]}"
 
-if [[ -z $dev_checkout ]]; then
+if [[ -z $dev_checkout ]] && (( ! keep_dev_checkout )); then
   omarchy-dev-unlink --no-reboot
   export OMARCHY_PATH=/usr/share/omarchy
 

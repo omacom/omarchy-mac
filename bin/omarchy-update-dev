@@ -18,4 +18,24 @@ if [[ -z $upstream ]]; then
 fi
 
 echo -e "\e[32m\nUpdate Omarchy dev checkout\e[0m"
-git -C "$OMARCHY_PATH" pull --ff-only
+if git -C "$OMARCHY_PATH" pull --ff-only; then
+  exit 0
+fi
+# Upstream moved under local commits. Replay those commits on top of it so the
+# checkout gains the remote work. A conflict aborts the rebase and leaves the
+# local commits where they were; package updates still run.
+if git -C "$OMARCHY_PATH" rev-parse --verify --quiet '@{upstream}' >/dev/null; then
+  if git -C "$OMARCHY_PATH" rebase --autostash '@{upstream}'; then
+    exit 0
+  fi
+  rebase_merge=$(git -C "$OMARCHY_PATH" rev-parse --git-path rebase-merge)
+  rebase_apply=$(git -C "$OMARCHY_PATH" rev-parse --git-path rebase-apply)
+  if [[ -d $rebase_merge || -d $rebase_apply ]]; then
+    git -C "$OMARCHY_PATH" rebase --abort
+    echo -e "\e[33mDev checkout rebase onto ${upstream} was aborted. Local commits were kept.\e[0m" >&2
+    exit 0
+  fi
+  echo -e "\e[33mDev checkout was not rebased onto ${upstream}. Continuing with the local tree.\e[0m" >&2
+  exit 0
+fi
+exit 1
