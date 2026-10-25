@@ -4,8 +4,10 @@
 # or unsuitable dependency paths. Repository packages and providers may now be
 # available, but their installation and Apple Silicon runtime still need review.
 #
-# The installer offers an explicit attempt when it has a terminal, and
-# OMARCHY_TRY_UNAVAILABLE=1 opts in without a prompt. Keep the default exclusion
+# The installer offers an explicit attempt when it has a terminal.
+# OMARCHY_TRY_UNAVAILABLE=1 opts in without a prompt and OMARCHY_TRY_UNAVAILABLE=0
+# keeps the exclusion without one; omarchy-mac-setup passes one or the other so
+# its unattended boots never wait on this question. Keep the default exclusion
 # until a suitable installation path and ARM behavior have been qualified.
 
 # A historical obs-studio attempt selected obs-studio-browser and spent about

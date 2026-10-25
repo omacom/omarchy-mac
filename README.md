@@ -76,22 +76,24 @@ password, then carries the machine the rest of the way on its own — moving
 `/boot` onto the EFI partition, encrypting the root, installing Omarchy —
 rebooting between steps and resuming itself each time on tty1.
 
-Expect about fifteen minutes, three reboots, and two questions along the way:
+Expect about fifteen minutes, three reboots, and one thing to type along the
+way: **the disk passphrase**, chosen at the console on the boot that does the
+encryption. That boot rewrites every block of the partition, printing
+cryptsetup's own progress as it goes; on an M2 Max it runs at about 1 GiB/s. It
+is safe to interrupt: the next boot resumes where it stopped.
 
-- **A gum dialog offering to build packages with no known aarch64 build.** Say
-  no. `obs-studio` alone compiles for about three hours and then fails an
-  architecture check. It defaults to no.
-- **The disk passphrase**, chosen at the console on the boot that does the
-  encryption. That boot rewrites every block of the partition, printing
-  cryptsetup's own progress as it goes; on an M2 Max it runs at about 1 GiB/s.
-  It is safe to interrupt: the next boot resumes where it stopped.
+The packages with no qualified aarch64 build (`obs-studio`, `pinta`, `obsidian`,
+`dotnet-runtime`, `qemu-user-static-binfmt`) are skipped without asking;
+`obs-studio` alone compiles for about three hours and then fails an architecture
+check. Pass `--try-unavailable` to attempt them anyway. Running `install.sh` by
+hand still asks.
 
 Encrypted machines log straight into the desktop afterwards: the passphrase at
 boot is the authentication, and a second password immediately after it protects
 nothing the first one did not.
 
 Other flags: `--no-encrypt` skips the encryption and the boot-layout move it
-needs, `--status` reports where a machine has got to, `--step <name>` re-runs
+needs, `--try-unavailable` attempts the packages above, `--status` reports where a machine has got to, `--step <name>` re-runs
 one step, `--abort` stops the guided run without undoing anything, and
 `--keep-root-password` leaves root's password as Asahi Alarm shipped it instead
 of locking it once your user has sudo.

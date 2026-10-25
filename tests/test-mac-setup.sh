@@ -941,5 +941,72 @@ check "an existing checkout is fetched" checkout_is_fetched
 check "and moved onto the requested ref" checkout_is_reset
 check "and pointed at the requested forge and repo" checkout_remote_is_set
 
+echo
+echo "=== the guided install answers the packages question itself ==="
+
+# install.sh asks whether to try the packages with no qualified aarch64 build
+# whenever /dev/tty is readable. On the resumed boot that is tty1, owned by the
+# setup unit with SDDM queued behind it, so the prompt waited where nobody was
+# looking and held the desktop back (#713). The answer is taken from the
+# command line, kept with the other answers, and handed to install.sh.
+default_skips() {
+  (
+    CONF=$work/no-such-conf
+    load_conf
+    [[ $try_unavailable == 0 ]]
+  )
+}
+check "the default is to skip them, as install.sh would" default_skips
+
+try_answer_survives_reboot() {
+  (
+    CONF=$work/try.conf
+    want_encrypt=1 try_unavailable=1 username=owner hostname=box keymap=us
+    repo=owner/repo ref=branch forge=github.com
+    save_conf
+    try_unavailable=0
+    load_conf
+    [[ $try_unavailable == 1 ]]
+  )
+}
+check "--try-unavailable survives the reboots like every other answer" try_answer_survives_reboot
+
+older_conf_still_loads() {
+  (
+    CONF=$work/old.conf
+    printf 'WANT_ENCRYPT=1\nSETUP_USER=owner\nSETUP_HOSTNAME=box\n' >"$CONF"
+    load_conf
+    [[ $try_unavailable == 0 && $username == owner ]]
+  )
+}
+check "a conf written before the flag existed resumes with the default" older_conf_still_loads
+
+install_gets_the_answer() {
+  grep -qE 'OMARCHY_TRY_UNAVAILABLE="\$\{try_unavailable:-0\}"' "$TOOL"
+}
+check "install.sh is run with the answer in its environment" install_gets_the_answer
+
+plan_names_the_choice() {
+  local run
+  run=$(
+    username=someone hostname=box keymap=us encrypt_flag=0 want_encrypt=0 try_unavailable="$1"
+    repo=owner/repo ref=branch
+    banner() { :; }
+    warn() { :; }
+    log() { printf '%s\n' "$*"; }
+    valid_hostname() { return 0; }
+    valid_keymap() { return 0; }
+    current_hostname() { echo box; }
+    current_keymap() { echo us; }
+    fail() { printf 'STOPPED: %s\n' "$*"; exit 1; }
+    root_is_encrypted() { return 1; }
+    boot_is_separate() { return 1; }
+    printf '\n' | ask_questions 2>/dev/null
+  )
+  matches "$2" "$run"
+}
+check "the plan says the packages are skipped by default" plan_names_the_choice 0 'skip the packages not yet qualified'
+check "the plan says when they will be tried" plan_names_the_choice 1 'also try the packages not yet qualified'
+
 echo "=== $pass checks passed, $failures failed ==="
 (( failures == 0 ))
