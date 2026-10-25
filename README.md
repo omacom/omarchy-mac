@@ -144,6 +144,29 @@ It enables `sshd`, adds `ufw limit 22/tcp`, and offers to fetch your public keys
 from `https://github.com/<user>.keys`. The same thing lives in the menu under
 Setup → Security → SSH.
 
+### The encryption boot shows only a blinking cursor
+
+The machine is not hung: it is waiting for the disk passphrase on a console you
+cannot see. Without `console=tty0` on the kernel command line, Apple Silicon
+puts `/dev/console` on the serial port, and the passphrase prompt goes there.
+`omarchy-system-btrfs-migrate` now sets `console=tty0` before staging the
+encryption; a machine staged before that fix needs it once by hand. Hold the
+power button to turn the machine off, start it again, and when the GRUB menu
+appears press `e`, move to the end of the `linux` line, type a space and
+`console=tty0`, and press Ctrl-X. The prompt appears on the display; choose the
+passphrase there and the encryption runs. Once the system is up, make it
+permanent:
+
+```bash
+sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 console=tty0"/' /etc/default/grub
+sudo grub-mkconfig -o /boot/grub/grub.cfg
+```
+
+The GRUB menu and the early-boot prompt do not see the same keyboards: GRUB
+sees a keyboard on the USB-C ports, the initramfs prompt one on the USB-A ports
+(see [#743](https://github.com/omacom/omarchy-mac/issues/743)). Keep a USB-A
+cable to hand for the passphrase.
+
 ### The machine boots to `grub rescue>`
 
 GRUB kept its modules and kernel on the root filesystem, and the root was
