@@ -33,10 +33,13 @@ o.bind("SUPER + CTRL + Delete", "Toggle laptop display", "omarchy-hyprland-monit
 o.bind("SUPER + CTRL + ALT + Delete", "Toggle laptop display mirroring", "omarchy-hyprland-monitor-internal-mirror toggle")
 o.bind("switch:on:Lid Switch", nil, "omarchy-system-lid-close", { locked = true })
 o.bind("switch:off:Lid Switch", nil, "omarchy-hyprland-monitor-clamshell", { locked = true })
--- Mac fork: Apple Silicon names the lid switch "Apple SMC power/lid events", not
--- the generic "Lid Switch", so quattro's binds above never fire on this hardware.
-o.bind("switch:on:Apple SMC power/lid events", nil, "omarchy-system-lid-close", { locked = true })
-o.bind("switch:off:Apple SMC power/lid events", nil, "omarchy-hyprland-monitor-clamshell", { locked = true })
+-- Mac fork: Apple Silicon names the lid switch "Apple SMC power/lid events",
+-- not the generic "Lid Switch", so the binds above never fire on this hardware.
+-- logind often never sees that switch either, so HandleLidSwitch does not
+-- suspend and the generic lid handler skips the lock. These binds own both,
+-- and opening the lid cancels a suspend that has not started.
+o.bind("switch:on:Apple SMC power/lid events", nil, "omarchy-system-lid-close --smc-closed", { locked = true })
+o.bind("switch:off:Apple SMC power/lid events", nil, "omarchy-system-lid-close --smc-opened", { locked = true })
 
 o.bind("PRINT", "Screenshot", "omarchy-capture-screenshot")
 o.bind("ALT + PRINT", "Screenrecording", "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord")
