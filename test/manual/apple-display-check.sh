@@ -54,7 +54,7 @@ check 'the software cursor was written once' bash -c "(( \$(grep -c no_hardware_
 
 # Greeter
 check 'sddm waits for the display controller' bash -c 'systemctl cat sddm.service | grep -qx "ExecStartPre=-/usr/lib/omarchy-mac/wait-for-display"'
-check 'the display controller card exists' test -e /dev/dri/by-path/platform-soc:display-subsystem-card
+check 'the display controller card exists' bash -c 'compgen -G "/dev/dri/by-path/platform-*display-subsystem-card" >/dev/null'
 journalctl -b -k -o short-monotonic --no-pager | grep -m1 -i 'apple-drm\|appledrm' | sed 's/^/  kernel: /'
 journalctl -b -u sddm -o short-monotonic --no-pager | grep -m2 -E 'Starting|Started' | sed 's/^/  sddm: /'
 echo '  expect sddm Started after the appledrm card; by eye: greeter typing fills dots on the built-in panel with USB-C monitors attached'
@@ -83,21 +83,27 @@ elif [[ -z $external ]]; then
   echo '  no external monitor attached; skipped the DDC case'
 fi
 
-# Ambient light keyboard
-check 'ALS and keyboard LED are available' omarchy-brightness-keyboard-auto --available
-check 'the ALS keyboard loop runs' systemctl --user is-active --quiet omarchy-brightness-keyboard-auto.service
-echo "  lux $(cat /sys/bus/iio/devices/iio:device*/in_illuminance_input 2>/dev/null | head -n1), keys $(brightnessctl -d kbd_backlight get)/255"
-if (( read_only )); then
-  echo '  read-only: skipped the lock-style keyboard blank'
+# Ambient light sensor, then the keyboard light that follows it
+check 'the ambient light sensor reads lux' bash -c 'cat /sys/bus/iio/devices/iio:device*/in_illuminance_input 2>/dev/null | head -n1 | grep -qE "^[0-9]+(\.[0-9]+)?$"'
+if [[ ! -e /sys/class/leds/kbd_backlight ]]; then
+  echo "  lux $(cat /sys/bus/iio/devices/iio:device*/in_illuminance_input 2>/dev/null | head -n1)"
+  echo '  no keyboard backlight (MacBook Neo); skipped the ALS keyboard checks'
 else
-  omarchy-brightness-keyboard off
-  sleep 12
-  lit=$(brightnessctl -d kbd_backlight get)
-  lux=$(omarchy-brightness-keyboard-auto --map-lux "$(cat /sys/bus/iio/devices/iio:device*/in_illuminance_input | head -n1 | cut -d. -f1)")
-  echo "  after a lock-style blank: keys $lit/255, room maps to $lux%"
-  check 'keys blanked by the lock screen light up again in a room that wants them' bash -c "(( $lux == 0 || $lit > 0 ))"
+  check 'ALS and keyboard LED are available' omarchy-brightness-keyboard-auto --available
+  check 'the ALS keyboard loop runs' systemctl --user is-active --quiet omarchy-brightness-keyboard-auto.service
+  echo "  lux $(cat /sys/bus/iio/devices/iio:device*/in_illuminance_input 2>/dev/null | head -n1), keys $(brightnessctl -d kbd_backlight get)/255"
+  if (( read_only )); then
+    echo '  read-only: skipped the lock-style keyboard blank'
+  else
+    omarchy-brightness-keyboard off
+    sleep 12
+    lit=$(brightnessctl -d kbd_backlight get)
+    lux=$(omarchy-brightness-keyboard-auto --map-lux "$(cat /sys/bus/iio/devices/iio:device*/in_illuminance_input | head -n1 | cut -d. -f1)")
+    echo "  after a lock-style blank: keys $lit/255, room maps to $lux%"
+    check 'keys blanked by the lock screen light up again in a room that wants them' bash -c "(( $lux == 0 || $lit > 0 ))"
+  fi
+  echo '  by eye: dim the keys to off with the keyboard-brightness keys; they stay off until the room light changes a lot'
 fi
-echo '  by eye: dim the keys to off with the keyboard-brightness keys; they stay off until the room light changes a lot'
 
 printf '\n%d failure(s)\n' "$failures"
 (( failures == 0 ))

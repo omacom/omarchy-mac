@@ -48,6 +48,28 @@ fi
 wait "$waiter" || fail 'the wait never fails the greeter'
 pass 'greeter waits for the display controller and starts when its card appears'
 
+# MacBook Neo (A18 Pro): the display subsystem is a root node, and its card has no soc: prefix.
+rm -rf "$node" "$card"
+root_node="$work/proc/device-tree/display-subsystem"
+root_card="$work/dev/dri/by-path/platform-display-subsystem-card"
+mkdir -p "$root_node"
+"$wait" &
+waiter=$!
+sleep 0.5
+kill -0 "$waiter" 2>/dev/null || fail 'a root display subsystem is waited for too'
+touch "$root_card"
+for _ in {1..40}; do
+  kill -0 "$waiter" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$waiter" 2>/dev/null; then
+  kill "$waiter"
+  fail 'greeter starts as soon as the root display subsystem card appears'
+fi
+wait "$waiter" || fail 'the wait never fails the greeter'
+rm -rf "$root_node" "$root_card"
+pass 'greeter waits for a root display subsystem (MacBook Neo) and its card'
+
 stage="$work/root"
 user_setup="$stage/usr/bin/omarchy-mac-setup-user"
 export HOME="$work/home" XDG_RUNTIME_DIR="$work/no-session"

@@ -189,11 +189,16 @@ else
   report FAIL vendor-firmware "omarchy-vendor-firmware.service is $firmware_state"
 fi
 
+# Speaker protection: speakersafetyd, or on the MacBook Neo (J700) speakerguardd, whose
+# feed-forward model replaces it there (speakersafetyd's J700 drop-in then skips it).
 speaker_state=$(systemctl is-active speakersafetyd.service 2>/dev/null)
+guard_state=$(systemctl is-active speakerguardd.service 2>/dev/null)
 if [[ $speaker_state == "active" ]]; then
   report PASS speakersafetyd "speakersafetyd is active"
+elif [[ $guard_state == "active" ]]; then
+  report PASS speakersafetyd "speakerguardd is active (feed-forward speaker protection)"
 else
-  report FAIL speakersafetyd "speakersafetyd is ${speaker_state:-unknown}"
+  report FAIL speakersafetyd "speakersafetyd is ${speaker_state:-unknown}, speakerguardd is ${guard_state:-unknown}"
 fi
 
 # Displays and audio, read from the logged-in user's session

@@ -13,9 +13,16 @@ if (( EUID != 0 )); then
   dev=${OMARCHY_DEV_ROOT:-/dev}
 fi
 # Connectors are no test: simpledrm has one, and so does the GPU's own card.
-[[ -e $proc/device-tree/soc/display-subsystem ]] || exit 0
+# The display subsystem sits under /soc on M1-M4 and at the root on the MacBook
+# Neo (A18 Pro); its card's by-path name follows the node's parent.
+node=
+for candidate in soc/display-subsystem display-subsystem; do
+  [[ -e $proc/device-tree/$candidate ]] && { node=$candidate; break; }
+done
+[[ -n $node ]] || exit 0
+card=$dev/dri/by-path/platform-${node//\//:}-card
 for _ in {1..200}; do
-  [[ -e $dev/dri/by-path/platform-soc:display-subsystem-card ]] && break
+  [[ -e $card ]] && break
   sleep 0.05
 done
 exit 0
