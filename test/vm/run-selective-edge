@@ -232,11 +232,11 @@ pacman -Sp --print-format '%r %n %v %l' "${targets[@]}" > /tmp/package-selection
 cat /tmp/package-selection
 awk '
   $1 == "omarchy" {
-    if ($2 != "hyprland" && $2 != "hyprtoolkit" && $2 != "hyprland-guiutils") exit 1
+    if ($2 != "hyprland" && $2 != "hyprtoolkit" && $2 != "hyprland-guiutils" && $2 != "quickshell") exit 1
     selected[$2] = 1
   }
   $2 == "aquamarine" { if ($1 != "extra") exit 1; aquamarine = 1 }
-  END { if (length(selected) != 3 || !aquamarine) exit 1 }
+  END { if (length(selected) != 4 || !aquamarine) exit 1 }
 ' /tmp/package-selection
 pacman -Syu --needed --noconfirm "${targets[@]}"
 pacman -Qii aquamarine hyprtoolkit hyprland-guiutils hyprland

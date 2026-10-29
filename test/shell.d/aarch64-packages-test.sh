@@ -105,3 +105,7 @@ pass "the Quattro upgrade adds the ARM repo before installing packages"
 grep -qF 'pacman -Si quickshell-git' "$ROOT/migrations/1784672586.sh" ||
   fail "the quickshell-git migration checks sync-repo availability before pacman"
 pass "the quickshell-git migration skips cleanly when the repo cannot serve it"
+
+grep -qF 'pacman -Si omarchy/quickshell' "$ROOT/migrations/1792350611.sh" ||
+  fail "the Omarchy quickshell migration checks sync-repo availability before pacman"
+pass "the Omarchy quickshell migration skips cleanly when the repo cannot serve it"

@@ -1,3 +1,4 @@
+//@ pragma OmarchyLoadPatch
 import QtQuick
 import QtQml.Models
 import Quickshell

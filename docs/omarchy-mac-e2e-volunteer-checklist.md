@@ -140,7 +140,8 @@ Collect the installed-system state:
 omarchy version
 printf '%s\n' "$OMARCHY_PATH"
 readlink -f /usr/share/omarchy
-pacman -Q omarchy omarchy-settings hyprland hyprtoolkit hyprland-guiutils aquamarine
+pacman -Q omarchy omarchy-settings hyprland hyprtoolkit hyprland-guiutils quickshell aquamarine
+quickshell --version
 pacman -Dk
 systemctl --failed --no-pager
 systemctl --user --failed --no-pager

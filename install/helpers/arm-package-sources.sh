@@ -1,8 +1,11 @@
 #!/bin/bash
 
 # Shared by the standalone installer and installed package update commands.
+# Quickshell is selected too: only Omarchy's build honors the shell's
+# `//@ pragma OmarchyLoadPatch`, which keeps Qt 6.12's QtQuick Color singleton
+# from shadowing the theme palette. The regular repositories ship Arch's build.
 omarchy_arm_package_targets() {
-  printf '%s\n' omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils
+  printf '%s\n' omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils omarchy/quickshell
 }
 
 # --needed drops unchanged explicit targets before sysupgrade considers the

@@ -44,7 +44,7 @@ def pkg(lane, name, version, *metadata):
 base = []
 for name in ['omarchy', 'omarchy-settings']:
     base.append(pkg('baseline', name, '4.0.2-2'))
-for name in ['hyprland', 'hyprtoolkit', 'hyprland-guiutils', 'aquamarine', 'ordinary', 'old-widget']:
+for name in ['hyprland', 'hyprtoolkit', 'hyprland-guiutils', 'quickshell', 'aquamarine', 'ordinary', 'old-widget']:
     base.append(pkg('baseline', name, '1-1'))
 for lane, version in [('stable', '4.0.2-2'), ('rc', '4.0.3rc1-1'), ('edge', '4.0.3rc1-1')]:
     pkg(lane, 'omarchy', version, 'depend = newlib')
@@ -52,10 +52,13 @@ for lane, version in [('stable', '4.0.2-2'), ('rc', '4.0.3rc1-1'), ('edge', '4.0
     run(['repo-add', str(lanes / lane / 'omarchy-aarch64.db.tar.gz'), *map(str, (lanes / lane).glob('*.pkg.tar.zst'))])
 for name in ['hyprland', 'hyprtoolkit', 'hyprland-guiutils']:
     pkg('graphics', name, '2-1', 'depend = aquamarine=2-1')
+pkg('graphics', 'quickshell', '2-1')
 run(['repo-add', str(lanes / 'graphics/omarchy.db.tar.gz'), *map(str, (lanes / 'graphics').glob('*.pkg.tar.zst'))])
 for name in ['aquamarine', 'ordinary', 'newlib']:
     pkg('regular', name, '2-1')
 pkg('regular', 'new-widget', '2-1', 'replaces = old-widget', 'conflict = old-widget')
+# Arch's newer build in [extra], listed before [omarchy], must not win.
+pkg('regular', 'quickshell', '3-1')
 run(['repo-add', str(lanes / 'regular/extra.db.tar.gz'), *map(str, (lanes / 'regular').glob('*.pkg.tar.zst'))])
 
 # A real local signing key verifies that preflight and final install can use
@@ -191,6 +194,7 @@ assert 'download/rc' in config.read_text()
 assert run([*pacman, '-Q', 'omarchy', 'omarchy-settings']).splitlines() == ['omarchy 4.0.3rc1-1', 'omarchy-settings 4.0.3rc1-1']
 assert 'ordinary 2-1' in run([*pacman, '-Q', 'ordinary'])
 assert 'new-widget 2-1' in run([*pacman, '-Q', 'new-widget'])
+assert run([*pacman, '-Q', 'quickshell']).strip() == 'quickshell 2-1', 'omarchy/quickshell must win over a newer [extra] build'
 assert subprocess.run([*pacman, '-Q', 'old-widget'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
 deps = run([*pacman, '-Qqd']).splitlines()
 assert 'aquamarine' in deps and 'newlib' in deps
@@ -203,6 +207,7 @@ channel('stable')
 assert 'download/stable' in config.read_text()
 assert run([*pacman, '-Q', 'omarchy', 'omarchy-settings']).splitlines() == ['omarchy 4.0.2-2', 'omarchy-settings 4.0.2-2']
 assert 'ordinary 2-1' in run([*pacman, '-Q', 'ordinary'])
+assert run([*pacman, '-Q', 'quickshell']).strip() == 'quickshell 2-1'
 print('ok - rc to stable downgrades only the explicit pair while retaining the upgraded distribution stack')
 assert all((keyring / name).read_bytes() == data for name, data in key_files.items())
 print('ok - signed package preflight and installation preserve original public trust and secret keys')
