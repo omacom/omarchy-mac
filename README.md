@@ -19,7 +19,7 @@ Omarchy's own packages now support Apple Silicon, so this fork's quattro line en
 
 <!-- omarchy-mac-migrate one-liner: migrate/build --check keeps the checksum current -->
 ```bash
-d=$(mktemp -d) && curl -fsSLo "$d/omarchy-mac-migrate" https://github.com/omacom/omarchy-mac/releases/download/mac-migrate-v1/omarchy-mac-migrate && echo "6ded7bd005327556a77063744138f525b2bcfdb4bfc5faa466199ff6b83b6fb7  $d/omarchy-mac-migrate" | sha256sum -c - && sudo bash "$d/omarchy-mac-migrate" run
+d=$(mktemp -d) && curl -fsSLo "$d/omarchy-mac-migrate" https://github.com/omacom/omarchy-mac/releases/download/mac-migrate-v1/omarchy-mac-migrate && echo "7daa9c784349294ba3622b8e64a5011248f195c0fd3932cb84d4fdb37583134c  $d/omarchy-mac-migrate" | sha256sum -c - && sudo bash "$d/omarchy-mac-migrate" run
 ```
 
 `sudo omarchy-mac-migrate check` says what a run would do without changing anything, and `sudo omarchy-mac-migrate status` where a run stands. How it works: [migrate/README.md](migrate/README.md).

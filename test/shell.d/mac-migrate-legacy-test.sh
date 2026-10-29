@@ -767,6 +767,21 @@ grep -qx 'GRUB_FONT=/boot/grub/fonts/unicode32.pf2' "$(state_dir)/backup/boot-sw
 [[ $(cat "$F/esp/EFI/BOOT/BOOTAA64.EFI") == "limine 12.9" ]] || fail "Limine takes U-Boot's slot on the GRUB font Mac"
 pass "the fork's GRUB font on the ESP does not stop the Limine activation"
 
+# aurora-sep installs its kernel outside pacman: a module tree no package owns,
+# whose pkgbase also says linux-aurora and which sorts before the packaged one.
+# The root's /boot gets the kernel the package installed, not that one.
+encrypted_fixture encrypted-sep checkout
+ships linux-aurora /usr/lib/modules/7.1.12-aurora/vmlinuz
+owns linux-aurora /usr/lib/modules/7.1.12-aurora/vmlinuz
+mkdir -p "$R/usr/lib/modules/7.1.11-sep"
+echo linux-aurora >"$R/usr/lib/modules/7.1.11-sep/pkgbase"
+echo "sep kernel 7.1.11" >"$R/usr/lib/modules/7.1.11-sep/vmlinuz"
+output=$(migrate run 2>&1) || fail "a legacy Mac with aurora-sep's module tree migrates to its reboot" "$output"
+grep -q "Reboot to finish" <<<"$output" || fail "the aurora-sep Mac's run asks for a reboot" "$output"
+[[ $(<"$R/boot/vmlinuz-linux-aurora") == "linux-aurora "* ]] ||
+  fail "the root's /boot gets the packaged Aurora kernel, not aurora-sep's" "$(cat "$R/boot/vmlinuz-linux-aurora")"
+pass "a module tree no package owns does not stand in for the packaged Aurora kernel"
+
 # A channel install, whose fork omarchy-settings owned omarchy_hooks.conf: the
 # transaction takes it away with the package.
 encrypted_fixture encrypted-channel channel
