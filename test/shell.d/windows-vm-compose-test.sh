@@ -77,9 +77,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-write() { # RAM CORES DISK USER PASS TZ
-  printf 'RAM=%s\nCORES=%s\nDISK=%s\nUSERNAME=%s\nPASSWORD=%s\nTZ=%s\n' \
-    "$@" | __priv_write_compose
+write() { # RAM CORES DISK USER PASS TZ [GRAPHICS]
+  local graphics="${7:-}"
+  printf 'RAM=%s\nCORES=%s\nDISK=%s\nUSERNAME=%s\nPASSWORD=%s\nTZ=%s\nGRAPHICS=%s\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$graphics" | __priv_write_compose
 }
 
 fd_count() { find "/proc/$$/fd" -mindepth 1 -maxdepth 1 -printf x | wc -c; }
@@ -106,6 +107,20 @@ grep -q 'PROTECT: "Y"' "$COMPOSE" || fail "web console is not password protected
 [[ $(stat -Lc '%a' "$EXPECTED_STORAGE") == 700 && $(stat -Lc '%a' "$EXPECTED_SHARED") == 700 ]] || fail "mount leaves are not private"
 grep -q -- '- /:/' "$COMPOSE" && fail "compose contains host-root bind"
 pass "writer emits fixed anchors bound to exact private source inodes"
+
+# The host prerequisite must enforce the documented Vulkan floor. Fake the
+# render node and probe output so this remains independent of the test runner's
+# GPU while covering both the rejection and acceptance paths.
+compgen() {
+  if [[ ${1:-} == -G && ${2:-} == /dev/dri/renderD\* ]]; then return 0; fi
+  builtin compgen "$@"
+}
+vulkaninfo() { printf '%s\n' 'Vulkan Instance Version: 1.2.999'; }
+if graphics_host_ready venus; then fail "Vulkan 1.2 was accepted for Venus"; fi
+vulkaninfo() { printf '%s\n' 'Vulkan Instance Version: 1.3.280'; }
+graphics_host_ready venus || fail "Vulkan 1.3 was rejected for Venus"
+unset -f compgen vulkaninfo
+pass "Venus host validation enforces Vulkan 1.3"
 
 # The graphics profile is explicit and adds only the protected render-device
 # and VirtIO/Venus QEMU arguments. Stub host probing here so this fixture does

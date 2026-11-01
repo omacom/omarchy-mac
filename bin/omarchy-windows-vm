@@ -162,6 +162,19 @@ graphics_host_ready() {
     echo "omarchy-windows-vm: Vulkan is unavailable on this host" >&2
     return 1
   }
+  local version major minor
+  version=$(vulkaninfo --summary 2>/dev/null | sed -nE \
+    's/^[[:space:]]*Vulkan Instance Version:[[:space:]]*([0-9]+)\.([0-9]+)(\.[0-9]+)?.*/\1.\2/p' | head -n1)
+  if [[ ! $version =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+    echo "omarchy-windows-vm: could not determine the Vulkan instance version" >&2
+    return 1
+  fi
+  major=${BASH_REMATCH[1]}
+  minor=${BASH_REMATCH[2]}
+  if ((major < 1 || (major == 1 && minor < 3))); then
+    echo "omarchy-windows-vm: VirtIO/Venus graphics needs Vulkan 1.3 or newer (found $version)" >&2
+    return 1
+  fi
 }
 
 # The only privileged sub-actions __priv may dispatch. A bash command name
@@ -881,14 +894,18 @@ assert_compose_trusted() {
 }
 
 assert_mounts_safe() {
-  local storage shared needs_rewrite=0 mounts_prepared=0 graphics=none
+  local storage shared needs_rewrite=0 mounts_prepared=0 graphics
   resolve_caller || return 1
   assert_compose_trusted || {
     echo "omarchy-windows-vm: refusing an untrusted compose file" >&2
     return 1
   }
-  if grep -q 'virtio-vga-gl' "$COMPOSE_FILE"; then graphics=venus; fi
-  graphics_host_ready "$graphics" || return 1
+  graphics=$(read_compose_value GRAPHICS "$COMPOSE_FILE")
+  graphics=${graphics:-none}
+  valid_graphics "$graphics" || {
+    echo "omarchy-windows-vm: refusing an unknown graphics mode in the compose" >&2
+    return 1
+  }
   storage=$(get_mount_source /storage)
   shared=$(get_mount_source /shared)
 
@@ -939,7 +956,11 @@ assert_mounts_safe() {
   }
 }
 
-__priv_up() { assert_mounts_safe && dc up -d; }
+__priv_up() {
+  assert_mounts_safe || return 1
+  graphics_host_ready "$(read_compose_value GRAPHICS "$COMPOSE_FILE")" || return 1
+  dc up -d
+}
 
 __priv_down() { dc down; }
 
@@ -947,6 +968,7 @@ __priv_down() { dc down; }
 # single elevation so the readiness poll does not prompt on every iteration.
 __priv_up_wait() {
   assert_mounts_safe || return 1
+  graphics_host_ready "$(read_compose_value GRAPHICS "$COMPOSE_FILE")" || return 1
   local status
   status=$(docker inspect --format='{{.State.Status}}' "$CONTAINER" 2>/dev/null)
   if [[ $status != "running" ]]; then
