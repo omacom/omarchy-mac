@@ -115,6 +115,7 @@ compgen() {
   if [[ ${1:-} == -G && ${2:-} == /dev/dri/renderD\* ]]; then return 0; fi
   builtin compgen "$@"
 }
+omarchy-cmd-present() { [[ ${1:-} == vulkaninfo ]]; }
 vulkaninfo() { printf '%s\n' 'Vulkan Instance Version: 1.2.999'; }
 if graphics_host_ready venus; then fail "Vulkan 1.2 was accepted for Venus"; fi
 vulkaninfo() { printf '%s\n' 'Vulkan Instance Version: 1.3.280'; }
