@@ -154,7 +154,7 @@ graphics_host_ready() {
     echo "omarchy-windows-vm: VirtIO/Venus graphics needs a /dev/dri render node" >&2
     return 1
   }
-  command -v vulkaninfo >/dev/null 2>&1 || {
+  omarchy-cmd-present vulkaninfo || {
     echo "omarchy-windows-vm: VirtIO/Venus graphics needs vulkaninfo (Vulkan 1.3+)" >&2
     return 1
   }
