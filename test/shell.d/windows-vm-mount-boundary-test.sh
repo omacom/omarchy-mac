@@ -31,9 +31,8 @@ mount -t tmpfs -o uid=0,gid=0,mode=0710,size=1g home-alice /home/alice
 export HOME=/home/alice
 unset OMARCHY_WINDOWS_DIR
 
-# The Mac fork's omarchy-windows-vm refuses aarch64 and exits, which would take
-# this test with it when sourced. The caller-boundary checks are architecture
-# blind, so answer the gate rather than lose the coverage on Apple Silicon.
+# The caller-boundary checks are architecture blind, so keep this fixture
+# independent of the host architecture.
 stub_bin="$test_tmp/bin"
 mkdir -p "$stub_bin"
 cat >"$stub_bin/uname" <<'SH'

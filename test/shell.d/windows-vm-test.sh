@@ -7,6 +7,12 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 windows_vm_command="$ROOT/bin/omarchy-windows-vm"
 windows_vm_rules="$ROOT/default/hypr/apps/windows-vm.lua"
 
+rg -q 'VirtIO-GPU/Venus' "$windows_vm_command" ||
+  fail "Windows VM documents the opt-in Linux VirtIO/Venus path"
+rg -q 'OMARCHY_WINDOWS_GRAPHICS=venus' "$windows_vm_command" ||
+  fail "Windows VM exposes an explicit graphics opt-in"
+pass "Windows VM keeps CPU-only default and exposes opt-in VirtIO/Venus graphics"
+
 rg -q '^    restart: "no"$' "$windows_vm_command" ||
   fail "Windows VM uses manual startup by default"
 pass "Windows VM uses manual startup by default"

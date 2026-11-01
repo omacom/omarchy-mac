@@ -38,7 +38,28 @@ The VM's ports are bound to localhost only, so nothing on your network can reach
 
 ## Limits and licensing
 
-There's no GPU passthrough with this setup, so it's not suitable for gaming or video editing. It's a great way to run Microsoft Office or whatever else you absolutely must have.
+The Docker/KVM backend requires an x86_64 Linux host. It does not configure
+UTM's macOS D3DMetal backend and is unavailable on Apple Silicon. UTM's
+Windows DX12 driver is a separate macOS path; this command does not claim that
+the Windows guest has DX12 acceleration.
+
+On a supported x86_64 Linux host with a Vulkan 1.3 driver and `/dev/dri` render
+node, you can opt into the experimental VirtIO-GPU/Venus device path used by
+current Linux QEMU/UTM stacks:
+
+```bash
+omarchy-windows-vm install --graphics venus
+```
+
+This adds a `virtio-vga-gl` device, shared memory, and the host render device
+to the protected compose file. The command refuses to enable it when Vulkan or
+DRM is unavailable. The Windows guest still needs a compatible VirtIO GPU
+driver. This path is not a claim of verified DirectX 12 support; no Windows
+guest graphics probe is shipped with this command yet. Use `--cpu-only` to
+make the default explicit.
+
+The host must expose Vulkan and render-node access to QEMU. This command does
+not silently install a Windows guest driver or claim DX12 conformance.
 
 The version installed is Windows 11 Pro, unactivated. You'll need your own license key to use the gated features.
 

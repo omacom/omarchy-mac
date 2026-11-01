@@ -20,9 +20,29 @@ export OMARCHY_WINDOWS_DIR="$TMPDIR/win"
 export HOME="$TMPDIR/home"
 mkdir -p "$HOME"
 
-# The Mac fork's omarchy-windows-vm refuses aarch64 and exits, which would take
-# this test with it when sourced. The compose writer it pins is architecture
-# blind, so answer the gate rather than lose the coverage on Apple Silicon.
+# The Docker/KVM backend must not be advertised as an Apple Silicon/UTM
+# backend. Keep the architecture gate ahead of every privileged action.
+arm_bin="$TMPDIR/arm-bin"
+mkdir -p "$arm_bin"
+cat >"$arm_bin/uname" <<'SH'
+#!/bin/bash
+if [[ ${1:-} == "-m" ]]; then
+  echo aarch64
+else
+  exec /usr/bin/uname "$@"
+fi
+SH
+chmod +x "$arm_bin/uname"
+if PATH="$arm_bin:/usr/bin:/bin" HOME="$HOME" OMARCHY_WINDOWS_DIR="$OMARCHY_WINDOWS_DIR" \
+  "$ROOT/bin/omarchy-windows-vm" help >/dev/null 2>"$TMPDIR/arm-error"; then
+  fail "Docker/KVM Windows VM backend ran on Apple Silicon"
+fi
+grep -q 'needs an x86_64 Linux host' "$TMPDIR/arm-error" ||
+  fail "Apple Silicon rejection does not explain the unsupported backend"
+pass "Docker/KVM backend rejects Apple Silicon instead of claiming UTM support"
+
+# The compose writer is architecture blind, so keep this fixture independent
+# of the host architecture and exercise its protected input boundary directly.
 stub_bin="$TMPDIR/bin"
 mkdir -p "$stub_bin"
 cat >"$stub_bin/uname" <<'SH'
@@ -86,6 +106,21 @@ grep -q 'PROTECT: "Y"' "$COMPOSE" || fail "web console is not password protected
 [[ $(stat -Lc '%a' "$EXPECTED_STORAGE") == 700 && $(stat -Lc '%a' "$EXPECTED_SHARED") == 700 ]] || fail "mount leaves are not private"
 grep -q -- '- /:/' "$COMPOSE" && fail "compose contains host-root bind"
 pass "writer emits fixed anchors bound to exact private source inodes"
+
+# The graphics profile is explicit and adds only the protected render-device
+# and VirtIO/Venus QEMU arguments. Stub host probing here so this fixture does
+# not depend on the test runner's GPU while still checking the emitted compose.
+graphics_host_ready() { return 0; }
+write 4G 2 64G alice s3cret Europe/Copenhagen venus
+grep -q 'GRAPHICS: "venus"' "$COMPOSE" || fail "Venus profile was not recorded"
+grep -q 'virtio-vga-gl.*venus=true' "$COMPOSE" || fail "Venus QEMU device is missing"
+grep -q -- '- /dev/dri:/dev/dri' "$COMPOSE" || fail "Venus render device is missing"
+grep -q 'shm_size: "2G"' "$COMPOSE" || fail "Venus shared memory is missing"
+write 4G 2 64G alice s3cret Europe/Copenhagen
+if grep -q 'virtio-vga-gl\|/dev/dri:/dev/dri\|GRAPHICS: "venus"' "$COMPOSE"; then
+  fail "CPU-only profile retained Venus settings"
+fi
+pass "Venus graphics is explicit and CPU-only remains the default"
 
 # Input cannot widen a mount or compose field.
 rm -f "$COMPOSE"
