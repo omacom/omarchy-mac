@@ -127,6 +127,7 @@ pass "Venus host validation enforces Vulkan 1.3"
 # silently falling back to Dockur's stock image.
 omarchy-cmd-present() { [[ ${1:-} == docker || ${1:-} == vulkaninfo ]]; }
 NEPTUNE_IMAGE_PRESENT=0
+NEPTUNE_IMAGE_CHECKS=0
 docker() {
   if [[ ${1:-} == image && ${2:-} == inspect && ${3:-} == "$NEPTUNE_IMAGE" ]]; then
     (( NEPTUNE_IMAGE_PRESENT == 1 ))
@@ -134,9 +135,15 @@ docker() {
   fi
   return 1
 }
+neptune_image_ready() {
+  NEPTUNE_IMAGE_CHECKS=$((NEPTUNE_IMAGE_CHECKS + 1))
+  (( NEPTUNE_IMAGE_PRESENT == 1 ))
+}
 if graphics_host_ready neptune; then
   fail "Neptune accepted without its explicitly built image"
 fi
+graphics_host_ready neptune false || fail "user-side Neptune preflight rejected without needing image access"
+(( NEPTUNE_IMAGE_CHECKS == 1 )) || fail "user-side Neptune preflight accessed Docker"
 NEPTUNE_IMAGE_PRESENT=1
 graphics_host_ready neptune || fail "Neptune rejected with image, render node, and Vulkan 1.3"
 write 4G 2 64G alice s3cret Europe/Copenhagen neptune
@@ -170,6 +177,7 @@ write 4G 2 64G alice s3cret Europe/Copenhagen
 if grep -q 'virtio-vga-gl\|/dev/dri:/dev/dri\|GRAPHICS: "venus"\|GPU: "Y"' "$COMPOSE"; then
   fail "CPU-only profile retained Venus settings"
 fi
+graphics_host_ready "" || fail "legacy compose without GRAPHICS was not treated as CPU-only"
 pass "Venus graphics is explicit and CPU-only remains the default"
 
 # Input cannot widen a mount or compose field.

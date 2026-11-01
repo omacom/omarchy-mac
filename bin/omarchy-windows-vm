@@ -165,13 +165,19 @@ neptune_image_ready() {
 }
 
 graphics_host_ready() {
-  case "$1" in
+  local graphics="${1:-none}" check_image="${2:-true}"
+  case "$graphics" in
   none) return 0 ;;
   neptune)
     # Neptune is a D3D11/D3D12 protocol capset, not a Venus alias.  The image
     # must carry the custom QEMU/virglrenderer integration and signed Triton
     # guest driver, so never silently run the stock Dockur image.
-    neptune_image_ready || return 1
+    # The user-side install preflight must not touch Docker's privileged
+    # socket.  The elevated compose writer repeats this check before writing
+    # a Neptune compose, and launch repeats it before starting the VM.
+    if [[ $check_image == true ]]; then
+      neptune_image_ready || return 1
+    fi
     ;;
   venus) ;;
   *) return 1 ;;
@@ -867,7 +873,7 @@ __priv_write_compose() {
   valid_tz "$tz" || tz="UTC"
   graphics=${graphics:-none}
   valid_graphics "$graphics" || { echo "invalid graphics mode" >&2; exit 2; }
-  graphics_host_ready "$graphics" || exit 2
+  graphics_host_ready "$graphics" true || exit 2
   prepare_caller_mounts || exit 2
   # Readable by root and the docker group only. Any failure after mounting rolls
   # back just the binds this writer created and leaves an old compose untouched.
@@ -1022,7 +1028,7 @@ assert_mounts_safe() {
 
 __priv_up() {
   assert_mounts_safe || return 1
-  graphics_host_ready "$(read_compose_value GRAPHICS "$COMPOSE_FILE")" || return 1
+  graphics_host_ready "$(read_compose_value GRAPHICS "$COMPOSE_FILE")" true || return 1
   dc up -d
 }
 
@@ -1032,7 +1038,7 @@ __priv_down() { dc down; }
 # single elevation so the readiness poll does not prompt on every iteration.
 __priv_up_wait() {
   assert_mounts_safe || return 1
-  graphics_host_ready "$(read_compose_value GRAPHICS "$COMPOSE_FILE")" || return 1
+  graphics_host_ready "$(read_compose_value GRAPHICS "$COMPOSE_FILE")" true || return 1
   local status
   status=$(docker inspect --format='{{.State.Status}}' "$CONTAINER" 2>/dev/null)
   if [[ $status != "running" ]]; then
@@ -1303,7 +1309,9 @@ install_windows() {
     echo "Invalid graphics mode: $WINDOWS_GRAPHICS (use none, venus, or neptune)." >&2
     exit 1
   }
-  graphics_host_ready "$WINDOWS_GRAPHICS" || exit 1
+  # Render-node/Vulkan checks are safe before authorization.  Neptune image
+  # inspection is deferred to the privileged compose writer.
+  graphics_host_ready "$WINDOWS_GRAPHICS" false || exit 1
 
   prepare_user_mount_sources || exit 1
   check_prerequisites
