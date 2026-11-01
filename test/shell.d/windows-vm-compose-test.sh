@@ -120,8 +120,38 @@ vulkaninfo() { printf '%s\n' 'Vulkan Instance Version: 1.2.999'; }
 if graphics_host_ready venus; then fail "Vulkan 1.2 was accepted for Venus"; fi
 vulkaninfo() { printf '%s\n' 'Vulkan Instance Version: 1.3.280'; }
 graphics_host_ready venus || fail "Vulkan 1.3 was rejected for Venus"
-unset -f compgen vulkaninfo
 pass "Venus host validation enforces Vulkan 1.3"
+
+# Neptune is a separate, image-provided UTM/QEMU protocol path. The command
+# must fail closed when its explicitly pinned image is absent rather than
+# silently falling back to Dockur's stock image.
+omarchy-cmd-present() { [[ ${1:-} == docker || ${1:-} == vulkaninfo ]]; }
+NEPTUNE_IMAGE_PRESENT=0
+docker() {
+  if [[ ${1:-} == image && ${2:-} == inspect && ${3:-} == "$NEPTUNE_IMAGE" ]]; then
+    (( NEPTUNE_IMAGE_PRESENT == 1 ))
+    return
+  fi
+  return 1
+}
+if graphics_host_ready neptune; then
+  fail "Neptune accepted without its explicitly built image"
+fi
+NEPTUNE_IMAGE_PRESENT=1
+graphics_host_ready neptune || fail "Neptune rejected with image, render node, and Vulkan 1.3"
+write 4G 2 64G alice s3cret Europe/Copenhagen neptune
+grep -q '^    image: omarchy-windows-neptune:utm$' "$COMPOSE" ||
+  fail "Neptune did not pin the custom image"
+grep -q 'GRAPHICS: "neptune"' "$COMPOSE" || fail "Neptune profile was not recorded"
+grep -q 'NEPTUNE: "Y"' "$COMPOSE" || fail "Neptune protocol flag was not enabled"
+grep -q 'GPU: "Y"' "$COMPOSE" || fail "Neptune GPU acceleration was not enabled"
+grep -q 'VGA: "virtio-vga-gl"' "$COMPOSE" || fail "Neptune VirtIO-GPU device is missing"
+grep -q 'VRAM_SIZE: "8G"' "$COMPOSE" || fail "Neptune host-memory budget is missing"
+grep -q -- '- /dev/dri:/dev/dri' "$COMPOSE" || fail "Neptune render device is missing"
+grep -q 'image: dockurr/windows' "$COMPOSE" && fail "Neptune fell back to the stock image"
+pass "Neptune requires the pinned image and emits its protected compose profile"
+
+unset -f compgen vulkaninfo omarchy-cmd-present docker
 
 # The graphics profile is explicit and adds only the protected render-device
 # and VirtIO/Venus QEMU arguments. Stub host probing here so this fixture does
@@ -521,7 +551,13 @@ dc() { return 1; }
 __priv_remove 2>/dev/null && fail "removal deleted data after docker-compose down failed"
 [[ -f $HOME/.windows/disk.img && -f $HOME/Windows/keep.txt && -f $COMPOSE ]] || fail "failed down changed data or compose"
 dc() { :; }
+graphics_ready_calls=0
+graphics_host_ready() {
+  graphics_ready_calls=$((graphics_ready_calls + 1))
+  return 1
+}
 __priv_remove
+(( graphics_ready_calls == 0 )) || fail "removal unexpectedly probed graphics host readiness"
 [[ ! -e $HOME/.windows/disk.img ]] || fail "removal preserved disk data"
 [[ -e $HOME/Windows/keep.txt ]] || fail "removal deleted shared data"
 [[ ! -f $COMPOSE ]] || fail "removal left compose"

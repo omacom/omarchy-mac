@@ -62,6 +62,21 @@ make the default explicit.
 The host must expose Vulkan and render-node access to QEMU. This command does
 not silently install a Windows guest driver or claim DX12 conformance.
 
+The experimental Neptune profile is a separate prebuilt-image path for the
+UTM/QEMU Neptune protocol. It is available only on the same x86_64 Linux host
+requirements and refuses to run unless the exact local image
+`omarchy-windows-neptune:utm` is already present:
+
+```bash
+OMARCHY_WINDOWS_GRAPHICS=neptune omarchy-windows-vm install
+```
+
+That image must contain the matching Neptune-capable QEMU/virglrenderer stack
+and its compatible, signed Windows guest driver. The installer does not build
+or install those components, and this command does not claim that a Windows
+guest has working D3D11 or D3D12 acceleration. The stock `dockurr/windows`
+image is never substituted for Neptune.
+
 The version installed is Windows 11 Pro, unactivated. You'll need your own license key to use the gated features.
 
 If this computer shipped with Windows, the OEM key is still in firmware even after installing Omarchy. Print it with `omarchy windows key`. That key is bound to this machine — it will activate Windows reinstalled on this hardware, but it usually will not activate the VM.
