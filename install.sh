@@ -185,6 +185,11 @@ ensure_arm_package_repo() {
   ensure_asahi_alarm_keyring
   ensure_omarchy_mac_keyring
   omarchy_arm_prepare_package_sources
+  # The target list follows the packages present in the synced ARM edge
+  # database.  A fresh root has no database yet, so the helper would fall back
+  # to every historical target and pacman would abort when edge no longer
+  # publishes one of them.
+  sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Sy --noconfirm
   local -a targets
   mapfile -t targets < <(omarchy_arm_package_upgrade_args)
   log "Upgrading system packages and installing the compatible Hyprland stack"

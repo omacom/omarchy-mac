@@ -138,7 +138,18 @@ build_call=$(grep -n '^[[:space:]]*build_omarchy_packages$' "$install_script" | 
 [[ -n $repo_call && -n $build_call ]] || fail "the installer prepares repositories before package builds"
 (( repo_call < build_call && repo_call < gum_call )) || fail "the compatible stack transaction precedes package operations"
 grep -qF 'source "$checkout/install/helpers/arm-package-sources.sh"' "$install_script" || fail "the installer uses shared source policy"
+sync_call=$(grep -nF 'sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Sy --noconfirm' "$install_script" | head -1 | cut -d: -f1)
+target_call=$(grep -nF 'mapfile -t targets < <(omarchy_arm_package_upgrade_args)' "$install_script" | head -1 | cut -d: -f1)
+[[ -n $sync_call && -n $target_call && $sync_call -lt $target_call ]] ||
+  fail "the installer syncs package databases before selecting ARM edge targets"
 pass "the installer prepares the compatible stack before package operations"
+
+update_script="$ROOT/bin/omarchy-update-system-pkgs"
+update_sync_call=$(grep -nF 'sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Sy --noconfirm' "$update_script" | head -1 | cut -d: -f1)
+update_target_call=$(grep -nF 'mapfile -t targets < <(omarchy_arm_package_upgrade_args)' "$update_script" | head -1 | cut -d: -f1)
+[[ -n $update_sync_call && -n $update_target_call && $update_sync_call -lt $update_target_call ]] ||
+  fail "the installed ARM updater syncs package databases before selecting edge targets"
+pass "the installed ARM updater syncs package databases before selecting edge targets"
 
 # Run the real orchestration with harmless stubs. A separate bash process
 # preserves errexit even when the test captures an expected nonzero status.
