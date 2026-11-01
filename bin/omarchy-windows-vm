@@ -1,30 +1,13 @@
 #!/bin/bash
-# omarchy:summary=Set up a Windows VM (unsupported on Apple Silicon)
+# omarchy:summary=Set up a Windows VM (optional VirtIO/Venus/Neptune graphics)
 
-# Check for ARM64 architecture first
+# CPU-only remains the portable default. This Docker/KVM backend is an
+# x86_64-Linux path; UTM's macOS D3DMetal backend is a separate product and is
+# not silently substituted here. On supported x86_64 Linux hosts, Venus is an
+# explicit VirtIO-GPU/Venus opt-in and still does not establish Windows DX12 support.
 ARCH=$(uname -m)
-if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
-  cat << 'EOF'
-
-╔═══════════════════════════════════════════════════════════════╗
-║                                                               ║
-║   ⚠️  Windows VM Not Supported on Apple Silicon/ARM64        ║
-║                                                               ║
-║   The Windows VM feature requires x86_64 architecture.        ║
-║   Apple Silicon Macs use ARM64 which cannot efficiently       ║
-║   run x86 Windows without extreme performance penalties.      ║
-║                                                               ║
-║   Alternatives for Apple Silicon:                             ║
-║   • Parallels Desktop (commercial, ARM Windows support)       ║
-║   • VMware Fusion (free for personal use)                     ║
-║   • UTM (free, open source, uses QEMU)                        ║
-║                                                               ║
-╚═══════════════════════════════════════════════════════════════╝
-
-EOF
-  echo "Current architecture: $ARCH"
-  echo "This feature is only available on x86_64 systems."
-  echo
+if [[ $ARCH != x86_64 ]]; then
+  echo "omarchy-windows-vm: this Docker/KVM Windows backend needs an x86_64 Linux host (got $ARCH)" >&2
   exit 1
 fi
 
@@ -51,6 +34,10 @@ LEGACY_COMPOSE_FILE="$HOME/.config/windows/docker-compose.yml"
 # the user's own config, so the plaintext password is never world-readable.
 CREDENTIALS_FILE="$HOME/.config/windows/credentials"
 IMAGE="dockurr/windows"
+# This image is intentionally separate from dockurr/windows.  It must contain
+# the UTM Neptune-capable QEMU/virglrenderer stack and matching signed guest
+# driver; the stock image only knows the Venus path.
+NEPTUNE_IMAGE="omarchy-windows-neptune:utm"
 CONTAINER="omarchy-windows"
 VM_LOCK_DIR=/run/lock/omarchy-windows-vm
 # Removal is the only path that recursively proves there are no bind aliases.
@@ -163,6 +150,79 @@ valid_disk() { [[ $1 =~ ^[0-9]{1,4}G$ ]]; }
 valid_username() { [[ $1 =~ ^[A-Za-z0-9_-]{1,20}$ ]]; }
 valid_tz() { [[ $1 =~ ^[A-Za-z0-9_/.+-]{1,64}$ ]]; }
 valid_password() { [[ $1 =~ ^[[:print:]]{1,64}$ ]]; }
+valid_graphics() { [[ $1 == none || $1 == venus || $1 == neptune ]]; }
+
+neptune_image_ready() {
+  omarchy-cmd-present docker || {
+    echo "omarchy-windows-vm: Neptune graphics needs Docker to inspect $NEPTUNE_IMAGE" >&2
+    return 1
+  }
+  docker image inspect "$NEPTUNE_IMAGE" >/dev/null 2>&1 || {
+    echo "omarchy-windows-vm: Neptune graphics requires the explicitly built $NEPTUNE_IMAGE image" >&2
+    echo "omarchy-windows-vm: build the pinned UTM stack and guest driver before selecting Neptune" >&2
+    return 1
+  }
+}
+
+graphics_host_ready() {
+  local graphics="${1:-none}" check_image="${2:-true}"
+  case "$graphics" in
+  none) return 0 ;;
+  neptune)
+    # Neptune is a D3D11/D3D12 protocol capset, not a Venus alias.  The image
+    # must carry the custom QEMU/virglrenderer integration and signed Triton
+    # guest driver, so never silently run the stock Dockur image.
+    # The user-side install preflight must not touch Docker's privileged
+    # socket.  The elevated compose writer repeats this check before writing
+    # a Neptune compose, and launch repeats it before starting the VM.
+    if [[ $check_image == true ]]; then
+      neptune_image_ready || return 1
+    fi
+    ;;
+  venus) ;;
+  *) return 1 ;;
+  esac
+  compgen -G '/dev/dri/renderD*' >/dev/null || {
+    echo "omarchy-windows-vm: accelerated graphics needs a /dev/dri render node" >&2
+    return 1
+  }
+  omarchy-cmd-present vulkaninfo || {
+    echo "omarchy-windows-vm: VirtIO/Venus graphics needs vulkaninfo (Vulkan 1.3+)" >&2
+    return 1
+  }
+  local vulkan_summary
+  vulkan_summary=$(vulkaninfo --summary 2>/dev/null) || {
+    echo "omarchy-windows-vm: Vulkan is unavailable on this host" >&2
+    return 1
+  }
+  local version major minor device_version device_major device_minor
+  version=$(sed -nE \
+    's/^[[:space:]]*Vulkan Instance Version:[[:space:]]*([0-9]+)\.([0-9]+)(\.[0-9]+)?.*/\1.\2/p' \
+    <<<"$vulkan_summary" | head -n1)
+  if [[ ! $version =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+    echo "omarchy-windows-vm: could not determine the Vulkan instance version" >&2
+    return 1
+  fi
+  major=${BASH_REMATCH[1]}
+  minor=${BASH_REMATCH[2]}
+  if ((major < 1 || (major == 1 && minor < 3))); then
+    echo "omarchy-windows-vm: accelerated graphics needs Vulkan 1.3 or newer (found $version)" >&2
+    return 1
+  fi
+  device_version=$(sed -nE \
+    's/^[[:space:]]*apiVersion[[:space:]]*=[[:space:]]*([0-9]+)\.([0-9]+)(\.[0-9]+)?.*/\1.\2/p' \
+    <<<"$vulkan_summary" | head -n1)
+  if [[ ! $device_version =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+    echo "omarchy-windows-vm: could not determine a Vulkan device API version" >&2
+    return 1
+  fi
+  device_major=${BASH_REMATCH[1]}
+  device_minor=${BASH_REMATCH[2]}
+  if ((device_major < 1 || (device_major == 1 && device_minor < 3))); then
+    echo "omarchy-windows-vm: accelerated graphics needs a Vulkan 1.3 device (found $device_version)" >&2
+    return 1
+  fi
+}
 
 # The only privileged sub-actions __priv may dispatch. A bash command name
 # containing a slash is executed as a path, so validating the action here — not
@@ -692,8 +752,8 @@ rollback_new_caller_mounts() {
 }
 
 write_compose_atomically() (
-  local ram="$1" cores="$2" disk="$3" username="$4" password="$5" tz="$6"
-  local tmp="" rc esc_password
+  local ram="$1" cores="$2" disk="$3" username="$4" password="$5" tz="$6" graphics="${7:-none}"
+  local tmp="" rc esc_password qemu_args graphics_device gpu vga vram image neptune
   cleanup_writer() {
     rc=$?
     trap - EXIT
@@ -713,6 +773,35 @@ write_compose_atomically() (
   esc_password=${password//\\/\\\\}
   esc_password=${esc_password//\"/\\\"}
   esc_password=${esc_password//\$/\$\$}
+  qemu_args='-rtc base=localtime,clock=host,driftfix=slew'
+  image="$IMAGE"
+  neptune='N'
+  if [[ $graphics == venus ]]; then
+    # Let the image's qemu display helper build the complete accelerated
+    # device argument. A second hand-written -device would leave both the
+    # default and accelerated adapters present, so Windows could bind the
+    # wrong one. These are the dockur/qemus controls consumed in-container.
+    gpu='Y'
+    vga='virtio-vga-gl'
+    vram='4G'
+    graphics_device='      - /dev/dri:/dev/dri'
+  elif [[ $graphics == neptune ]]; then
+    # The custom image's display helper turns NEPTUNE=Y into
+    # `virtio-vga-gl,hostmem=8G,blob=true,neptune=true`.  Keep the argument
+    # out of ARGUMENTS: adding a second display device would leave Windows
+    # free to bind the wrong adapter.
+    image="$NEPTUNE_IMAGE"
+    neptune='Y'
+    gpu='Y'
+    vga='virtio-vga-gl'
+    vram='8G'
+    graphics_device='      - /dev/dri:/dev/dri'
+  else
+    gpu='N'
+    vga='virtio'
+    vram='4G'
+    graphics_device=''
+  fi
 
   tmp=$(mktemp "$RUNTIME_DIR/.compose.XXXXXX") || exit 1
   # omarchy:heredoc-expands paths=EXPECTED_STORAGE,EXPECTED_SHARED -- both are
@@ -722,7 +811,7 @@ write_compose_atomically() (
   cat >"$tmp" <<EOF || exit 1
 services:
   windows:
-    image: $IMAGE
+    image: $image
     container_name: $CONTAINER
     environment:
       VERSION: "11"
@@ -733,10 +822,16 @@ services:
       PASSWORD: "$esc_password"
       PROTECT: "Y"
       TZ: "$tz"
-      ARGUMENTS: "-rtc base=localtime,clock=host,driftfix=slew"
+      GRAPHICS: "$graphics"
+      NEPTUNE: "$neptune"
+      GPU: "$gpu"
+      VGA: "$vga"
+      VRAM_SIZE: "$vram"
+      ARGUMENTS: "$qemu_args"
     devices:
       - /dev/kvm
       - /dev/net/tun
+$graphics_device
     cap_add:
       - NET_ADMIN
     ports:
@@ -746,6 +841,13 @@ services:
     volumes:
       - $EXPECTED_STORAGE:/storage
       - $EXPECTED_SHARED:/shared
+EOF
+  if [[ $graphics == venus ]]; then
+    cat >>"$tmp" <<EOF
+    shm_size: "2G"
+EOF
+  fi
+  cat >>"$tmp" <<EOF
     restart: "no"
     stop_grace_period: 2m
 EOF
@@ -764,7 +866,7 @@ EOF
 # Only these fixed keys are honored; image, container name, devices, caps, and
 # port bindings are hard-coded and never taken from input.
 __priv_write_compose() {
-  local ram cores disk username password tz key value
+  local ram cores disk username password tz graphics key value
 
   while IFS='=' read -r key value; do
     case "$key" in
@@ -774,6 +876,7 @@ __priv_write_compose() {
     USERNAME) username="$value" ;;
     PASSWORD) password="$value" ;;
     TZ) tz="$value" ;;
+    GRAPHICS) graphics="$value" ;;
     esac
   done
 
@@ -783,10 +886,13 @@ __priv_write_compose() {
   valid_username "$username" || { echo "invalid username: $username" >&2; exit 2; }
   valid_password "$password" || { echo "invalid password" >&2; exit 2; }
   valid_tz "$tz" || tz="UTC"
+  graphics=${graphics:-none}
+  valid_graphics "$graphics" || { echo "invalid graphics mode" >&2; exit 2; }
+  graphics_host_ready "$graphics" true || exit 2
   prepare_caller_mounts || exit 2
   # Readable by root and the docker group only. Any failure after mounting rolls
   # back just the binds this writer created and leaves an old compose untouched.
-  write_compose_atomically "$ram" "$cores" "$disk" "$username" "$password" "$tz" || exit 2
+  write_compose_atomically "$ram" "$cores" "$disk" "$username" "$password" "$tz" "$graphics" || exit 2
 }
 
 # Read the host source of a bind mount out of the compose (e.g. /storage).
@@ -861,12 +967,30 @@ assert_compose_trusted() {
 }
 
 assert_mounts_safe() {
-  local storage shared needs_rewrite=0 mounts_prepared=0
+  local storage shared needs_rewrite=0 mounts_prepared=0 graphics image
   resolve_caller || return 1
   assert_compose_trusted || {
     echo "omarchy-windows-vm: refusing an untrusted compose file" >&2
     return 1
   }
+  graphics=$(read_compose_value GRAPHICS "$COMPOSE_FILE")
+  graphics=${graphics:-none}
+  valid_graphics "$graphics" || {
+    echo "omarchy-windows-vm: refusing an unknown graphics mode in the compose" >&2
+    return 1
+  }
+  image=$(read_compose_image "$COMPOSE_FILE")
+  if [[ $graphics == neptune ]]; then
+    [[ $image == "$NEPTUNE_IMAGE" ]] || {
+      echo "omarchy-windows-vm: Neptune compose does not use the fixed Neptune image" >&2
+      return 1
+    }
+  else
+    [[ $image == "$IMAGE" ]] || {
+      echo "omarchy-windows-vm: refusing an unexpected Windows image" >&2
+      return 1
+    }
+  fi
   storage=$(get_mount_source /storage)
   shared=$(get_mount_source /shared)
 
@@ -917,14 +1041,25 @@ assert_mounts_safe() {
   }
 }
 
-__priv_up() { assert_mounts_safe && dc up -d; }
+__priv_up() {
+  local graphics
+  assert_mounts_safe || return 1
+  graphics=$(read_compose_value GRAPHICS "$COMPOSE_FILE")
+  graphics=${graphics:-none}
+  graphics_host_ready "$graphics" true || return 1
+  dc up -d
+}
 
 __priv_down() { dc down; }
 
 # Bring the VM up and wait until the guest reports it is ready, all under a
 # single elevation so the readiness poll does not prompt on every iteration.
 __priv_up_wait() {
+  local graphics
   assert_mounts_safe || return 1
+  graphics=$(read_compose_value GRAPHICS "$COMPOSE_FILE")
+  graphics=${graphics:-none}
+  graphics_host_ready "$graphics" true || return 1
   local status
   status=$(docker inspect --format='{{.State.Status}}' "$CONTAINER" 2>/dev/null)
   if [[ $status != "running" ]]; then
@@ -1058,9 +1193,9 @@ available_storage_gb() {
 
 # Feed the collected settings to the elevated writer.
 write_compose() {
-  local ram="$1" cores="$2" disk="$3" username="$4" password="$5" tz="$6"
-  printf 'RAM=%s\nCORES=%s\nDISK=%s\nUSERNAME=%s\nPASSWORD=%s\nTZ=%s\n' \
-    "$ram" "$cores" "$disk" "$username" "$password" "$tz" |
+  local ram="$1" cores="$2" disk="$3" username="$4" password="$5" tz="$6" graphics="${7:-none}"
+  printf 'RAM=%s\nCORES=%s\nDISK=%s\nUSERNAME=%s\nPASSWORD=%s\nTZ=%s\nGRAPHICS=%s\n' \
+    "$ram" "$cores" "$disk" "$username" "$password" "$tz" "$graphics" |
     priv write_compose
 }
 
@@ -1114,6 +1249,10 @@ read_compose_value() {
   sed -n "s/.*${key}: \"\(.*\)\"/\1/p" "$file" | head -n1
 }
 
+read_compose_image() {
+  sed -n 's/^[[:space:]]*image:[[:space:]]*\([^[:space:]]*\)[[:space:]]*$/\1/p' "$1" | head -n1
+}
+
 # Older installs kept the compose under ~/.config/windows. Carry those settings
 # into the root-owned location (preserving the VM's data via the same volume
 # paths) so an upgrade does not strand or re-download an existing VM.
@@ -1129,6 +1268,9 @@ migrate_legacy_compose() {
   username=$(read_compose_value USERNAME "$LEGACY_COMPOSE_FILE")
   password=$(read_compose_value PASSWORD "$LEGACY_COMPOSE_FILE")
   tz=$(read_compose_value TZ "$LEGACY_COMPOSE_FILE")
+  local graphics
+  graphics=$(read_compose_value GRAPHICS "$LEGACY_COMPOSE_FILE")
+  [[ -z $graphics ]] && graphics=none
   [[ -z $tz ]] && tz="UTC"
   prepare_user_mount_sources || {
     echo "Could not validate the existing Windows VM data directories." >&2
@@ -1137,7 +1279,7 @@ migrate_legacy_compose() {
   write_credentials "$username" "$password" || return 1
   # The elevated writer derives both mount anchors from the authenticated uid;
   # it never consumes volume paths from this user-owned legacy file.
-  if ! write_compose "$ram" "$cores" "$disk" "$username" "$password" "$tz"; then
+  if ! write_compose "$ram" "$cores" "$disk" "$username" "$password" "$tz" "$graphics"; then
     echo "Could not migrate the existing configuration automatically." >&2
     echo "Re-run: omarchy-windows-vm install" >&2
     return 1
@@ -1183,6 +1325,14 @@ check_prerequisites() {
 install_windows() {
   # Set up trap to handle Ctrl+C
   trap "echo ''; echo 'Installation cancelled by user'; exit 1" INT
+  WINDOWS_GRAPHICS=${OMARCHY_WINDOWS_GRAPHICS:-none}
+  valid_graphics "$WINDOWS_GRAPHICS" || {
+    echo "Invalid graphics mode: $WINDOWS_GRAPHICS (use none, venus, or neptune)." >&2
+    exit 1
+  }
+  # Render-node/Vulkan checks are safe before authorization.  Neptune image
+  # inspection is deferred to the privileged compose writer.
+  graphics_host_ready "$WINDOWS_GRAPHICS" false || exit 1
 
   prepare_user_mount_sources || exit 1
   check_prerequisites
@@ -1317,6 +1467,7 @@ EOF
     "RAM:       $SELECTED_RAM" \
     "CPU:       $SELECTED_CORES cores" \
     "Disk:      $SELECTED_DISK" \
+    "Graphics:  $WINDOWS_GRAPHICS" \
     "Username:  $USERNAME" \
     "Password:  $PASSWORD_DISPLAY"
 
@@ -1334,7 +1485,7 @@ EOF
   # sudoless Docker is off). The writer pins the familiar home directories (or
   # their legitimate symlink targets) into root-protected bind anchors.
   write_compose "$SELECTED_RAM" "$SELECTED_CORES" "$SELECTED_DISK" \
-    "$USERNAME" "$PASSWORD" "$tz" || {
+    "$USERNAME" "$PASSWORD" "$tz" "$WINDOWS_GRAPHICS" || {
     echo "❌ Failed to write the Windows VM configuration."
     exit 1
   }
@@ -1558,6 +1709,8 @@ show_usage() {
   echo ""
   echo "Commands:"
   echo "  install              Install and configure Windows VM"
+  echo "                       Set OMARCHY_WINDOWS_GRAPHICS=venus for opt-in VirtIO/Venus graphics"
+  echo "                       Set OMARCHY_WINDOWS_GRAPHICS=neptune only after building the pinned UTM stack/image"
   echo "  remove               Remove Windows VM and optionally its data"
   echo "  launch [options]     Start Windows VM (if needed) and connect via RDP"
   echo "                       Options:"
@@ -1589,6 +1742,14 @@ __priv)
   with_vm_lock "__priv_${action}" "$@"
   ;;
 install)
+  if [[ ${2:-} == --graphics ]]; then
+    export OMARCHY_WINDOWS_GRAPHICS="${3:-venus}"
+  elif [[ ${2:-} == --cpu-only ]]; then
+    export OMARCHY_WINDOWS_GRAPHICS=none
+  elif [[ -n ${2:-} ]]; then
+    echo "Unknown install option: $2" >&2
+    exit 1
+  fi
   install_windows
   ;;
 remove)

@@ -20,9 +20,29 @@ export OMARCHY_WINDOWS_DIR="$TMPDIR/win"
 export HOME="$TMPDIR/home"
 mkdir -p "$HOME"
 
-# The Mac fork's omarchy-windows-vm refuses aarch64 and exits, which would take
-# this test with it when sourced. The compose writer it pins is architecture
-# blind, so answer the gate rather than lose the coverage on Apple Silicon.
+# The Docker/KVM backend must not be advertised as an Apple Silicon/UTM
+# backend. Keep the architecture gate ahead of every privileged action.
+arm_bin="$TMPDIR/arm-bin"
+mkdir -p "$arm_bin"
+cat >"$arm_bin/uname" <<'SH'
+#!/bin/bash
+if [[ ${1:-} == "-m" ]]; then
+  echo aarch64
+else
+  exec /usr/bin/uname "$@"
+fi
+SH
+chmod +x "$arm_bin/uname"
+if PATH="$arm_bin:/usr/bin:/bin" HOME="$HOME" OMARCHY_WINDOWS_DIR="$OMARCHY_WINDOWS_DIR" \
+  "$ROOT/bin/omarchy-windows-vm" help >/dev/null 2>"$TMPDIR/arm-error"; then
+  fail "Docker/KVM Windows VM backend ran on Apple Silicon"
+fi
+grep -q 'needs an x86_64 Linux host' "$TMPDIR/arm-error" ||
+  fail "Apple Silicon rejection does not explain the unsupported backend"
+pass "Docker/KVM backend rejects Apple Silicon instead of claiming UTM support"
+
+# The compose writer is architecture blind, so keep this fixture independent
+# of the host architecture and exercise its protected input boundary directly.
 stub_bin="$TMPDIR/bin"
 mkdir -p "$stub_bin"
 cat >"$stub_bin/uname" <<'SH'
@@ -57,9 +77,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-write() { # RAM CORES DISK USER PASS TZ
-  printf 'RAM=%s\nCORES=%s\nDISK=%s\nUSERNAME=%s\nPASSWORD=%s\nTZ=%s\n' \
-    "$@" | __priv_write_compose
+write() { # RAM CORES DISK USER PASS TZ [GRAPHICS]
+  local graphics="${7:-}"
+  printf 'RAM=%s\nCORES=%s\nDISK=%s\nUSERNAME=%s\nPASSWORD=%s\nTZ=%s\nGRAPHICS=%s\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$graphics" | __priv_write_compose
 }
 
 fd_count() { find "/proc/$$/fd" -mindepth 1 -maxdepth 1 -printf x | wc -c; }
@@ -86,6 +107,101 @@ grep -q 'PROTECT: "Y"' "$COMPOSE" || fail "web console is not password protected
 [[ $(stat -Lc '%a' "$EXPECTED_STORAGE") == 700 && $(stat -Lc '%a' "$EXPECTED_SHARED") == 700 ]] || fail "mount leaves are not private"
 grep -q -- '- /:/' "$COMPOSE" && fail "compose contains host-root bind"
 pass "writer emits fixed anchors bound to exact private source inodes"
+
+# The host prerequisite must enforce the documented Vulkan floor. Fake the
+# render node and probe output so this remains independent of the test runner's
+# GPU while covering both the rejection and acceptance paths.
+compgen() {
+  if [[ ${1:-} == -G && ${2:-} == /dev/dri/renderD\* ]]; then return 0; fi
+  builtin compgen "$@"
+}
+omarchy-cmd-present() { [[ ${1:-} == vulkaninfo ]]; }
+vulkaninfo() {
+  printf '%s\n' 'Vulkan Instance Version: 1.2.999' '    apiVersion = 1.2.999'
+}
+if graphics_host_ready venus; then fail "Vulkan 1.2 was accepted for Venus"; fi
+vulkaninfo() {
+  printf '%s\n' 'Vulkan Instance Version: 1.3.280' '    apiVersion = 1.2.999'
+}
+if graphics_host_ready venus; then fail "Vulkan 1.2 device was accepted for Venus"; fi
+vulkaninfo() {
+  printf '%s\n' 'Vulkan Instance Version: 1.3.280' '    apiVersion = 1.3.280'
+}
+graphics_host_ready venus || fail "Vulkan 1.3 was rejected for Venus"
+pass "Venus host validation enforces Vulkan 1.3 instance and device versions"
+
+# Neptune is a separate, image-provided UTM/QEMU protocol path. The command
+# must fail closed when its explicitly pinned image is absent rather than
+# silently falling back to Dockur's stock image.
+omarchy-cmd-present() { [[ ${1:-} == docker || ${1:-} == vulkaninfo ]]; }
+NEPTUNE_IMAGE_PRESENT=0
+NEPTUNE_IMAGE_CHECKS=0
+docker() {
+  if [[ ${1:-} == image && ${2:-} == inspect && ${3:-} == "$NEPTUNE_IMAGE" ]]; then
+    (( NEPTUNE_IMAGE_PRESENT == 1 ))
+    return
+  fi
+  return 1
+}
+neptune_image_ready() {
+  NEPTUNE_IMAGE_CHECKS=$((NEPTUNE_IMAGE_CHECKS + 1))
+  (( NEPTUNE_IMAGE_PRESENT == 1 ))
+}
+if graphics_host_ready neptune; then
+  fail "Neptune accepted without its explicitly built image"
+fi
+graphics_host_ready neptune false || fail "user-side Neptune preflight rejected without needing image access"
+(( NEPTUNE_IMAGE_CHECKS == 1 )) || fail "user-side Neptune preflight accessed Docker"
+NEPTUNE_IMAGE_PRESENT=1
+graphics_host_ready neptune || fail "Neptune rejected with image, render node, and Vulkan 1.3"
+write 4G 2 64G alice s3cret Europe/Copenhagen neptune
+grep -q '^    image: omarchy-windows-neptune:utm$' "$COMPOSE" ||
+  fail "Neptune did not pin the custom image"
+grep -q 'GRAPHICS: "neptune"' "$COMPOSE" || fail "Neptune profile was not recorded"
+grep -q 'NEPTUNE: "Y"' "$COMPOSE" || fail "Neptune protocol flag was not enabled"
+grep -q 'GPU: "Y"' "$COMPOSE" || fail "Neptune GPU acceleration was not enabled"
+grep -q 'VGA: "virtio-vga-gl"' "$COMPOSE" || fail "Neptune VirtIO-GPU device is missing"
+grep -q 'VRAM_SIZE: "8G"' "$COMPOSE" || fail "Neptune host-memory budget is missing"
+grep -q -- '- /dev/dri:/dev/dri' "$COMPOSE" || fail "Neptune render device is missing"
+grep -q 'image: dockurr/windows' "$COMPOSE" && fail "Neptune fell back to the stock image"
+pass "Neptune requires the pinned image and emits its protected compose profile"
+
+unset -f compgen vulkaninfo omarchy-cmd-present docker
+
+# The graphics profile is explicit and adds only the protected render-device
+# and VirtIO/Venus QEMU arguments. Stub host probing here so this fixture does
+# not depend on the test runner's GPU while still checking the emitted compose.
+graphics_host_ready() { return 0; }
+write 4G 2 64G alice s3cret Europe/Copenhagen venus
+grep -q 'GRAPHICS: "venus"' "$COMPOSE" || fail "Venus profile was not recorded"
+grep -q 'GPU: "Y"' "$COMPOSE" || fail "Venus GPU acceleration was not enabled"
+grep -q 'VGA: "virtio-vga-gl"' "$COMPOSE" || fail "Venus QEMU device is missing"
+grep -q 'VRAM_SIZE: "4G"' "$COMPOSE" || fail "Venus VRAM budget is missing"
+grep -q 'ARGUMENTS: "-rtc base=localtime,clock=host,driftfix=slew"' "$COMPOSE" ||
+  fail "Venus compose added an unvalidated duplicate QEMU device"
+grep -q -- '- /dev/dri:/dev/dri' "$COMPOSE" || fail "Venus render device is missing"
+grep -q 'shm_size: "2G"' "$COMPOSE" || fail "Venus shared memory is missing"
+write 4G 2 64G alice s3cret Europe/Copenhagen
+if grep -q 'virtio-vga-gl\|/dev/dri:/dev/dri\|GRAPHICS: "venus"\|GPU: "Y"' "$COMPOSE"; then
+  fail "CPU-only profile retained Venus settings"
+fi
+graphics_host_ready "" || fail "legacy compose without GRAPHICS was not treated as CPU-only"
+pass "Venus graphics is explicit and CPU-only remains the default"
+
+# Existing CPU-only composes predate GRAPHICS. Their startup path must keep
+# treating the missing field as the CPU-only profile after an upgrade.
+sed -i '/^[[:space:]]*GRAPHICS:/d' "$COMPOSE"
+graphics_ready_calls=0
+graphics_host_ready() {
+  graphics_ready_calls=$((graphics_ready_calls + 1))
+  [[ ${1:-} == none && ${2:-} == true ]]
+}
+dc() { :; }
+__priv_up || fail "legacy compose without GRAPHICS did not start as CPU-only"
+(( graphics_ready_calls == 1 )) || fail "legacy compose graphics check was not performed once"
+pass "legacy CPU-only composes start without a GRAPHICS field"
+graphics_host_ready() { return 0; }
+dc() { docker-compose -f "$COMPOSE_FILE" "$@"; }
 
 # Input cannot widen a mount or compose field.
 rm -f "$COMPOSE"
@@ -466,7 +582,13 @@ dc() { return 1; }
 __priv_remove 2>/dev/null && fail "removal deleted data after docker-compose down failed"
 [[ -f $HOME/.windows/disk.img && -f $HOME/Windows/keep.txt && -f $COMPOSE ]] || fail "failed down changed data or compose"
 dc() { :; }
+graphics_ready_calls=0
+graphics_host_ready() {
+  graphics_ready_calls=$((graphics_ready_calls + 1))
+  return 1
+}
 __priv_remove
+(( graphics_ready_calls == 0 )) || fail "removal unexpectedly probed graphics host readiness"
 [[ ! -e $HOME/.windows/disk.img ]] || fail "removal preserved disk data"
 [[ -e $HOME/Windows/keep.txt ]] || fail "removal deleted shared data"
 [[ ! -f $COMPOSE ]] || fail "removal left compose"

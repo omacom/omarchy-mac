@@ -38,7 +38,44 @@ The VM's ports are bound to localhost only, so nothing on your network can reach
 
 ## Limits and licensing
 
-There's no GPU passthrough with this setup, so it's not suitable for gaming or video editing. It's a great way to run Microsoft Office or whatever else you absolutely must have.
+The Docker/KVM backend requires an x86_64 Linux host. It does not configure
+UTM's macOS D3DMetal backend and is unavailable on Apple Silicon. UTM's
+Windows DX12 driver is a separate macOS path; this command does not claim that
+the Windows guest has DX12 acceleration.
+
+On a supported x86_64 Linux host with a Vulkan 1.3 driver and `/dev/dri` render
+node, you can opt into the experimental VirtIO-GPU/Venus device path used by
+current Linux QEMU stacks:
+
+```bash
+omarchy-windows-vm install --graphics venus
+```
+
+This records the image's `GPU=Y`, `VGA=virtio-vga-gl`, and `VRAM_SIZE=4G`
+settings, adds shared memory, and passes the host render device into the
+protected compose file. The command refuses to enable it when Vulkan 1.3 or
+DRM is unavailable. The Windows guest still needs a compatible VirtIO GPU
+driver. This path is not a claim of verified DirectX 12 support; no Windows
+guest graphics probe is shipped with this command yet. Use `--cpu-only` to
+make the default explicit.
+
+The host must expose Vulkan and render-node access to QEMU. This command does
+not silently install a Windows guest driver or claim DX12 conformance.
+
+The experimental Neptune profile is a separate prebuilt-image path for the
+UTM/QEMU Neptune protocol. It is available only on the same x86_64 Linux host
+requirements and refuses to run unless the exact local image
+`omarchy-windows-neptune:utm` is already present:
+
+```bash
+OMARCHY_WINDOWS_GRAPHICS=neptune omarchy-windows-vm install
+```
+
+That image must contain the matching Neptune-capable QEMU/virglrenderer stack
+and its compatible, signed Windows guest driver. The installer does not build
+or install those components, and this command does not claim that a Windows
+guest has working D3D11 or D3D12 acceleration. The stock `dockurr/windows`
+image is never substituted for Neptune.
 
 The version installed is Windows 11 Pro, unactivated. You'll need your own license key to use the gated features.
 

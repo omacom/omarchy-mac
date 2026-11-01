@@ -236,10 +236,11 @@ awk '
     selected[$2] = 1
   }
   $2 == "aquamarine" { if ($1 != "extra") exit 1; aquamarine = 1 }
-  END { if (length(selected) != 3 || !aquamarine) exit 1 }
+  END { if (!selected["hyprland"] || !aquamarine) exit 1 }
 ' /tmp/package-selection
 pacman -Syu --needed --noconfirm "${targets[@]}"
-pacman -Qii aquamarine hyprtoolkit hyprland-guiutils hyprland
+pacman -Qii aquamarine
+while read -r target; do pacman -Qii "${target#*/}"; done < <(omarchy_arm_package_targets)
 pacman -Dk
 printf 'PASS: fresh restricted-source transaction\n'
 
@@ -248,7 +249,8 @@ awk '/^\[/ { omit = ($0 == "[omarchy]") } !omit { print }' /etc/pacman.conf >/et
 mv /etc/pacman.conf.previous /etc/pacman.conf
 omarchy-update-system-pkgs
 [[ $(pacman-conf --repo omarchy Usage) == "Sync" ]]
-pacman -Qii aquamarine hyprtoolkit hyprland-guiutils hyprland
+pacman -Qii aquamarine
+while read -r target; do pacman -Qii "${target#*/}"; done < <(omarchy_arm_package_targets)
 pacman -Dk
 printf 'PASS: current-stack repository remediation and reinstall (not an old-stack upgrade fixture)\n'
 PACKAGE_SOURCES
