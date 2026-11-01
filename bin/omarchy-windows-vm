@@ -190,13 +190,15 @@ graphics_host_ready() {
     echo "omarchy-windows-vm: VirtIO/Venus graphics needs vulkaninfo (Vulkan 1.3+)" >&2
     return 1
   }
-  vulkaninfo --summary >/dev/null 2>&1 || {
+  local vulkan_summary
+  vulkan_summary=$(vulkaninfo --summary 2>/dev/null) || {
     echo "omarchy-windows-vm: Vulkan is unavailable on this host" >&2
     return 1
   }
-  local version major minor
-  version=$(vulkaninfo --summary 2>/dev/null | sed -nE \
-    's/^[[:space:]]*Vulkan Instance Version:[[:space:]]*([0-9]+)\.([0-9]+)(\.[0-9]+)?.*/\1.\2/p' | head -n1)
+  local version major minor device_version device_major device_minor
+  version=$(sed -nE \
+    's/^[[:space:]]*Vulkan Instance Version:[[:space:]]*([0-9]+)\.([0-9]+)(\.[0-9]+)?.*/\1.\2/p' \
+    <<<"$vulkan_summary" | head -n1)
   if [[ ! $version =~ ^([0-9]+)\.([0-9]+)$ ]]; then
     echo "omarchy-windows-vm: could not determine the Vulkan instance version" >&2
     return 1
@@ -205,6 +207,19 @@ graphics_host_ready() {
   minor=${BASH_REMATCH[2]}
   if ((major < 1 || (major == 1 && minor < 3))); then
     echo "omarchy-windows-vm: accelerated graphics needs Vulkan 1.3 or newer (found $version)" >&2
+    return 1
+  fi
+  device_version=$(sed -nE \
+    's/^[[:space:]]*apiVersion[[:space:]]*=[[:space:]]*([0-9]+)\.([0-9]+)(\.[0-9]+)?.*/\1.\2/p' \
+    <<<"$vulkan_summary" | head -n1)
+  if [[ ! $device_version =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+    echo "omarchy-windows-vm: could not determine a Vulkan device API version" >&2
+    return 1
+  fi
+  device_major=${BASH_REMATCH[1]}
+  device_minor=${BASH_REMATCH[2]}
+  if ((device_major < 1 || (device_major == 1 && device_minor < 3))); then
+    echo "omarchy-windows-vm: accelerated graphics needs a Vulkan 1.3 device (found $device_version)" >&2
     return 1
   fi
 }
@@ -1027,8 +1042,11 @@ assert_mounts_safe() {
 }
 
 __priv_up() {
+  local graphics
   assert_mounts_safe || return 1
-  graphics_host_ready "$(read_compose_value GRAPHICS "$COMPOSE_FILE")" true || return 1
+  graphics=$(read_compose_value GRAPHICS "$COMPOSE_FILE")
+  graphics=${graphics:-none}
+  graphics_host_ready "$graphics" true || return 1
   dc up -d
 }
 
@@ -1037,8 +1055,11 @@ __priv_down() { dc down; }
 # Bring the VM up and wait until the guest reports it is ready, all under a
 # single elevation so the readiness poll does not prompt on every iteration.
 __priv_up_wait() {
+  local graphics
   assert_mounts_safe || return 1
-  graphics_host_ready "$(read_compose_value GRAPHICS "$COMPOSE_FILE")" true || return 1
+  graphics=$(read_compose_value GRAPHICS "$COMPOSE_FILE")
+  graphics=${graphics:-none}
+  graphics_host_ready "$graphics" true || return 1
   local status
   status=$(docker inspect --format='{{.State.Status}}' "$CONTAINER" 2>/dev/null)
   if [[ $status != "running" ]]; then

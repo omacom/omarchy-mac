@@ -116,11 +116,19 @@ compgen() {
   builtin compgen "$@"
 }
 omarchy-cmd-present() { [[ ${1:-} == vulkaninfo ]]; }
-vulkaninfo() { printf '%s\n' 'Vulkan Instance Version: 1.2.999'; }
+vulkaninfo() {
+  printf '%s\n' 'Vulkan Instance Version: 1.2.999' '    apiVersion = 1.2.999'
+}
 if graphics_host_ready venus; then fail "Vulkan 1.2 was accepted for Venus"; fi
-vulkaninfo() { printf '%s\n' 'Vulkan Instance Version: 1.3.280'; }
+vulkaninfo() {
+  printf '%s\n' 'Vulkan Instance Version: 1.3.280' '    apiVersion = 1.2.999'
+}
+if graphics_host_ready venus; then fail "Vulkan 1.2 device was accepted for Venus"; fi
+vulkaninfo() {
+  printf '%s\n' 'Vulkan Instance Version: 1.3.280' '    apiVersion = 1.3.280'
+}
 graphics_host_ready venus || fail "Vulkan 1.3 was rejected for Venus"
-pass "Venus host validation enforces Vulkan 1.3"
+pass "Venus host validation enforces Vulkan 1.3 instance and device versions"
 
 # Neptune is a separate, image-provided UTM/QEMU protocol path. The command
 # must fail closed when its explicitly pinned image is absent rather than
@@ -179,6 +187,21 @@ if grep -q 'virtio-vga-gl\|/dev/dri:/dev/dri\|GRAPHICS: "venus"\|GPU: "Y"' "$COM
 fi
 graphics_host_ready "" || fail "legacy compose without GRAPHICS was not treated as CPU-only"
 pass "Venus graphics is explicit and CPU-only remains the default"
+
+# Existing CPU-only composes predate GRAPHICS. Their startup path must keep
+# treating the missing field as the CPU-only profile after an upgrade.
+sed -i '/^[[:space:]]*GRAPHICS:/d' "$COMPOSE"
+graphics_ready_calls=0
+graphics_host_ready() {
+  graphics_ready_calls=$((graphics_ready_calls + 1))
+  [[ ${1:-} == none && ${2:-} == true ]]
+}
+dc() { :; }
+__priv_up || fail "legacy compose without GRAPHICS did not start as CPU-only"
+(( graphics_ready_calls == 1 )) || fail "legacy compose graphics check was not performed once"
+pass "legacy CPU-only composes start without a GRAPHICS field"
+graphics_host_ready() { return 0; }
+dc() { docker-compose -f "$COMPOSE_FILE" "$@"; }
 
 # Input cannot widen a mount or compose field.
 rm -f "$COMPOSE"
