@@ -45,14 +45,15 @@ the Windows guest has DX12 acceleration.
 
 On a supported x86_64 Linux host with a Vulkan 1.3 driver and `/dev/dri` render
 node, you can opt into the experimental VirtIO-GPU/Venus device path used by
-current Linux QEMU/UTM stacks:
+current Linux QEMU stacks:
 
 ```bash
 omarchy-windows-vm install --graphics venus
 ```
 
-This adds a `virtio-vga-gl` device, shared memory, and the host render device
-to the protected compose file. The command refuses to enable it when Vulkan or
+This records the image's `GPU=Y`, `VGA=virtio-vga-gl`, and `VRAM_SIZE=4G`
+settings, adds shared memory, and passes the host render device into the
+protected compose file. The command refuses to enable it when Vulkan 1.3 or
 DRM is unavailable. The Windows guest still needs a compatible VirtIO GPU
 driver. This path is not a claim of verified DirectX 12 support; no Windows
 guest graphics probe is shipped with this command yet. Use `--cpu-only` to

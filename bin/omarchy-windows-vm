@@ -706,7 +706,7 @@ rollback_new_caller_mounts() {
 
 write_compose_atomically() (
   local ram="$1" cores="$2" disk="$3" username="$4" password="$5" tz="$6" graphics="${7:-none}"
-  local tmp="" rc esc_password qemu_args graphics_device
+  local tmp="" rc esc_password qemu_args graphics_device gpu vga vram
   cleanup_writer() {
     rc=$?
     trap - EXIT
@@ -728,9 +728,18 @@ write_compose_atomically() (
   esc_password=${esc_password//\$/\$\$}
   qemu_args='-rtc base=localtime,clock=host,driftfix=slew'
   if [[ $graphics == venus ]]; then
-    qemu_args+=' -device virtio-vga-gl,hostmem=4G,blob=true,venus=true'
+    # Let the image's qemu display helper build the complete accelerated
+    # device argument. A second hand-written -device would leave both the
+    # default and accelerated adapters present, so Windows could bind the
+    # wrong one. These are the dockur/qemus controls consumed in-container.
+    gpu='Y'
+    vga='virtio-vga-gl'
+    vram='4G'
     graphics_device='      - /dev/dri:/dev/dri'
   else
+    gpu='N'
+    vga='virtio'
+    vram='4G'
     graphics_device=''
   fi
 
@@ -754,6 +763,9 @@ services:
       PROTECT: "Y"
       TZ: "$tz"
       GRAPHICS: "$graphics"
+      GPU: "$gpu"
+      VGA: "$vga"
+      VRAM_SIZE: "$vram"
       ARGUMENTS: "$qemu_args"
     devices:
       - /dev/kvm

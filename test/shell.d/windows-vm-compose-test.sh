@@ -128,11 +128,15 @@ pass "Venus host validation enforces Vulkan 1.3"
 graphics_host_ready() { return 0; }
 write 4G 2 64G alice s3cret Europe/Copenhagen venus
 grep -q 'GRAPHICS: "venus"' "$COMPOSE" || fail "Venus profile was not recorded"
-grep -q 'virtio-vga-gl.*venus=true' "$COMPOSE" || fail "Venus QEMU device is missing"
+grep -q 'GPU: "Y"' "$COMPOSE" || fail "Venus GPU acceleration was not enabled"
+grep -q 'VGA: "virtio-vga-gl"' "$COMPOSE" || fail "Venus QEMU device is missing"
+grep -q 'VRAM_SIZE: "4G"' "$COMPOSE" || fail "Venus VRAM budget is missing"
+grep -q 'ARGUMENTS: "-rtc base=localtime,clock=host,driftfix=slew"' "$COMPOSE" ||
+  fail "Venus compose added an unvalidated duplicate QEMU device"
 grep -q -- '- /dev/dri:/dev/dri' "$COMPOSE" || fail "Venus render device is missing"
 grep -q 'shm_size: "2G"' "$COMPOSE" || fail "Venus shared memory is missing"
 write 4G 2 64G alice s3cret Europe/Copenhagen
-if grep -q 'virtio-vga-gl\|/dev/dri:/dev/dri\|GRAPHICS: "venus"' "$COMPOSE"; then
+if grep -q 'virtio-vga-gl\|/dev/dri:/dev/dri\|GRAPHICS: "venus"\|GPU: "Y"' "$COMPOSE"; then
   fail "CPU-only profile retained Venus settings"
 fi
 pass "Venus graphics is explicit and CPU-only remains the default"
