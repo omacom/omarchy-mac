@@ -1225,7 +1225,7 @@ read_credential() {
 
 read_compose_value() {
   local key="$1" file="$2"
-  sed -n "s/.*${key}: \"\(.*\)\"/\1/p" "$file" | head -n1
+  sed -n "s/^[[:space:]]*${key}:[[:space:]]*\"\(.*\)\"[[:space:]]*$/\1/p" "$file" | head -n1
 }
 
 read_compose_image() {
