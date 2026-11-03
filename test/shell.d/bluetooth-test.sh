@@ -155,14 +155,58 @@ export POWERED_FILE="$device_tmp/powered"
 cat >"$mock_bin/bluetoothctl" <<'SH'
 #!/bin/bash
 
+if [[ $# -eq 0 ]]; then
+  selected=""
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >>"$BLUETOOTHCTL_LOG"
+    cmd=($line)
+    case "${cmd[0]:-}" in
+      select)
+        selected="${cmd[1]:-}"
+        ;;
+      power)
+        case "${cmd[1]:-}" in
+          on)
+            target="$POWERED_FILE"
+            [[ -n $selected && -f "$POWERED_FILE.$selected" ]] && target="$POWERED_FILE.$selected"
+            echo yes >"$target"
+            ;;
+          off)
+            if [[ -f "$POWERED_FILE.stuck" || (-n $selected && -f "$POWERED_FILE.stuck.$selected") ]]; then
+              :
+            elif [[ -n $selected && -f "$POWERED_FILE.$selected" ]]; then
+              echo no >"$POWERED_FILE.$selected"
+            else
+              echo no >"$POWERED_FILE"
+            fi
+            ;;
+        esac
+        ;;
+    esac
+  done
+  exit 0
+fi
+
 printf '%s\n' "$*" >>"$BLUETOOTHCTL_LOG"
 [[ $1 == "power" && $2 == "on" ]] && echo yes >"$POWERED_FILE"
+[[ $1 == "power" && $2 == "off" && ! -f "$POWERED_FILE.stuck" ]] && echo no >"$POWERED_FILE"
 [[ $1 == "list" ]] &&
   for c in ${MOCK_CONTROLLERS:-AA:BB:CC:DD:EE:FF}; do printf 'Controller %s mock\n' "$c"; done
+
 # Per-controller state where a test set it, the shared file otherwise.
 if [[ $1 == "show" ]]; then
+  controller="${2:-}"
+  delay_file="$POWERED_FILE.delay.$controller"
+  if [[ -n $controller && -f $delay_file ]]; then
+    probes=$(cat "$delay_file")
+    if (( probes > 0 )); then
+      echo $(( probes - 1 )) >"$delay_file"
+      printf '\tPowered: yes\n'
+      exit 0
+    fi
+  fi
   state="$POWERED_FILE"
-  [[ -n ${2:-} && -f "$POWERED_FILE.$2" ]] && state="$POWERED_FILE.$2"
+  [[ -n $controller && -f "$POWERED_FILE.$controller" ]] && state="$POWERED_FILE.$controller"
   printf '\tPowered: %s\n' "$(cat "$state")"
 fi
 exit 0
@@ -190,7 +234,7 @@ bluetooth_run() {
   echo "$powered" >"$POWERED_FILE"
   : >"$device_tmp/log"
   PATH="$mock_bin:$ROOT/bin:$PATH" BLUETOOTHCTL_LOG="$device_tmp/log" \
-    OMARCHY_BLUETOOTH_POWER_WAIT_SECONDS=0 "$@" ||
+    OMARCHY_BLUETOOTH_POWER_WAIT_SECONDS=${MOCK_WAIT_SECONDS:-0} "$@" ||
     fail "$* exits cleanly with Powered: $powered"
   printf '%s' "$device_tmp/log"
 }
@@ -199,16 +243,17 @@ bluetooth_power() {
   bluetooth_run "$1" "$ROOT/bin/omarchy-bluetooth-power" "$2"
 }
 
-# Off has to be the block. A bluetoothctl power off would read the same until the
-# next boot, then quietly come back on.
+# Turning off powers adapters down through BlueZ first to drain DMA queues
+# (preventing hci_bcm4377 ring destruction hangs), followed by an rfkill block
+# so the state persists across reboots.
 off_log=$(bluetooth_power yes off)
 grep -qx "rfkill block bluetooth" "$off_log" ||
   fail "bluetooth turns off with an rfkill block" "$(cat "$off_log")"
 pass "bluetooth turns off with an rfkill block"
 
-grep -q "power off" "$off_log" &&
-  fail "bluetooth does not also power the adapter down" "$(cat "$off_log")"
-pass "bluetooth does not also power the adapter down"
+grep -q "power off" "$off_log" ||
+  fail "bluetooth powers adapters down before the rfkill block" "$(cat "$off_log")"
+pass "bluetooth powers adapters down before the rfkill block"
 
 # Unblocking is enough on its own, so there is nothing left to ask bluetoothctl.
 on_log=$(bluetooth_power no on)
@@ -274,6 +319,57 @@ rm -f "$POWERED_FILE.11:22:33:44:55:66"
 grep -qx "rfkill block bluetooth" "$multi_log" ||
   fail "bluetooth counts a secondary controller as on" "$(cat "$multi_log")"
 pass "bluetooth counts a secondary controller as on"
+
+# Graceful power-off acts as a completion barrier for secondary controllers:
+# omarchy-bluetooth-power polls and waits for a delayed secondary controller to
+# reach Powered: no before cutting power with an rfkill block.
+echo yes >"$POWERED_FILE"
+echo yes >"$POWERED_FILE.11:22:33:44:55:66"
+echo 2 >"$POWERED_FILE.delay.11:22:33:44:55:66"
+export MOCK_CONTROLLERS="AA:BB:CC:DD:EE:FF 11:22:33:44:55:66"
+delayed_log=$(MOCK_WAIT_SECONDS=1 bluetooth_power yes off)
+unset MOCK_CONTROLLERS
+rm -f "$POWERED_FILE.11:22:33:44:55:66" "$POWERED_FILE.delay.11:22:33:44:55:66"
+
+grep -qx "rfkill block bluetooth" "$delayed_log" ||
+  fail "bluetooth blocks rfkill after delayed secondary controller settles" "$(cat "$delayed_log")"
+pass "bluetooth blocks rfkill after delayed secondary controller settles"
+
+awk '
+  /show 11:22:33:44:55:66/ { shows++ }
+  /rfkill block bluetooth/ { blocks++; shows_before_block = shows }
+  END {
+    if (shows_before_block < 2 || blocks == 0) exit 1
+  }
+' "$delayed_log" ||
+  fail "bluetooth waits for delayed secondary controller before rfkill block" "$(cat "$delayed_log")"
+pass "bluetooth waits for delayed secondary controller before rfkill block"
+
+# Power-off timeout on a stuck controller emits a warning to stderr and still
+# executes the rfkill block as a safe fallback.
+echo yes >"$POWERED_FILE"
+echo yes >"$POWERED_FILE.11:22:33:44:55:66"
+touch "$POWERED_FILE.stuck.11:22:33:44:55:66"
+export MOCK_CONTROLLERS="AA:BB:CC:DD:EE:FF 11:22:33:44:55:66"
+: >"$device_tmp/log"
+timeout_err="$device_tmp/timeout_err"
+timeout_status=0
+PATH="$mock_bin:$ROOT/bin:$PATH" BLUETOOTHCTL_LOG="$device_tmp/log" \
+  OMARCHY_BLUETOOTH_POWER_WAIT_SECONDS=0 "$ROOT/bin/omarchy-bluetooth-power" off 2>"$timeout_err" || timeout_status=$?
+unset MOCK_CONTROLLERS
+rm -f "$POWERED_FILE.11:22:33:44:55:66" "$POWERED_FILE.stuck.11:22:33:44:55:66"
+
+[[ $timeout_status -ne 0 ]] ||
+  fail "bluetooth power off exits non-zero when controller remains powered"
+pass "bluetooth power off exits non-zero when controller remains powered"
+
+grep -q "controller 11:22:33:44:55:66 did not power down cleanly" "$timeout_err" ||
+  fail "bluetooth power off warns on stuck controller" "$(cat "$timeout_err")"
+pass "bluetooth power off warns on stuck controller"
+
+grep -qx "rfkill block bluetooth" "$device_tmp/log" ||
+  fail "bluetooth still blocks rfkill when power-off times out" "$(cat "$device_tmp/log")"
+pass "bluetooth still blocks rfkill when power-off times out"
 
 # AutoEnable=false was the old attempt at persistence and never worked. Left set,
 # it would also keep bluetoothd from powering the adapter up after an unblock.
