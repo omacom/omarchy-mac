@@ -19,6 +19,13 @@ admin_target=$R/etc/omarchy-mac/migration-target
 test_pin_mark="# Test image only (omarchy-mac-installer image-builder)"
 guard_mark="# omarchy-mac-migrate: a migration to Omarchy's packages is in progress."
 
+# The block aurora-sep's installer writes into [options] to hold the Aurora
+# kernel, its headers, libfprint and m1n1 back: an Apple Touch ID Mac has it. The
+# target set replaces those packages, so the switch drops the block. Text as
+# reported on a real Mac in omacom/omarchy-mac#778.
+aurora_sep_open="# >>> aurora-sep pin"
+aurora_sep_close="# <<< aurora-sep pin"
+
 # The runtime pair a channel's Macs run: Omarchy's edge builds its runtime from
 # the development branch as omarchy-dev.
 channel_pair() {
@@ -229,11 +236,25 @@ Include = /etc/pacman.d/mirrorlist
 CONF
 }
 
+# CONF without aurora-sep's pin block. Only a block that closes inside its own
+# section goes; one that never closes stays as written, so what it holds back
+# still refuses the migration.
+aurora_sep_pin_dropped() {
+  awk -v open="$aurora_sep_open" -v shut="$aurora_sep_close" '
+    function flush(  i) { for (i = 1; i <= n; i++) print held[i]; n = 0; holding = 0 }
+    holding && index($0, shut) == 1 { n = 0; holding = 0; next }
+    holding && /^[[:space:]]*\[[^]]+\][[:space:]]*$/ { flush() }
+    holding { held[++n] = $0; next }
+    index($0, open) == 1 { holding = 1; held[++n] = $0; next }
+    { print }
+    END { flush() }' "$1"
+}
+
 # The administrator's own [options] lines of CONF: every option the core
 # configuration does not set, without the test-image pin and this migration's
 # guard. Comments and blank lines go.
 admin_options() {
-  awk -v pin="$test_pin_mark" -v guard="$guard_mark" '
+  aurora_sep_pin_dropped "$1" | awk -v pin="$test_pin_mark" -v guard="$guard_mark" '
     BEGIN { split("Color ILoveCandy VerbosePkgLists HoldPkg Architecture CheckSpace ParallelDownloads DownloadUser SigLevel LocalFileSigLevel RemoteFileSigLevel", list, " "); for (i in list) core[list[i]] = 1 }
     /^[[:space:]]*\[[^]]+\][[:space:]]*$/ { name = $0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", name); next }
     name != "options" { next }
@@ -242,7 +263,7 @@ admin_options() {
     skip > 0 && /^[[:space:]]*IgnorePkg[[:space:]]*=/ { skip = 0; next }
     { skip = 0 }
     /^[[:space:]]*(#|$)/ { next }
-    { key = $0; sub(/^[[:space:]]*/, "", key); sub(/[[:space:]]*=.*$/, "", key); sub(/[[:space:]]+$/, "", key); if (!(key in core)) print }' "$1"
+    { key = $0; sub(/^[[:space:]]*/, "", key); sub(/[[:space:]]*=.*$/, "", key); sub(/[[:space:]]+$/, "", key); if (!(key in core)) print }'
 }
 
 # The test-image pin block of CONF, as it is written.
