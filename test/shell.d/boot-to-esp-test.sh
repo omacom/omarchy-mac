@@ -77,3 +77,55 @@ for fixture in marker private; do
   [[ $before == "$after" ]] || fail "$fixture boot files remain unchanged"
   pass "$fixture main refuses before writes, even with --yes"
 done
+
+# A busy ESP: something else may hold /boot/efi for a moment after the earlier
+# steps (issue #776). The unmount is retried, and a mount that never frees up
+# names its holders and says nothing has been moved yet.
+unmount_run() (
+  source "$ROOT/bin/omarchy-system-boot-to-esp"
+  calls_file="$work/umount-calls"
+  : >"$calls_file"
+  sleep() { :; }
+  umount() {
+    # The real call runs in a command substitution, so count in a file.
+    echo x >>"$calls_file"
+    if (( $(wc -l <"$calls_file") <= busy_for )); then
+      echo "umount: $1: target is busy." >&2
+      return 32
+    fi
+    return 0
+  }
+  fuser() { echo "/boot/efi: 1234 (udisksd)"; }
+  unmount_esp /boot/efi
+  echo "umount calls: $(wc -l <"$calls_file")"
+)
+
+busy_for=2 output=$(unmount_run 2>&1) || fail 'a briefly busy ESP is unmounted after a retry' "$output"
+[[ $output == *'umount calls: 3'* ]] || fail 'a briefly busy ESP takes one retry per busy attempt' "$output"
+pass 'a briefly busy ESP is unmounted after a retry'
+
+if output=$(busy_for=99 unmount_run 2>&1); then
+  fail 'an ESP that stays busy stops the move'
+fi
+[[ $output == *'target is busy'* && $output == *'udisksd'* && $output == *'nothing has been moved'* ]] ||
+  fail 'a busy ESP names its holders and says nothing was moved' "$output"
+pass 'an ESP that stays busy stops the move and names its holders'
+
+# main installs trap recovery_note ERR before the unmount. A busy ESP stops the
+# move before anything has changed, so it must not print the instructions for
+# undoing a move (mv /boot.old /boot).
+trap_run() (
+  source "$ROOT/bin/omarchy-system-boot-to-esp"
+  set -euo pipefail
+  trap recovery_note ERR
+  sleep() { :; }
+  umount() { echo "umount: $1: target is busy." >&2; return 32; }
+  fuser() { :; }
+  unmount_esp /boot/efi
+)
+
+output=$(trap_run 2>&1) && fail 'a busy ESP with the ERR trap installed stops the move'
+[[ $output == *'target is busy'* ]] || fail 'the busy ESP is reported with the trap installed' "$output"
+[[ $output != *'/boot.old'* && $output != *'put the machine back'* ]] ||
+  fail 'a busy ESP does not print instructions for undoing a move that never started' "$output"
+pass 'a busy ESP prints no restore instructions for a move that never started'
