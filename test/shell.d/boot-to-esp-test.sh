@@ -77,3 +77,36 @@ for fixture in marker private; do
   [[ $before == "$after" ]] || fail "$fixture boot files remain unchanged"
   pass "$fixture main refuses before writes, even with --yes"
 done
+
+# A busy ESP: something else may hold /boot/efi for a moment after the earlier
+# steps (issue #776). The unmount is retried, and a mount that never frees up
+# names its holders and says nothing has been moved yet.
+unmount_run() (
+  source "$ROOT/bin/omarchy-system-boot-to-esp"
+  calls_file="$work/umount-calls"
+  : >"$calls_file"
+  sleep() { :; }
+  umount() {
+    # The real call runs in a command substitution, so count in a file.
+    echo x >>"$calls_file"
+    if (( $(wc -l <"$calls_file") <= busy_for )); then
+      echo "umount: $1: target is busy." >&2
+      return 32
+    fi
+    return 0
+  }
+  fuser() { echo "/boot/efi: 1234 (udisksd)"; }
+  unmount_esp /boot/efi
+  echo "umount calls: $(wc -l <"$calls_file")"
+)
+
+busy_for=2 output=$(unmount_run 2>&1) || fail 'a briefly busy ESP is unmounted after a retry' "$output"
+[[ $output == *'umount calls: 3'* ]] || fail 'a briefly busy ESP takes one retry per busy attempt' "$output"
+pass 'a briefly busy ESP is unmounted after a retry'
+
+if output=$(busy_for=99 unmount_run 2>&1); then
+  fail 'an ESP that stays busy stops the move'
+fi
+[[ $output == *'target is busy'* && $output == *'udisksd'* && $output == *'nothing has been moved'* ]] ||
+  fail 'a busy ESP names its holders and says nothing was moved' "$output"
+pass 'an ESP that stays busy stops the move and names its holders'
