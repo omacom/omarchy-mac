@@ -708,28 +708,29 @@ patch_mkinitcpio_conf() {
 # The USB-C controller and HID modules a keyboard needs at the passphrase
 # prompt. mkinitcpio's autodetect leaves some of them out (issue #743: a Mac
 # Studio's keyboard was dead at the prompt until dwc3_apple and apple_tunable
-# were in the image). Prints the ones this kernel has, space separated.
-usb_keyboard_modules() {
-  local module found=()
-  for module in apple_tunable phy_apple_atc tps6598x typec dwc3 dwc3_apple \
-    xhci_plat_hcd usbhid hid_apple hid_generic; do
-    if modinfo -k "$(uname -r)" "$module" >/dev/null 2>&1; then
-      found+=("$module")
-    fi
-  done
-  echo "${found[*]}"
-}
-
+# were in the image).
+#
 # With encryption the passphrase is typed in the initramfs, so put those
 # modules in every image built from now on. $1 is the mkinitcpio.conf.d
-# directory, $2 whether LUKS is involved.
+# directory, $2 whether LUKS is involved. mkinitcpio sources the drop-in for
+# each image with KERNELVERSION set, so the modules are checked against the
+# kernel being built, not the running one (a kernel update without a reboot
+# builds for another). Same shape as fix-asahi-hid-race.sh.
 write_usb_keyboard_dropin() {
-  local dir="$1" encrypt="$2" modules
+  local dir="$1" encrypt="$2"
   (( encrypt )) || return 0
-  modules=$(usb_keyboard_modules)
-  [[ -n $modules ]] || return 0
   install -d "$dir"
-  echo "MODULES+=($modules)" >"$dir/20-omarchy-usb-keyboard.conf"
+  cat >"$dir/20-omarchy-usb-keyboard.conf" <<'EOF'
+# mkinitcpio fails the whole image over a MODULES entry it cannot find, so name
+# each module only on kernels that have it. Ending on unset keeps the exit
+# status zero, which mkinitcpio reads as a readable config.
+for _omarchy_usb_keyboard_module in apple_tunable phy_apple_atc tps6598x typec \
+  dwc3 dwc3_apple xhci_plat_hcd usbhid hid_apple hid_generic; do
+  modinfo -k "${KERNELVERSION:-$(uname -r)}" "$_omarchy_usb_keyboard_module" >/dev/null 2>&1 &&
+    MODULES+=("$_omarchy_usb_keyboard_module")
+done
+unset _omarchy_usb_keyboard_module
+EOF
 }
 
 # Everything staged into $CONF for the initramfs worker, plus the hook, the
