@@ -1,8 +1,11 @@
 #!/bin/bash
 
 # Shared by the standalone installer and installed package update commands.
+# The edge repository publishes hyprland for aarch64 and no longer carries
+# hyprtoolkit or hyprland-guiutils; those come from the regular repositories
+# (issue #741, "target not found"). Only hyprland is selected from it.
 omarchy_arm_package_targets() {
-  printf '%s\n' omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils
+  printf '%s\n' omarchy/hyprland
 }
 
 # --needed drops unchanged explicit targets before sysupgrade considers the

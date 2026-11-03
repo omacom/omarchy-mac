@@ -34,11 +34,12 @@ cmp -s "$test_tmp/original-backup" "$test_tmp/pacman.conf.bak" || fail 'channel 
 pass 'preparation after channel replacement preserves the original backup'
 
 mapfile -t targets < <(omarchy_arm_package_targets)
-[[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'only approved packages selected'
+[[ ${targets[*]} == "omarchy/hyprland" ]] || fail 'only approved packages selected'
 pass 'Aquamarine remains a regular-repository dependency'
 
 # Exercise the real default-package loop after the compatibility transaction.
-# The three selected packages must never reach yay as unqualified targets.
+# The selected compositor must never reach yay as an unqualified target. Its
+# companions come from the regular repositories and take the ordinary path.
 eval "$(sed -n '/^install_default_package_set() {/,/^seed_user_defaults() {/p' "$ROOT/install.sh" | sed '$d')"
 checkout=$ROOT
 log() { :; }
@@ -49,12 +50,10 @@ package_is_unavailable_here() { return 1; }
 pacman() { [[ $1 == "-Q" ]] && printf '%s\n' "$2" >> "$test_tmp/checked"; }
 yay() { printf '%s\n' "$*" >> "$test_tmp/yay"; }
 install_default_package_set
-for package in hyprland hyprtoolkit hyprland-guiutils; do
-  if grep -qxF "$package" "$ROOT/install/omarchy-base.packages"; then
-    grep -qxF "$package" "$test_tmp/checked" || fail "$package availability checked"
-  fi
-  ! grep -qE "(^| )$package( |$)" "$test_tmp/yay" || fail "$package must not be downgraded by yay"
-done
+grep -qxF hyprland "$test_tmp/checked" || fail 'hyprland availability checked'
+! grep -qE '(^| )hyprland( |$)' "$test_tmp/yay" || fail 'hyprland must not be downgraded by yay'
+grep -q -- '-S --needed --noconfirm hyprland-guiutils' "$test_tmp/yay" ||
+  fail 'hyprland-guiutils is installed from the regular repository'
 grep -q 'wf-recorder' "$test_tmp/yay" || fail 'regular package path still runs'
 for package in asdcontrol tobi-try; do
   grep -q -- "-S --needed --noconfirm omarchy/$package" "$test_tmp/yay" || fail "$package is explicitly sourced from the only available repository"
