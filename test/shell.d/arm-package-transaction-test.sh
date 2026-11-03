@@ -52,7 +52,9 @@ export OMARCHY_PACMAN_CONFIG="$test_tmp/pacman.conf"
 mapfile -t targets < <(omarchy_arm_package_upgrade_args)
 for version in 2-1 3-1 1-1; do
   rm -rf "$test_tmp/omarchy"
-  for package in hyprland hyprtoolkit hyprland-guiutils asdcontrol tobi-try; do
+  # The edge repository publishes hyprland, not hyprtoolkit or hyprland-guiutils
+  # (those come from the regular repositories): issue #741, "target not found".
+  for package in hyprland asdcontrol tobi-try; do
     write_package "$test_tmp/omarchy" "$package" "$version"
   done
   tar -czf "$test_tmp/db/sync/omarchy.db" -C "$test_tmp/omarchy" --transform='s|^\./||' .
@@ -60,15 +62,19 @@ for version in 2-1 3-1 1-1; do
   grep -qx 'extra/normal 4-1' <<< "$selected" || fail 'ordinary packages still upgrade'
   ! grep -q 'tobi-try' <<< "$selected" || fail 'removed optional defaults remain removed'
   ! grep -q '^extra/asdcontrol' <<< "$selected" || fail 'installed upstream-only optional defaults retain their selected source'
-  ! grep -q '^extra/hypr' <<< "$selected" || fail 'regular repository cannot replace the selected stack'
+  ! grep -q '^extra/hyprland ' <<< "$selected" || fail 'regular repository cannot replace the edge compositor'
   if [[ $version == "2-1" ]]; then
-    [[ $selected == 'extra/normal 4-1' ]] || fail 'unchanged compositor packages are not reinstalled'
+    [[ $selected == $'extra/hyprland-guiutils 4-1\nextra/hyprtoolkit 4-1\nextra/normal 4-1' ]] ||
+      fail 'companions upgrade from the regular repository; the compositor is not reinstalled' "$selected"
     mapfile -t unprotected < <(omarchy_arm_package_targets)
     baseline=$(select_packages "${unprotected[@]}")
-    grep -qx 'extra/hyprtoolkit 4-1' <<< "$baseline" || fail 'fixture reproduces the original --needed sysupgrade bug'
+    grep -qx 'extra/hyprland 4-1' <<< "$baseline" || fail 'fixture reproduces the original --needed sysupgrade bug'
   else
-    for package in hyprland hyprtoolkit hyprland-guiutils asdcontrol; do
+    for package in hyprland asdcontrol; do
       grep -qx "omarchy/$package $version" <<< "$selected" || fail 'changed packages use the explicit repository, including downgrades'
+    done
+    for package in hyprtoolkit hyprland-guiutils; do
+      grep -qx "extra/$package 4-1" <<< "$selected" || fail "$package comes from the regular repository"
     done
   fi
   pass "real pacman preserves selected $version stack while upgrading ordinary packages"
