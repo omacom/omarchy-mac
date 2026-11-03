@@ -66,10 +66,10 @@ Item {
   property var shell: null
 
   // ---- theme --------------------------------------------------------------
-  readonly property color foreground: Color.foreground
-  readonly property color background: Color.background
-  readonly property color accent: Color.accent
-  readonly property color urgent: Color.urgent
+  readonly property color foreground: ShellColor.foreground
+  readonly property color background: ShellColor.background
+  readonly property color accent: ShellColor.accent
+  readonly property color urgent: ShellColor.urgent
   readonly property string fontFamily: "monospace"
 
   // Fake `bar` for components that take a whole bar object (e.g. Slider).

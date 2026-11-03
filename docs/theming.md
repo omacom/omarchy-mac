@@ -196,7 +196,7 @@ The filename decides the target section, so the `[lock]` header is optional.
 
 The running shell reads `shell.toml` into two QML singletons:
 
-- `Color` for palette and surface roles like `Color.menu.border`.
+- `ShellColor` for palette and surface roles like `ShellColor.menu.border`. Qt 6.12's `QtQuick.Color` shadows an unqualified `Color`.
 - `Style` for controls, spacing, font scale, corner radius, and bar sizing.
 
 ### Borders
@@ -346,7 +346,7 @@ Use `Border.surfaceSpec(section, token, fallbackColor, fallbackWidth, alphaKey)`
 for shell theme tokens (the optional `alphaKey` names the alpha token, e.g.
 `"border-alpha"`), `Border.controlSpec(state, foreground, accent, urgent)` for
 shared controls, and `Border.flat(color, width)` for a deliberate local border
-that should not be overridden by the active theme. `Color.<section>.border` is the
+that should not be overridden by the active theme. `ShellColor.<section>.border` is the
 flat first-stop color for consumers that cannot render full border specs.
 
 ## Hyprland templates
