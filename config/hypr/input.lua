@@ -52,6 +52,7 @@
 -- o.window("com.mitchellh.ghostty", { scroll_touchpad = 0.2 })
 
 -- Enable touchpad gestures for changing workspaces.
+-- (Or flip the toggle: `omarchy toggle touchpad gestures`, also under Trigger > Hardware.)
 -- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Gestures/
 -- hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
 
