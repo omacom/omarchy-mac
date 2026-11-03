@@ -73,6 +73,12 @@ You can also turn on [touchpad gestures](https://wiki.hypr.land/Configuring/Adva
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
 ```
 
+On Apple Silicon Macs this swipe is already on, as in macOS. A three-finger sideways gesture of your own in `~/.config/hypr/input.lua` takes its place. To turn the swipe off, add this line to `~/.config/hypr/input.lua`:
+
+```lua
+omarchy_workspace_gesture = false
+```
+
 On Dell XPS laptops with a haptic touchpad, you can also set the click strength to low, mid, or high under _Trigger > Hardware > Touchpad Haptics_.
 
 ### Typing in Chinese, Japanese, and other languages
