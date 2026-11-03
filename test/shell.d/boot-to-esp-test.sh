@@ -110,3 +110,22 @@ fi
 [[ $output == *'target is busy'* && $output == *'udisksd'* && $output == *'nothing has been moved'* ]] ||
   fail 'a busy ESP names its holders and says nothing was moved' "$output"
 pass 'an ESP that stays busy stops the move and names its holders'
+
+# main installs trap recovery_note ERR before the unmount. A busy ESP stops the
+# move before anything has changed, so it must not print the instructions for
+# undoing a move (mv /boot.old /boot).
+trap_run() (
+  source "$ROOT/bin/omarchy-system-boot-to-esp"
+  set -euo pipefail
+  trap recovery_note ERR
+  sleep() { :; }
+  umount() { echo "umount: $1: target is busy." >&2; return 32; }
+  fuser() { :; }
+  unmount_esp /boot/efi
+)
+
+output=$(trap_run 2>&1) && fail 'a busy ESP with the ERR trap installed stops the move'
+[[ $output == *'target is busy'* ]] || fail 'the busy ESP is reported with the trap installed' "$output"
+[[ $output != *'/boot.old'* && $output != *'put the machine back'* ]] ||
+  fail 'a busy ESP does not print instructions for undoing a move that never started' "$output"
+pass 'a busy ESP prints no restore instructions for a move that never started'
