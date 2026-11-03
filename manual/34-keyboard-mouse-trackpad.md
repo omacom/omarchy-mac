@@ -73,7 +73,7 @@ You can also turn on [touchpad gestures](https://wiki.hypr.land/Configuring/Adva
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
 ```
 
-On Apple Silicon Macs this swipe is already on, as in macOS. A three-finger sideways gesture of your own in `~/.config/hypr/input.lua` takes its place. To turn the swipe off, add this line to `~/.config/hypr/input.lua`:
+On Apple Silicon Macs this swipe is already on, as in macOS, including empty workspaces: swiping past the last workspace opens the next one. A three-finger sideways gesture of your own in `~/.config/hypr/input.lua` takes its place. To turn the swipe off, add this line to `~/.config/hypr/input.lua`:
 
 ```lua
 omarchy_workspace_gesture = false

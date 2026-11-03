@@ -68,7 +68,11 @@ end
 
 hl = setmetatable({
   dsp = proxy(),
-  config = function() end,
+  config = function(config)
+    if config.gestures and config.gestures.workspace_swipe_use_r ~= nil then
+      use_r = config.gestures.workspace_swipe_use_r
+    end
+  end,
   gesture = function(gesture)
     local direction = gesture.direction:lower()
     direction = aliases[direction] or direction
@@ -100,6 +104,9 @@ hl = setmetatable({
 })
 
 dofile(os.getenv("HOME") .. "/.config/hypr/hyprland.lua")
+if os.getenv("SHOW_USE_R") then
+  print("workspace_swipe_use_r " .. tostring(use_r == true))
+end
 LUA
 }
 
@@ -140,6 +147,18 @@ pass "a modifier string naming no modifier still replaces the default"
 output=$(load_config apple 'omarchy_workspace_gesture = false')
 [[ -z $output ]] || fail "omarchy_workspace_gesture = false turns the default off" "$output"
 pass "omarchy_workspace_gesture = false turns the default off"
+
+[[ $(SHOW_USE_R=1 load_config apple) == "$swipe"$'\nworkspace_swipe_use_r true' ]] ||
+  fail "a Mac swipe steps by number, into empty workspaces" "$(SHOW_USE_R=1 load_config apple)"
+[[ $(SHOW_USE_R=1 load_config other) == "workspace_swipe_use_r false" ]] ||
+  fail "x86 keeps Hyprland's own workspace stepping" "$(SHOW_USE_R=1 load_config other)"
+output=$(SHOW_USE_R=1 load_config apple "$focus_lines")
+[[ $output == $'3 left function\n3 right function\nworkspace_swipe_use_r false' ]] ||
+  fail "a user's own gesture keeps Hyprland's stepping" "$output"
+output=$(SHOW_USE_R=1 load_config apple 'omarchy_workspace_gesture = false')
+[[ $output == "workspace_swipe_use_r false" ]] ||
+  fail "omarchy_workspace_gesture = false keeps Hyprland's stepping" "$output"
+pass "a Mac's workspace swipe steps into empty workspaces, only with Omarchy's own gesture"
 
 grep -Fq 'omarchy_workspace_gesture = false' "$ROOT/manual/34-keyboard-mouse-trackpad.md" ||
   fail "the manual documents how to turn the Mac gesture off"
