@@ -516,6 +516,46 @@ printf '[omarchy-aarch64]\nSigLevel = Optional TrustAll\nServer = file://%s/repo
 legacy_refused "the fork repository an Include configures" "\[omarchy-aarch64\] is configured through an Include"
 pass "preflight refuses pre-Quattro and mid-channel-switch legacy Macs, unknown fork keys, untrusted kept and included repositories, changing nothing"
 
+# --- Touch ID through aurora-sep ---------------------------------------------------
+
+# aurora-sep's installer holds the Aurora kernel, its headers, libfprint and m1n1
+# back in a block of its own in [options]. The target set replaces the packages
+# it holds, so the migration drops that block (and only that block) instead of
+# refusing. The marker text is the block as reported on a real Touch ID Mac in
+# omacom/omarchy-mac#778.
+aurora_sep_pin() { # trailing-lines
+  sed -i "/^\[options\]$/a # >>> aurora-sep pin (remove with: install-aurora-sep.sh --uninstall)\nIgnorePkg = linux-aurora linux-aurora-headers libfprint m1n1-aurora\n# <<< aurora-sep pin${1:+\n$1}" "$R/etc/pacman.conf"
+}
+new_fixture touchid checkout
+aurora_sep_pin "IgnorePkg = firefox"
+finish
+! grep -q "aurora-sep pin" "$R/etc/pacman.conf" || fail "the aurora-sep pin block is gone" "$(cat "$R/etc/pacman.conf")"
+grep -qx "IgnorePkg = firefox" "$R/etc/pacman.conf" && [[ $(grep -c '^IgnorePkg' "$R/etc/pacman.conf") == 1 ]] ||
+  fail "an administrator's own IgnorePkg stays, and nothing else holds a package back" "$(cat "$R/etc/pacman.conf")"
+grep -qx "linux-aurora 7.1.12.aurora2-11" "$R/var/lib/pacman/local/packages" && grep -qx "m1n1-aurora 1.6.1.aurora1-3" "$R/var/lib/pacman/local/packages" ||
+  fail "the packages the pin held back were replaced" "$(cat "$R/var/lib/pacman/local/packages")"
+pass "an aurora-sep Touch ID Mac migrates: its pin block goes, an administrator's IgnorePkg stays"
+new_fixture touchid-open checkout
+sed -i "/^\[options\]$/a # >>> aurora-sep pin (remove with: install-aurora-sep.sh --uninstall)\nIgnorePkg = linux-aurora linux-aurora-headers libfprint m1n1-aurora" "$R/etc/pacman.conf"
+legacy_refused "an aurora-sep block that never closes" "holds back linux-aurora, which the migration changes"
+new_fixture touchid-outside checkout
+sed -i "/^\[options\]$/a IgnorePkg = linux-aurora" "$R/etc/pacman.conf"
+legacy_refused "the same hold written by hand outside the block" "holds back linux-aurora, which the migration changes"
+pass "an unmarked or unterminated hold on the Aurora kernel still refuses, changing nothing"
+# The block is dropped only when it closes inside [options]: whatever follows an
+# open marker that never closes, at the end of the file or before another
+# section, is kept as written.
+pin_dropped() { # file
+  bash -c 'aurora_sep_open="# >>> aurora-sep pin"; aurora_sep_close="# <<< aurora-sep pin"; source <(sed -n "/^aurora_sep_pin_dropped() {/,/^}/p" "$1"); aurora_sep_pin_dropped "$2"' _ "$ROOT/migrate/src/target.sh" "$1"
+}
+printf '[core]\nInclude = x\n\n[options]\n# >>> aurora-sep pin (x)\nIgnorePkg = linux-aurora\n' >"$tmp/unclosed-at-end.conf"
+[[ $(pin_dropped "$tmp/unclosed-at-end.conf") == "$(cat "$tmp/unclosed-at-end.conf")" ]] || fail "an open marker at the end of the file keeps its lines" "$(pin_dropped "$tmp/unclosed-at-end.conf")"
+printf '[options]\n# >>> aurora-sep pin (x)\nIgnorePkg = linux-aurora\n[omarchy]\nServer = s\n# <<< aurora-sep pin\n' >"$tmp/closed-elsewhere.conf"
+[[ $(pin_dropped "$tmp/closed-elsewhere.conf") == "$(cat "$tmp/closed-elsewhere.conf")" ]] || fail "a close marker in another section does not close the block" "$(pin_dropped "$tmp/closed-elsewhere.conf")"
+printf '[options]\nIgnorePkg = a\n# >>> aurora-sep pin (x)\nIgnorePkg = linux-aurora\n# <<< aurora-sep pin\nIgnorePkg = b\n' >"$tmp/closed.conf"
+[[ $(pin_dropped "$tmp/closed.conf") == $'[options]\nIgnorePkg = a\nIgnorePkg = b' ]] || fail "a closed block goes and its neighbours stay" "$(pin_dropped "$tmp/closed.conf")"
+pass "the pin block is dropped only when it closes inside [options]"
+
 # --- Failures before the switch defer; after it they put things back ---------------
 
 # Before the repository switch a failure sets the attempt aside, nothing
