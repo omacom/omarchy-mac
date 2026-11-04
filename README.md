@@ -16,6 +16,8 @@ place, see [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md).
 
 - A recent backup of macOS (Time Machine or similar).
 - An Apple Silicon Mac (M1/M2 family). Verify compatibility: https://asahilinux.org/fedora/#device-support
+  M5 Macs can't use this guide yet; see [manual/49-omarchy-on.md](manual/49-omarchy-on.md#apple-m5-chips)
+  for where they stand.
 - At least 50 GB free on the internal SSD (100 GB recommended).
 - Internet access.
 
