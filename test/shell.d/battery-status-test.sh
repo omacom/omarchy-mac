@@ -39,7 +39,7 @@ chmod +x "$tmp_dir/bin/upower"
 
 shell_output=$(OMARCHY_POWER_SUPPLY_PATH="$tmp_dir/power" PATH="$tmp_dir/bin:$PATH" "$ROOT/bin/omarchy-battery-status" --shell)
 
-grep -Fx $'percentage\t51%' <<<"$shell_output" >/dev/null || fail "battery status reports percentage"
+grep -Fx $'percentage\t49%' <<<"$shell_output" >/dev/null || fail "battery status reports usable percentage"
 grep -Fx $'state\tdischarging' <<<"$shell_output" >/dev/null || fail "battery status reports state"
 grep -Fx $'rate\t10.8W' <<<"$shell_output" >/dev/null || fail "battery status reports live sysfs power rate"
 grep -Fx $'size\t56Wh' <<<"$shell_output" >/dev/null || fail "battery status reports full capacity"
@@ -93,7 +93,7 @@ grep -Fx $'threshold\t80%' <<<"$asahi_output" >/dev/null || fail "Apple Silicon 
 grep -Fx $'cycles\t405' <<<"$asahi_output" >/dev/null || fail "Apple Silicon charge cycles are read"
 
 # Display rounding is half-up to match the bar widget, but the charge-hold
-# check must compare UPower's raw percentage: 79.5% displays as 80%, and an
+# check must compare UPower's raw percentage: 79.5% displays as 79%, and an
 # 80% hold threshold must not trip while the raw value is still below it.
 hold_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir" "$asahi_dir" "$hold_dir"' EXIT
@@ -129,7 +129,7 @@ chmod +x "$hold_dir/bin/upower"
 
 hold_output=$(OMARCHY_POWER_SUPPLY_PATH="$hold_dir/power" PATH="$hold_dir/bin:$PATH" "$ROOT/bin/omarchy-battery-status" --shell)
 
-grep -Fx $'percentage\t80%' <<<"$hold_output" >/dev/null || fail "display percentage rounds half-up"
+grep -Fx $'percentage\t79%' <<<"$hold_output" >/dev/null || fail "display percentage maps usable charge"
 grep -Fx $'state\tcharging' <<<"$hold_output" >/dev/null || fail "hold threshold compares the raw percentage"
 
 pass "battery status reads an Apple Silicon battery"
