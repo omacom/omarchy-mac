@@ -1132,10 +1132,14 @@ print_status() {
   printf '  omarchy         %s\n' \
     "$(omarchy_is_installed && echo installed || echo "not installed")"
   # State first, intent only where there is still a choice: "requested" against
-  # an already-encrypted root reads as though the work is pending.
+  # an already-encrypted root reads as though the work is pending. After the
+  # install finishes, cleanup_all deletes the answers file, so want_encrypt is
+  # back at its default and no longer records the user's choice. Report the disk.
   local encryption
   if root_is_encrypted; then
     encryption=done
+  elif [[ $step == done ]]; then
+    encryption="no (root is not encrypted)"
   elif ((want_encrypt)); then
     encryption=requested
   else
