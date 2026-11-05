@@ -10,7 +10,9 @@ trap 'rm -rf "$test_tmp"' EXIT
 mock_bin="$test_tmp/bin"
 call_log="$test_tmp/calls"
 runtime_dir="$test_tmp/runtime"
-mkdir -p "$mock_bin" "$runtime_dir"
+mkdir -p "$mock_bin" "$runtime_dir" "$test_tmp/drm/card1-DP-1" "$test_tmp/drm/card1-DP-2"
+: >"$test_tmp/drm/card1-DP-1/ddc"
+: >"$test_tmp/drm/card1-DP-2/ddc"
 
 cat >"$mock_bin/omarchy-hyprland-monitor-focused-apple" <<'SH'
 #!/bin/bash
@@ -54,7 +56,8 @@ SH
 chmod +x "$mock_bin"/*
 
 run_brightness() {
-  CALL_LOG="$call_log" XDG_RUNTIME_DIR="$runtime_dir" PATH="$mock_bin:$ROOT/bin:$PATH" \
+  CALL_LOG="$call_log" XDG_RUNTIME_DIR="$runtime_dir" \
+    OMARCHY_DRM_CLASS="$test_tmp/drm" PATH="$mock_bin:$ROOT/bin:$PATH" \
     "$ROOT/bin/omarchy-brightness-display" "$@"
 }
 
@@ -144,3 +147,18 @@ if PATH="$mock_bin:$PATH" "$ROOT/bin/omarchy-hyprland-monitor-focused-apple"; th
   fail "focused non-Apple display is not detected as Apple"
 fi
 pass "named Apple display is detected independently of focus"
+
+: >"$call_log"
+if run_brightness --monitor HDMI-A-1 >/dev/null 2>&1; then
+  fail "external monitor without a DDC channel still has a brightness backend"
+fi
+! grep -q ddcutil "$call_log" || fail "external without DDC still probes ddcutil" "$(cat "$call_log")"
+! grep -q brightnessctl "$call_log" || fail "external without DDC still uses kernel backlight" "$(cat "$call_log")"
+pass "external monitor without a DDC channel is skipped"
+
+if run_brightness --no-osd --monitor HDMI-A-1 +5% >/dev/null 2>&1; then
+  fail "setting brightness on a DDC-less external still succeeds"
+fi
+! grep -q ddcutil "$call_log" || fail "setting DDC-less external still probes ddcutil" "$(cat "$call_log")"
+! grep -q brightnessctl "$call_log" || fail "setting DDC-less external still uses kernel backlight" "$(cat "$call_log")"
+pass "setting brightness on a DDC-less external fails closed"
