@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy.touchbar",
+  "name": "Touch Bar",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "description": "Apple Silicon Touch Bar: Omarchy menu, terminal, lock, screenshot, and media keys via tiny-dfr. Customize with ~/.config/omarchy/touchbar.json.",
+  "kinds": ["service"],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
