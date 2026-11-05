@@ -200,6 +200,7 @@ Consider supporting the project: [![Buy Me A Coffee](https://img.shields.io/badg
 - The Omarchy manual — [manual/](manual/)
 - Btrfs snapshots and disk encryption — [docs/btrfs.md](docs/btrfs.md)
 - Upgrading from 3.x to Quattro — [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md)
+- Touch Bar mini apps (Now Playing) — [docs/touchbar.md](docs/touchbar.md)
 
 ---
 

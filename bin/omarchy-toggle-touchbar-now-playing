@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# omarchy:summary=Toggle the Now Playing mini app on the Touch Bar
+
+# Bound to a hotkey, so anything that needs a terminal (installing the
+# spectrum analyser on first use) opens in a floating one. Otherwise hand
+# straight to the app, which toggles itself off when it is already running.
+
+if ! omarchy-hw-touchbar; then
+  omarchy-notification-send "This Mac has no Touch Bar" -t 3000
+  exit 1
+fi
+
+if omarchy-pkg-missing cava; then
+  omarchy-launch-floating-terminal-with-presentation omarchy-install-touchbar-now-playing
+else
+  omarchy-touchbar-now-playing
+fi
