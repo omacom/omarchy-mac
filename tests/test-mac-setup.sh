@@ -666,6 +666,9 @@ check "rejecting root happens before account mutation" not matches MUTATED "$roo
 
 no_unbound_when_piped() { ! matches 'unbound variable' "$(piped --status)"; }
 piped_reaches_main() { matches 'Omarchy Mac setup status' "$(piped --status)"; }
+# $SELF on an installed Mac holds a copy whose comment-block help never
+# mentions --status. Piped --help must not read that file, or this check is
+# red on every real machine and green only where the tool is not installed.
 piped_help_is_useful() { matches '[-][-]status' "$(piped --help)"; }
 piped_help_is_clean() { ! matches 'no such file|unbound variable' "$(piped --help)"; }
 file_help_prints_header() { matches 'carries the' "$(bash "$TOOL" --help 2>&1)"; }

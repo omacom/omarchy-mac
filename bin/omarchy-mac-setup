@@ -407,18 +407,13 @@ install_self() {
   install -Dm755 "${BASH_SOURCE[0]}" "$SELF"
 }
 
-# --help is answered before the piped re-exec below has a file to work with, so
-# fall back to the copy an earlier run left on disk, and to a one-liner when
-# there is no copy either.
+# --help is answered before the piped re-exec below has a file to work with.
+# Do not fall back to $SELF: that copy can be missing, older, or a different
+# fork than the script that was piped in. The one-liner lives in this file, so
+# it always describes this invocation.
 print_help() {
-  local source=""
   if running_from_a_file; then
-    source=${BASH_SOURCE[0]}
-  elif [[ -f $SELF ]]; then
-    source=$SELF
-  fi
-  if [[ -n $source ]]; then
-    sed -n '/^# One command/,/^# where it left off/p' "$source" | sed 's/^# \{0,3\}//'
+    sed -n '/^# One command/,/^# where it left off/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,3\}//'
   else
     echo "Run with --status to see where this machine has got to, or with no"
     echo "arguments to start the install. Download the script and run"
