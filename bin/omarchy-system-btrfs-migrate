@@ -793,6 +793,90 @@ require_separate_boot() {
   fail "refusing to make this machine unbootable"
 }
 
+# Prints the value assigned to $2 in the GRUB defaults file $1: quotes removed,
+# any trailing comment dropped, the last assignment winning as it does when the
+# shell reads the file. A double-quoted value ends at its first unescaped quote,
+# and the backslashes that escape characters inside it are dropped, as the
+# shell drops them. Nothing is printed when the variable is not set.
+grub_default_value() {
+  local file=$1 var=$2 line
+  line=$(grep -E "^[[:space:]]*$var=" "$file" | tail -n 1)
+  [[ -n $line ]] || return 0
+  line=${line#*=}
+  case $line in
+    \"*) sed -E 's/^"(([^"\\]|\\.)*).*/\1/; s/\\(.)/\1/g' <<<"$line" | tr -d '\n' ;;
+    \'*) line=${line#\'}; printf '%s' "${line%%\'*}" ;;
+    *) line=${line%%#*}; printf '%s' "${line%%[[:space:]]*}" ;;
+  esac
+}
+
+# The worker prompts and prints on /dev/console, and so does the encrypt hook
+# on every boot after it. Which device that is depends on the kernel command
+# line: with no console= parameter the kernel registers the console the
+# firmware names in /chosen/stdout-path and then the VT, and the one registered
+# last owns /dev/console. On Apple Silicon the firmware names the serial port
+# (ttySAC0), so the passphrase prompt goes to a UART nobody is watching while
+# the display shows one blinking cursor. console=tty0 makes the VT the only
+# console. It is written to GRUB's defaults, where the finish service and every
+# later grub-mkconfig keep it, and grub.cfg is regenerated here, because the
+# boot that runs the staged worker is the first one that needs it.
+#
+# A console= the owner chose is theirs: someone installing over a serial line
+# has set it on purpose, and the prompt already lands where they are looking.
+ensure_display_console() {
+  local grub_default=${OMARCHY_GRUB_DEFAULT:-/etc/default/grub}
+  local compatible=${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}
+  local var
+
+  [[ -f $compatible ]] || return 0
+  grep -Faiq 'apple,' "$compatible" || return 0
+
+  if [[ ! -f $grub_default ]]; then
+    warn "$grub_default is missing; add console=tty0 to the kernel command line yourself,"
+    warn "or the passphrase prompt on the next boot goes to the serial port instead of the display."
+    return 0
+  fi
+  # The values, not the lines: a comment that mentions console= is not a
+  # console, and one that does not must not hide a value that does.
+  for var in GRUB_CMDLINE_LINUX GRUB_CMDLINE_LINUX_DEFAULT; do
+    [[ $(grub_default_value "$grub_default" "$var") == *console=* ]] && return 0
+  done
+
+  log "Pointing the console at the display (console=tty0) so the passphrase prompt is visible"
+  local backup
+  backup=$(mktemp)
+  cp -p "$grub_default" "$backup"
+  if grep -Eq '^[[:space:]]*GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_default"; then
+    # Append inside the quotes, whichever kind they are. The value ends at the
+    # first matching quote that is not escaped, so neither a quote inside a
+    # trailing comment nor a \" inside the value is mistaken for it; an empty
+    # value gets no leading space.
+    sed -i -E \
+      -e 's/^([[:space:]]*GRUB_CMDLINE_LINUX_DEFAULT=")(([^"\\]|\\.)*)"/\1\2 console=tty0"/' \
+      -e "s/^([[:space:]]*GRUB_CMDLINE_LINUX_DEFAULT=')([^']*)'/\1\2 console=tty0'/" \
+      -e 's/^([[:space:]]*GRUB_CMDLINE_LINUX_DEFAULT=["'"'"']) console=tty0/\1console=tty0/' \
+      "$grub_default"
+  else
+    printf 'GRUB_CMDLINE_LINUX_DEFAULT="console=tty0"\n' >>"$grub_default"
+  fi
+  if [[ $(grub_default_value "$grub_default" GRUB_CMDLINE_LINUX_DEFAULT) != *console=tty0* ]]; then
+    cp "$backup" "$grub_default"
+    rm -f "$backup"
+    warn "could not add console=tty0 to GRUB_CMDLINE_LINUX_DEFAULT in $grub_default; add it yourself,"
+    warn "or the passphrase prompt on the next boot goes to the serial port instead of the display."
+    return 0
+  fi
+  # The defaults and grub.cfg change together or not at all. Left in the
+  # defaults alone, console=tty0 would satisfy the check above on the next run
+  # and nothing would regenerate grub.cfg before the staged boot.
+  if ! grub-mkconfig -o /boot/grub/grub.cfg; then
+    cp "$backup" "$grub_default"
+    rm -f "$backup"
+    fail "grub-mkconfig failed; $grub_default is back as it was and nothing has been staged. Fix the error and run this again."
+  fi
+  rm -f "$backup"
+}
+
 # ext4 root: the full conversion, staged through RAM.
 stage_convert() {
   local encrypt="$1"
@@ -814,6 +898,7 @@ stage_convert() {
   echo
   confirm_or_yes convert
 
+  ensure_display_console
   ensure_packages "$encrypt"
   stage_worker convert "$encrypt"
 
@@ -863,6 +948,7 @@ stage_encrypt() {
   echo
   confirm_or_yes encrypt
 
+  ensure_display_console
   ensure_packages 1
   stage_worker encrypt 1
 
