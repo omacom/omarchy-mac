@@ -27,6 +27,15 @@
   ufw allow 53317/udp
   ufw allow 53317/tcp
 
+  # Leave a way back in for installs administered over SSH: when sshd is set
+  # to start on the installed system, rate-limit-allow it before the
+  # default-deny policy takes effect on first boot or a headless machine is
+  # locked out of its only access path.
+  if systemctl is-enabled --quiet sshd.service 2>/dev/null ||
+    systemctl is-enabled --quiet sshd.socket 2>/dev/null; then
+    ufw limit ssh comment 'allow sshd'
+  fi
+
   # Allow Docker containers to use DNS on host.
   ufw allow in proto udp from 172.16.0.0/12 to 172.17.0.1 port 53 comment 'allow-docker-dns'
   ufw allow in proto udp from 192.168.0.0/16 to 172.17.0.1 port 53 comment 'allow-docker-dns'
