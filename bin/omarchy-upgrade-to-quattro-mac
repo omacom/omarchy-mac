@@ -260,6 +260,298 @@ wire_system_paths() {
   done
 }
 
+# These paths are deliberately narrow. The transition owns only the files it
+# names here; unrelated SDDM/systemd configuration is left untouched.
+sddm_alias=/etc/systemd/system/display-manager.service
+sddm_dropin=/etc/systemd/system/sddm.service.d/wait-for-display.conf
+seamless_unit=/etc/systemd/system/omarchy-seamless-login.service
+seamless_unit_name=omarchy-seamless-login.service
+seamless_dropin_dir=/etc/systemd/system/omarchy-seamless-login.service.d
+seamless_dropin=/etc/systemd/system/omarchy-seamless-login.service.d/require-sddm.conf
+seamless_wait_dropin=/etc/systemd/system/omarchy-seamless-login.service.d/wait-for-display.conf
+sddm_autologin=/etc/sddm.conf.d/autologin.conf
+sddm_system_conf_dir=/usr/lib/sddm/sddm.conf.d
+sddm_admin_conf_dir=/etc/sddm.conf.d
+sddm_conf=/etc/sddm.conf
+seamless_graphical_link=/etc/systemd/system/graphical.target.wants/omarchy-seamless-login.service
+seamless_multi_user_link=/etc/systemd/system/multi-user.target.wants/omarchy-seamless-login.service
+seamless_default_link=/etc/systemd/system/default.target.wants/omarchy-seamless-login.service
+legacy_seamless_helper=/usr/local/bin/seamless-login
+legacy_wait_helper=/usr/local/bin/omarchy-wait-for-display
+legacy_getty_dropin=/etc/systemd/system/getty@tty1.service.d/autologin.conf
+legacy_plymouth_dropin=/etc/systemd/system/plymouth-quit.service.d/wait-for-graphical.conf
+sddm_wayland_session_dir=/usr/share/wayland-sessions
+sddm_local_wayland_session_dir=/usr/local/share/wayland-sessions
+systemd_state_status=0
+systemd_state_output=
+autologin_user=
+autologin_session=
+sddm_session_dir=
+login_cleanup_only=0
+preserve_autologin=0
+
+capture_systemd_state() {
+  systemd_state_status=0
+  systemd_state_output=$(sudo env LC_ALL=C systemctl is-enabled "$1" 2>&1) || systemd_state_status=$?
+}
+
+require_enabled_sddm() {
+  capture_systemd_state sddm.service
+  [[ $systemd_state_status == 0 && $systemd_state_output == "enabled" ]] ||
+    fail "SDDM is not exactly enabled (status $systemd_state_status: $systemd_state_output)"
+}
+
+validate_sddm_alias() {
+  local fragment alias_target
+  if [[ ! -e $sddm_alias && ! -L $sddm_alias ]]; then
+    return 0
+  fi
+  [[ -L $sddm_alias ]] || fail "Existing $sddm_alias is not a symlink"
+  fragment=$(sudo env LC_ALL=C systemctl show -p FragmentPath --value sddm.service 2>&1) ||
+    fail "Could not resolve SDDM FragmentPath: $fragment"
+  [[ -f $fragment ]] || fail "SDDM FragmentPath is not a regular file: $fragment"
+  alias_target=$(sudo readlink -f "$sddm_alias" 2>&1) ||
+    fail "Could not resolve $sddm_alias: $alias_target"
+  [[ $alias_target == "$fragment" ]] ||
+    fail "$sddm_alias does not resolve to SDDM ($alias_target != $fragment)"
+  capture_systemd_state sddm.service
+  [[ $systemd_state_status == 0 && $systemd_state_output == "enabled" ]] ||
+    fail "Existing SDDM alias is not backed by exactly enabled SDDM (status $systemd_state_status: $systemd_state_output)"
+}
+
+require_sddm_alias() {
+  [[ -e $sddm_alias || -L $sddm_alias ]] || fail "SDDM display-manager alias is missing"
+  validate_sddm_alias
+}
+
+inspect_sddm_config() {
+  local file="$1" line section=
+  [[ -r $file ]] || fail "Cannot read SDDM configuration: $file"
+  while IFS= read -r line || [[ -n $line ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z $line || ${line:0:1} == "#" || ${line:0:1} == ";" ]] && continue
+    if [[ $line =~ ^\[([^]]+)\]$ ]]; then
+      section=${BASH_REMATCH[1]}
+    elif [[ $section == "Wayland" && $line =~ ^SessionDir[[:space:]]*=(.*)$ ]]; then
+      sddm_session_dir=${BASH_REMATCH[1]}
+      sddm_session_dir="${sddm_session_dir#"${sddm_session_dir%%[![:space:]]*}"}"
+      sddm_session_dir="${sddm_session_dir%"${sddm_session_dir##*[![:space:]]}"}"
+      if [[ ${sddm_session_dir:0:1} == "\"" && ${sddm_session_dir: -1} == "\"" ]] ||
+         [[ ${sddm_session_dir:0:1} == "'" && ${sddm_session_dir: -1} == "'" ]]; then
+        sddm_session_dir=${sddm_session_dir:1:${#sddm_session_dir}-2}
+      fi
+    fi
+  done <"$file"
+}
+
+inspect_sddm_config_dir() {
+  local dir="$1" file
+  [[ ! -e $dir ]] && return 0
+  [[ -d $dir && -r $dir ]] || fail "Cannot read SDDM configuration directory: $dir"
+  while IFS= read -r file; do
+    [[ -e $file ]] || continue
+    inspect_sddm_config "$file"
+  done < <(printf '%s\n' "$dir"/*.conf | LC_ALL=C sort)
+}
+
+validate_sddm_session_dir() {
+  sddm_session_dir=
+  inspect_sddm_config_dir "$sddm_system_conf_dir"
+  inspect_sddm_config_dir "$sddm_admin_conf_dir"
+  [[ ! -e $sddm_conf ]] || inspect_sddm_config "$sddm_conf"
+  if [[ -n $sddm_session_dir && $sddm_session_dir != "/usr/share/wayland-sessions" &&
+        $sddm_session_dir != "/usr/local/share/wayland-sessions" ]]; then
+    fail "Unsupported effective SDDM Wayland SessionDir: $sddm_session_dir"
+  fi
+}
+
+session_file_path() {
+  local session="$1" dir
+  [[ -n $session && $session != */* ]] || return 1
+  for dir in "$sddm_wayland_session_dir" "$sddm_local_wayland_session_dir"; do
+    if [[ -f $dir/$session ]]; then
+      printf '%s\n' "$dir/$session"
+      return 0
+    fi
+  done
+  return 1
+}
+
+read_existing_autologin() {
+  local line section='' value
+  autologin_user=
+  autologin_session=
+  [[ -e $sddm_autologin ]] || return 1
+  [[ -f $sddm_autologin && -r $sddm_autologin ]] || fail "Invalid SDDM autologin file: $sddm_autologin"
+  while IFS= read -r line || [[ -n $line ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z $line || ${line:0:1} == "#" || ${line:0:1} == ";" ]] && continue
+    if [[ $line =~ ^\[([^]]+)\]$ ]]; then
+      section=${BASH_REMATCH[1]}
+    elif [[ $section == "Autologin" && $line =~ ^User[[:space:]]*=(.*)$ ]]; then
+      value=${BASH_REMATCH[1]}
+      autologin_user="${value#"${value%%[![:space:]]*}"}"
+      autologin_user="${autologin_user%"${autologin_user##*[![:space:]]}"}"
+    elif [[ $section == "Autologin" && $line =~ ^Session[[:space:]]*=(.*)$ ]]; then
+      value=${BASH_REMATCH[1]}
+      autologin_session="${value#"${value%%[![:space:]]*}"}"
+      autologin_session="${autologin_session%"${autologin_session##*[![:space:]]}"}"
+    fi
+  done <"$sddm_autologin"
+  [[ -n $autologin_user && -n $autologin_session ]] || fail "Malformed SDDM autologin file: $sddm_autologin"
+  id "$autologin_user" >/dev/null 2>&1 || fail "SDDM autologin user does not exist: $autologin_user"
+  session_file_path "$autologin_session" >/dev/null || fail "SDDM autologin Session is not installed: $autologin_session"
+  return 0
+}
+
+write_root_file() {
+  local destination="$1" contents="$2" temporary parent
+  parent=$(dirname "$destination")
+  temporary=$(sudo mktemp "$parent/.omarchy-login.XXXXXX")
+  printf '%s\n' "$contents" | sudo tee "$temporary" >/dev/null
+  sudo chmod 644 "$temporary"
+  sudo mv -f "$temporary" "$destination"
+}
+
+install_login_interlock() {
+  local dropin_dir
+  dropin_dir=$(dirname "$seamless_dropin")
+  sudo mkdir -p "$dropin_dir"
+  write_root_file "$seamless_dropin" $'[Unit]\nConditionPathExists=!/etc/systemd/system/display-manager.service'
+  sudo grep -Fx 'ConditionPathExists=!/etc/systemd/system/display-manager.service' "$seamless_dropin" >/dev/null ||
+    fail "Seamless-login interlock drop-in is invalid"
+}
+
+install_sddm_display_guard() {
+  local dropin_dir
+  [[ -x $checkout/bin/omarchy-system-wait-for-display ]] || fail "Missing display guard in selected checkout"
+  dropin_dir=$(dirname "$sddm_dropin")
+  sudo mkdir -p "$dropin_dir"
+  write_root_file "$sddm_dropin" $'[Service]\nExecStartPre=/usr/bin/omarchy-system-wait-for-display'
+  sudo grep -Fx 'ExecStartPre=/usr/bin/omarchy-system-wait-for-display' "$sddm_dropin" >/dev/null ||
+    fail "SDDM display guard drop-in is invalid"
+  sudo test -x /usr/bin/omarchy-system-wait-for-display || fail "Display guard was not installed"
+}
+
+verify_login_interlock() {
+  [[ -f $seamless_dropin ]] || fail "Seamless-login interlock is missing"
+  sudo grep -Fx 'ConditionPathExists=!/etc/systemd/system/display-manager.service' "$seamless_dropin" >/dev/null ||
+    fail "Seamless-login interlock is invalid"
+}
+
+verify_sddm_display_guard() {
+  [[ -f $sddm_dropin ]] || fail "SDDM display guard drop-in is missing"
+  sudo grep -Fx 'ExecStartPre=/usr/bin/omarchy-system-wait-for-display' "$sddm_dropin" >/dev/null ||
+    fail "SDDM display guard drop-in is invalid"
+  sudo test -x /usr/bin/omarchy-system-wait-for-display || fail "SDDM display guard is not executable"
+}
+
+prepare_login_transition() {
+  local seamless_state preserve=0
+  capture_systemd_state "$seamless_unit_name"
+  if [[ $systemd_state_status == 0 && $systemd_state_output == "enabled" ]]; then
+    seamless_state=enabled
+  elif (( systemd_state_status != 0 )) &&
+       [[ $systemd_state_output == "disabled" || $systemd_state_output == "not-found" ]]; then
+    seamless_state=$systemd_state_output
+  else
+    fail "Cannot classify seamless-login state (status $systemd_state_status: $systemd_state_output)"
+  fi
+  if [[ ($seamless_state == "disabled" || $seamless_state == "not-found") ]] && legacy_artifacts_present; then
+    require_sddm_alias
+    login_cleanup_only=1
+  fi
+  validate_sddm_alias
+  validate_sddm_session_dir
+  if read_existing_autologin; then
+    preserve=1
+  fi
+  preserve_autologin=$preserve
+  if (( login_cleanup_only )); then
+    install_sddm_display_guard
+    return 0
+  fi
+  if [[ $seamless_state == enabled ]]; then
+    preserve=1
+    [[ -n $autologin_user ]] || autologin_user=$USER
+  fi
+  preserve_autologin=$preserve
+  if [[ -f $seamless_unit ]]; then
+    install_login_interlock
+    sudo systemctl daemon-reload
+    verify_login_interlock
+  fi
+  install_sddm_display_guard
+  if (( preserve )); then
+    [[ -n $autologin_user ]] || fail "Autologin preservation has no user"
+    sudo env OMARCHY_PATH="$checkout" "$checkout/bin/omarchy-mac-setup" --autologin --user "$autologin_user"
+    read_existing_autologin || fail "mac-setup did not produce valid SDDM autologin"
+  fi
+  sudo systemctl daemon-reload
+}
+
+legacy_artifacts_present() {
+  local path
+  for path in "$seamless_unit" "$seamless_dropin_dir" "$seamless_dropin" "$seamless_wait_dropin" \
+    "$seamless_graphical_link" "$seamless_multi_user_link" "$seamless_default_link" \
+    "$legacy_seamless_helper" "$legacy_wait_helper" "$legacy_getty_dropin" "$legacy_plymouth_dropin"; do
+    [[ -e $path || -L $path ]] && return 0
+  done
+  return 1
+}
+
+remove_legacy_login_artifacts() {
+  # Keep each mutation separate so interruption leaves an observable,
+  # cleanup-pending state which the next invocation can safely resume.
+  sudo rm -f "$seamless_unit"
+  if [[ ${OMARCHY_LOGIN_TRANSITION_INTERRUPT_AFTER_UNIT:-0} == "1" ]]; then
+    fail "Interrupted after removing seamless-login unit; rerun to resume cleanup"
+  fi
+  sudo rm -f "$seamless_dropin" "$seamless_wait_dropin"
+  sudo rmdir "$seamless_dropin_dir" 2>/dev/null || true
+  sudo rm -f "$seamless_graphical_link" "$seamless_multi_user_link" "$seamless_default_link"
+  sudo rm -f "$legacy_seamless_helper" "$legacy_wait_helper"
+  sudo rm -f "$legacy_getty_dropin" "$legacy_plymouth_dropin"
+}
+
+cleanup_login_transition() {
+  local artifacts=0
+  legacy_artifacts_present && artifacts=1 || true
+  require_enabled_sddm
+  require_sddm_alias
+  capture_systemd_state "$seamless_unit_name"
+  if [[ $systemd_state_status == 0 && $systemd_state_output == "enabled" ]]; then
+    sudo systemctl disable omarchy-seamless-login.service
+    capture_systemd_state "$seamless_unit_name"
+    if (( systemd_state_status == 0 )) ||
+       [[ $systemd_state_output != "disabled" && $systemd_state_output != "not-found" ]]; then
+      fail "Disable did not leave a classified seamless-login state (status $systemd_state_status: $systemd_state_output)"
+    fi
+  elif (( systemd_state_status == 0 )) ||
+       [[ $systemd_state_output != "disabled" && $systemd_state_output != "not-found" ]]; then
+    fail "Cannot classify post-setup seamless-login state (status $systemd_state_status: $systemd_state_output)"
+  fi
+  if [[ $systemd_state_output == "not-found" && $artifacts == 1 ]]; then
+    validate_sddm_alias
+  fi
+  remove_legacy_login_artifacts
+  sudo systemctl daemon-reload
+  require_enabled_sddm
+  require_sddm_alias
+  verify_sddm_display_guard
+  capture_systemd_state "$seamless_unit_name"
+  if (( systemd_state_status == 0 )) ||
+     [[ $systemd_state_output != "disabled" && $systemd_state_output != "not-found" ]]; then
+    fail "Final seamless-login state is not disabled or not-found (status $systemd_state_status: $systemd_state_output)"
+  fi
+  if (( preserve_autologin )); then
+    read_existing_autologin || fail "Preserved SDDM autologin is no longer valid"
+  fi
+  legacy_artifacts_present && fail "Legacy login artifacts remain after cleanup" || true
+}
+
 update_bashrc() {
   local bashrc="$HOME/.bashrc" line replaced=0 rewritten
 
@@ -370,9 +662,13 @@ main() {
   ensure_arm_package_repo
   install_quattro_packages
   wire_system_paths
-  update_bashrc
-  replace_hyprland_config
-  run_quattro_setup
+  prepare_login_transition
+  if (( ! login_cleanup_only )); then
+    update_bashrc
+    replace_hyprland_config
+    run_quattro_setup
+  fi
+  cleanup_login_transition
   retire_legacy_packages
   switch_to_networkmanager
 
