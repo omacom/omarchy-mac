@@ -46,11 +46,8 @@ if ! graphical_state=$(systemctl --user show --property=ActiveState --value grap
 fi
 
 if [[ $graphical_state == "active" ]]; then
-  if ! error=$(systemctl --user reset-failed omarchy-sleep-lock.service 2>&1); then
-    echo "Could not reset omarchy-sleep-lock.service: $error"
-    echo "The pre-suspend lock repair will be retried by omarchy-migrate."
-    exit 1
-  elif ! error=$(systemctl --user restart omarchy-sleep-lock.service 2>&1); then
+  systemctl --user reset-failed omarchy-sleep-lock.service >/dev/null 2>&1 || true
+  if ! error=$(systemctl --user restart omarchy-sleep-lock.service 2>&1); then
     echo "Could not restart omarchy-sleep-lock.service: $error"
     echo "The pre-suspend lock repair will be retried by omarchy-migrate."
     exit 1
@@ -71,9 +68,6 @@ else
     echo "Could not stop stale omarchy-sleep-lock.service: $error"
     echo "The pre-suspend lock repair will be retried by omarchy-migrate."
     exit 1
-  elif ! error=$(systemctl --user reset-failed omarchy-sleep-lock.service 2>&1); then
-    echo "Could not reset omarchy-sleep-lock.service: $error"
-    echo "The pre-suspend lock repair will be retried by omarchy-migrate."
-    exit 1
   fi
+  systemctl --user reset-failed omarchy-sleep-lock.service >/dev/null 2>&1 || true
 fi
