@@ -156,6 +156,7 @@ cat >"$mock_bin/bluetoothctl" <<'SH'
 #!/bin/bash
 
 printf '%s\n' "$*" >>"$BLUETOOTHCTL_LOG"
+[[ $1 == "pair" && -n ${MOCK_PAIR_FAILURE:-} ]] && exit 1
 [[ $1 == "power" && $2 == "on" ]] && echo yes >"$POWERED_FILE"
 [[ $1 == "list" ]] &&
   for c in ${MOCK_CONTROLLERS:-AA:BB:CC:DD:EE:FF}; do printf 'Controller %s mock\n' "$c"; done
@@ -262,6 +263,40 @@ pass "bluetooth lifts the block before connecting"
 grep -qx "connect AA:BB:CC:DD:EE:FF" "$unpowered_log" ||
   fail "bluetooth connects once the adapter is up" "$(cat "$unpowered_log")"
 pass "bluetooth connects once the adapter is up"
+
+paired_log=$(bluetooth_run yes "$ROOT/bin/omarchy-bluetooth-device" pair AA:BB:CC:DD:EE:FF)
+grep -qx "pair AA:BB:CC:DD:EE:FF" "$paired_log" ||
+  fail "bluetooth pairs an available device" "$(cat "$paired_log")"
+pass "bluetooth pairs an available device"
+
+grep -qx "trust AA:BB:CC:DD:EE:FF" "$paired_log" ||
+  fail "bluetooth trusts a device after pairing" "$(cat "$paired_log")"
+pass "bluetooth trusts a device after pairing"
+
+grep -qx "connect AA:BB:CC:DD:EE:FF" "$paired_log" ||
+  fail "bluetooth connects a device after pairing" "$(cat "$paired_log")"
+pass "bluetooth connects a device after pairing"
+
+# A failed pair must not leave a device trusted and connected without a pairing
+# record. That state looks connected in BlueZ but cannot expose an A2DP sink.
+echo yes >"$POWERED_FILE"
+: >"$device_tmp/log"
+PATH="$mock_bin:$ROOT/bin:$PATH" BLUETOOTHCTL_LOG="$device_tmp/log" MOCK_PAIR_FAILURE=1 \
+  "$ROOT/bin/omarchy-bluetooth-device" pair AA:BB:CC:DD:EE:FF ||
+  fail "bluetooth exits cleanly when pairing fails"
+failed_pair_log=$(cat "$device_tmp/log")
+
+grep -qx "pair AA:BB:CC:DD:EE:FF" "$device_tmp/log" ||
+  fail "bluetooth attempts pairing before any follow-up action" "$failed_pair_log"
+pass "bluetooth attempts pairing before any follow-up action"
+
+grep -q "trust AA:BB:CC:DD:EE:FF" "$device_tmp/log" &&
+  fail "bluetooth does not trust a device when pairing fails" "$failed_pair_log"
+pass "bluetooth does not trust a device when pairing fails"
+
+grep -q "connect AA:BB:CC:DD:EE:FF" "$device_tmp/log" &&
+  fail "bluetooth does not connect a device when pairing fails" "$failed_pair_log"
+pass "bluetooth does not connect a device when pairing fails"
 
 # Blocking hits every radio at once, so the read has to span them too. A bare
 # bluetoothctl show reports the default controller and misses a powered dongle.
