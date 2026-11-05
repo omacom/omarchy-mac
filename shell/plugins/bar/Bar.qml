@@ -335,7 +335,7 @@ Item {
   property bool appleSiliconHost: false
   Process {
     running: true
-    command: ["bash", "-c", "grep -qi apple /proc/device-tree/compatible 2>/dev/null && echo yes || echo no"]
+    command: ["bash", "-c", "grep -qai apple /proc/device-tree/compatible 2>/dev/null && echo yes || echo no"]
     stdout: SplitParser { onRead: function(line) { root.appleSiliconHost = String(line).trim() === "yes" } }
   }
 
