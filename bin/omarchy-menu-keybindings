@@ -44,6 +44,18 @@ parse_keycodes() {
         if (keycode_symbol[code] == "GRAVE") keycode_symbol[code] = "~"
       }
 
+      apple_fn_row["XF86MonBrightnessDown"] = "F1"
+      apple_fn_row["XF86MonBrightnessUp"] = "F2"
+      apple_fn_row["XF86LaunchA"] = "F3"
+      apple_fn_row["XF86Search"] = "F4"
+      apple_fn_row["XF86AudioMicMute"] = "F5"
+      apple_fn_row["XF86Sleep"] = "F6"
+      apple_fn_row["XF86AudioPrev"] = "F7"
+      apple_fn_row["XF86AudioPlay"] = "F8"
+      apple_fn_row["XF86AudioNext"] = "F9"
+      apple_fn_row["XF86AudioMute"] = "F10"
+      apple_fn_row["XF86AudioLowerVolume"] = "F11"
+      apple_fn_row["XF86AudioRaiseVolume"] = "F12"
       mouse_symbol["272"] = "LEFT MOUSE BUTTON"
       mouse_symbol["273"] = "RIGHT MOUSE BUTTON"
       mouse_symbol["274"] = "MIDDLE MOUSE BUTTON"
@@ -60,11 +72,13 @@ parse_keycodes() {
         if (symbol == "") symbol = "mouse:" code
         sub("mouse:" code, symbol)
       } else {
-        # On Apple Silicon MacBooks XF86MonBrightnessUp/Down ARE the physical
-        # F2/F1 keys (verified on apple,j414c), so name the physical key
-        # instead of leaking raw XKB symbols into the menu. Issue #194.
-        gsub(/XF86MonBrightnessUp/, "F2")
-        gsub(/XF86MonBrightnessDown/, "F1")
+        # On Apple Silicon MacBooks the top row sends media keysyms, not
+        # F-keys: the hid-apple table for 2021 and later Apple keyboards maps
+        # F1..F12 to brightness, Mission Control, Spotlight, dictation, Do Not
+        # Disturb, media and volume, and fnmode=1 makes that the bare press.
+        # Name the physical key instead of leaking raw XKB symbols into the
+        # menu, so "SHIFT + F2" reads as the key you press. Issue #194.
+        for (symbol in apple_fn_row) gsub("\\<" symbol "\\>", apple_fn_row[symbol])
       }
 
       print
@@ -536,7 +550,7 @@ output_binding_records_uncached() {
 
 keybindings_cache_key() {
   {
-    printf 'v14\n'
+    printf 'v15\n'
     hyprctl devices 2>/dev/null | grep -F 'active keymap:'
     hyprctl binds 2>/dev/null
   } | sha256sum | awk '{ print $1 }'

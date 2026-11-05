@@ -5,10 +5,13 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 # The keybindings menu must show Mac physical key names: on Apple Silicon
-# MacBook keyboards XF86MonBrightnessUp/Down ARE F2/F1, so raw symbols leak
-# meaningless rows like "SHIFT + XF86MonBrightnessUp" (issue #194).
+# MacBook keyboards the whole top row sends media keysyms (hid-apple's 2021
+# Magic Keyboard table: F1/F2 brightness, F3 Mission Control, F4 Spotlight,
+# F5 dictation, F6 Do Not Disturb, F7-F9 media, F10-F12 volume), so raw
+# symbols leak meaningless rows like "SHIFT + XF86MonBrightnessUp" or
+# "SUPER + XF86AudioMute" (issue #194).
 # Regression guard for the cache too: a pre-seeded stale cache file from the
-# v13 era must not win over current rendering (cache key bumped to v14).
+# v13 era must not win over current rendering (cache key bumped since).
 
 mock_bin=$(mktemp -d)
 cache_dir=$(mktemp -d)
@@ -48,6 +51,54 @@ bindi
 	description: Brightness up precise
 	dispatcher: exec
 	arg: omarchy-brightness-display +1%
+
+bind
+	modmask: 64
+	key: XF86AudioMute
+	keycode: 0
+	description: Screenshot Window (Apple top row)
+	dispatcher: exec
+	arg: omarchy-capture-screenshot windows
+
+bindl
+	modmask: 1
+	key: XF86AudioPlay
+	keycode: 0
+	description: Switch media source
+	dispatcher: exec
+	arg: omarchy-audio-source-switch
+
+bindl
+	modmask: 0
+	key: XF86AudioMicMute
+	keycode: 0
+	description: Mute microphone
+	dispatcher: exec
+	arg: omarchy-audio-input-mute
+
+bindl
+	modmask: 0
+	key: XF86LaunchA
+	keycode: 0
+	description: Mission Control
+	dispatcher: exec
+	arg: omarchy-menu toggle apps
+
+bindl
+	modmask: 0
+	key: XF86Sleep
+	keycode: 0
+	description: Do Not Disturb
+	dispatcher: exec
+	arg: omarchy-toggle-dnd
+
+bindl
+	modmask: 0
+	key: XF86Calculator
+	keycode: 0
+	description: Calculator
+	dispatcher: exec
+	arg: omacalc
 
 bindm
 	modmask: 64
@@ -113,4 +164,25 @@ grep -qF 'XF86MonBrightness' <<<"$output" && \
 tr -s ' ' <<<"$output" | grep -qF 'SUPER + Q → Close window' || \
   fail "unrelated bindings render unchanged (SUPER + Q)" "$output"
 
-pass "keybindings menu shows Mac physical key names (F1/F2), stale caches ignored"
+tr -s ' ' <<<"$output" | grep -qF 'SUPER + F10 → Screenshot Window (Apple top row)' || \
+  fail "SUPER + XF86AudioMute renders as SUPER + F10" "$output"
+
+tr -s ' ' <<<"$output" | grep -qF 'SHIFT + F8 → Switch media source' || \
+  fail "SHIFT + XF86AudioPlay renders as SHIFT + F8" "$output"
+
+tr -s ' ' <<<"$output" | grep -qF 'F5 → Mute microphone' || \
+  fail "XF86AudioMicMute (dictation key) renders as F5" "$output"
+
+tr -s ' ' <<<"$output" | grep -qF 'F3 → Mission Control' || \
+  fail "XF86LaunchA (Mission Control key) renders as F3" "$output"
+
+tr -s ' ' <<<"$output" | grep -qF 'F6 → Do Not Disturb' || \
+  fail "XF86Sleep (Do Not Disturb key) renders as F6" "$output"
+
+tr -s ' ' <<<"$output" | grep -qF 'XF86Calculator → Calculator' || \
+  fail "keysyms that are not on the Apple top row keep their name (XF86Calculator)" "$output"
+
+grep -qE 'XF86(MonBrightness|Audio(Mute|Play|MicMute)|LaunchA|Sleep)' <<<"$output" && \
+  fail "raw Apple top-row symbols no longer leak into the menu" "$output"
+
+pass "keybindings menu shows Mac physical key names for the whole top row, stale caches ignored"
