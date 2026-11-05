@@ -5,7 +5,7 @@
 # omarchy:hidden=true
 # omarchy:requires-sudo=true
 
-# The Broadcom firmware on Apple Silicon Macs (BCM4378/BCM4387) can wedge
+# The Broadcom firmware on Apple Silicon Macs (BCM4378/BCM4387/BCM4388) can wedge
 # across s2idle: scans fail with -52 and every association is rejected with
 # status_code=16, which NetworkManager surfaces as a wrong password. Toggling
 # the radio does not reset the chip firmware - only a driver reload does.

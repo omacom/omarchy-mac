@@ -12,15 +12,16 @@
 # firmware bug does not bite - and stops acting early by itself if the bug is
 # ever fixed.
 #
-# BCM4378 (14e4:4425) and BCM4387 (14e4:4433) also appear in T2 Intel Macs,
-# where suspend takes a different path - hence the architecture gate.
+# BCM4378 (14e4:4425), BCM4387 (14e4:4433) and BCM4388 (14e4:4434) also appear
+# in T2 Intel Macs, where suspend takes a different path - hence the
+# architecture gate.
 #
-# BCM4388 (14e4:4434) in M2 Max/Ultra Macs is deliberately absent, not an
-# oversight: one rode out a six-minute s2idle with zero ASSOC-REJECT
-# status_code=16 events and zero scan -52 errors (verified on an M2 Max in
-# the PR #255 review), so its firmware does not wedge.
+# BCM4388 (14e4:4434) wedges on real lid-close suspend (#10857: an M2 Pro
+# wedges reliably and recovers after a manual enable). The single six-minute
+# s2idle test on an M2 Max in the PR #255 review that excluded it did not
+# reproduce the real-world path.
 
-if [[ $(uname -m) == "aarch64" ]] && lspci -nn | grep -E "14e4:(4425|4433)" >/dev/null; then
+if [[ $(uname -m) == "aarch64" ]] && lspci -nn | grep -E "14e4:(4425|4433|4434)" >/dev/null; then
   echo "Detected Apple Silicon Broadcom Wi-Fi; installing resume recovery"
 
   cat > /etc/systemd/system/omarchy-wifi-resume-fix.service <<'EOF'
