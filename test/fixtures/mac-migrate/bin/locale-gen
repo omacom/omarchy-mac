@@ -1,0 +1,4 @@
+#!/bin/bash
+fixture=${MIGRATE_FIXTURE:?}
+echo "locale-gen $*" >>"$fixture/boot.log"
+[[ ! -e $fixture/locale-gen-fail ]]

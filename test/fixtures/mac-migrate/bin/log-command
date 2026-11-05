@@ -1,0 +1,6 @@
+#!/bin/bash
+# Stands in for a command the engine only calls: logs the call, and fails while
+# the fixture holds <command>-fail.
+fixture=${MIGRATE_FIXTURE:?}
+echo "${0##*/} $*" >>"$fixture/boot.log"
+[[ ! -e $fixture/${0##*/}-fail ]]

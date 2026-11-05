@@ -1,0 +1,15 @@
+#!/bin/bash
+# repo-add for the fixtures: indexes name-version-release-arch.pkg.tar.* files.
+set -euo pipefail
+[[ $1 == "-q" ]] && shift
+db=$1
+shift
+for file in "$@"; do
+  [[ $file == *.pkg.tar.* && $file != *.sig ]] || { echo "==> ERROR: '$file' is not a package file" >&2; exit 1; }
+  base=${file##*/}
+  base=${base%%.pkg.tar.*}
+  base=${base%-*}
+  release=${base##*-}
+  base=${base%-*}
+  echo "${base%-*} ${base##*-}-$release"
+done >"${db%.db.tar.gz}.db"

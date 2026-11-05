@@ -1,0 +1,143 @@
+#!/bin/bash
+
+# omarchy:summary=Print the mkinitcpio HOOKS the Apple Silicon kernel's initramfs is built with
+# omarchy:hidden=true
+
+# Resolves the configuration the way mkinitcpio -P does for the kernel's
+# default preset: a default_config or ALL_config in the preset is passed as
+# -c and disables the drop-ins, as does a -c in default_options, whose -A
+# and -S add and skip hooks (parsed with mkinitcpio's option table); otherwise /etc/mkinitcpio.conf is joined by
+# every /etc/mkinitcpio.conf.d/*.conf in version order (LC_ALL=C.UTF-8
+# sort -V, as mkinitcpio sorts them) and sourced as one file. Prints HOOKS on
+# one line and exits 0, or exits 1 when the configuration cannot be read or
+# sets no HOOKS, so a caller can tell "busybox" from "unknown".
+
+set -euo pipefail
+
+conf=${OMARCHY_MKINITCPIO_CONF:-/etc/mkinitcpio.conf}
+conf_dir=${OMARCHY_MKINITCPIO_CONF_DIR:-$conf.d}
+preset_dir=${OMARCHY_MKINITCPIO_PRESET_DIR:-/etc/mkinitcpio.d}
+kernel=${OMARCHY_MKINITCPIO_KERNEL:-$(omarchy-mac-kernel 2>/dev/null || echo linux-asahi)}
+
+drop_ins=1
+add_hooks=() skip_hooks=()
+
+# mkinitcpio's own option table (its _opt_short and _opt_long): options that
+# take a value, and the ones that decide the hooks.
+short_with_value='AcDIgHkprStUdz'
+short_flags='hnLMPRsVv'
+long_options=(add: addhooks: include: config: generate: hookdir: hookhelp: help kernel: listhooks automods
+  moduleroot: nocolor nopost allpresets preset: remove skiphooks: save generatedir: builddir: version verbose
+  compress: uki: uefi: microcode: splash: kernelimage: uefistub: cmdline: osrelease: no-cmdline ukiconfig: no-ukify)
+
+hook_option() {
+  local option=$1 value=$2 list
+  IFS=, read -ra list <<<"$value"
+  case $option in
+    c | config) conf=$value; drop_ins=0 ;;
+    A | add | addhooks) add_hooks+=("${list[@]}") ;;
+    S | skiphooks) skip_hooks+=("${list[@]}") ;;
+  esac
+}
+
+# Parses the preset's options the way parseopts does: bundled short flags,
+# a short option's value attached or next, --long=value or --long value,
+# and a unique prefix of a long option. Anything it cannot place fails.
+# Words after -- are positional, which mkinitcpio ignores.
+preset_option_args() {
+  local arg name value i char candidate matches
+  while (( $# )); do
+    arg=$1
+    shift
+    if [[ $arg == -- ]]; then
+      break
+    elif [[ $arg == --?* ]]; then
+      name=${arg#--}
+      value=""
+      if [[ $name == *=* ]]; then
+        value=${name#*=}
+        name=${name%%=*}
+      fi
+      matches=()
+      for candidate in "${long_options[@]}"; do
+        if [[ ${candidate%:} == "$name" ]]; then
+          matches=("$candidate")
+          break
+        fi
+        if [[ ${candidate%:} == "$name"* ]]; then
+          matches+=("$candidate")
+        fi
+      done
+      (( ${#matches[@]} == 1 )) || return 1
+      if [[ ${matches[0]} == *: ]]; then
+        if [[ $arg != *=* ]]; then
+          (( $# )) || return 1
+          value=$1
+          shift
+        fi
+        hook_option "${matches[0]%:}" "$value"
+      elif [[ $arg == *=* ]]; then
+        return 1
+      fi
+    elif [[ $arg == -?* ]]; then
+      for (( i = 1; i < ${#arg}; i++ )); do
+        char=${arg:i:1}
+        if [[ $short_with_value == *"$char"* ]]; then
+          value=${arg:i+1}
+          if [[ -z $value ]]; then
+            (( $# )) || return 1
+            value=$1
+            shift
+          fi
+          hook_option "$char" "$value"
+          break
+        fi
+        if [[ $short_flags != *"$char"* ]]; then
+          return 1
+        fi
+      done
+    fi
+  done
+}
+preset="$preset_dir/$kernel.preset"
+if [[ -r $preset ]]; then
+  # The default preset's configuration, then its options as mkinitcpio
+  # appends them: a later -c wins, -A and -S add and skip hooks.
+  preset_out=$(bash -c '. "$1" >/dev/null 2>&1 || exit 1
+    printf "%s\n" "${default_config:-${ALL_config:-}}"
+    if [[ "${default_options@a}" == *a* ]]; then printf "%s\n" "${default_options[@]}"
+    elif [[ -n ${default_options:-} ]]; then printf "%s\n" $default_options; fi' _ "$preset") || exit 1
+  mapfile -t preset_args <<<"$preset_out"
+  if [[ -n ${preset_args[0]:-} ]]; then
+    conf=${preset_args[0]}
+    drop_ins=0
+  fi
+  preset_option_args "${preset_args[@]:1}" || exit 1
+fi
+[[ -r $conf ]] || exit 1
+
+files=("$conf")
+if (( drop_ins )) && [[ -d $conf_dir ]]; then
+  while IFS= read -r -d '' name; do
+    if [[ -r $conf_dir/$name ]]; then
+      files+=("$conf_dir/$name")
+    fi
+  done < <(LC_ALL=C.UTF-8 find "$conf_dir" -maxdepth 1 -xtype f -name '*.conf' -print0 | sed -z 's/.*\///' | LC_ALL=C.UTF-8 sort -zVu)
+fi
+
+joined=$(mktemp)
+trap 'rm -f "$joined"' EXIT
+cat -- "${files[@]}" >"$joined"
+# A scalar HOOKS is split on spaces, as mkinitcpio's arrayize_config does.
+hooks_out=$(bash -c 'unset HOOKS; . "$1" >/dev/null 2>&1 || exit 1
+  set -f; [[ ${HOOKS@a} == *a* ]] || IFS=" " read -r -a HOOKS <<<"$HOOKS"
+  printf "%s\n" "${HOOKS[@]}"' _ "$joined") || exit 1
+mapfile -t hooks <<<"$hooks_out"
+effective=()
+for hook in "${hooks[@]}" "${add_hooks[@]}"; do
+  if [[ -n $hook && " ${skip_hooks[*]} " != *" $hook "* ]]; then
+    effective+=("$hook")
+  fi
+done
+(( ${#effective[@]} )) || exit 1
+printf '%s\n' "${effective[*]}"
