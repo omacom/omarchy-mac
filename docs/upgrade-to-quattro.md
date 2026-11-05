@@ -34,7 +34,8 @@ retires the old one.
 - **The upgrade is one-way.** There is no supported downgrade to 3.x.
 - **Back up first.** At minimum, know that your macOS side is safe and copy
   anything irreplaceable off the Linux side. The script also backs up
-  `~/.config` and your Hyprland config before touching them.
+  `~/.config` and your Hyprland config before touching them. A retry reuses its
+  complete backup instead of replacing it with a later copy.
 - Your Hyprland configuration is replaced. 3.x used `hyprland.conf`; Quattro is
   configured in Lua. Your old files are moved aside, not deleted, but expect to
   redo personal keybindings and monitor tweaks in the new format.
@@ -51,7 +52,11 @@ while — Quickshell and a few other AUR packages are compiled on the machine.
 
 ## What the script does
 
-1. Backs up `~/.config` to `~/.config.omarchy3.<timestamp>.bak`.
+1. Backs up `~/.config` to an owned `~/.config.omarchy3.<timestamp>-<unique>.bak`
+   directory. The backup identity is retained under
+   `~/.local/state/omarchy/upgrade-to-quattro-mac/` so an interrupted retry
+   reuses the same complete backup; older or unrelated `.bak` directories are
+   left untouched.
 2. Switches `~/.local/share/omarchy` to the `quattro` branch (it refuses to run
    if the checkout has uncommitted changes, and refuses to continue unless the
    checked-out tree is a Quattro one).
@@ -64,14 +69,25 @@ while — Quickshell and a few other AUR packages are compiled on the machine.
    and `/usr/bin/omarchy-*` symlinks (Omarchy's systemd units start commands by
    that path).
 5. Replaces the 3.x line in `~/.bashrc` with Quattro's two-line bootstrap.
-6. Moves `~/.config/hypr` to a `.bak` and copies in the Quattro defaults.
+6. Stages the Quattro `hypr` and `omarchy` defaults together, preserving
+   unrelated existing files under `~/.config/omarchy`, then publishes them with
+   the old directories retained under collision-safe `.bak` paths. If
+   `~/.config/hypr/hyprland.lua` already exists, the active config is adopted
+   as-is so a user repair is not replaced on retry; that Lua file is a
+   preservation signal, not proof that the complete Omarchy tree is present.
 7. Runs `omarchy-setup-system --upgrade`, `omarchy-finalize-user`, and
    `omarchy-migrate`.
 8. Removes the retired Waybar/Walker/Mako/SwayOSD desktop stack and switches
    networking from iwd to NetworkManager.
 
-Re-running the script after a failure is safe — every step either skips work
-that is already done or redoes it harmlessly.
+Re-running the script after a failure is safe for the config transition — the
+complete backup and any complete same-identity stage are reused, while partial
+copies are rebuilt. A user-repaired active `hyprland.lua` is adopted without
+recopying either config tree. The transition lock allows only one backup or
+publication at a time, and an interrupted publication resumes from its
+same-identity stage without overwriting an existing backup. Other upgrade steps
+remain safe to retry as described by their individual commands; the state
+record does not claim that the whole upgrade completed.
 
 ## After the upgrade
 

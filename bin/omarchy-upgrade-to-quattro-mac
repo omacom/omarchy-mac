@@ -115,11 +115,142 @@ while true; do sudo -n true; sleep 60; done 2>/dev/null &
 sudo_keepalive_pid=$!
 trap '[[ -n $sudo_keepalive_pid ]] && kill "$sudo_keepalive_pid" 2>/dev/null || true' EXIT
 
-backup_suffix=$(date +%Y%m%d%H%M%S)
+upgrade_state_dir="$HOME/.local/state/omarchy/upgrade-to-quattro-mac"
+backup_identity_file="$upgrade_state_dir/backup-identity"
+backup_absent_file="$upgrade_state_dir/config-backup-absent"
+config_transition_file="$upgrade_state_dir/config-transition-complete"
+config_transition_lock="$upgrade_state_dir/config-transition.lock"
+hypr_backup_state_file="$upgrade_state_dir/hypr-backup-state"
+omarchy_backup_state_file="$upgrade_state_dir/omarchy-backup-state"
+backup_suffix=""
+
+is_valid_backup_identity() {
+  [[ $1 =~ ^[0-9]{14}-[[:alnum:]]{6}$ ]]
+}
+
+acquire_config_transition_lock() {
+  if [[ -L $upgrade_state_dir || ( -e $upgrade_state_dir && ! -d $upgrade_state_dir ) ]]; then
+    fail "The Quattro upgrade state path is not a directory: $upgrade_state_dir"
+  fi
+  mkdir -p "$upgrade_state_dir"
+  [[ -d $upgrade_state_dir && ! -L $upgrade_state_dir ]] ||
+    fail "The Quattro upgrade state path is not a directory: $upgrade_state_dir"
+  [[ ! -L $config_transition_lock ]] ||
+    fail "The Quattro upgrade lock path must not be a symlink: $config_transition_lock"
+  [[ ! -e $config_transition_lock || -f $config_transition_lock ]] ||
+    fail "The Quattro upgrade lock path is not a regular file: $config_transition_lock"
+
+  # Keep the descriptor open until the script exits so the lock spans backup,
+  # staging, and publication. Use a fixed descriptor for the macOS Bash 3
+  # runtime; the standalone upgrade keeps descriptor 9 open until it exits.
+  exec 9>"$config_transition_lock"
+  flock -n 9 ||
+    fail "Another Quattro config transition is already running; wait for it to finish and retry."
+}
+
+owned_marker_matches_identity() {
+  local marker="$1"
+
+  [[ ! -L $marker && -f $marker ]] || return 1
+  [[ $(<"$marker") == "$backup_suffix" ]]
+}
+
+write_state_marker() {
+  local path="$1" value="$2" temporary
+
+  [[ ! -L $path ]] || fail "The Quattro state marker must not be a symlink: $path"
+  [[ ! -e $path || -f $path ]] || fail "The Quattro state marker is not a regular file: $path"
+  temporary=$(mktemp "$upgrade_state_dir/.state.XXXXXX")
+  printf '%s\n' "$value" >"$temporary"
+  mv "$temporary" "$path"
+}
+
+write_owned_marker() {
+  local path="$1" value="$2" temporary
+
+  [[ ! -L $path ]] || fail "The Quattro completion marker must not be a symlink: $path"
+  temporary=$(mktemp "${path}.XXXXXX")
+  printf '%s\n' "$value" >"$temporary"
+  mv "$temporary" "$path"
+}
+
+load_or_create_backup_identity() {
+  local temporary random candidate
+
+  [[ -L $backup_identity_file ]] &&
+    fail "The Quattro upgrade identity must not be a symlink: $backup_identity_file"
+  if [[ -e $backup_identity_file ]]; then
+    [[ -f $backup_identity_file ]] || fail "The Quattro upgrade identity is not a regular file: $backup_identity_file"
+    backup_suffix=$(<"$backup_identity_file")
+    is_valid_backup_identity "$backup_suffix" ||
+      fail "The Quattro upgrade identity is invalid; remove $backup_identity_file only if you are recovering the upgrade manually."
+    return 0
+  fi
+
+  # mktemp supplies six random alphanumeric characters. Persist the resulting
+  # identity before copying any user data, so a retry cannot choose a second
+  # backup after an interruption.
+  while true; do
+    temporary=$(mktemp "$upgrade_state_dir/.backup-identity.XXXXXX")
+    random=${temporary##*.}
+    backup_suffix="$(date +%Y%m%d%H%M%S)-$random"
+    candidate="$HOME/.config.omarchy3.$backup_suffix.bak"
+    if [[ ! -e $candidate && ! -L $candidate && ! -e $candidate.partial && ! -L $candidate.partial ]]; then
+      printf '%s\n' "$backup_suffix" >"$temporary"
+      mv "$temporary" "$backup_identity_file"
+      return 0
+    fi
+    rm -f "$temporary"
+  done
+}
 
 backup_user_config() {
-  log "Backing up ~/.config to ~/.config.omarchy3.$backup_suffix.bak"
-  cp -a "$HOME/.config" "$HOME/.config.omarchy3.$backup_suffix.bak"
+  local backup_root backup_marker backup_partial
+
+  acquire_config_transition_lock
+  load_or_create_backup_identity
+  backup_root="$HOME/.config.omarchy3.$backup_suffix.bak"
+  backup_marker="$backup_root/.omarchy-upgrade-to-quattro-config-backup-complete"
+  backup_partial="$backup_root.partial"
+
+  [[ ! -L $backup_root && ! -L $backup_partial ]] ||
+    fail "The selected Quattro backup path must not be a symlink: $backup_root"
+  if [[ -e $backup_absent_file || -L $backup_absent_file ]]; then
+    [[ ! -L $backup_absent_file && -f $backup_absent_file ]] ||
+      fail "The Quattro absent-config marker is not a regular file: $backup_absent_file"
+    [[ $(<"$backup_absent_file") == absent ]] ||
+      fail "The Quattro absent-config marker has unexpected content: $backup_absent_file"
+    [[ ! -e $backup_marker && ! -L $backup_marker ]] ||
+      fail "The Quattro state says ~/.config is absent but also has a complete backup: $backup_root"
+    log "Reusing the recorded absence of ~/.config"
+    return 0
+  fi
+
+  if [[ -e $backup_marker || -L $backup_marker ]]; then
+    [[ ! -L $backup_marker ]] || fail "The Quattro backup completion marker must not be a symlink: $backup_marker"
+    owned_marker_matches_identity "$backup_marker" ||
+      fail "The Quattro backup completion marker has unexpected content: $backup_marker"
+    log "Reusing the existing ~/.config backup at $backup_root"
+    return 0
+  fi
+  [[ ! -e $backup_root ]] ||
+    fail "The selected Quattro backup path already exists without a completion marker: $backup_root"
+
+  if [[ ! -e $HOME/.config ]]; then
+    log "No ~/.config exists; recording that there is no user config to back up"
+    write_state_marker "$backup_absent_file" absent
+    return 0
+  fi
+
+  [[ ! -e $backup_partial ]] || rm -rf "$backup_partial"
+  log "Backing up ~/.config to $backup_root"
+  mkdir "$backup_partial"
+  if ! cp -a "$HOME/.config/." "$backup_partial/"; then
+    rm -rf "$backup_partial"
+    fail "Could not back up ~/.config. Nothing in the active config was changed; retry the Quattro upgrade."
+  fi
+  write_owned_marker "$backup_partial/.omarchy-upgrade-to-quattro-config-backup-complete" "$backup_suffix"
+  mv "$backup_partial" "$backup_root"
 }
 
 switch_checkout_to_quattro() {
@@ -292,15 +423,333 @@ update_bashrc() {
   mv "$rewritten" "$bashrc"
 }
 
-replace_hyprland_config() {
-  log "Replacing the Hyprland config with Quattro defaults"
+config_backup_path() {
+  local base="$1" suffix=1 candidate="$1"
 
-  if [[ -d $HOME/.config/hypr ]]; then
-    mv "$HOME/.config/hypr" "$HOME/.config/hypr.omarchy3.$backup_suffix.bak"
+  while [[ -e $candidate || -L $candidate ]]; do
+    candidate="$base.$suffix"
+    ((suffix++))
+  done
+  printf '%s\n' "$candidate"
+}
+
+publish_config_transition() {
+  local status="$1" identity recorded_status
+
+  [[ $status == adopted || $status == published ]] ||
+    fail "The Quattro config transition marker has an invalid status: $status"
+  if [[ -e $config_transition_file || -L $config_transition_file ]]; then
+    [[ ! -L $config_transition_file && -f $config_transition_file ]] ||
+      fail "The Quattro config transition marker is not a regular file: $config_transition_file"
+    (( $(wc -l <"$config_transition_file") == 2 )) ||
+      fail "The Quattro config transition marker has unexpected content: $config_transition_file"
+    identity=$(sed -n '1p' "$config_transition_file")
+    recorded_status=$(sed -n '2p' "$config_transition_file")
+    [[ $identity == "$backup_suffix" && ( $recorded_status == adopted || $recorded_status == published ) ]] ||
+      fail "The Quattro config transition marker has unexpected content: $config_transition_file"
   fi
-  mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy"
-  cp -R "$checkout/config/hypr/." "$HOME/.config/hypr/"
-  cp -R "$checkout/config/omarchy/." "$HOME/.config/omarchy/"
+  write_state_marker "$config_transition_file" "$backup_suffix
+$status"
+}
+
+tree_state_matches() {
+  local state_file="$1" kind="$2" active="$3"
+  local identity backup target target_backup status prefix suffix
+
+  [[ ! -L $state_file && -f $state_file ]] || return 1
+  (( $(wc -l <"$state_file") == 5 )) || return 1
+  identity=$(sed -n '1p' "$state_file")
+  backup=$(sed -n '2p' "$state_file")
+  target=$(sed -n '3p' "$state_file")
+  target_backup=$(sed -n '4p' "$state_file")
+  status=$(sed -n '5p' "$state_file")
+  [[ $identity == "$backup_suffix" && ( $status == pending || $status == published ) ]] || return 1
+
+  prefix="$HOME/.config/$kind.omarchy3.$backup_suffix.bak"
+  [[ $backup == "$prefix" || $backup == "$prefix."* ]] || return 1
+  suffix=${backup#"$prefix"}
+  [[ -z $suffix || $suffix =~ ^\.[0-9]+$ ]] || return 1
+  if [[ -n $target ]]; then
+    [[ -L $active ]] || return 1
+    [[ $(readlink -f "$active") == "$target" ]] || return 1
+    [[ $target_backup == "$target.omarchy3.$backup_suffix.bak" || $target_backup == "$target.omarchy3.$backup_suffix.bak."* ]] || return 1
+  else
+    [[ -z $target_backup && ! -L $active ]] || return 1
+  fi
+}
+
+write_tree_state() {
+  local state_file="$1" backup="$2" target="$3" target_backup="$4" status="$5"
+
+  write_state_marker "$state_file" "$backup_suffix
+$backup
+$target
+$target_backup
+$status"
+}
+
+load_tree_state() {
+  local state_file="$1" kind="$2" active="$3" proposed_backup="$4"
+  local target target_backup
+
+  tree_backup_path="$proposed_backup"
+  tree_target_path=""
+  tree_target_backup=""
+  tree_publication_status=pending
+  if [[ -e $state_file || -L $state_file ]]; then
+    [[ ! -L $state_file ]] || fail "The Quattro config backup state must not be a symlink: $state_file"
+    tree_state_matches "$state_file" "$kind" "$active" ||
+      fail "The Quattro config backup state is invalid or belongs to another path: $state_file"
+    tree_backup_path=$(sed -n '2p' "$state_file")
+    tree_target_path=$(sed -n '3p' "$state_file")
+    tree_target_backup=$(sed -n '4p' "$state_file")
+    tree_publication_status=$(sed -n '5p' "$state_file")
+    return 0
+  fi
+
+  tree_backup_path=$(config_backup_path "$proposed_backup")
+  if [[ -L $active ]]; then
+    [[ -d $active ]] || fail "The symlinked Quattro config root does not point to a directory: $active"
+    target=$(readlink -f "$active")
+    [[ -n $target && -d $target ]] || fail "The symlinked Quattro config root has no directory target: $active"
+    target_backup=$(config_backup_path "$target.omarchy3.$backup_suffix.bak")
+    tree_target_path="$target"
+    tree_target_backup="$target_backup"
+  fi
+  write_tree_state "$state_file" "$tree_backup_path" "$tree_target_path" "$tree_target_backup" pending
+}
+
+ensure_tree_backup() {
+  local source="$1" backup="$2" marker partial
+
+  [[ ! -L $backup ]] || fail "The Quattro config backup must not be a symlink: $backup"
+  marker="$backup/.omarchy-upgrade-to-quattro-config-tree-backup-complete"
+  partial="$backup.partial"
+  if [[ -e $backup ]]; then
+    [[ -d $backup ]] || fail "The Quattro config backup is not a directory: $backup"
+    if [[ -e $marker || -L $marker ]]; then
+      [[ ! -L $marker ]] || fail "The Quattro config backup marker must not be a symlink: $marker"
+      owned_marker_matches_identity "$marker" ||
+        fail "The Quattro config backup marker has unexpected content: $marker"
+    else
+      fail "The Quattro config backup has no owned completion marker: $backup"
+    fi
+    return 0
+  fi
+
+  [[ ! -e $partial && ! -L $partial ]] || rm -rf "$partial"
+  mkdir "$partial"
+  if ! cp -a "$source/." "$partial/"; then
+    rm -rf "$partial"
+    fail "Could not back up the symlinked config target; retry the Quattro upgrade."
+  fi
+  write_owned_marker "$partial/.omarchy-upgrade-to-quattro-config-tree-backup-complete" "$backup_suffix"
+  mv "$partial" "$backup"
+}
+
+validate_tree_backup_if_present() {
+  local backup="$1" marker
+
+  [[ ! -L $backup ]] || fail "The Quattro config backup must not be a symlink: $backup"
+  [[ ! -e $backup ]] && return 0
+  [[ -d $backup ]] || fail "The Quattro config backup is not a directory: $backup"
+  marker="$backup/.omarchy-upgrade-to-quattro-config-tree-backup-complete"
+  [[ ! -L $marker && -f $marker ]] || fail "The Quattro config backup has no owned completion marker: $backup"
+  owned_marker_matches_identity "$marker" || fail "The Quattro config backup marker has unexpected content: $marker"
+}
+
+validate_target_backup_if_present() {
+  local backup="$1" marker
+
+  [[ ! -L $backup ]] || fail "The Quattro target backup must not be a symlink: $backup"
+  [[ ! -e $backup ]] && return 0
+  [[ -d $backup ]] || fail "The Quattro target backup is not a directory: $backup"
+  marker="$backup/.omarchy-upgrade-to-quattro-target-backup-complete"
+  [[ ! -L $marker && -f $marker ]] || fail "The Quattro target backup has no owned completion marker: $backup"
+  owned_marker_matches_identity "$marker" || fail "The Quattro target backup marker has unexpected content: $marker"
+}
+
+publish_config_tree() {
+  local kind="$1" source="$2" active="$3" proposed_backup="$4" temporary="$5" state_file="$6"
+  local backup target target_backup target_parent target_temporary target_collision marker backup_marker
+
+  [[ ! -L $source && -d $source ]] ||
+    fail "The Quattro config stage is missing its owned directory: $source"
+  load_tree_state "$state_file" "$kind" "$active" "$proposed_backup"
+  backup="$tree_backup_path"
+  target="$tree_target_path"
+  target_backup="$tree_target_backup"
+
+  if [[ -n $target ]]; then
+    backup_marker="$backup/.omarchy-upgrade-to-quattro-config-tree-backup-complete"
+    if [[ -e $backup && ! -e $backup_marker ]]; then
+      [[ ! -e $target && ! -L $target ]] ||
+        fail "The Quattro config backup is not owned by this transition: $backup"
+      write_owned_marker "$backup_marker" "$backup_suffix"
+    fi
+    ensure_tree_backup "$active" "$backup"
+    if [[ $tree_publication_status == published ]]; then
+      validate_tree_backup_if_present "$backup"
+      validate_target_backup_if_present "$target_backup"
+      return 0
+    fi
+
+    # Once the original target has been moved to its owned backup, a
+    # reappeared target is adopted. It may be a completed atomic publication
+    # or a user repair; replacing either would destroy the active tree.
+    if [[ -e $target && -e $target_backup ]]; then
+      validate_target_backup_if_present "$target_backup"
+      validate_tree_backup_if_present "$backup"
+      write_tree_state "$state_file" "$backup" "$target" "$target_backup" published
+      return 0
+    fi
+
+    # The target may be absent because the process stopped after moving it to
+    # the exact state-recorded backup. That path is recoverable evidence for
+    # this transition; bind it before writing its completion marker.
+    if [[ ! -e $target && -e $target_backup ]]; then
+      [[ ! -L $target_backup && -d $target_backup ]] ||
+        fail "The Quattro target backup is not a directory: $target_backup"
+      marker="$target_backup/.omarchy-upgrade-to-quattro-target-backup-complete"
+      if [[ ! -e $marker ]]; then
+        write_owned_marker "$marker" "$backup_suffix"
+      fi
+      validate_target_backup_if_present "$target_backup"
+    fi
+
+    target_parent=${target%/*}
+    target_temporary="$target_parent/.omarchy3.$backup_suffix.$kind-publish.partial"
+    [[ ! -L $target_temporary ]] || fail "The Quattro config publication path must not be a symlink: $target_temporary"
+    [[ ! -e $target_temporary ]] || rm -rf "$target_temporary"
+    mkdir "$target_temporary"
+    if ! cp -a "$source/." "$target_temporary/"; then
+      rm -rf "$target_temporary"
+      fail "Could not prepare the symlinked config target; retry the Quattro upgrade."
+    fi
+    if [[ -e $target || -L $target ]]; then
+      if [[ ! -e $target_backup ]]; then
+        mv "$target" "$target_backup"
+        write_owned_marker "$target_backup/.omarchy-upgrade-to-quattro-target-backup-complete" "$backup_suffix"
+      else
+        [[ ! -L $target_backup && -d $target_backup ]] || fail "The Quattro target backup is not a directory: $target_backup"
+        marker="$target_backup/.omarchy-upgrade-to-quattro-target-backup-complete"
+        if [[ ! -e $marker ]]; then
+          [[ ! -e $target && ! -L $target ]] || fail "The Quattro target backup is not owned by this transition: $target_backup"
+          write_owned_marker "$marker" "$backup_suffix"
+        fi
+        [[ ! -L $marker ]] || fail "The Quattro target backup marker must not be a symlink: $marker"
+        owned_marker_matches_identity "$marker" || fail "The Quattro target backup marker has unexpected content: $marker"
+        target_collision=$(config_backup_path "$target_backup")
+        mv "$target" "$target_collision"
+      fi
+    fi
+    mv "$target_temporary" "$target"
+    write_tree_state "$state_file" "$backup" "$target" "$target_backup" published
+    return 0
+  fi
+
+  backup_marker="$backup/.omarchy-upgrade-to-quattro-config-tree-backup-complete"
+  if [[ -e $backup && ! -e $backup_marker ]]; then
+    [[ ! -e $active && ! -L $active ]] ||
+      fail "The Quattro config backup is not owned by this transition: $backup"
+    write_owned_marker "$backup_marker" "$backup_suffix"
+  fi
+
+  if [[ $tree_publication_status == published && ( -e $active || -L $active ) ]]; then
+    validate_tree_backup_if_present "$backup"
+    return 0
+  fi
+  # A pending state with this transition's owned backup proves that the old
+  # active tree was moved. Adopt any active tree that reappeared afterward,
+  # whether it is our completed swap or a user repair.
+  if [[ $tree_publication_status == pending && -e $active && -e $backup ]]; then
+    validate_tree_backup_if_present "$backup"
+    write_tree_state "$state_file" "$backup" "" "" published
+    return 0
+  fi
+  if [[ -e $backup || -L $backup ]]; then
+    [[ ! -L $backup && -d $backup ]] || fail "The Quattro config backup is not an owned directory: $backup"
+    marker="$backup/.omarchy-upgrade-to-quattro-config-tree-backup-complete"
+    if [[ ! -e $marker ]]; then
+      [[ ! -e $active && ! -L $active ]] || fail "The Quattro config backup is not owned by this transition: $backup"
+      write_owned_marker "$marker" "$backup_suffix"
+    fi
+    [[ ! -L $marker ]] || fail "The Quattro config backup marker must not be a symlink: $marker"
+    owned_marker_matches_identity "$marker" || fail "The Quattro config backup marker has unexpected content: $marker"
+    if [[ -e $active || -L $active ]]; then
+      target_collision=$(config_backup_path "$backup")
+      mv "$active" "$target_collision"
+    fi
+  else
+    if [[ -e $active || -L $active ]]; then
+      mv "$active" "$backup"
+      write_owned_marker "$backup/.omarchy-upgrade-to-quattro-config-tree-backup-complete" "$backup_suffix"
+    fi
+  fi
+
+  [[ ! -L $temporary ]] || fail "The Quattro config publication path must not be a symlink: $temporary"
+  [[ ! -e $temporary ]] || rm -rf "$temporary"
+  mkdir "$temporary"
+  if ! cp -a "$source/." "$temporary/"; then
+    rm -rf "$temporary"
+    fail "Could not publish the staged config tree; retry the Quattro upgrade."
+  fi
+  mv "$temporary" "$active"
+  write_tree_state "$state_file" "$backup" "" "" published
+}
+
+replace_hyprland_config() {
+  local stage stage_complete hypr_backup omarchy_backup
+
+  if [[ -f $HOME/.config/hypr/hyprland.lua ]]; then
+    log "Keeping the existing Quattro Hyprland config"
+    publish_config_transition adopted
+    return 0
+  fi
+
+  stage="$HOME/.config.omarchy3.$backup_suffix.quattro-config.partial"
+  stage_complete="$stage/.omarchy-upgrade-to-quattro-config-complete"
+  hypr_backup="$HOME/.config/hypr.omarchy3.$backup_suffix.bak"
+  omarchy_backup="$HOME/.config/omarchy.omarchy3.$backup_suffix.bak"
+
+  [[ ! -L $stage ]] || fail "The Quattro config stage must not be a symlink: $stage"
+  if [[ -e $stage_complete || -L $stage_complete ]]; then
+    [[ ! -L $stage_complete ]] || fail "The Quattro config completion marker must not be a symlink: $stage_complete"
+    owned_marker_matches_identity "$stage_complete" ||
+      fail "The Quattro config completion marker has unexpected content: $stage_complete"
+    [[ ! -L $stage/hypr && ! -L $stage/omarchy && -f $stage/hypr/hyprland.lua && -d $stage/omarchy ]] ||
+      fail "The Quattro config stage is incomplete: $stage"
+  else
+    [[ ! -e $stage ]] || rm -rf "$stage"
+    log "Preparing the Quattro Hyprland and Omarchy configs"
+    mkdir -p "$stage/hypr" "$stage/omarchy"
+    if [[ -d $HOME/.config/omarchy ]]; then
+      if ! cp -a "$HOME/.config/omarchy/." "$stage/omarchy/"; then
+        fail "Could not stage the existing Omarchy config; retry the Quattro upgrade."
+      fi
+    fi
+    if ! cp -a "$checkout/config/hypr/." "$stage/hypr/"; then
+      fail "Could not stage the Quattro Hyprland config; retry the Quattro upgrade."
+    fi
+    if ! cp -a "$checkout/config/omarchy/." "$stage/omarchy/"; then
+      fail "Could not stage the Quattro Omarchy config; retry the Quattro upgrade."
+    fi
+    write_owned_marker "$stage_complete" "$backup_suffix"
+  fi
+
+  mkdir -p "$HOME/.config"
+
+  # Publish Omarchy first and Hyprland last. The complete stage remains in
+  # place so a power loss between these two publications can resume after the
+  # exact-identity backup and publication paths are rediscovered from disk.
+  publish_config_tree omarchy "$stage/omarchy" "$HOME/.config/omarchy" "$omarchy_backup" "$HOME/.config.omarchy3.$backup_suffix.omarchy-publish.partial" "$omarchy_backup_state_file"
+  publish_config_tree hypr "$stage/hypr" "$HOME/.config/hypr" "$hypr_backup" "$HOME/.config.omarchy3.$backup_suffix.hypr-publish.partial" "$hypr_backup_state_file"
+
+  [[ -d $HOME/.config/omarchy ]] ||
+    fail "The Quattro Omarchy config was not published completely; retry the upgrade."
+  [[ -f $HOME/.config/hypr/hyprland.lua ]] ||
+    fail "The Quattro Hyprland config was not published completely; retry the upgrade."
+  publish_config_transition published
 }
 
 run_quattro_setup() {
