@@ -303,10 +303,16 @@ current_step() {
 # Persistence: the answers, this script, and the unit that resumes it
 # ---------------------------------------------------------------------------
 
+# An absent CONF is ambiguous: a finished install deletes it on purpose, and a
+# fresh machine has never had one. Reporting the encrypt default as intent on
+# either machine invents an answer the user never gave, so --status falls back
+# to asking the disk rather than the default.
+want_encrypt_recorded=0
 load_conf() {
   # Plain defaults, not environment fallbacks: USERNAME and friends are already
   # set in a login shell and would quietly pick the wrong answers.
   want_encrypt=1
+  want_encrypt_recorded=0
   username=""
   hostname=""
   keymap=""
@@ -317,7 +323,10 @@ load_conf() {
   if [[ -f $CONF ]]; then
     # shellcheck source=/dev/null
     . "$CONF"
-    want_encrypt=${WANT_ENCRYPT:-$want_encrypt}
+    if [[ -n ${WANT_ENCRYPT:-} ]]; then
+      want_encrypt=$WANT_ENCRYPT
+      want_encrypt_recorded=1
+    fi
     username=${SETUP_USER:-$username}
     hostname=${SETUP_HOSTNAME:-$hostname}
     keymap=${SETUP_KEYMAP:-$keymap}
@@ -1136,8 +1145,16 @@ print_status() {
   local encryption
   if root_is_encrypted; then
     encryption=done
+  elif ((want_encrypt_recorded)); then
+    if ((want_encrypt)); then
+      encryption=requested
+    else
+      encryption="not requested"
+    fi
   elif ((want_encrypt)); then
-    encryption=requested
+    # No recorded answer: a finished install deletes its config, so the encrypt
+    # default is not intent. Let the machine state carry the line instead.
+    encryption="unknown (no setup answer recorded)"
   else
     encryption="not requested"
   fi
