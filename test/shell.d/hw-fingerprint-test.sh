@@ -35,7 +35,26 @@ write_usb_devices() {
 }
 
 hw_fingerprint() {
-  OMARCHY_USB_DEVICES_PATH="$tmp_dir/devices" "$ROOT/bin/omarchy-hw-fingerprint"
+  OMARCHY_USB_DEVICES_PATH="$tmp_dir/devices" \
+    OMARCHY_BUS_DEVICES_PATH="${OMARCHY_TEST_BUS:-$tmp_dir/bus-empty}" \
+    OMARCHY_FPRINTD_SERVICE_FILE="${OMARCHY_TEST_FPRINTD:-$tmp_dir/no-fprintd}" \
+    "$ROOT/bin/omarchy-hw-fingerprint"
+}
+
+write_bus_devices() {
+  rm -rf "$tmp_dir/bus"
+  local spec
+  for spec in "$@"; do
+    local bus=${spec%%:*}
+    local rest=${spec#*:}
+    local name=${rest%%:*}
+    local product=${rest#*:}
+    local dev="$tmp_dir/bus/$bus/devices/$name"
+
+    mkdir -p "$dev"
+    [[ -n $product ]] && printf '%s\n' "$product" >"$dev/name"
+  done
+  OMARCHY_TEST_BUS="$tmp_dir/bus"
 }
 
 assert_detects() {
@@ -103,3 +122,43 @@ assert_detects "a self-named reader is detected with a driver bound"
 
 write_usb_devices '1234:5678:Generic USB Device'
 assert_rejects "a machine with no matching USB devices detects nothing"
+
+# Non-USB pass: a reader on another bus (SPI, platform fabric — where a Touch
+# ID driver would live if one ever lands) names itself and is trusted.
+write_usb_devices '1234:5678:Generic USB Device'
+write_bus_devices 'platform:fingerprint0:Apple Touch ID Fingerprint Sensor'
+assert_detects "a fingerprint-named platform device is detected"
+
+write_usb_devices '1234:5678:Generic USB Device'
+write_bus_devices 'spi:spi0.0:Fingerprint Reader'
+assert_detects "a fingerprint-named SPI device is detected"
+
+write_usb_devices '1234:5678:Generic USB Device'
+write_bus_devices 'platform:pmic0:apple,maverick-pmic' 'iio:iio0:aop-sensors-als'
+assert_rejects "non-USB devices naming other functions detect nothing"
+
+# fprintd pass: when the service file exists its device list is authoritative,
+# catching readers the sysfs scans miss entirely.
+write_usb_devices '1234:5678:Generic USB Device'
+mkdir -p "$tmp_dir/bin" "$tmp_dir/fprintd"
+: >"$tmp_dir/fprintd/net.reactivated.Fprint.service"
+cat >"$tmp_dir/bin/busctl" <<'STUB'
+#!/bin/bash
+printf 'ao 1 "/net/reactivated/Fprint/Device/0"\n'
+STUB
+chmod +x "$tmp_dir/bin/busctl"
+OMARCHY_TEST_FPRINTD="$tmp_dir/fprintd/net.reactivated.Fprint.service" \
+  PATH="$tmp_dir/bin:$PATH" \
+  hw_fingerprint || fail "fprintd reporting a device detects a reader"
+pass "fprintd reporting a device detects a reader"
+
+cat >"$tmp_dir/bin/busctl" <<'STUB'
+#!/bin/bash
+printf 'ao 0\n'
+STUB
+chmod +x "$tmp_dir/bin/busctl"
+if OMARCHY_TEST_FPRINTD="$tmp_dir/fprintd/net.reactivated.Fprint.service" \
+  PATH="$tmp_dir/bin:$PATH" hw_fingerprint; then
+  fail "fprintd reporting no devices detects nothing"
+fi
+pass "fprintd reporting no devices detects nothing"
