@@ -3,7 +3,7 @@
 # omarchy:summary=Guided end-to-end Omarchy Mac install: boot layout, encryption, Omarchy
 # omarchy:group=setup
 # omarchy:requires-sudo=true
-# omarchy:args=[--encrypt|--no-encrypt] [--user <name>] [--hostname <name>] [--keymap <name>] [--repo <owner/repo>] [--ref <branch>] [--forge <host>] [--status] [--step <name>] [--fonts] [--autologin] [--resume] [--abort] [--allow-omarchy3] [--keep-root-password]
+# omarchy:args=[--encrypt|--no-encrypt] [--try-unavailable] [--user <name>] [--hostname <name>] [--keymap <name>] [--repo <owner/repo>] [--ref <branch>] [--forge <host>] [--status] [--step <name>] [--fonts] [--autologin] [--resume] [--abort] [--allow-omarchy3] [--keep-root-password]
 # omarchy:examples=sudo omarchy-mac-setup --encrypt | omarchy-mac-setup --status
 
 # One command, run once as root on a fresh Asahi Alarm install, that carries the
@@ -307,6 +307,7 @@ load_conf() {
   # Plain defaults, not environment fallbacks: USERNAME and friends are already
   # set in a login shell and would quietly pick the wrong answers.
   want_encrypt=1
+  try_unavailable=0
   username=""
   hostname=""
   keymap=""
@@ -318,6 +319,7 @@ load_conf() {
     # shellcheck source=/dev/null
     . "$CONF"
     want_encrypt=${WANT_ENCRYPT:-$want_encrypt}
+    try_unavailable=${TRY_UNAVAILABLE:-$try_unavailable}
     username=${SETUP_USER:-$username}
     hostname=${SETUP_HOSTNAME:-$hostname}
     keymap=${SETUP_KEYMAP:-$keymap}
@@ -334,6 +336,7 @@ save_conf() {
   {
     printf '# Written by omarchy-mac-setup; delete it to stop the guided install.\n'
     printf 'WANT_ENCRYPT=%q\n' "$want_encrypt"
+    printf 'TRY_UNAVAILABLE=%q\n' "${try_unavailable:-0}"
     printf 'SETUP_USER=%q\n' "$username"
     printf 'SETUP_HOSTNAME=%q\n' "$hostname"
     printf 'SETUP_KEYMAP=%q\n' "$keymap"
@@ -1043,8 +1046,15 @@ step_omarchy() {
   # Run from a login shell so the install sees a normal user environment. The
   # status is captured rather than left to set -e: a failed install must still
   # give the NOPASSWD rule back before anything else happens.
+  #
+  # The packages question is answered here, not by install.sh: on the resumed
+  # boot this runs from the unit on tty1, with /dev/tty readable and SDDM
+  # queued behind it, so install.sh's own gum prompt would sit on a console
+  # nobody is looking at and hold the desktop back until someone found it.
+  # 0 keeps the default exclusion without asking; 1 is --try-unavailable.
   local status=0
-  sudo -u "$username" -i bash -lc 'cd ~/.local/share/omarchy && bash install.sh' || status=$?
+  sudo -u "$username" -i env OMARCHY_TRY_UNAVAILABLE="${try_unavailable:-0}" \
+    bash -lc 'cd ~/.local/share/omarchy && bash install.sh' || status=$?
   revoke_passwordless_sudo
   (( status == 0 )) || fail "install.sh exited $status -- fix it and run '$SELF --resume'"
 
@@ -1207,6 +1217,11 @@ ask_questions() {
     root_is_encrypted || log "  - encrypt the root -- you choose the passphrase at the console"
   fi
   log "  - install Omarchy from $repo ($ref) as $username"
+  if ((${try_unavailable:-0})); then
+    log "  - also try the packages not yet qualified for Apple Silicon (--try-unavailable)"
+  else
+    log "  - skip the packages not yet qualified for Apple Silicon (--try-unavailable to attempt them)"
+  fi
   log "  - reboot into the desktop"
   echo
   read -rp "Start? [Y/n] " answer
@@ -1220,7 +1235,7 @@ ask_questions() {
 }
 
 main() {
-  local resume=0 status=0 abort=0 step_only="" allow_omarchy3=0 keep_root_password=0 encrypt_flag="" want_encrypt username hostname keymap repo ref forge
+  local resume=0 status=0 abort=0 step_only="" allow_omarchy3=0 keep_root_password=0 encrypt_flag="" want_encrypt try_unavailable username hostname keymap repo ref forge
 
   # The parse loop below shifts every argument away, so keep a copy first. The
   # piped re-exec has to hand the same arguments to the copy on disk: without
@@ -1234,6 +1249,7 @@ main() {
     case $1 in
       --encrypt) encrypt_flag=1; want_encrypt=1 ;;
       --no-encrypt) encrypt_flag=0; want_encrypt=0 ;;
+      --try-unavailable) try_unavailable=1 ;;
       --user) username=${2:?--user needs a name}; shift ;;
       --hostname) hostname=${2:?--hostname needs a name}; shift ;;
       --keymap)

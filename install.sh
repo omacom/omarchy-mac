@@ -222,7 +222,13 @@ confirm() {
 # now exist, so retain an explicit opt-in attempt.
 should_attempt_unavailable() {
   (( ${#unavailable_packages[@]} )) || return 1
-  [[ ${OMARCHY_TRY_UNAVAILABLE:-0} == "1" ]] && return 0
+  # An explicit answer settles it either way. The guided setup passes 0 so
+  # the resumed boot, which runs this on tty1 with the desktop waiting behind
+  # it, keeps the default exclusion instead of stopping at a prompt.
+  case ${OMARCHY_TRY_UNAVAILABLE:-} in
+    1) return 0 ;;
+    0) return 1 ;;
+  esac
   [[ -r /dev/tty ]] || return 1
 
   warn "Excluded by default pending ARM qualification: ${unavailable_packages[*]}"
