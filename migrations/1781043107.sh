@@ -79,6 +79,7 @@ for file in \
   "$HOME/.config/ghostty/config" \
   "$HOME/.config/hypr/hyprland.conf" \
   "$HOME/.config/hypr/hyprland.lua" \
+  "$HOME/.config/hypr/hyprlock.conf" \
   "$HOME/.config/hyprland-preview-share-picker/config.yaml" \
   "$HOME/.config/kitty/kitty.conf"; do
   replace_current_path "$file"
