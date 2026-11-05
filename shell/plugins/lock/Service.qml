@@ -4,6 +4,7 @@ import Quickshell.Io
 import Quickshell.Services.Pam
 import Quickshell.Wayland
 import qs.Commons
+import "PamNotice.js" as PamNotice
 
 Item {
   id: root
@@ -26,6 +27,9 @@ Item {
   property string enteredPassword: ""
   property string pendingPassword: ""
   property string failureMessage: ""
+  // PAM messages that asked for no response during the current attempt: the
+  // lockout notice pam_faillock prints before the password prompt.
+  property string pamNotice: ""
   property int failedAttempts: 0
   property string backgroundPath: ""
   property int backgroundVersion: 0
@@ -180,6 +184,7 @@ Item {
     runWake()
     pendingPassword = password
     failureMessage = ""
+    pamNotice = ""
     authenticatingPassword = true
 
     if (!passwordPam.start()) {
@@ -202,7 +207,7 @@ Item {
     enteredPassword = ""
     pendingPassword = ""
     failedAttempts += 1
-    failureMessage = "Authentication failed (" + failedAttempts + ")"
+    failureMessage = PamNotice.failureText(pamNotice, failedAttempts)
     runWake()
   }
 
@@ -322,7 +327,10 @@ Item {
     user: root.userName
 
     onResponseRequiredChanged: root.respondToPasswordPrompt()
-    onPamMessage: root.respondToPasswordPrompt()
+    onPamMessage: {
+      root.pamNotice = PamNotice.append(root.pamNotice, passwordPam.message, passwordPam.responseRequired)
+      root.respondToPasswordPrompt()
+    }
 
     onCompleted: function(result) {
       root.authenticatingPassword = false
