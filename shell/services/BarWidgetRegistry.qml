@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.11
 
 // Instance, not a singleton — instantiated once by shell.qml and injected into
 // plugins that need to read or extend the widget catalogue. Relative-path

@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.11
 import qs.Commons
 
 // Small-caps-style label that introduces a panel section ("DNS provider",
