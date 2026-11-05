@@ -5,7 +5,7 @@
 Omarchy 4 on Apple Silicon, alongside macOS: Asahi Alarm + Omarchy, installed
 in one command, full-disk encryption included.
 
-[![License](https://img.shields.io/github/license/omarchy-mac/omarchy-mac)](LICENSE) [![Stars](https://img.shields.io/github/stars/omarchy-mac/omarchy-mac?style=social)](https://github.com/omarchy-mac/omarchy-mac/stargazers)
+[![License](https://img.shields.io/github/license/omacom/omarchy-mac)](LICENSE) [![Stars](https://img.shields.io/github/stars/omacom/omarchy-mac?style=social)](https://github.com/omacom/omarchy-mac/stargazers)
 
 Already running Omarchy 3.x? This page is the fresh install — to upgrade in
 place, see [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md).
@@ -54,7 +54,7 @@ again.
 Still as root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/omarchy-mac-setup | bash
+curl -fsSL https://raw.githubusercontent.com/omacom/omarchy-mac/quattro/bin/omarchy-mac-setup | bash
 ```
 
 There is nothing to prepare beyond the network: no pacman update, no locale
@@ -62,7 +62,7 @@ setup, no user creation. The script installs what it needs, creates your user
 and sets up sudo itself. To read it before running it, or to pass options:
 
 ```bash
-curl -LO https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/omarchy-mac-setup
+curl -LO https://raw.githubusercontent.com/omacom/omarchy-mac/quattro/bin/omarchy-mac-setup
 bash omarchy-mac-setup --no-encrypt
 ```
 
@@ -107,7 +107,7 @@ the minimal image ships without `git` or `sudo`, so as root first:
 `pacman -S --needed sudo git` — installing Omarchy itself is:
 
 ```bash
-git clone https://github.com/omarchy-mac/omarchy-mac.git ~/.local/share/omarchy
+git clone https://github.com/omacom/omarchy-mac.git ~/.local/share/omarchy
 cd ~/.local/share/omarchy
 cat version    # 4.x — if this says 3.x you are on the wrong branch
 bash install.sh
@@ -171,7 +171,7 @@ it, because the update aborts before the package carrying it can be replaced.
 Run the recovery and log out and back in afterwards:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/fix-arm-packages.sh | bash
+curl -fsSL https://raw.githubusercontent.com/omacom/omarchy-mac/quattro/fix-arm-packages.sh | bash
 ```
 
 See [docs/arm-package-sources.md](docs/arm-package-sources.md) for what it changes and how to pass `--dry-run` or `--no-snapshot` to the piped script.
