@@ -73,13 +73,18 @@ power_rate=$(awk -v rate="${power_rate_raw:-0}" 'BEGIN {
   print rounded
 }')
 state=$(awk '/state/ { print $2; exit }' <<<"$battery_info")
-threshold_start=$(awk '/charge-start-threshold:/ { gsub(/%/, "", $2); print int($2); exit }' <<<"$battery_info")
-threshold_end=$(awk '/charge-end-threshold:/ { gsub(/%/, "", $2); print int($2); exit }' <<<"$battery_info")
 
 # The device's own sysfs directory first -- native-path names it, whatever it
-# is called -- and only then the BAT* guess, which never matches macsmc-battery.
-[[ -z $threshold_end ]] && threshold_end=$(cat "$battery_path"/charge_control_end_threshold 2>/dev/null | head -1)
-[[ -z $threshold_start ]] && threshold_start=$(cat "$battery_path"/charge_control_start_threshold 2>/dev/null | head -1)
+# is called. UPower's charge-*-threshold is only a fallback: the
+# macsmc-battery driver never calls power_supply_changed() for a
+# threshold-only write, so UPower's copy goes stale the moment
+# battery-charge-limit changes it and never catches up (Panel.qml hits the
+# same staleness for the slider and reads the CLI directly for that reason).
+# The BAT* guess never matches macsmc-battery either way.
+threshold_end=$(cat "$battery_path"/charge_control_end_threshold 2>/dev/null | head -1)
+threshold_start=$(cat "$battery_path"/charge_control_start_threshold 2>/dev/null | head -1)
+[[ -z $threshold_end ]] && threshold_end=$(awk '/charge-end-threshold:/ { gsub(/%/, "", $2); print int($2); exit }' <<<"$battery_info")
+[[ -z $threshold_start ]] && threshold_start=$(awk '/charge-start-threshold:/ { gsub(/%/, "", $2); print int($2); exit }' <<<"$battery_info")
 [[ -z $threshold_end ]] && threshold_end=$(cat "$power_supply_path"/BAT*/charge_control_end_threshold 2>/dev/null | head -1)
 [[ -z $threshold_start ]] && threshold_start=$(cat "$power_supply_path"/BAT*/charge_control_start_threshold 2>/dev/null | head -1)
 
