@@ -62,6 +62,162 @@ class Audio:
         time.sleep(0.1)
 
 
+
+J456_SOURCE = 'omarchy_j456_microphone'
+J456_CAPTURE = 'capture.omarchy-j456-microphone'
+
+
+def j456_raw(graph):
+    # ALSA's card identity restricts this fallback to the tested four-port M1
+    # iMac. Instance names and card numbers change across boots/hot-plug.
+    candidates = []
+    for obj in graph:
+        props = obj.get('info', {}).get('props', {})
+        if (obj.get('type', '').endswith(':Node')
+                and props.get('media.class') == 'Audio/Source'
+                and props.get('alsa.id') == 'AppleJ456HPAI'
+                and props.get('api.alsa.pcm.stream') == 'capture'
+                and props.get('alsa.driver_name') == 'snd_soc_aop'
+                and props.get('audio.channels') == 3
+                and props.get('object.serial') is not None):
+            channels = {item.get('info', {}).get('props', {}).get('audio.channel')
+                        for item in graph if item.get('type', '').endswith(':Port')
+                        and item.get('info', {}).get('props', {}).get('node.id') == obj['id']
+                        and item.get('info', {}).get('props', {}).get('port.direction') == 'out'}
+            if channels == {'AUX0', 'AUX1', 'AUX2'}:
+                candidates.append(obj)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def save_j456_state(audio, path):
+    source = next((obj for obj in audio.objects('sources') if obj['name'] == J456_SOURCE), None)
+    if source is None:
+        return
+    saved = json.dumps(gain(source, channels=1), sort_keys=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or path.read_text() != saved:
+        with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as temporary:
+            temporary.write(saved)
+        os.replace(temporary.name, path)
+
+
+class J456Fallback:
+    # The watch service owns the filter process, not a persistent global
+    # PipeWire config. Stopping it or gaining native DSP removes the fallback.
+    def __init__(self, runtime, state):
+        self.runtime = runtime
+        self.state = state
+        self.process = None
+        self.target = None
+
+    def stop(self):
+        process, self.process = self.process, None
+        self.target = None
+        if process is not None:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+    def start(self, serial):
+        template = Path(os.environ['OMARCHY_PATH']) / 'default/pipewire/j456-microphone.conf'
+        config = template.read_text().replace('@TARGET@', json.dumps(str(serial)))
+        # Keep the private configuration until the child exits: it reads the
+        # path asynchronously, and can load it again on connection recovery.
+        self.config = tempfile.TemporaryDirectory(prefix='omarchy-j456-', dir=self.runtime)
+        path = Path(self.config.name) / 'filter.conf'
+        path.write_text(config)
+        try:
+            self.process = subprocess.Popen(['pipewire', '-c', str(path)], stdin=subprocess.DEVNULL)
+            self.target = serial
+        except Exception:
+            self.config.cleanup()
+            raise
+
+    def save(self, audio):
+        if self.process is not None:
+            save_j456_state(audio, self.state)
+
+    def close(self):
+        self.stop()
+        if hasattr(self, 'config'):
+            self.config.cleanup()
+
+    def reconcile(self, audio, sources, dsp):
+        if dsp:
+            self.save(audio)
+            selected = audio.run('pactl', 'get-default-source')
+            # Switch away only from our running fallback; never touch an
+            # independently created node with the same name.
+            if self.process is not None and selected == J456_SOURCE:
+                audio.run('pactl', 'set-default-source', dsp)
+            self.close()
+            return False
+        graph = audio.graph()
+        raw = j456_raw(graph)
+        if raw is None:
+            self.save(audio)
+            self.close()
+            return False
+        props = raw['info']['props']
+        serial, name = props['object.serial'], props['node.name']
+        owned = self.process is not None
+        if self.process is not None and (self.process.poll() is not None or self.target != serial):
+            if self.process.poll() is None:
+                self.save(audio)
+            self.close()
+        names = {obj['name'] for obj in sources}
+        if not owned and J456_SOURCE in names:
+            raise Deferred('An independent J456 microphone source already exists; leaving it unchanged')
+        original = audio.run('pactl', 'get-default-source')
+        try:
+            started = self.process is None
+            if started:
+                self.start(serial)
+            for attempt in range(30):
+                graph = audio.graph()
+                current_raw = j456_raw(graph)
+                if current_raw is None or current_raw['info']['props']['object.serial'] != serial:
+                    raise RuntimeError('J456 microphone changed while starting its filter')
+                if self.process.poll() is not None:
+                    raise RuntimeError('J456 microphone filter exited')
+                output = port(graph, name, 'capture_AUX2')
+                input_ = port(graph, J456_CAPTURE, 'input_AUX2')
+                connected = output is not None and input_ is not None and links(graph, output, input_)
+                if connected and any(obj['name'] == J456_SOURCE for obj in audio.objects('sources')):
+                    break
+                audio.pause()
+            else:
+                raise RuntimeError('J456 microphone filter did not become ready')
+            if started and self.state.exists():
+                saved = json.loads(self.state.read_text())
+                values = gain(dict(volume={str(i): {'value': value} for i, value in enumerate(saved['volume'])}, mute=saved['mute']), channels=1)
+                audio.run('pactl', 'set-source-volume', J456_SOURCE, str(values['volume'][0]))
+                audio.run('pactl', 'set-source-mute', J456_SOURCE, '1' if values['mute'] else '0')
+            current = audio.run('pactl', 'get-default-source')
+            if original == name and current == original:
+                audio.run('pactl', 'set-default-source', J456_SOURCE)
+            elif original and original not in (name, J456_SOURCE) and current == J456_SOURCE:
+                # Undo policy auto-selection when registering a new source.
+                if original in {obj['name'] for obj in audio.objects('sources')}:
+                    if audio.run('pactl', 'get-default-source') == J456_SOURCE:
+                        audio.run('pactl', 'set-default-source', original)
+            self.save(audio)
+            return True
+        except Exception:
+            try:
+                if original and original != J456_SOURCE and audio.run('pactl', 'get-default-source') == J456_SOURCE:
+                    if original in {obj['name'] for obj in audio.objects('sources')}:
+                        if audio.run('pactl', 'get-default-source') == J456_SOURCE:
+                            audio.run('pactl', 'set-default-source', original)
+            finally:
+                self.close()
+            raise
+
+
 def port(graph, node_name, port_name):
     nodes = {obj['id'] for obj in graph if obj.get('type', '').endswith(':Node')
              and obj.get('info', {}).get('props', {}).get('node.name') == node_name}
@@ -80,10 +236,10 @@ def links(graph, output, input_):
             and obj['info'].get('state') in ('active', 'paused')]
 
 
-def gain(obj):
+def gain(obj, channels=2):
     values = [channel['value'] for channel in obj['volume'].values()]
-    if len(values) != 2 or any(type(value) is not int or not 0 <= value < 2**32 - 1 for value in values) or type(obj['mute']) is not bool:
-        raise ValueError('Invalid stereo mapping gain state')
+    if len(values) != channels or any(type(value) is not int or not 0 <= value < 2**32 - 1 for value in values) or type(obj['mute']) is not bool:
+        raise ValueError('Invalid microphone mapping gain state')
     return dict(volume=values, mute=obj['mute'])
 
 
@@ -121,14 +277,20 @@ def restore_output(audio, previous):
                 audio.run('pactl', 'set-default-sink', previous)
 
 
-def reconcile(audio, state, save_only=False):
+def reconcile(audio, state, save_only=False, fallback=None):
     if save_only:
         save_state(audio, state)
+        save_j456_state(audio, state.with_name('j456-mic-gain.json'))
         return
     sources = audio.objects('sources')
     original_input = audio.run('pactl', 'get-default-source')
     original_output = audio.run('pactl', 'get-default-sink')
     dsp = next((obj['name'] for obj in sources if re.fullmatch(r'effect_output\.j[0-9]+-mic', obj['name'])), None)
+    if fallback is not None:
+        if fallback.reconcile(audio, sources, dsp):
+            return
+        # Native DSP takeover may have moved the owned fallback selection.
+        original_input = audio.run('pactl', 'get-default-source')
     if not dsp:
         raise Deferred('No Asahi DSP microphone is present; user service will retry if an array appears')
     sinks = audio.objects('sinks')
@@ -235,11 +397,11 @@ def mapping_lock(runtime):
         yield
 
 
-def run_once(audio, runtime, state, save_only=False):
+def run_once(audio, runtime, state, save_only=False, fallback=None):
     if not os.environ.get('PULSE_SERVER') and not os.environ.get('PIPEWIRE_REMOTE') and not any((runtime / path).exists() for path in ('pulse/native', 'pipewire-0')):
         raise Deferred('No audio session endpoints; microphone mapping deferred to the user service')
     with mapping_lock(runtime):
-        reconcile(audio, state, save_only)
+        reconcile(audio, state, save_only, fallback)
 
 
 class Subscription:
@@ -350,11 +512,18 @@ def main():
         return 0
     runtime = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid())))
     state = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'omarchy/asahi-mic-gain.json'
-    operation = lambda: run_once(Audio(), runtime, state, args.save_state)
+    fallback = J456Fallback(runtime, state.with_name('j456-mic-gain.json')) if args.watch else None
+    operation = lambda: run_once(Audio(), runtime, state, args.save_state, fallback)
     if args.watch:
         # Let a service stop unwind through supervise so the subscriber exits too.
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-        supervise(operation)
+        try:
+            supervise(operation)
+        finally:
+            try:
+                fallback.save(Audio())
+            finally:
+                fallback.close()
     else:
         try:
             operation()
