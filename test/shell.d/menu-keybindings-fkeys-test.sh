@@ -98,19 +98,19 @@ EOF
 
 output=$(PATH="$mock_bin:$PATH" XDG_CACHE_HOME="$cache_dir" "$ROOT/bin/omarchy-menu-keybindings" --print)
 
-tr -s ' ' <<<"$output" | grep -qF 'SHIFT + F2 → Keyboard brightness up' || \
-  fail "SHIFT + XF86MonBrightnessUp renders as SHIFT + F2 with its description" "$output"
+tr -s ' ' <<<"$output" | grep -qF '⇧ + F2 → Keyboard brightness up' || \
+  fail "SHIFT + XF86MonBrightnessUp renders as ⇧ + F2 with its description" "$output"
 
-tr -s ' ' <<<"$output" | grep -qF 'SHIFT + F1 → Keyboard brightness down' || \
-  fail "SHIFT + XF86MonBrightnessDown renders as SHIFT + F1 with its description" "$output"
+tr -s ' ' <<<"$output" | grep -qF '⇧ + F1 → Keyboard brightness down' || \
+  fail "SHIFT + XF86MonBrightnessDown renders as ⇧ + F1 with its description" "$output"
 
-tr -s ' ' <<<"$output" | grep -qF 'ALT + F2 → Brightness up precise' || \
-  fail "modifier combos keep the F-key name (ALT + F2)" "$output"
+tr -s ' ' <<<"$output" | grep -qF '⌥ + F2 → Brightness up precise' || \
+  fail "modifier combos keep the F-key name (⌥ + F2)" "$output"
 
 grep -qF 'XF86MonBrightness' <<<"$output" && \
   fail "raw XF86MonBrightness symbols no longer leak into the menu" "$output"
 
-tr -s ' ' <<<"$output" | grep -qF 'SUPER + Q → Close window' || \
-  fail "unrelated bindings render unchanged (SUPER + Q)" "$output"
+tr -s ' ' <<<"$output" | grep -qF '⌘ + Q → Close window' || \
+  fail "unrelated bindings use the Apple Command symbol (⌘ + Q)" "$output"
 
 pass "keybindings menu shows Mac physical key names (F1/F2), stale caches ignored"
