@@ -15,4 +15,15 @@ if [[ -d /sys/firmware/efi ]] && [[ -f /usr/lib/fwupd/efi/fwupdx64.efi ]]; then
 fi
 
 fwupdmgr refresh --force
-sudo fwupdmgr update
+
+# fwupdmgr exits 2 when there is nothing to update, which is not a failure
+status=0
+sudo fwupdmgr update || status=$?
+if (( status != 0 && status != 2 )); then
+  exit $status
+fi
+
+if omarchy-hw-apple; then
+  echo
+  echo "Mac system firmware is not managed by fwupd. It is updated by installing macOS updates from the macOS partition."
+fi
