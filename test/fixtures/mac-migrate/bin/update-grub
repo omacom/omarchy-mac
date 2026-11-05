@@ -3,4 +3,11 @@
 # the fixture holds <command>-fail.
 fixture=${MIGRATE_FIXTURE:?}
 echo "${0##*/} $*" >>"$fixture/boot.log"
-[[ ! -e $fixture/${0##*/}-fail ]]
+[[ ! -e $fixture/${0##*/}-fail ]] || exit 1
+# grub-mkconfig stops on a GRUB_FONT it cannot find.
+root=${OMARCHY_MAC_MIGRATE_ROOT:-}
+font=$(sed -n 's/^GRUB_FONT=//p' "$root/etc/default/grub" 2>/dev/null | tail -n 1 | tr -d "\"'")
+if [[ -n $font && ! -e $root$font ]]; then
+  echo "grub-probe: error: failed to get canonical path of \`$font'." >&2
+  exit 1
+fi

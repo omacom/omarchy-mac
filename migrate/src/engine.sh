@@ -220,6 +220,12 @@ hardware_platform() {
   fi
 }
 
+# Omarchy's detector says aarch64-apple since omacom/omarchy #14431; the
+# runtimes it replaces, and their device-tree fallback, say apple-silicon.
+apple_platform() {
+  [[ $1 == "apple-silicon" || $1 == "aarch64-apple" ]]
+}
+
 boot_id() {
   cat "$R/proc/sys/kernel/random/boot_id"
 }
@@ -228,12 +234,26 @@ limine_mac() {
   [[ -e $limine_gate && -f $limine_default ]]
 }
 
-# The release of the installed Apple kernel, from the pkgbase its module tree names.
+# The release of the installed Apple kernel, from the pkgbase its module tree
+# names. A tree no package owns can name the same pkgbase (aurora-sep's kernel
+# is installed outside pacman and stays after the switch), so when several do,
+# the one whose vmlinuz the package itself installs is the release.
 kernel_release() {
-  local dir
+  local dir owned
+  local -a releases=()
   for dir in "$R"/usr/lib/modules/*/; do
-    if [[ -f $dir/pkgbase && $(<"$dir/pkgbase") == "$1" ]]; then
-      basename "$dir"
+    [[ -f $dir/pkgbase && $(<"$dir/pkgbase") == "$1" ]] && releases+=("$(basename "$dir")")
+  done
+  (( ${#releases[@]} )) || return 1
+  if (( ${#releases[@]} == 1 )); then
+    echo "${releases[0]}"
+    return 0
+  fi
+  owned=$(LC_ALL=C pacman --config "$pacman_conf" --dbpath "$pacman_db" -Qlq "$1" 2>/dev/null |
+    sed -n 's|^/usr/lib/modules/\([^/]*\)/vmlinuz$|\1|p')
+  for dir in "${releases[@]}"; do
+    if [[ $dir == "$owned" ]]; then
+      echo "$dir"
       return 0
     fi
   done
@@ -1495,7 +1515,7 @@ migrate_run() {
   # A migration past its switch is this Mac's, whatever a detector says now.
   if ! past_boundary; then
     platform=$(hardware_platform) || die "cannot determine the hardware platform"
-    if [[ $platform != "apple-silicon" ]]; then
+    if ! apple_platform "$platform"; then
       say "Not an Apple Silicon Mac: nothing to migrate."
       return 0
     fi
@@ -1557,7 +1577,7 @@ migrate_verify() {
   past_boundary || [[ -s $user_pending ]] || return 0
   if ! past_boundary; then
     platform=$(hardware_platform) || die "cannot determine the hardware platform"
-    [[ $platform == "apple-silicon" ]] || return 0
+    apple_platform "$platform" || return 0
   fi
   take_lock
   if past_boundary; then
