@@ -64,7 +64,7 @@ check_preconditions() {
   [[ $(uname -m) == "aarch64" ]] || fail "This is the Apple Silicon installer. On x86 machines install from the ISO."
   command -v pacman >/dev/null || fail "This installer only supports Arch-based systems."
   command -v sudo >/dev/null || fail "sudo is required."
-  grep -qi apple /proc/device-tree/compatible 2>/dev/null ||
+  grep -qai apple /proc/device-tree/compatible 2>/dev/null ||
     warn "This does not look like Apple hardware; continuing anyway."
 }
 
