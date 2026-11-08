@@ -29,12 +29,15 @@ battery=$(upower -e 2>/dev/null | grep -iE '/devices/battery' | head -n 1)
 
 battery_info=$(upower -i "$battery")
 
-# Keep UPower's unrounded percentage for the charge-hold comparisons below:
-# rounding first would let 79.5% cross an 80% hold threshold while still
-# charging. The bar widget shows Math.round of the same value, so round half-up
-# only for display -- truncating made the panel differ from the bar by 1%.
+# Keep raw telemetry for charge-hold comparisons. Display the same usable
+# percentage as the shell: raw 5% is 1%, reserving charge for shutdown.
 raw_percentage=$(awk '/percentage/ { print $2 + 0; exit }' <<<"$battery_info")
-percentage=$(awk -v p="$raw_percentage" 'BEGIN { printf "%d", p + 0.5 }')
+percentage=$(awk -v p="$raw_percentage" 'BEGIN {
+  if (p <= 0) { print 0; exit }
+  if (p > 100) p = 100
+  usable = int((p - 4) * 100 / 96 + 0.5)
+  print usable < 1 ? 1 : usable
+}')
 capacity=$(awk '/energy-full:/ { printf "%d", $2; exit }' <<<"$battery_info")
 time_remaining=$(awk '/time to (empty|full)/ {
   value = $4
