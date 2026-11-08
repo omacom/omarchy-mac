@@ -5,7 +5,47 @@
 Omarchy 4 on Apple Silicon, alongside macOS: Asahi Alarm + Omarchy, installed
 in one command, full-disk encryption included.
 
-[![License](https://img.shields.io/github/license/omarchy-mac/omarchy-mac)](LICENSE) [![Stars](https://img.shields.io/github/stars/omarchy-mac/omarchy-mac?style=social)](https://github.com/omarchy-mac/omarchy-mac/stargazers)
+[![License](https://img.shields.io/github/license/omacom/omarchy-mac)](LICENSE) [![Stars](https://img.shields.io/github/stars/omacom/omarchy-mac?style=social)](https://github.com/omacom/omarchy-mac/stargazers)
+
+> [!IMPORTANT]
+> **The Omarchy Mac team joined Omacom, and together we built the streamlined
+> Apple Silicon version of Omarchy, first released with Omarchy 4.5.
+> Omarchy for Apple Silicon is now an official Omacom solution.**
+> Install it with the [Omarchy installer](https://github.com/omacom/omarchy-mac-installer), below.
+> Its Mac packages and the [Mac manual](https://github.com/omacom/omarchy-mac-pkgs/tree/main/mac-manual)
+> live in [omarchy-mac-pkgs](https://github.com/omacom/omarchy-mac-pkgs).
+> The script install further down still works for now, but new Mac support lands in
+> Omarchy for Apple Silicon. New installs should use it, and existing installs should move to it.
+
+## Install Omarchy for Apple Silicon (recommended)
+
+From macOS, install it with the Omarchy installer:
+
+```bash
+brew install omacom/mac/omarchy
+```
+
+Or download the installer from its [releases](https://github.com/omacom/omarchy-mac-installer/releases).
+It sets up Omarchy for Apple Silicon next to macOS in one guided flow. See its
+[supported Macs](https://github.com/omacom/omarchy-mac-installer#supported-macs) list.
+
+What you get over this script install:
+
+- **More Macs:** M3 MacBooks and iMacs, and the MacBook Neo, alongside M1 and M2.
+- **Multiple monitors over USB-C.**
+- **Fingerprint login** with Touch ID.
+- **Snapshots you can boot:** pick an earlier snapshot from the Limine boot menu to roll back or restore.
+
+### Moving from this setup
+
+There is no in-place upgrade from the script install to Omarchy for Apple Silicon. To move:
+
+1. **Back up** your home directory and anything else you want to keep, off the Mac.
+2. **[Remove the old install](#removal-uninstall)** from macOS, so its disk space is free.
+3. **Install Omarchy for Apple Silicon** as above.
+4. **Restore** your files.
+
+## Install with the script (legacy, M1 and M2)
 
 Already running Omarchy 3.x? This page is the fresh install — to upgrade in
 place, see [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md).
