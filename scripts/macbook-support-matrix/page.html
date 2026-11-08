@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MacBook Support Matrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f6f7f8; --surface: #ffffff; --ink: #17202a; --muted: #5d6874; --rule: #dfe3e8;
+  --accent: #1f6f8b; --band: #eef2f5;
+  --on: #1d7a46; --on-bg: #e3f3e9; --opt: #9a6400; --opt-bg: #fbf0d9;
+  --part: #355f9e; --part-bg: #e5edf8; --no: #b23a3a; --no-bg: #f8e4e4; --na: #6b7480; --na-bg: #eceef1;
+  --pr: #7a3f9e; --pr-bg: #f1e6f8;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161b; --surface: #182028; --ink: #e6ebf0; --muted: #98a4b0; --rule: #2a3540;
+  --accent: #5fb4d1; --band: #1d2731;
+  --on: #6fd39a; --on-bg: #17362a; --opt: #f0bd5a; --opt-bg: #3a2e14; --part: #8fb4ef; --part-bg: #1e2c44;
+  --no: #f08a8a; --no-bg: #3e1e20; --na: #9aa4ae; --na-bg: #232c35; --pr: #cfa0ef; --pr-bg: #33223f; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #11161b; --surface: #182028; --ink: #e6ebf0; --muted: #98a4b0; --rule: #2a3540;
+  --accent: #5fb4d1; --band: #1d2731;
+  --on: #6fd39a; --on-bg: #17362a; --opt: #f0bd5a; --opt-bg: #3a2e14; --part: #8fb4ef; --part-bg: #1e2c44;
+  --no: #f08a8a; --no-bg: #3e1e20; --na: #9aa4ae; --na-bg: #232c35; --pr: #cfa0ef; --pr-bg: #33223f; color-scheme: dark; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.5; }
+.wrap { padding-block: 28px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); max-width: 1680px; margin: 0 auto; display: grid; gap: 28px; }
+header { display: grid; gap: 8px; max-width: 78ch; }
+h1 { font-family: var(--f-display); font-weight: 600; font-size: 30px; line-height: 1.15; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--f-display); font-weight: 600; font-size: 19px; margin: 0; text-wrap: balance; }
+p { margin: 0; }
+.lede { color: var(--muted); }
+.mono { font-family: var(--f-mono); font-size: 12.5px; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.sum { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0; }
+.sum b { font-family: var(--f-display); font-size: 15px; font-weight: 600; }
+.sum span { color: var(--muted); font-size: 13px; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; color: var(--muted); font-size: 13px; }
+.legend div { display: flex; gap: 6px; align-items: center; }
+.tablebox { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; min-width: 1500px; width: 100%; }
+th, td { border-bottom: 1px solid var(--rule); padding: 7px 8px; text-align: left; vertical-align: top; }
+thead th { font-family: var(--f-display); font-weight: 600; font-size: 12.5px; letter-spacing: .02em; color: var(--muted); background: var(--surface); position: sticky; top: 0; z-index: 2; white-space: nowrap; }
+th.board, td.board { position: sticky; left: 0; background: var(--surface); z-index: 1; min-width: 210px; max-width: 230px; border-right: 1px solid var(--rule); }
+thead th.board { z-index: 3; }
+tr.fam td { background: var(--band); font-family: var(--f-display); font-weight: 600; font-size: 13px; letter-spacing: .03em; text-transform: uppercase; color: var(--ink); padding-block: 6px; }
+tr.fam td.board { background: var(--band); }
+.bname { font-weight: 600; font-size: 13.5px; }
+.bmeta { color: var(--muted); font-size: 12px; }
+.code { font-family: var(--f-mono); font-size: 11.5px; color: var(--muted); }
+.cell { display: grid; gap: 3px; min-width: 84px; }
+.chip { display: inline-block; justify-self: start; font-family: var(--f-display); font-weight: 600; font-size: 11.5px; letter-spacing: .03em; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.s-on { color: var(--on); background: var(--on-bg); }
+.s-opt { color: var(--opt); background: var(--opt-bg); }
+.s-part { color: var(--part); background: var(--part-bg); }
+.s-no { color: var(--no); background: var(--no-bg); }
+.s-na { color: var(--na); background: var(--na-bg); }
+.s-pr { color: var(--pr); background: var(--pr-bg); }
+.famnote { display: block; font-family: var(--f-body); font-weight: 400; font-size: 12px; letter-spacing: 0; text-transform: none; color: var(--muted); margin-top: 2px; }
+.note { font-size: 11.5px; color: var(--muted); line-height: 1.35; max-width: 22ch; }
+.ledger { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px 28px; }
+.ledger section { display: grid; gap: 6px; min-width: 0; }
+.ledger h3 { font-family: var(--f-display); font-size: 14.5px; font-weight: 600; margin: 0; }
+.ledger ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--ink); font-size: 13px; }
+.ledger code { font-family: var(--f-mono); font-size: 12px; overflow-wrap: anywhere; }
+footer { color: var(--muted); font-size: 12.5px; max-width: 90ch; display: grid; gap: 6px; }
+@media (max-width: 600px) { h1 { font-size: 24px; } th.board, td.board { min-width: 150px; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Apple Silicon MacBook support matrix</h1>
+    <p class="lede">What the Omarchy Mac kernel (linux-aurora) and boot loader (m1n1) actually drive on every Apple Silicon MacBook: 42 boards from M1 to M6, including MacBook Neo. The board list comes from Apple's model pages and AppleDB, so models that have no code yet are included. Every cell comes from code: the compiled device tree for that board, a matching kernel driver, and any per-board gate in the driver or m1n1. A green cell means the code is there and enabled by default. It does not mean the feature has passed hardware testing.</p>
+    <p class="mono">{{SNAPSHOT}}</p>
+  </header>
+
+  <div class="summary" id="summary"></div>
+
+  <div class="legend" aria-label="Legend">
+    <div><span class="chip s-on">On</span> described, driver binds, on by default</div>
+    <div><span class="chip s-opt">Opt-in</span> code present, needs a boot.bin line or pending change</div>
+    <div><span class="chip s-part">Partial</span> code present with a gap noted</div>
+    <div><span class="chip s-pr">In PR</span> in an open, unmerged pull request</div>
+    <div><span class="chip s-no">Missing</span> no driver, gate refuses, or not described</div>
+    <div><span class="chip s-na">N/A</span> hardware not on this model</div>
+  </div>
+
+  <div class="tablebox" role="region" aria-label="Support table" tabindex="0">
+    <table id="matrix"></table>
+  </div>
+
+  <h2>Evidence</h2>
+  <div class="ledger">
+    <section>
+      <h3>How a cell is decided</h3>
+      <ul>
+        <li>Each board's <code>.dts</code> is preprocessed and compiled, then every node's effective status is read (a node is off if it or a parent is <code>disabled</code>).</li>
+        <li>Each enabled node's <code>compatible</code> strings, or its PCI ID, are matched against <code>drivers/</code> and <code>sound/</code>. All 27 trees bind a driver for every enabled device.</li>
+        <li>Per-board gates then override that: GPU admission tables, display board tables, the audio speaker table, and m1n1's defaults and handoffs.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>GPU gates</h3>
+      <ul>
+        <li>OF matches: <code>asahi/driver.rs:164-218</code> covers t8103, t8112, t600x, t602x, t8122, t6030, t6031, t8140; the G15 driver (<code>g15/mod.rs:143-157</code>) covers t6030, t6031 and t6034.</li>
+        <li>M3 Air / J504: <code>asahi/m3/t8122_admission.rs:9</code> admits only J613, J615, J504.</li>
+        <li>M3 Pro: <code>asahi/g15/glue.c:229</code> admits only J514S, J516S, and <code>g15/hw.rs:156-171</code> pins one firmware TEXT for each. The 11-core CPU / 14-core GPU bin loads a different firmware (TEXT <code>cd05af6a…</code>), so its GPU is refused; <a href="https://github.com/omacom/linux-aurora/pull/366">linux-aurora#366</a> (J514S) and <a href="https://github.com/omacom/linux-aurora/pull/390">#390</a> (J516S) add it.</li>
+        <li>M3 Max: <code>g15/hw/t6031.rs:183</code> is J516C. J514C is admitted by <code>g15/boot.rs:475</code> (<a href="https://github.com/omacom/linux-aurora/pull/363">linux-aurora#363</a>), which logs that its power values are inherited from the J516C and unqualified. J514M (T6034) is admitted by <code>g15/boot.rs:479</code> (<a href="https://github.com/omacom/linux-aurora/pull/408">linux-aurora#408</a>, with <a href="https://github.com/omacom/mesa/pull/33">mesa#33</a>); <code>boot.rs:497</code> refuses every other T6034 board, so J516M stays off. m1n1 has no T6034 path until <a href="https://github.com/omacom/m1n1/pull/32">m1n1#32</a> merges.</li>
+        <li>m1n1 defaults: <code>kboot.c:407-419</code> turns graphics on for J613, J615, J504, J514S, J516S, J516C and J514C (added by <a href="https://github.com/omacom/m1n1/pull/31">m1n1#31</a>).</li>
+      </ul>
+    </section>
+    <section>
+      <h3>Display gates</h3>
+      <ul>
+        <li>M1/M2 families use the standard DCP driver (<code>apple,t8103-dcp</code> and successors).</li>
+        <li>M3 boards: <code>drm/apple/iomfb_v14_7.c:231-239</code> lists T6030 (any M3 Pro), J613, J615, J504, J516C, J514C and J514M. J516M has no entry.</li>
+        <li>External displays: M3 Pro is native when the device tree's <code>asahi,t6030-dispext = "1"</code> handoff is present (<code>dcp.c:1385</code>). J613 needs <code>chosen.asahi,t8122-dcpext=1</code> (m1n1 <code>kboot.c:2785</code>). Only <code>t8122-j613.dts</code> describes the USB-C routes to dcpext; J615 and J504 have none, so the switch does nothing there (J615 routes in <a href="https://github.com/omacom/linux-aurora/pull/356">linux-aurora#356</a>). M3 Max has no external display nodes yet (<a href="https://github.com/omacom/linux-aurora/pull/292">linux-aurora#292</a>). Neo is gated by <code>dcp_h17p_external_supported</code> (<code>apple_drv.c:901</code>).</li>
+      </ul>
+    </section>
+    <section>
+      <h3>Audio, Touch ID, Neo</h3>
+      <ul>
+        <li>Speakers: <code>sound/soc/apple/macaudio.c:1862</code>. Every MacBook config has speakers enabled, either directly or through a compatible fallback (M2 Pro to J314/J316, M3 to J314/J316/J413/J415). Speakers still need the speakersafetyd daemon in userspace.</li>
+        <li>Touch ID: the SEP driver (<code>drivers/soc/apple/sep.rs</code>) exposes enrol/verify through <code>/dev/sep-bio</code>. SEP nodes ship disabled by design and the driver enables them at runtime (<code>sep.rs:10</code>), so a board is covered when <code>soc/apple/profile.rs:550-590</code> has a profile for it (T8103, T6000/T6001, T6020/T6021, T8112, T8140, and T8122 for J613/J615 only) and its fingerprint sensor node is enabled. That covers every M1, M1 Pro/Max, M2, M2 Pro/Max and M3 Air MacBook, and Neo. M3 Pro SEP is in <a href="https://github.com/omacom/linux-aurora/pull/282">linux-aurora#282</a>. Touch ID still needs userspace integration.</li>
+        <li>Neo: Wi-Fi and Bluetooth use the MT7932 drivers. m1n1 disables Neo PCIe only if its PCIe setup fails (<code>kboot.c:6693</code>).</li>
+      </ul>
+    </section>
+    <section>
+      <h3>Power + sleep</h3>
+      <ul>
+        <li>Each cell gives code evidence first and lab results second, labelled "Code" and "Lab". Partial means the code paths exist but sleep is s2idle only and drains far more than macOS.</li>
+        <li>cpufreq: an enabled <code>*-cluster-cpufreq</code> node with a driver match (<code>drivers/cpufreq/apple-soc-cpufreq.c</code>). It is present on M1 to M3, Neo and J813. The M4 trees have none.</li>
+        <li>cpuidle: <code>drivers/cpuidle/cpuidle-apple.c:173-186</code> starts on t8103, t8112, t8122, t600x, t602x, t6030, t6031, t6032, t6034 and t8140 (WFI only on T8140). It does not start on any M4, M5 or M6 chip.</li>
+        <li>s2idle: Apple Silicon has no PSCI system suspend, so <code>mem_sleep</code> offers only s2idle on every board. There is no S3-style deep sleep.</li>
+        <li>Display sleep: the DCP driver has system-sleep handlers for every generation (<code>drm/apple/dcp.c:5086</code>, <code>apple_drv.c:1291</code>). GPU: the GPU driver has no system-sleep callbacks; its firmware stays resident. On T6031, genpd powers the GPU domain off under it, which <a href="https://github.com/omacom/linux-aurora/pull/288">linux-aurora#288</a> fixes (open).</li>
+        <li>Lab: M1 Pro J314S figures are 5 V input measurements from 14 Oct 2026. The M3 Pro J514S figure is the SMC coulomb counter on battery, from <a href="https://github.com/omacom/linux-aurora/pull/274">linux-aurora#274</a>. The M2 Pro figure is from the 9 Oct 2026 battery investigation. A live Thunderbolt link adds about 1.3 W in sleep on the M1 Pro.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>M4 Pro and later</h3>
+      <ul>
+        <li>Board codes and chip IDs come from Apple's <a href="https://support.apple.com/en-us/108052">MacBook Pro</a> and <a href="https://support.apple.com/en-us/102869">MacBook Air</a> identification pages and <a href="https://github.com/littlebyteorg/appledb/tree/main/deviceFiles">AppleDB</a>. The tree has no <code>.dts</code> for any of these 15 boards.</li>
+        <li>Chip-level code only: m1n1 <code>soc.h</code> defines T6040, T6041, T6050, T6051, T8142 and T8152. For T604x and T605x, m1n1 has only CPU start code (<code>smp.c</code>). The kernel has a G17 GPU config for <code>agx-t6040</code> (<code>asahi/driver.rs:168</code>) but no T6040 device tree to use it.</li>
+        <li>M5 Max J714C: <a href="https://github.com/omacom/linux-aurora/pull/404">linux-aurora#404</a> adds T6050 and J714C. It covers CPUs, NVMe, keyboard, trackpad, keyboard backlight and SMC, with the panel as a framebuffer. It leaves out Wi-Fi/BT, sound, USB, GPU and the display controller. The m1n1 side is <a href="https://github.com/omacom/m1n1/pull/30">m1n1#30</a>, <a href="https://github.com/omacom/m1n1/pull/33">#33</a>, <a href="https://github.com/omacom/m1n1/pull/34">#34</a> (N1 Wi-Fi, opt-in), <a href="https://github.com/omacom/m1n1/pull/37">#37</a> (GPU) and <a href="https://github.com/omacom/m1n1/pull/35">#35</a> (display, opt-in).</li>
+        <li>M6 (T8152): the kernel has the Mac mini J873G device tree, CPU IDs and cpufreq, and m1n1 has display, DCP and ATC PHY code for the chip. All of it targets the Mac mini (<a href="https://github.com/omacom/linux-aurora/pull/191">linux-aurora#191</a> to <a href="https://github.com/omacom/linux-aurora/pull/198">#198</a>, <a href="https://github.com/omacom/linux-aurora/pull/359">#359</a>). The J804 MacBook Pro has no board file.</li>
+        <li>AppleDB gives M5 Pro and M5 Max the same chip ID (0x6050), while m1n1 also defines T6051. Whether the M5 Max splits across two chips, as the M3 Max did, is not confirmed.</li>
+      </ul>
+    </section>
+  </div>
+
+  <footer>
+    <p>The edge catalog column is the installer's model list. No M4, M5 or M6 MacBook is offered. J604, J713, J715 and J813 have device trees that describe CPUs and little else: there is no storage controller, so Linux has nowhere to install. The other 15 boards from M4 Pro onward have no device tree at all.</p>
+    <p>Not covered by code evidence: backlight and fn-key behaviour, sustained power and thermals. The 28 Oct test reports still fail display controller, backlight, ambient light, fn key and external display checks on every M3 board that reported.</p>
+  </footer>
+</div>
+
+<script>
+const DATA = {{DATA}};
+const C = DATA.columns.map(([k]) => k);
+const H = Object.fromEntries(DATA.columns);
+const L = {on:"On",opt:"Opt-in",part:"Partial",pr:"In PR",no:"Missing",na:"N/A"};
+const FAMILIES = DATA.families;
+const row = b => b.r;
+
+const t = document.getElementById("matrix");
+let html = "<thead><tr><th class='board' scope='col'>Board</th>" + C.map(k => `<th scope="col">${H[k]}</th>`).join("") + "</tr></thead><tbody>";
+const counts = {full:0, m3on:0, m3all:0, none:0, measured:0};
+for (const f of FAMILIES) {
+  html += `<tr class="fam"><td class="board">${f.name} <span class="code">${f.soc}</span></td><td colspan="${C.length}">${f.note ? `<span class="famnote">${f.note}</span>` : ""}</td></tr>`;
+  for (const b of f.boards) {
+    const r = row(b);
+    if (r.inst.s === "no") counts.none++;
+    if (f.name.startsWith("M3")) { counts.m3all++; if (r.disp.s === "on" && ["on","part"].includes(r.gpu.s)) counts.m3on++; }
+    if (["M1","M1 Pro / Max","M2","M2 Pro / Max"].includes(f.name)) counts.full++;
+    html += `<tr><td class="board"><div class="bname">${b.n}</div><div class="bmeta"><span class="code">${b.id.toUpperCase()}</span>${b.cfg ? " · " + b.cfg : ""}</div></td>`;
+    html += C.map(k => { const v = r[k]; return `<td><div class="cell"><span class="chip s-${v.s}">${L[v.s]}</span>${v.n ? `<span class="note">${v.n}</span>` : ""}</div></td>`; }).join("");
+    html += "</tr>";
+  }
+}
+t.innerHTML = html + "</tbody>";
+
+document.getElementById("summary").innerHTML = [
+  [`${counts.full} boards: M1 to M2 Max`, "Every device described with a driver, display and GPU on by default. The gap is external display on M2."],
+  [`${counts.m3on} of ${counts.m3all} M3 boards`, "Native display and GPU on by default: J504, J613, J615, J514S, J516S, J516C, and J514C since m1n1#31 (unqualified power values). On M3 Pro only the 12-core CPU / 18-core GPU bin gets the GPU; the 14-core GPU bin is in linux-aurora#366 and #390."],
+  ["Sleep is s2idle only", "No board has deep sleep. Measured sleep drain: M1 Pro J314S 2.25 W, M3 Pro J514S 1.35 W, about 2 W on an M2 Pro, against 0.25 W for macOS on the same M1 Pro. Neo does not resume from s2idle yet."],
+  ["Binned M3 Max (T6034)", "J514M display and GPU are merged in the kernel and Mesa; on by default once m1n1#32 merges. J516M has nothing yet and boots on the framebuffer."],
+  ["MacBook Neo", "Display, GPU, Wi-Fi, BT and audio on by default. External display and Touch ID partial."],
+  [`${counts.none} boards not installable`, "Every M4, M5 and M6 MacBook. 15 have no device tree. J604, J713, J715 and J813 have one without storage. Only the M5 Max J714C has open bring-up PRs."],
+].map(([b, s]) => `<div class="sum"><b>${b}</b><span>${s}</span></div>`).join("");
+</script>
+</html>
