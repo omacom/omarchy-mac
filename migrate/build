@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# Builds bin/omarchy-mac-migrate, one self-contained script, from migrate/src.
+# --check fails when the committed script is not what the sources build.
+
+set -euo pipefail
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+output=$here/../bin/omarchy-mac-migrate
+modules=(main.sh engine.sh target.sh payload.sh repairs.sh users.sh cohort-tester.sh cohort-legacy.sh cohort-mx-mac.sh)
+
+build() {
+  local module
+  for module in "${modules[@]}"; do
+    if [[ $module != "main.sh" ]]; then
+      printf '\n# --- %s %s\n\n' "$module" "$(printf '%.0s-' {1..60})"
+    fi
+    cat "$here/src/$module"
+  done
+  printf '\nmigrate_main "$@"\n'
+}
+
+readme=$here/../README.md
+version=$(sed -n 's/^tool_version=\([0-9]*\)$/\1/p' "$here/src/engine.sh")
+
+# The README's one-liner names this version's release asset and its checksum.
+readme_line() {
+  printf 'd=$(mktemp -d) && curl -fsSLo "$d/omarchy-mac-migrate" https://github.com/omacom/omarchy-mac/releases/download/mac-migrate-v%s/omarchy-mac-migrate && echo "%s  $d/omarchy-mac-migrate" | sha256sum -c - && sudo bash "$d/omarchy-mac-migrate" run\n' \
+    "$version" "$1"
+}
+
+with_readme_line() {
+  awk -v line="$1" '/^d=\$\(mktemp -d\) && curl .*omarchy-mac-migrate/ { print line; next } { print }' "$readme"
+}
+
+case ${1:-} in
+  --check)
+    if ! cmp -s <(build) "$output"; then
+      echo "bin/omarchy-mac-migrate is not built from migrate/src: run migrate/build" >&2
+      exit 1
+    fi
+    if ! cmp -s <(with_readme_line "$(readme_line "$(sha256sum "$output" | cut -d' ' -f1)")") "$readme"; then
+      echo "README.md's one-liner does not name this build: run migrate/build" >&2
+      exit 1
+    fi
+    ;;
+  "")
+    build >"$output.new"
+    chmod 755 "$output.new"
+    mv "$output.new" "$output"
+    with_readme_line "$(readme_line "$(sha256sum "$output" | cut -d' ' -f1)")" >"$readme.new"
+    mv "$readme.new" "$readme"
+    ;;
+  *)
+    echo "Usage: migrate/build [--check]" >&2
+    exit 2
+    ;;
+esac

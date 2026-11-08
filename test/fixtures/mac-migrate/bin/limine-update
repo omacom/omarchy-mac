@@ -1,0 +1,7 @@
+#!/bin/bash
+root=${OMARCHY_MAC_MIGRATE_ROOT:?}
+echo "limine-update" >>"${MIGRATE_FIXTURE:?}/boot.log"
+mkdir -p "$root/boot/efi/EFI/Linux"
+echo "uki" >"$root/boot/efi/EFI/Linux/omarchy_linux-aurora.efi"
+grep -Fq 'omarchy_linux-aurora.efi' "$root/boot/efi/limine.conf" 2>/dev/null ||
+  echo "    image_path: boot():/EFI/Linux/omarchy_linux-aurora.efi" >>"$root/boot/efi/limine.conf"

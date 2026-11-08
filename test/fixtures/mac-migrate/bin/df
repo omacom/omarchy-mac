@@ -1,0 +1,3 @@
+#!/bin/bash
+echo Avail
+if [[ -e ${MIGRATE_FIXTURE:?}/df-low ]]; then echo 1000; else echo 999999999999; fi
