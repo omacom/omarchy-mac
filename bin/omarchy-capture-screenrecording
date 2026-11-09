@@ -386,7 +386,12 @@ finalize_recording() {
     # Hard-mute the first 400ms to drop the PipeWire capture-open pop (a near-clipping
     # transient around 130-200ms that a gentle fade-in can't attenuate enough), then a
     # 50ms fade avoids a click at the boundary before loudnorm normalizes the rest.
-    args+=(-af "volume=enable='lt(t,0.4)':volume=0,afade=t=in:st=0.4:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11")
+    #
+    # loudnorm analyses at 192 kHz and declares that as its output rate. Without -ar,
+    # ffmpeg negotiates the AAC encoder's 96 kHz ceiling. Playing that file switches
+    # the Asahi speaker PCM to 96 kHz and speakersafetyd panics on bad ivsense data,
+    # which locks the amps. -R 48000 on wf-recorder is not enough: this pass rewrites it.
+    args+=(-ar 48000 -af "volume=enable='lt(t,0.4)':volume=0,afade=t=in:st=0.4:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11")
   fi
 
   local processed="${latest%.mp4}-processed.mp4"
