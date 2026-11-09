@@ -2,6 +2,8 @@
 
 # omarchy:summary=Unblock and restart the Wi-Fi service.
 
+set -euo pipefail
+
 echo -e "Unblocking wifi...\n"
 
 rfkill unblock wifi
