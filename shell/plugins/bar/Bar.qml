@@ -62,14 +62,14 @@ Item {
   property string fontFamily: Style.font.family
   // Bound to the central Color singleton so the bar tracks shell.toml's
   // [bar] section. Property names kept for the rest of this file's bindings.
-  property color themeForeground: Color.bar.text
-  property color themeContrastForeground: Color.background
-  property color transparentForeground: Color.bar.text
+  property color themeForeground: ShellColor.bar.text
+  property color themeContrastForeground: ShellColor.background
+  property color transparentForeground: ShellColor.bar.text
   property color foreground: themeForeground
   property color barForeground: useTransparentForeground ? transparentForeground : themeForeground
   property bool foregroundAnimationEnabled: true
-  property color background: Color.bar.background
-  property color urgent: Color.bar.active
+  property color background: ShellColor.bar.background
+  property color urgent: ShellColor.bar.active
 
   Behavior on barForeground { enabled: root.foregroundAnimationEnabled; ColorAnimation { duration: 420; easing.type: Easing.InOutCubic } }
   Behavior on background { ColorAnimation { duration: 420; easing.type: Easing.InOutCubic } }
@@ -1120,8 +1120,8 @@ Item {
         id: tooltipBubble
         implicitWidth: tooltipLabel.implicitWidth + 20
         implicitHeight: tooltipLabel.implicitHeight + 14
-        color: Color.tooltip.background
-        borderSpec: Border.surfaceSpec("tooltip", "border", Color.tooltip.border, 1)
+        color: ShellColor.tooltip.background
+        borderSpec: Border.surfaceSpec("tooltip", "border", ShellColor.tooltip.border, 1)
         radius: Style.cornerRadius
 
         Text {
@@ -1129,7 +1129,7 @@ Item {
           textFormat: Text.PlainText
           anchors.centerIn: parent
           text: root.tooltipText
-          color: Color.tooltip.text
+          color: ShellColor.tooltip.text
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
           horizontalAlignment: Text.AlignHCenter
@@ -1248,7 +1248,7 @@ Item {
       y: targetRect ? Math.round(targetRect.y) : 0
       width: targetRect ? targetRect.width : 0
       height: targetRect ? targetRect.height : 0
-      color: Color.accent
+      color: ShellColor.accent
       radius: Math.min(width, height) / 2
     }
   }
@@ -1666,7 +1666,7 @@ Item {
 
       visible: opacity > 0
       opacity: slot.panelOpen && !slot.dragSource ? 0.9 : 0
-      color: Color.accent
+      color: ShellColor.accent
       radius: Math.min(width, height) / 2
       width: root.vertical ? Style.space(2) : slot.panelIndicatorExtent
       height: root.vertical ? slot.panelIndicatorExtent : Style.space(2)
