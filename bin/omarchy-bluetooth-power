@@ -48,6 +48,16 @@ wait_powered() {
   done
 }
 
+wait_unpowered() {
+  local deadline=$((SECONDS + POWER_WAIT_SECONDS))
+
+  while :; do
+    powered || return 0
+    ((SECONDS < deadline)) || return 1
+    sleep 0.1
+  done
+}
+
 power_on() {
   rfkill unblock bluetooth
 
@@ -63,18 +73,45 @@ power_on() {
   return 1
 }
 
+power_off() {
+  local controller
+  local status=0
+
+  # Gracefully power down adapters through BlueZ before cutting radio power.
+  # This stops active discovery inquiry scans and drains DMA queues, preventing
+  # HCI command timeouts and corrupted transfer rings on PCIe Bluetooth chips
+  # (such as Broadcom/Apple Silicon hci_bcm4377). Piped interactive commands
+  # exit on stdin EOF before BlueZ finishes powering down secondary adapters, so
+  # wait until all controllers report unpowered before dropping the rfkill block.
+  for controller in $(controllers); do
+    printf "select %s\npower off\n" "$controller" | timeout 2s bluetoothctl >/dev/null 2>&1
+  done
+
+  timeout 2s bluetoothctl power off >/dev/null 2>&1
+
+  if ! wait_unpowered; then
+    status=1
+    for controller in $(controllers); do
+      if [[ $(timeout 2s bluetoothctl show "$controller" 2>/dev/null) == *"Powered: yes"* ]]; then
+        echo "omarchy-bluetooth-power: warning: controller $controller did not power down cleanly" >&2
+      fi
+    done
+  fi
+
+  rfkill block bluetooth || return $?
+  return "$status"
+}
+
 case "${1:-}" in
   on)
     power_on
     ;;
   off)
-    # No bluetoothctl power off to go with this: the block already drops the
-    # adapter to Powered: no, and it is the half that survives the reboot.
-    rfkill block bluetooth
+    power_off
     ;;
   toggle)
     if powered; then
-      rfkill block bluetooth
+      power_off
     else
       power_on
     fi
