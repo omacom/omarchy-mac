@@ -13,8 +13,136 @@
 # A docked lid close does not suspend (HandleLidSwitchDocked defaults to
 # ignore), so it must not lock either: that is clamshell mode, still in use on
 # the external display.
-if omarchy-hw-laptop-closed && ! omarchy-hw-external-monitors; then
-  omarchy-system-lock >/dev/null 2>&1 || true
-fi
+#
+# The no-argument path is the generic Lid Switch binding. It trusts logind's
+# LidClosed, because Hyprland can run the binding again while the lid is open
+# and an open lid must not lock the session someone is using.
+#
+# Apple Silicon does not have that luxury. The lid switch is named
+# "Apple SMC power/lid events", and Hyprland is what receives it.
+# systemd-logind often never logs an edge for that device, so LidClosed stays
+# false, the generic path skips the lock, and HandleLidSwitch never suspends.
+# A closed Mac then stays fully awake. --smc-closed treats the Hyprland
+# switch:on edge as the close. --smc-opened cancels a suspend that has not
+# started yet.
+#
+# The suspend is delayed a few seconds so a lid that opens again does not
+# sleep, and so a suspend logind did manage to start is not repeated. Suspend
+# freezes this process; on thaw the wall clock has jumped by the whole sleep,
+# which is how the waiter tells the two cases apart.
 
-omarchy-hyprland-monitor-clamshell
+runtime_dir() {
+  printf '%s\n' "${OMARCHY_LID_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy}/lid-suspend"
+}
+
+cancel_suspend() {
+  local dir pid
+  dir=$(runtime_dir)
+  rm -f "$dir/token"
+  [[ -f $dir/pid ]] || return 0
+
+  pid=$(<"$dir/pid")
+  rm -f "$dir/pid"
+  if [[ $pid =~ ^[0-9]+$ ]]; then
+    kill "$pid" 2>/dev/null || true
+  fi
+}
+
+# Returns 0 when this waiter should still suspend.
+suspend_still_pending() {
+  local token_id=$1 delay=$2 start now current dir
+  dir=$(runtime_dir)
+  mkdir -p "$dir"
+  printf '%s\n' "$$" >"$dir/pid"
+
+  start=$(date +%s)
+  sleep "$delay"
+  now=$(date +%s)
+
+  # A jump larger than the delay means the machine already suspended.
+  if (( now - start > delay + 10 )); then
+    return 1
+  fi
+
+  current=$(cat "$dir/token" 2>/dev/null || true)
+  [[ $current == "$token_id" ]] || return 1
+  rm -f "$dir/token" "$dir/pid"
+  omarchy-hw-external-monitors && return 1
+  return 0
+}
+
+schedule_suspend() {
+  local dir token_id delay self
+  dir=$(runtime_dir)
+  mkdir -p "$dir"
+  delay=${OMARCHY_LID_SUSPEND_DELAY:-3}
+  [[ $delay =~ ^[0-9]+$ ]] || delay=3
+  token_id=$(date +%s%N)-$$
+  printf '%s\n' "$token_id" >"$dir/token"
+
+  # Tests run the waiter inline so they can see systemctl without racing a child.
+  if [[ ${OMARCHY_LID_SUSPEND_FOREGROUND:-} == "1" ]]; then
+    if suspend_still_pending "$token_id" "$delay"; then
+      systemctl suspend
+    fi
+    return
+  fi
+
+  self=${BASH_SOURCE[0]}
+  [[ $self == /* ]] || self=$(command -v -- "$self")
+  # setsid -f exits as soon as it forks. A command substitution around it keeps
+  # the child's stdout open on that pipe, and the lid binding then blocks until
+  # the waiter exits.
+  setsid -f "$self" --wait "$token_id" "$delay" </dev/null >/dev/null 2>&1
+}
+
+reconcile_displays() {
+  omarchy-hyprland-monitor-clamshell
+}
+
+close_from_logind() {
+  if omarchy-hw-laptop-closed && ! omarchy-hw-external-monitors; then
+    omarchy-system-lock >/dev/null 2>&1 || true
+  fi
+
+  reconcile_displays
+}
+
+close_from_smc() {
+  if omarchy-hw-external-monitors; then
+    cancel_suspend
+    reconcile_displays
+    return
+  fi
+
+  omarchy-system-lock >/dev/null 2>&1 || true
+  reconcile_displays
+  schedule_suspend
+}
+
+open_from_smc() {
+  cancel_suspend
+  reconcile_displays
+}
+
+case "${1:-}" in
+  "")
+    close_from_logind
+    ;;
+  --smc-closed)
+    close_from_smc
+    ;;
+  --smc-opened)
+    open_from_smc
+    ;;
+  --wait)
+    [[ -n ${2:-} && ${3:-} =~ ^[0-9]+$ ]] || exit 0
+    if suspend_still_pending "$2" "$3"; then
+      systemctl suspend
+    fi
+    ;;
+  *)
+    echo "usage: omarchy-system-lid-close [--smc-closed|--smc-opened]" >&2
+    exit 2
+    ;;
+esac
