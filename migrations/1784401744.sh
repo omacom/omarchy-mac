@@ -21,7 +21,7 @@ fi
 if lspci | grep -iE '(VGA|Display).*AMD' >/dev/null && omarchy-pkg-missing vulkan-radeon; then
   hardware_packages+=(vulkan-radeon)
 fi
-if lspci | grep -iE '(VGA|Display).*Apple' >/dev/null && omarchy-pkg-missing vulkan-asahi; then
+if omarchy-hw-apple && omarchy-pkg-missing vulkan-asahi; then
   hardware_packages+=(vulkan-asahi)
 fi
 
