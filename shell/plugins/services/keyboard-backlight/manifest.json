@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy.keyboard-backlight",
+  "name": "Keyboard Backlight",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "description": "Turns the keyboard backlight off after a short idle and back on at the first input.",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
