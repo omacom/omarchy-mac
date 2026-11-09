@@ -138,6 +138,65 @@ function withPendingAction(actions, address, action) {
   return next
 }
 
+// Classic HID devices (Apple keyboards, most mice) do not expose the GATT
+// Battery Service BlueZ reads battery from. The kernel HID driver publishes
+// their charge instead, as a sysfs power_supply node whose name embeds the
+// device's Bluetooth MAC:
+//   /sys/class/power_supply/hid-aa:bb:cc:dd:ee:ff-battery-<id>/capacity
+// The node appears only once the HID link is up, so the panel cats it through
+// a shell to let the id glob resolve.
+function hidBatteryGlob(address) {
+  var text = String(address || "").trim().toLowerCase()
+  return isAddressLike(text)
+    ? "/sys/class/power_supply/hid-" + text + "-battery-*/capacity"
+    : ""
+}
+
+function hidBatteryCapacity(raw) {
+  var value = parseInt(String(raw || "").trim(), 10)
+  return isFinite(value) && value >= 0 && value <= 100 ? value : -1
+}
+
+// Apple earbuds push battery over the proprietary AAP L2CAP channel, which no
+// BlueZ D-Bus surface exposes and no kernel power_supply node mirrors. Those
+// devices go through the plugin-local airpods-battery.py one-shot probe
+// instead: stdout JSON mirrors into a compact levels display, or "" when the
+// probe found nothing. Name-based, because AAP answers only AirPods-family devices.
+function looksLikeAirPods(name) {
+  return /airpods/i.test(String(name || "").trim())
+}
+
+function airpodsLevels(raw) {
+  var value
+  try {
+    value = JSON.parse(String(raw || ""))
+  } catch (e) {
+    return null
+  }
+  if (!value || typeof value !== "object" || value.error) return null
+
+  var levels = {}
+  var any = false
+  var parts = ["left", "right", "case"]
+  for (var i = 0; i < parts.length; i++) {
+    var level = value[parts[i]]
+    var valid = typeof level === "number" && isFinite(level) && level >= 0 && level <= 100
+    levels[parts[i]] = valid ? Math.round(level) : null
+    any = any || valid
+  }
+  return any ? levels : null
+}
+
+function airpodsText(levels) {
+  if (!levels) return ""
+  var text = []
+  var order = ["left", "right", "case"]
+  for (var i = 0; i < order.length; i++) {
+    if (typeof levels[order[i]] === "number") text.push(levels[order[i]])
+  }
+  return text.length > 0 ? text.join("/") : ""
+}
+
 function visibleSections(lists, discovering) {
   var sections = []
   if (lists && lists.connected && lists.connected.length > 0) sections.push("connected")
@@ -172,6 +231,11 @@ if (typeof module !== "undefined") {
     pendingAction: pendingAction,
     withPendingAction: withPendingAction,
     visibleSections: visibleSections,
-    sectionDevices: sectionDevices
+    sectionDevices: sectionDevices,
+    hidBatteryGlob: hidBatteryGlob,
+    hidBatteryCapacity: hidBatteryCapacity,
+    looksLikeAirPods: looksLikeAirPods,
+    airpodsLevels: airpodsLevels,
+    airpodsText: airpodsText
   }
 }
