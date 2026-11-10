@@ -1,0 +1,159 @@
+#!/bin/bash
+
+# omarchy:summary=Rebind hci_bcm4377 if Bluetooth wedges across resume
+# omarchy:hidden=true
+# omarchy:requires-sudo=true
+
+# The Broadcom Bluetooth firmware on Apple Silicon Macs can wedge across
+# s2idle: the controller stops answering on resume, so every HCI opcode fails
+# with -110 and the kernel logs "command 0x0c01 tx timeout" every couple of
+# seconds. BlueZ cannot clear it - both the bar toggle and bluetoothctl power
+# on fail - and only unbinding and rebinding the PCIe driver brings it back.
+# Upstream: https://github.com/AsahiLinux/linux/issues/604
+#
+# Run by omarchy-bluetooth-resume-fix.service after each resume (installed by
+# install/hardware/apple/fix-bluetooth-resume.sh). Output goes to the journal:
+#   journalctl -u omarchy-bluetooth-resume-fix
+#
+# Unlike Wi-Fi, an idle Bluetooth controller has no "should be connected by
+# now" state to time out on: a powered adapter with nothing in range is
+# healthy. So this acts on the tx timeout signature alone and never on a
+# backstop timer, which keeps it from rebinding hardware that is fine.
+
+WAIT_BEFORE=20 # how long to watch for the wedge signature after resume
+WAIT_AFTER=15  # how long to wait for the controller to return after a rebind
+
+# The shell tests point these at a sandbox; nothing else overrides them.
+DRIVER=${OMARCHY_BLUETOOTH_DRIVER_DIR:-/sys/bus/pci/drivers/hci_bcm4377}
+CONTROLLERS=${OMARCHY_BLUETOOTH_CLASS_DIR:-/sys/class/bluetooth}
+
+# A wedged controller repeats this every couple of seconds and a healthy one
+# never logs it at all. HCI_OP_RESET (0x0c01) is the usual first casualty, but
+# any opcode timing out is the same hang, so match them all.
+WEDGE_SIGNATURE='hci[0-9]+: command 0x[0-9a-f]+ tx timeout'
+
+START=$(date '+%Y-%m-%d %H:%M:%S')
+
+# The kernel holds these messages back while the console is suspended and
+# flushes them at resume, which can land them in the journal before this
+# service even starts, so a cursor taken now would miss them. Anchor on the
+# suspend entry instead: nothing is logged while the machine is asleep, so
+# everything after it is the suspend and resume path. Not the exit marker -
+# the kernel logs "PM: suspend exit" last, after device resume, and the tx
+# timeouts land ahead of it. The cursor also survives the clock stepping
+# backwards across resume, which a --since window does not.
+suspend_cursor() {
+  journalctl -kq -n 1 -g 'PM: suspend entry' --show-cursor 2>/dev/null |
+    sed -n 's/^-- cursor: //p'
+}
+
+wedged() {
+  local n
+
+  if [[ -n $CURSOR ]]; then
+    n=$(journalctl -kq --after-cursor "$CURSOR" --no-pager 2>/dev/null |
+      grep -cE "$WEDGE_SIGNATURE")
+  else
+    # No suspend marker to read from, so a --since window is the best left. It
+    # comes back empty if the clock stepped backwards across resume, and the
+    # next resume gets another chance - better than an unwindowed read, which
+    # would count stale timeouts from a wedge that was already recovered.
+    n=$(journalctl -kq --since "$START" --no-pager 2>/dev/null |
+      grep -cE "$WEDGE_SIGNATURE")
+  fi
+
+  ((${n:-0} > 0))
+}
+
+# Whatever PCI function is bound to the driver, rather than a hard-coded
+# address: the Wi-Fi and Bluetooth halves of these chips sit on the same
+# device, and only the Bluetooth function is ever bound here.
+bound_controller() {
+  local path
+
+  for path in "$DRIVER"/*:*:*.*; do
+    if [[ -e $path ]]; then
+      basename "$path"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+controller_back() {
+  compgen -G "$CONTROLLERS/hci*" >/dev/null
+}
+
+for cmd in journalctl rfkill; do
+  if omarchy-cmd-missing "$cmd"; then
+    echo "missing $cmd - cannot recover Bluetooth"
+    exit 1
+  fi
+done
+
+# Respect a deliberately disabled radio - do not fight the user or rfkill.
+# omarchy-bluetooth-power keeps the off state as an rfkill soft block, so a
+# blocked radio is a choice rather than a wedge.
+soft_state=$(rfkill --noheadings --output SOFT list bluetooth 2>/dev/null)
+if [[ -z $soft_state ]]; then
+  echo "no bluetooth radio present, nothing to do"
+  exit 0
+fi
+if ! grep -q "unblocked" <<<"$soft_state"; then
+  echo "bluetooth is soft blocked, nothing to do"
+  exit 0
+fi
+
+DEVICE=$(bound_controller)
+if [[ -z $DEVICE ]]; then
+  echo "no controller bound to hci_bcm4377, nothing to rebind"
+  exit 0
+fi
+
+CURSOR=$(suspend_cursor)
+if [[ -z $CURSOR ]]; then
+  echo "no suspend marker in the journal - watching from now instead"
+fi
+
+i=0
+while ((i < WAIT_BEFORE)); do
+  if wedged; then
+    echo "wedged controller confirmed ${i}s after resume ($DEVICE) - rebinding hci_bcm4377"
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+if ((i >= WAIT_BEFORE)); then
+  echo "no wedge signature ${WAIT_BEFORE}s after resume - bluetooth came back on its own"
+  exit 0
+fi
+
+# Unbinding a hung controller is slow: the driver destroys six transfer rings
+# and four completion rings, and every one of them waits out its own timeout,
+# so this write can sit for ten seconds before it returns.
+if ! echo "$DEVICE" >"$DRIVER/unbind" 2>/dev/null; then
+  echo "failed to unbind $DEVICE - giving up, a reboot is needed"
+  exit 1
+fi
+sleep 1
+if ! echo "$DEVICE" >"$DRIVER/bind" 2>/dev/null; then
+  echo "failed to bind $DEVICE - giving up, a reboot is needed"
+  exit 1
+fi
+echo "rebound $DEVICE, waiting for the controller to come back"
+
+i=0
+while ((i < WAIT_AFTER)); do
+  if controller_back; then
+    echo "controller back ${i}s after the rebind"
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+echo "controller still missing ${WAIT_AFTER}s after the rebind"
+exit 1
