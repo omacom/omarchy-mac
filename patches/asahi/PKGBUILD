@@ -1,0 +1,22 @@
+pkgname=linux-asahi-hdmi-recover
+pkgver=7.1.13.asahi1
+pkgrel=1
+pkgdesc='Asahi HDMI reconnect recovery candidate (experimental, opt-in)'
+arch=('aarch64')
+url='https://github.com/AsahiLinux/linux'
+license=('GPL-2.0-only')
+depends=('coreutils' 'kmod' 'initramfs' 'm1n1>=1.6.1')
+options=('!strip' '!debug')
+PKGEXT='.pkg.tar.zst'
+COMPRESSZST=(zstd -c -T4 -8 -)
+package() {
+  local kernel_src="${ASAHI_KERNEL_SOURCE:?Run patches/asahi/build-hdmi-reconnect.sh}"
+  local kernel_release
+  kernel_release=$(make -s -C "$kernel_src" LOCALVERSION= kernelrelease)
+  [[ $kernel_release == '7.1.13-1-1-ARCH-hdmi-recover' ]] || return 1
+  make -C "$kernel_src" LOCALVERSION= modules_install INSTALL_MOD_PATH="$pkgdir/usr"
+  install -Dm644 "$kernel_src/arch/arm64/boot/Image" "$pkgdir/usr/lib/modules/$kernel_release/vmlinuz"
+  printf '%s\n' "$pkgname" > "$pkgdir/usr/lib/modules/$kernel_release/pkgbase"
+  install -d "$pkgdir/usr/lib/modules/$kernel_release/dtbs"
+  install -m644 "$kernel_src"/arch/arm64/boot/dts/apple/*.dtb "$pkgdir/usr/lib/modules/$kernel_release/dtbs/"
+}
