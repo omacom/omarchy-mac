@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# omarchy:summary=Returns true when a Touch Bar is present
+
+# The Touch Bar's digitizer registers as an input device named "* Touch Bar":
+# "Mac14,7 Touch Bar" on the M2, "MacBookPro17,1 Touch Bar" on the M1, and
+# "Apple Inc. Touch Bar Display Touchpad" on T2 Macs. Read sysfs directly so
+# this answers before any userspace Touch Bar tool is installed.
+input_devices_path="${OMARCHY_INPUT_DEVICES_PATH:-/sys/class/input}"
+
+for device in "$input_devices_path"/input*; do
+  [[ -r $device/name ]] || continue
+  if [[ $(<"$device/name") == *"Touch Bar"* ]]; then
+    exit 0
+  fi
+done
+
+exit 1
