@@ -13,6 +13,15 @@ exit_screensaver() {
   exit 0
 }
 
+# Without ttfx there is nothing to draw, and a respawn loop over a missing
+# command paints the terminal with launch errors. Say so once and leave
+# before any state — hidden cursor, background color — needs restoring.
+if omarchy-cmd-missing ttfx; then
+  echo "The screensaver needs ttfx, which is not installed." >&2
+  echo "Install it with: omarchy pkg add ttfx" >&2
+  exit 1
+fi
+
 # Exit the screensaver on signals and input from keyboard and mouse
 trap exit_screensaver SIGINT SIGTERM SIGHUP SIGQUIT
 
