@@ -941,5 +941,34 @@ check "an existing checkout is fetched" checkout_is_fetched
 check "and moved onto the requested ref" checkout_is_reset
 check "and pointed at the requested forge and repo" checkout_remote_is_set
 
+echo
+echo "=== the console font step also turns UTF-8 mode on ==="
+
+utf8_root=$(mktemp -d)
+utf8_repo=$(cd -- "$(dirname -- "$TOOL")/.." && pwd)
+OMARCHY_PATH=$utf8_repo \
+  OMARCHY_CONSOLE_UTF8_BIN=$utf8_root/bin/omarchy-mac-console-utf8 \
+  OMARCHY_GETTY_UTF8_DROPIN=$utf8_root/getty/omarchy-console-utf8.conf \
+  OMARCHY_CONSOLE_UTF8_UNIT=$utf8_root/omarchy-console-utf8.service \
+  OMARCHY_CONSOLE_UTF8_SOURCE=$utf8_repo/bin/omarchy-mac-console-utf8 \
+  OMARCHY_CONSOLE_UTF8_SKIP_ENABLE=1 \
+  bash "$utf8_repo/install/hardware/apple/fix-console-utf8.sh"
+
+helper_installed() { [[ -x $utf8_root/bin/omarchy-mac-console-utf8 ]]; }
+check "the helper is installed" helper_installed
+check "getty reapplies UTF-8 after it resets the VT" \
+  grep -qF 'ExecStart=' "$utf8_root/getty/omarchy-console-utf8.conf" && \
+  grep -qF -- "--agetty %I linux" "$utf8_root/getty/omarchy-console-utf8.conf"
+check "the boot unit runs before getty" \
+  grep -qF 'Before=getty.target' "$utf8_root/omarchy-console-utf8.service"
+check "the helper parses UTF-8 instead of doubling the font" \
+  grep -qF 'kbd_mode -C' "$utf8_root/bin/omarchy-mac-console-utf8" && \
+  ! grep -qF 'setfont -d' "$utf8_root/bin/omarchy-mac-console-utf8"
+check "the font step still selects ter-132b" \
+  grep -qF 'FONT=ter-132b' "$TOOL"
+check "the font step installs the UTF-8 hook" \
+  grep -qF 'fix-console-utf8.sh' "$TOOL"
+rm -rf "$utf8_root"
+
 echo "=== $pass checks passed, $failures failed ==="
 (( failures == 0 ))
