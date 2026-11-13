@@ -22,7 +22,13 @@ if [[ ! -e $mic_wants/omarchy-asahi-mic.service && ! -L $mic_wants/omarchy-asahi
 fi
 mic_status=0
 omarchy-audio-asahi-mic-map || mic_status=$?
-if [[ -S ${XDG_RUNTIME_DIR:-/run/user/$UID}/bus ]]; then
+runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$UID}"
+# Provisioning can run while the user is logged in on another VT, so a user bus
+# socket may exist even though this shell has no session environment. Only
+# contact the user manager from a live runtime context with a usable bus.
+if [[ ${OMARCHY_SETUP_CONTEXT:-runtime} == "runtime" && -S $runtime_dir/bus ]]; then
+  export XDG_RUNTIME_DIR="$runtime_dir"
+  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$runtime_dir/bus}"
   systemctl --user daemon-reload
   systemctl --user start omarchy-asahi-mic.service
 fi
