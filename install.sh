@@ -304,7 +304,8 @@ run_system_setup() {
   fi
 
   log "Running Omarchy user setup"
-  omarchy-provision-user --first-install
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}" \
+    omarchy-provision-user --first-install
 }
 
 # On a btrfs root (see omarchy-system-btrfs-migrate) record the finished
