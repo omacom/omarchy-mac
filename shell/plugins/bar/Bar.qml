@@ -420,8 +420,9 @@ Item {
 
   // Tab order for the panels in one bar region. Scoped to a single bar surface
   // so tabbing walks the bar the open panel belongs to instead of hopping the
-  // panel to another monitor's copy of the same widget.
-  function panelNavigationSlots(region, window) {
+  // panel to another monitor's copy of the same widget. A screen name scopes
+  // the walk to one output without needing a surface.
+  function panelNavigationSlots(region, window, screenName) {
     var entries = layoutEntries(region)
     var slots = []
     for (var i = 0; i < entries.length; i++) {
@@ -430,6 +431,7 @@ Item {
         var slot = moduleSlots[j]
         if (!slot || slot.region !== region || slot.moduleName !== id) continue
         if (window && !sameWindow(slotWindow(slot), window)) continue
+        if (screenName && slotScreenName(slot) !== screenName) continue
         var item = slot.activeItem
         if (!item || item.visible !== true || slot.visible !== true || slot.width <= 0 || slot.height <= 0) continue
         if (typeof item.open !== "function" || typeof item.close !== "function" || item.opened === undefined) continue
@@ -446,11 +448,15 @@ Item {
   // Nth panel icon the user can see rather than the Nth layout entry.
   // One-based, because it exists for hotkeys; anything else lands on no slot.
   //
-  // Counting any bar surface is enough: every monitor lays its bar out from the
-  // one layout, and summoning the id routes through pickPanelSlot, which opens
-  // the focused monitor's copy whichever surface was counted.
+  // Counted on the focused output, because a bar beside a camera cutout can
+  // drop controls that another output still draws. Summoning the id routes
+  // through pickPanelSlot, which opens that same output's copy. With no
+  // focused output, or none that has a panel, every output is counted.
   function panelWidgetIdAt(region, index) {
-    var slots = panelNavigationSlots(String(region || ""), null)
+    var regionName = String(region || "")
+    var focused = focusedScreenName()
+    var slots = focused ? panelNavigationSlots(regionName, null, focused) : []
+    if (slots.length === 0) slots = panelNavigationSlots(regionName, null, "")
     var slot = slots[Math.round(Number(index)) - 1]
     return slot ? String(slot.moduleName || "") : ""
   }
@@ -1605,18 +1611,23 @@ Item {
           ModuleSlot {
             required property var modelData
             required property int index
-            readonly property real measuredWidth: activeItem ? activeItem.implicitWidth : 0
+            // The slot's own size already treats a self-hiding widget as zero
+            // wide. A slot dropped for overflow stays visible but transparent
+            // and disabled: hiding it would make every child report hidden,
+            // so the measure would collapse and the slot would flap back.
+            readonly property real measuredWidth: implicitWidth
             readonly property var placement: boundedList.placement[index]
+            readonly property bool placed: !!placement && placement.visible
             entry: modelData
             region: moduleListRoot.region
             x: placement ? placement.x : 0
-            width: measuredWidth
+            width: placed ? measuredWidth : 0
             height: activeItem ? activeItem.implicitHeight : 0
             anchors.verticalCenter: parent.verticalCenter
-            visible: !!placement && placement.visible
-            enabled: visible
-            onVisibleChanged: {
-              if (!visible && panelOpen && activeItem && typeof activeItem.close === "function") activeItem.close()
+            opacity: placed ? 1 : 0
+            enabled: placed
+            onPlacedChanged: {
+              if (!placed && panelOpen && activeItem && typeof activeItem.close === "function") activeItem.close()
             }
           }
         }

@@ -200,12 +200,13 @@ assert(
 )
 
 // A positional hotkey means "the third panel in this section", so it counts the
-// panels the bar actually draws. Reusing the tab-order walk is what keeps the
-// count honest: a widget with no panel and a hidden one are already passed over
-// there, and reading the layout config a second time would count both.
+// panels the bar actually draws on the focused output. Reusing the tab-order
+// walk is what keeps the count honest: a widget with no panel and a hidden one
+// are already passed over there, and reading the layout config a second time
+// would count both.
 assert(
-  /function panelWidgetIdAt\(region, index\) \{[\s\S]*?panelNavigationSlots\(String\(region \|\| ""\), null\)/.test(barSource),
-  'bar counts positional panels off the drawn tab order'
+  /function panelWidgetIdAt\(region, index\) \{[\s\S]*?panelNavigationSlots\(regionName, null, focused\)[\s\S]*?panelNavigationSlots\(regionName, null, ""\)/.test(barSource),
+  'bar counts positional panels off the drawn tab order of the focused output'
 )
 assert(
   /var slot = slots\[Math\.round\(Number\(index\)\) - 1\]/.test(barSource),

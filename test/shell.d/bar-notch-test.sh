@@ -61,8 +61,8 @@ assert(
 )
 
 const cutouts = bar.parseCutouts(JSON.stringify({ panels: [
-  { connector: 'eDP', width: 3024, height: 1964, top: 64, cutoutWidth: 420 },
-  { connector: 'eDP', width: 2560, height: 1664, top: 56 }
+  { connector: 'eDP', width: 3024, height: 1964, cutoutWidth: 420 },
+  { connector: 'eDP', width: 2560, height: 1664 }
 ] }))
 const mode = (width, height, transform = 0) => ({ width, height, transform })
 assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964)), 210, 'scale 2 halves the physical cutout width')
@@ -123,5 +123,14 @@ assertDeepEqual(bar.notchSlotLayout([0, 100], 300, 647), [
   { x: 547, visible: false },
   { x: 547, visible: true }
 ], 'an empty control consumes no space or input target')
+assertDeepEqual(bar.notchSlotLayout([347, 0], 300, 647), [
+  { x: 300, visible: true },
+  { x: 647, visible: false }
+], 'a hidden trailing control does not push a control that fits out of the space')
+assertDeepEqual(bar.notchSlotLayout([100, 0, 247], 300, 647), [
+  { x: 300, visible: true },
+  { x: 400, visible: false },
+  { x: 400, visible: true }
+], 'a hidden control between two others leaves no blank slot')
 assertDeepEqual(bar.notchSlotLayout([], 300, 647), [], 'an empty center section stays empty')
 JS
