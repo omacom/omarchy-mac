@@ -12,6 +12,7 @@ set -euo pipefail
 echo "Omarchy Mac is no longer maintained and can't start new installs." >&2
 echo "Install the official Omarchy for Apple Silicon: brew install omacom/mac/omarchy" >&2
 echo "Mac manual: https://omarchy.org/manual/mac-support/" >&2
+echo "If a guided setup is in progress, stop it with: sudo omarchy-mac-setup --abort" >&2
 exit 1
 
 readonly checkout="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

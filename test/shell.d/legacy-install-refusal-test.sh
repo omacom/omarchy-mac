@@ -42,3 +42,7 @@ for script in bootstrap.sh setup.sh install.sh bin/omarchy-upgrade-to-quattro-ma
   [[ -z $(ls -A "$work/home") ]] || fail "$script writes nothing to HOME" "$(ls -A "$work/home")"
   pass "$script refuses to start an install and changes nothing"
 done
+
+grep -qF 'sudo omarchy-mac-setup --abort' "$test_tmp/work-install.sh/stderr" ||
+  fail "install.sh tells a guided setup in progress how to stop" "$(cat "$test_tmp/work-install.sh/stderr")"
+pass "install.sh tells a guided setup in progress how to stop"
