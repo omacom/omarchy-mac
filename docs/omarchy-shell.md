@@ -382,8 +382,8 @@ The platform can supply measured camera cutout widths in
 physical pixels. The width must be positive and narrower than the panel.
 For a matching top bar, the center widgets sit just left of the centered cutout.
 Other displays and bar positions keep their layout. Panels without a measured
-width also keep their layout. Hyprland supplies the physical mode at fractional
-scales; the bar does not infer a cutout width from the framebuffer.
+width also keep their layout. Width placement requires Hyprland's physical
+mode and a known top-edge orientation; unavailable monitor data keeps the layout.
 
 ## Custom bar modules
 

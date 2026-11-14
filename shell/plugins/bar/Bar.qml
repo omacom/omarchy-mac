@@ -1065,13 +1065,13 @@ Item {
           : BarModel.notchHeight(screen.name, screen.width, screen.height, screen.devicePixelRatio))
       : 0
     readonly property var panelMonitor: Hyprland.monitorFor(screen)
-    readonly property var panelMode: panelMonitor ? ({
+    readonly property var panelMode: panelMonitor && panelMonitor.lastIpcObject ? ({
       width: panelMonitor.width,
       height: panelMonitor.height,
-      transform: panelMonitor.lastIpcObject ? panelMonitor.lastIpcObject.transform : 0
+      transform: panelMonitor.lastIpcObject.transform
     }) : null
     readonly property int cutoutLeft: BarModel.cutoutLeftEdge(root.displayCutouts, root.position, screen.name,
-      screen.width, screen.height, screen.devicePixelRatio, panelMode)
+      screen.width, screen.height, panelMode)
 
     implicitWidth: root.vertical ? root.barSize : 0
     implicitHeight: root.vertical ? 0 : Math.max(root.barSize, notchFloor)

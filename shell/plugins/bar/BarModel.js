@@ -286,33 +286,24 @@ function parseCutouts(text) {
   return panels.filter(validCutoutPanel)
 }
 
-function cutoutMode(logicalWidth, logicalHeight, devicePixelRatio, mode) {
-  if (mode && mode.width > 0 && mode.height > 0) return mode
-  return {
-    width: Math.round(logicalWidth * devicePixelRatio),
-    height: Math.round(logicalHeight * devicePixelRatio),
-    transform: 0
-  }
-}
 
 function cutoutPanelMatches(panel, mode, screenName) {
   return String(screenName || "").indexOf(panel.connector) === 0
     && Math.abs(mode.width - panel.width) <= 4 && Math.abs(mode.height - panel.height) <= 4
 }
 
-function cutoutWidthAt(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode) {
+function cutoutWidthAt(cutouts, position, screenName, logicalWidth, logicalHeight, mode) {
   if (position !== "top" || !(logicalWidth > 0) || !(logicalHeight > 0)) return 0
-  var physical = cutoutMode(logicalWidth, logicalHeight, devicePixelRatio, mode)
-  if ([0, 4].indexOf(Number(physical.transform) || 0) === -1) return 0
-  if ((physical.width > physical.height) !== (logicalWidth > logicalHeight)) return 0
+  if (!mode || !(mode.width > 0) || !(mode.height > 0) || [0, 4].indexOf(mode.transform) === -1) return 0
+  if ((mode.width > mode.height) !== (logicalWidth > logicalHeight)) return 0
   var panel = cutouts.find(function(panel) {
-    return cutoutPanelMatches(panel, physical, screenName)
+    return cutoutPanelMatches(panel, mode, screenName)
   })
-  return panel ? Math.ceil(panel.cutoutWidth * logicalWidth / physical.width) : 0
+  return panel ? Math.ceil(panel.cutoutWidth * logicalWidth / mode.width) : 0
 }
 
-function cutoutLeftEdge(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode) {
-  var width = cutoutWidthAt(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode)
+function cutoutLeftEdge(cutouts, position, screenName, logicalWidth, logicalHeight, mode) {
+  var width = cutoutWidthAt(cutouts, position, screenName, logicalWidth, logicalHeight, mode)
   return width > 0 ? Math.floor((logicalWidth - width) / 2) : 0
 }
 
