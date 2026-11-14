@@ -41,13 +41,7 @@ retires the old one.
 
 ## Run the upgrade
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/omarchy-upgrade-to-quattro-mac | bash
-```
-
-The script confirms before it changes anything, asks for your sudo password
-once, and prompts to reboot at the end. Expect the package step to take a
-while — Quickshell and a few other AUR packages are compiled on the machine.
+Omarchy Mac is no longer maintained, so `omarchy-upgrade-to-quattro-mac` no longer upgrades a 3.x install. It prints where to go and exits without changing anything. Install the official Omarchy for Apple Silicon from macOS with `brew install omacom/mac/omarchy`, or see the [Mac manual](https://omarchy.org/manual/mac-support/). The rest of this page describes what the upgrade did, for machines that already ran it.
 
 ## What the script does
 

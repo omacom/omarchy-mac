@@ -686,10 +686,12 @@ echo "=== the piped re-exec carries its arguments ==="
 # and branch -- Omarchy 3 upstream instead of the branch asked for. Only the
 # unrelated Omarchy-3 guard caught it.
 #
-# Stubs walk main() to that one line without root: running_from_a_file reports
-# a pipe, fetch_self does nothing, fail is made non-fatal so the EUID check
-# does not end the run, and exec is shadowed by a function so this process
-# survives to be asserted on.
+# --abort is the only run that still gets that far now that new setups are
+# refused, so it carries the arguments here. Stubs walk main() to that one line
+# without root: running_from_a_file reports a pipe, fetch_self does nothing,
+# fail is made non-fatal so the EUID check does not end the run, cleanup_all
+# keeps a fall-through away from the real /etc, and exec is shadowed by a
+# function so this process survives to be asserted on.
 #
 # It has to run under a pty. The re-exec carries a `</dev/tty` redirection, and
 # with no controlling terminal that redirection fails -- which skips the call
@@ -706,8 +708,9 @@ running_from_a_file() { return 1; }
 fetch_self() { :; }
 load_conf() { :; }
 fail() { :; }
+cleanup_all() { :; }
 exec() { printf 'EXEC: %s\n' "$*"; exit 0; }
-main --repo scottjones/omarchy-mac --ref feat/btrfs-encrypt-only
+main --abort --repo scottjones/omarchy-mac --ref feat/btrfs-encrypt-only
 HARNESS
   output=$(TOOL="$TOOL" timeout 30 script -qec "bash '$harness'" /dev/null 2>/dev/null | tr -d '\r')
   rm -f "$harness"
@@ -877,54 +880,102 @@ check "an unencrypted root with the flag set still reports requested" \
 check "an unencrypted root without the flag reports not requested" \
   matches 'encryption +not requested' "$(status_with 0 0)"
 
-echo "=== a finished machine is not worked on before being told it is finished ==="
+echo "=== a guided setup is refused before it changes anything ==="
 
-# Reaching the done step only after the setup block meant an already-complete
-# machine had its root account locked, its user re-created, its GRUB font
-# rebuilt and its keymap reapplied -- and was then told there was nothing to do.
-# Stubs report what would have run; fail is neutered so the EUID and
-# architecture checks do not end the run on a development machine.
-finished_machine_run() {
+# Omarchy Mac is no longer maintained, so main() turns away every run except
+# --status and --abort. The refusal has to come first: a setup creates the
+# user, locks root and encrypts the disk long before it reaches install.sh,
+# which refuses too. Stubs report what would have run, the paths the script
+# writes point into a scratch directory, and the commands it shells out to log
+# their calls. fail is neutered so the EUID and architecture checks cannot end
+# the run before the refusal does.
+closed=$work/closed
+closed_reset() {
+  local cmd
+  rm -rf "$closed"
+  mkdir -p "$closed/bin"
+  for cmd in useradd usermod userdel passwd chpasswd systemctl cryptsetup \
+    mkfs.btrfs mkfs.vfat mount umount btrfs grub-mkconfig setfont \
+    hostnamectl git curl pacman sudo; do
+    printf '#!/bin/sh\necho "%s $*" >>"%s/calls"\n' "$cmd" "$closed" >"$closed/bin/$cmd"
+    chmod +x "$closed/bin/$cmd"
+  done
+}
+
+closed_run() {
+  local step="$1"
+  shift
   (
-    resume=0 step_only="" abort=0 status=0
-    username=someone hostname=box keymap=us want_encrypt=1
-    repo=owner/repo ref=branch forge=codeberg.org
-    invocation=()
+    PATH=$closed/bin:$PATH
+    CONF=$closed/conf SELF=$closed/self UNIT=$closed/unit
+    SUDOERS=$closed/sudoers SRC=$closed/src LOG=$closed/log/setup.log
     fail() { :; }
-    quiet_console() { :; }
-    on_exit() { :; }
-    load_conf() { :; }
-    current_step() { echo done; }
+    quiet_console() { echo "QUIETED CONSOLE"; }
+    current_step() { echo "$step"; }
     ask_questions() { echo "ASKED QUESTIONS"; }
-    require_network() { :; }
+    require_network() { echo "CHECKED NETWORK"; }
     ensure_source_checkout() { echo "CLONED"; }
     ensure_user() { echo "CREATED USER"; }
-    lock_root_account() { echo "LOCKED ROOT"; }
     setup_console_font() { echo "CONSOLE FONT"; }
     setup_grub_font() { echo "GRUB FONT"; }
     apply_keymap() { echo "APPLIED KEYMAP"; }
     apply_hostname() { echo "APPLIED HOSTNAME"; }
-    save_conf() { :; }
-    install_self() { :; }
+    save_conf() { echo "SAVED CONF"; }
+    install_self() { echo "INSTALLED SELF"; }
+    install_unit() { echo "INSTALLED UNIT"; }
     run_step() { echo "RAN STEP: $1"; }
-    main
+    run_named_step() { echo "RAN STEP: $1"; }
+    main "$@"
   ) 2>&1
 }
 
-finished_run=$(finished_machine_run)
+# Everything closed_run leaves behind besides its own stubs.
+closed_leftovers() {
+  find "$closed" -mindepth 1 -not -path "$closed/bin" -not -path "$closed/bin/*"
+}
 
-check "it runs the done step" matches 'RAN STEP: done' "$finished_run"
+refuses_cleanly() {
+  local label="$1" output status
+  shift
+  closed_reset
+  output=$(closed_run "$@")
+  status=$?
+  check "$label: exits non-zero" [ "$status" != 0 ]
+  check "$label: points to the Mac manual" \
+    matches 'omarchy\.org/manual/mac-support' "$output"
+  check "$label: runs no setup step" \
+    not matches 'QUIETED|ASKED|NETWORK|CLONED|CREATED|FONT|APPLIED|SAVED|INSTALLED|RAN STEP' "$output"
+  check "$label: writes no state and calls no command" \
+    [ -z "$(closed_leftovers)" ]
+}
 
-no_questions_asked() { ! matches 'ASKED QUESTIONS' "$finished_run"; }
-no_user_created() { ! matches 'CREATED USER' "$finished_run"; }
-no_fonts_rebuilt() { ! matches 'GRUB FONT|CONSOLE FONT' "$finished_run"; }
-no_clone_made() { ! matches 'CLONED' "$finished_run"; }
+refuses_cleanly "a fresh run" boot-layout
+refuses_cleanly "a fresh run with every answer given" boot-layout \
+  --user someone --hostname box --keymap us --encrypt
+refuses_cleanly "a resumed run" encrypt --resume
+refuses_cleanly "a finished machine" done
+refuses_cleanly "a single step" done --step fonts
+refuses_cleanly "a single step alongside --abort" done --abort --step fonts
 
-check "it asks nothing" no_questions_asked
-# ensure_user is also what locks the root account, so this covers both.
-check "it does not re-create the user or relock root" no_user_created
-check "it does not rebuild the fonts" no_fonts_rebuilt
-check "it does not clone the repo" no_clone_made
+closed_reset
+status_output=$(closed_run encrypt --status)
+status_status=$?
+check "--status still exits 0" [ "$status_status" = 0 ]
+check "--status still prints the status" \
+  matches 'Omarchy Mac setup status' "$status_output"
+check "--status is not refused" not matches 'mac-support' "$status_output"
+
+closed_reset
+: >"$closed/conf"
+: >"$closed/sudoers"
+abort_output=$(closed_run encrypt --abort)
+abort_status=$?
+check "--abort still exits 0" [ "$abort_status" = 0 ]
+check "--abort still says the setup stopped" \
+  matches 'Guided setup stopped' "$abort_output"
+abort_cleaned_up() { [[ ! -e $closed/conf && ! -e $closed/sudoers ]]; }
+check "--abort still removes the setup's config and sudoers drop-in" abort_cleaned_up
+check "--abort is not refused" not matches 'mac-support' "$abort_output"
 
 echo "=== an existing checkout is brought to the requested ref ==="
 

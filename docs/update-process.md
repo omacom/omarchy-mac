@@ -135,8 +135,9 @@ omarchy-update
 
 Important behavior:
 
-- In dev-link mode, `omarchy update` fast-forwards the active checkout from its
-  configured upstream before changing system packages or running migrations.
+- In dev-link mode, `omarchy update` no longer pulls the active checkout.
+  Omarchy Mac is no longer maintained, so the checkout stays frozen and
+  `omarchy-update-dev` only says so, pointing to the Mac manual.
 - `-y` exports `OMARCHY_UPDATE_UNATTENDED=1` — a promise not to ask anything.
   Steps that would prompt (orphan removal, conflict handoff) report and skip
   instead of blocking.
@@ -227,13 +228,11 @@ omarchy-update-available
 
 `omarchy-update-available` checks the active Omarchy sources for updates:
 
-- new upstream commits for the active dev-linked checkout
 - `omarchy-dev`, when installed
 - otherwise `omarchy`, when installed
 
-The dev check fetches the checkout's configured upstream before comparing it
-with `HEAD`. A failed fetch is quiet and falls back to the existing remote-
-tracking state.
+A dev-linked checkout is frozen and `omarchy update` no longer pulls it, so new
+upstream commits are not reported as updates.
 
 Exit codes:
 
@@ -250,7 +249,7 @@ Updates install whatever the active channel points at. `omarchy-channel-set
 which pacman repo the mirrorlist points at (and swap between the `omarchy` and
 `omarchy-dev` packages through a guard-allowed pacman run), while `dev` links
 the runtime to a git checkout via the dev-link mechanism, after which
-`omarchy update` fast-forwards that checkout instead of upgrading a package.
+`omarchy update` leaves that checkout as it is instead of upgrading a package.
 
 There is no version file at runtime. `omarchy-version` derives the version from
 `pacman -Q` on whichever package is installed, or reports `dev (<hash>)` for a
@@ -270,7 +269,7 @@ scripts.
 | `omarchy-update-stay-awake` | Hidden helper that starts or stops update-owned sleep and idle inhibition, restoring only the state it changed. | **Keep internal/hidden.** Keeps inhibitor ownership and cleanup together. |
 | `omarchy-update-status` | Hidden helper that refreshes or clears the shell update indicator after rechecking available updates. | **Keep internal/hidden.** Keeps shell status synchronization out of the main pipeline. |
 | `omarchy-update-confirm` | Gum confirmation copy for `omarchy update`. | **Question.** Could be inlined into `omarchy-update`; separate file only helps keep copy isolated. |
-| `omarchy-update-dev` | Fast-forwards the active dev-linked checkout from its configured upstream; no-ops for package-backed installs. | **Keep.** Runs before package updates so a checkout conflict stops the update before system mutation. |
+| `omarchy-update-dev` | Reports that the dev-linked checkout is frozen and points to the Mac manual; no-ops for package-backed installs. | **Keep.** Frozen checkouts still run it on every update. |
 | `omarchy-update-keyring` | Ensures Omarchy keyring and Arch keyring are current before the main transaction. | **Keep, but review.** It uses targeted `pacman -Sy` for keyring bootstrapping; acceptable for this special case but should remain tightly scoped. |
 | `omarchy-update-system-pkgs` | Runs `sudo env OMARCHY_UPDATE_PACMAN=1 pacman -Syu --noconfirm` with `--overwrite '/usr/share/omarchy/*'`, capturing stderr to a report file; on failure it execs `omarchy-update-system-pkgs-when-conflicted`. | **Keep for now.** Small leaf command, clear/testable. |
 | `omarchy-update-system-pkgs-when-conflicted` | Hidden conflict handler: quarantines unowned conflicting files under `/var/lib/omarchy/replaced`, retries the upgrade once, restores files the upgrade didn't claim, and hands package-vs-package conflicts to an interactive pacman run (never under `-y`). | **Keep internal/hidden.** Keeps conflict recovery out of the happy path. |

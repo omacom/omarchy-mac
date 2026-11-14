@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# omarchy:summary=Upgrade an Omarchy Mac 3.x install to the Quattro source-checkout layout
+# omarchy:summary=Retired: points Omarchy Mac 3.x installs to Omarchy for Apple Silicon
 # omarchy:args=[--yes] [--reboot] [--ref BRANCH]
 # omarchy:examples=omarchy upgrade to quattro mac
 # omarchy:requires-sudo=true
@@ -11,14 +11,8 @@ usage() {
   cat <<'USAGE'
 Usage: omarchy-upgrade-to-quattro-mac [--yes] [--reboot] [--ref BRANCH]
 
-Upgrade an Omarchy Mac 3.x install to Quattro (Omarchy 4). There are no
-Omarchy packages for Apple Silicon, so unlike the upstream x86 upgrade this
-keeps Omarchy running from the git checkout at ~/.local/share/omarchy and
-wires that checkout into the places a packaged install would occupy.
-
-This script is self-contained so 3.x users can run it directly:
-
-  curl -fsSL https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/omarchy-upgrade-to-quattro-mac | bash
+Retired. Omarchy Mac is no longer maintained, so this upgrade no longer runs.
+Install Omarchy for Apple Silicon instead: https://omarchy.org/manual/mac-support/
 
 Options:
   -y, --yes      Do not prompt before upgrading
@@ -83,6 +77,12 @@ while (($#)); do
   esac
 done
 
+echo "Omarchy Mac is no longer maintained, so 3.x installs are no longer upgraded to Quattro." >&2
+echo "Install the official Omarchy for Apple Silicon: brew install omacom/mac/omarchy" >&2
+echo "Mac manual: https://omarchy.org/manual/mac-support/" >&2
+exit 1
+
+# The rest of this file stays because tests extract its functions.
 (( EUID != 0 )) || fail "Run this as your regular user, not as root. It uses sudo where needed."
 command -v sudo >/dev/null 2>&1 || fail "sudo is required."
 command -v pacman >/dev/null 2>&1 || fail "This upgrade is only supported on Arch-based systems with pacman."

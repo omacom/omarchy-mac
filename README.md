@@ -14,8 +14,8 @@ in one command, full-disk encryption included.
 > Install it with the [Omarchy installer](https://github.com/omacom/omarchy-mac-installer), below.
 > Its Mac packages and the [Mac manual](https://github.com/omacom/omarchy-mac-pkgs/tree/main/mac-manual)
 > live in [omarchy-mac-pkgs](https://github.com/omacom/omarchy-mac-pkgs).
-> The script install further down still works for now, but new Mac support lands in
-> Omarchy for Apple Silicon. New installs should use it, and existing installs should move to it.
+> Omarchy Mac is no longer maintained. Existing installs keep working but get no more
+> updates. New installs should use Omarchy for Apple Silicon.
 
 ## Install Omarchy for Apple Silicon (recommended)
 
@@ -45,125 +45,21 @@ There is no in-place upgrade from the script install to Omarchy for Apple Silico
 3. **Install Omarchy for Apple Silicon** as above.
 4. **Restore** your files.
 
-## Install with the script (legacy, M1 and M2)
+## Script install (no longer maintained)
 
-Already running Omarchy 3.x? This page is the fresh install — to upgrade in
-place, see [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md).
-
----
-
-## Before you begin
-
-- A recent backup of macOS (Time Machine or similar).
-- An Apple Silicon Mac (M1/M2 family). Verify compatibility: https://asahilinux.org/fedora/#device-support
-- At least 50 GB free on the internal SSD (100 GB recommended).
-- Internet access.
-
----
-
-## Install
-
-### 1. Run the Asahi Alarm installer, from macOS Terminal
+Omarchy Mac is no longer maintained, and its scripts no longer start new
+installs. Install Omarchy for Apple Silicon from macOS instead:
 
 ```bash
-curl https://asahi-alarm.org/installer-bootstrap.sh | sh
+brew install omacom/mac/omarchy
 ```
 
-Choose `Asahi Alarm Minimal (BTRFS)` and allocate at least 50 GB for Linux.
-The plain `Asahi Alarm Minimal` (ext4) works too — the setup below converts
-it — but the BTRFS image already has the right shape.
+Or see the [Mac manual](https://omarchy.org/manual/mac-support/).
 
-### 2. Boot into Arch and get online
-
-Log in as root (username: `root`, password: `root`) and connect first — 
-everything from here starts with a download:
-
-```bash
-nmtui
-```
-
-Choose `Activate a connection` and connect to a WiFi network. Optionally 
-`Set a system hostname` or set it during install below. Choose `Quit` when done 
-to return to the prompt.
-
-If `nmtui` shows an error right after activating the connection, reboot and try
-again.
-
-### 3. One command
-
-Still as root:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/omarchy-mac-setup | bash
-```
-
-There is nothing to prepare beyond the network: no pacman update, no locale
-setup, no user creation. The script installs what it needs, creates your user
-and sets up sudo itself. To read it before running it, or to pass options:
-
-```bash
-curl -LO https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/omarchy-mac-setup
-bash omarchy-mac-setup --no-encrypt
-```
-
-(`--repo <owner/repo>` installs from a fork the same way. `quattro` is the
-repository's default branch and the script installs from it by default; it
-checks the version it is about to install and stops rather than giving you
-Omarchy 3 by accident.)
-
-It asks whether to encrypt (yes by default), then for a hostname, username and
-password, then carries the machine the rest of the way on its own — moving
-`/boot` onto the EFI partition, encrypting the root, installing Omarchy —
-rebooting between steps and resuming itself each time on tty1.
-
-Expect about fifteen minutes, three reboots, and two questions along the way:
-
-- **A gum dialog offering to build packages with no known aarch64 build.** Say
-  no. `obs-studio` alone compiles for about three hours and then fails an
-  architecture check. It defaults to no.
-- **The disk passphrase**, chosen at the console on the boot that does the
-  encryption. That boot rewrites every block of the partition, printing
-  cryptsetup's own progress as it goes; on an M2 Max it runs at about 1 GiB/s.
-  It is safe to interrupt: the next boot resumes where it stopped.
-
-Encrypted machines log straight into the desktop afterwards: the passphrase at
-boot is the authentication, and a second password immediately after it protects
-nothing the first one did not.
-
-Other flags: `--no-encrypt` skips the encryption and the boot-layout move it
-needs, `--status` reports where a machine has got to, `--step <name>` re-runs
-one step, `--abort` stops the guided run without undoing anything, and
-`--keep-root-password` leaves root's password as Asahi Alarm shipped it instead
-of locking it once your user has sudo.
-
----
-
-## By hand
-
-Every step the script drives can be run separately. The boot-layout move,
-btrfs conversion, snapper snapshots and encryption are covered in
-[docs/btrfs.md](docs/btrfs.md). Once a regular user with sudo exists —
-the minimal image ships without `git` or `sudo`, so as root first:
-`pacman -S --needed sudo git` — installing Omarchy itself is:
-
-```bash
-git clone https://github.com/omarchy-mac/omarchy-mac.git ~/.local/share/omarchy
-cd ~/.local/share/omarchy
-cat version    # 4.x — if this says 3.x you are on the wrong branch
-bash install.sh
-```
-
-**Mind the branch.** A plain clone gets `quattro`, the default branch and the
-Omarchy 4 line. `main` still carries Omarchy 3.x, and its `install.sh` installs
-Omarchy 3 without saying which generation it is putting on the machine — an
-easy hour to lose. `cat version` is how you check before committing to it.
-
-The install takes under ten minutes on a good connection — most of the default
-set comes prebuilt from the aarch64 package repo rather than being compiled
-here. A few packages have no ARM build at all and are reported at the end
-rather than failing the install; where building one would take hours and still
-fail, the installer asks before trying, and `OMARCHY_TRY_UNAVAILABLE=1 bash
-install.sh` forces the attempt.
+Existing installs keep working but get no more updates. There is no in-place
+upgrade to Omarchy for Apple Silicon: back up, remove the old install, install
+Omarchy for Apple Silicon, then restore your files, as in
+[Moving from this setup](#moving-from-this-setup).
 
 ---
 
@@ -239,7 +135,7 @@ Consider supporting the project: [![Buy Me A Coffee](https://img.shields.io/badg
 
 - The Omarchy manual — [manual/](manual/)
 - Btrfs snapshots and disk encryption — [docs/btrfs.md](docs/btrfs.md)
-- Upgrading from 3.x to Quattro — [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md)
+- Upgrading from 3.x to Quattro (no longer runs; install [Omarchy for Apple Silicon](https://omarchy.org/manual/mac-support/) instead) — [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md)
 
 ---
 
