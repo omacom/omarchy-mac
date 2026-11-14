@@ -135,7 +135,7 @@ Consider supporting the project: [![Buy Me A Coffee](https://img.shields.io/badg
 
 - The Omarchy manual — [manual/](manual/)
 - Btrfs snapshots and disk encryption — [docs/btrfs.md](docs/btrfs.md)
-- Upgrading from 3.x to Quattro — [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md)
+- Upgrading from 3.x to Quattro (no longer runs; install [Omarchy for Apple Silicon](https://omarchy.org/manual/mac-support/) instead) — [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md)
 
 ---
 

@@ -101,15 +101,12 @@ check_tree "4.0.0.alpha" "missing etc/profile.d/omarchy.sh" reject "etc/profile.
 check_tree "4.0.0.alpha" "version 4.0.0.alpha" accept
 pass "the tree validator only lets Quattro trees through"
 
-# The curl one-liner is written out in both the script and the guide, so a
-# branch rename can leave a 3.x user fetching an upgrade that no longer exists.
-script_url=$(grep -oE 'https://[^ ]*omarchy-upgrade-to-quattro-mac' "$upgrade_to_quattro_mac" | head -1)
-doc_url=$(grep -oE 'https://[^ ]*omarchy-upgrade-to-quattro-mac' "$ROOT/docs/upgrade-to-quattro.md" | head -1)
-[[ -n $script_url && -n $doc_url ]] || fail "the upgrade one-liner appears in both the script and the guide"
-[[ $script_url == "$doc_url" ]] ||
-  fail "the upgrade one-liner agrees between script and guide" "script: $script_url
-doc:    $doc_url"
-pass "the upgrade one-liner agrees between the script and the guide"
+if grep -qE 'https://[^ ]*omarchy-upgrade-to-quattro-mac' "$ROOT/docs/upgrade-to-quattro.md"; then
+  fail "the guide no longer publishes the retired upgrade one-liner"
+fi
+grep -qF 'https://omarchy.org/manual/mac-support/' "$ROOT/docs/upgrade-to-quattro.md" ||
+  fail "the guide points 3.x users to the Mac manual"
+pass "the guide points 3.x users to the Mac manual instead of the upgrade"
 
 # A pre-existing ARM repo stanza does not prove its sync database is current;
 # stale metadata turns the later package phase into confusing 404s. Refreshing

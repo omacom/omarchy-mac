@@ -83,6 +83,11 @@ while (($#)); do
   esac
 done
 
+echo "Omarchy Mac is no longer maintained, so 3.x installs are no longer upgraded to Quattro." >&2
+echo "Install the official Omarchy for Apple Silicon: brew install omacom/mac/omarchy" >&2
+echo "Mac manual: https://omarchy.org/manual/mac-support/" >&2
+exit 1
+
 (( EUID != 0 )) || fail "Run this as your regular user, not as root. It uses sudo where needed."
 command -v sudo >/dev/null 2>&1 || fail "sudo is required."
 command -v pacman >/dev/null 2>&1 || fail "This upgrade is only supported on Arch-based systems with pacman."

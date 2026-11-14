@@ -21,9 +21,9 @@ for command in sudo su pacman pacman-key yay makepkg git curl wget useradd \
   chmod +x "$mock_bin/$command"
 done
 
-for script in bootstrap.sh setup.sh install.sh; do
+for script in bootstrap.sh setup.sh install.sh bin/omarchy-upgrade-to-quattro-mac; do
   : >"$calls"
-  work="$test_tmp/work-$script"
+  work="$test_tmp/work-${script//\//-}"
   mkdir -p "$work/home"
 
   set +e
