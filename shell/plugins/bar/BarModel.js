@@ -264,8 +264,63 @@ function notchHeight(screenName, logicalWidth, logicalHeight, devicePixelRatio) 
   return Math.ceil(strip)
 }
 
+function positiveInteger(value) {
+  return Number.isInteger(value) && value > 0
+}
+
+function validCutoutPanel(panel) {
+  return panel && typeof panel.connector === "string" && panel.connector !== ""
+    && positiveInteger(panel.width) && positiveInteger(panel.height)
+    && positiveInteger(panel.cutoutWidth) && panel.cutoutWidth < panel.width
+}
+
+// Widths come only from platform measurements; unknown panels keep their layout.
+function parseCutouts(text) {
+  var parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch (error) {
+    return []
+  }
+  var panels = parsed && Array.isArray(parsed.panels) ? parsed.panels : []
+  return panels.filter(validCutoutPanel)
+}
+
+function cutoutMode(logicalWidth, logicalHeight, devicePixelRatio, mode) {
+  if (mode && mode.width > 0 && mode.height > 0) return mode
+  return {
+    width: Math.round(logicalWidth * devicePixelRatio),
+    height: Math.round(logicalHeight * devicePixelRatio),
+    transform: 0
+  }
+}
+
+function cutoutPanelMatches(panel, mode, screenName) {
+  return String(screenName || "").indexOf(panel.connector) === 0
+    && Math.abs(mode.width - panel.width) <= 4 && Math.abs(mode.height - panel.height) <= 4
+}
+
+function cutoutWidthAt(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode) {
+  if (position !== "top" || !(logicalWidth > 0) || !(logicalHeight > 0)) return 0
+  var physical = cutoutMode(logicalWidth, logicalHeight, devicePixelRatio, mode)
+  if ([0, 4].indexOf(Number(physical.transform) || 0) === -1) return 0
+  if ((physical.width > physical.height) !== (logicalWidth > logicalHeight)) return 0
+  var panel = cutouts.find(function(panel) {
+    return cutoutPanelMatches(panel, physical, screenName)
+  })
+  return panel ? Math.ceil(panel.cutoutWidth * logicalWidth / physical.width) : 0
+}
+
+function cutoutLeftEdge(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode) {
+  var width = cutoutWidthAt(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode)
+  return width > 0 ? Math.floor((logicalWidth - width) / 2) : 0
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
+    parseCutouts: parseCutouts,
+    cutoutWidthAt: cutoutWidthAt,
+    cutoutLeftEdge: cutoutLeftEdge,
     isDrawnSlot: isDrawnSlot,
     notchHeight: notchHeight,
     pickDrawnSlot: pickDrawnSlot,

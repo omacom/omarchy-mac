@@ -39,6 +39,19 @@ Item {
     centerAnchor: "omarchy.clock",
     layout: { left: [], center: [], right: [] }
   })
+  readonly property var displayCutouts: displayCutoutsFile.missing ? [] : BarModel.parseCutouts(displayCutoutsFile.text())
+
+  FileView {
+    id: displayCutoutsFile
+    property bool missing: false
+    path: "/usr/share/omarchy-platform/display-cutouts.json"
+    blockLoading: true
+    watchChanges: true
+    onLoaded: missing = false
+    onLoadFailed: missing = true
+    onFileChanged: reload()
+  }
+
   property var layoutConfig: fallbackBarConfig.layout
   property string centerAnchor: ""
   property bool requestedTransparent: false
@@ -1051,6 +1064,14 @@ Item {
           ? Style.bar.notchHeight
           : BarModel.notchHeight(screen.name, screen.width, screen.height, screen.devicePixelRatio))
       : 0
+    readonly property var panelMonitor: Hyprland.monitorFor(screen)
+    readonly property var panelMode: panelMonitor ? ({
+      width: panelMonitor.width,
+      height: panelMonitor.height,
+      transform: panelMonitor.lastIpcObject ? panelMonitor.lastIpcObject.transform : 0
+    }) : null
+    readonly property int cutoutLeft: BarModel.cutoutLeftEdge(root.displayCutouts, root.position, screen.name,
+      screen.width, screen.height, screen.devicePixelRatio, panelMode)
 
     implicitWidth: root.vertical ? root.barSize : 0
     implicitHeight: root.vertical ? 0 : Math.max(root.barSize, notchFloor)
@@ -1144,7 +1165,10 @@ Item {
       Item {
         anchors.fill: parent
 
-        CenterModules { anchors.fill: parent }
+        CenterModules {
+          anchors.fill: parent
+          cutoutLeft: barWindow.cutoutLeft
+        }
 
         LeftModules {
           anchors.left: parent.left
@@ -1326,12 +1350,36 @@ Item {
     id: centerRoot
 
     property var entries: root.layoutEntries("center")
+    property int cutoutLeft: 0
     readonly property bool hasAnchor: root.entryIndex(entries, root.centerAnchor) !== -1
     readonly property var anchorEntry: root.findCenterAnchorEntry()
 
     Loader {
       anchors.fill: parent
-      sourceComponent: root.vertical ? verticalCenterModules : horizontalCenterModules
+      sourceComponent: root.vertical ? verticalCenterModules
+        : centerRoot.cutoutLeft > 0 ? notchCenterModules : horizontalCenterModules
+    }
+
+    Component {
+      id: notchCenterModules
+
+      Item {
+        anchors.fill: parent
+
+        CenterGestureArea { anchors.fill: parent }
+
+        HoverHandler {
+          onHoveredChanged: root.setCenterSectionHovered(hovered)
+        }
+
+        ModuleList {
+          entries: centerRoot.entries
+          region: "center"
+          anchors.right: parent.right
+          anchors.rightMargin: parent.width - centerRoot.cutoutLeft + Style.space(4)
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
     }
 
     Component {
