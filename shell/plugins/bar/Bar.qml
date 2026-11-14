@@ -39,6 +39,19 @@ Item {
     centerAnchor: "omarchy.clock",
     layout: { left: [], center: [], right: [] }
   })
+  readonly property var displayCutouts: displayCutoutsFile.missing ? [] : BarModel.parseCutouts(displayCutoutsFile.text())
+
+  FileView {
+    id: displayCutoutsFile
+    property bool missing: false
+    path: "/usr/share/omarchy-platform/display-cutouts.json"
+    blockLoading: true
+    watchChanges: true
+    onLoaded: missing = false
+    onLoadFailed: missing = true
+    onFileChanged: reload()
+  }
+
   property var layoutConfig: fallbackBarConfig.layout
   property string centerAnchor: ""
   property bool requestedTransparent: false
@@ -407,8 +420,9 @@ Item {
 
   // Tab order for the panels in one bar region. Scoped to a single bar surface
   // so tabbing walks the bar the open panel belongs to instead of hopping the
-  // panel to another monitor's copy of the same widget.
-  function panelNavigationSlots(region, window) {
+  // panel to another monitor's copy of the same widget. A screen name scopes
+  // the walk to one output without needing a surface.
+  function panelNavigationSlots(region, window, screenName) {
     var entries = layoutEntries(region)
     var slots = []
     for (var i = 0; i < entries.length; i++) {
@@ -417,6 +431,7 @@ Item {
         var slot = moduleSlots[j]
         if (!slot || slot.region !== region || slot.moduleName !== id) continue
         if (window && !sameWindow(slotWindow(slot), window)) continue
+        if (screenName && slotScreenName(slot) !== screenName) continue
         var item = slot.activeItem
         if (!item || item.visible !== true || slot.visible !== true || slot.width <= 0 || slot.height <= 0) continue
         if (typeof item.open !== "function" || typeof item.close !== "function" || item.opened === undefined) continue
@@ -433,11 +448,15 @@ Item {
   // Nth panel icon the user can see rather than the Nth layout entry.
   // One-based, because it exists for hotkeys; anything else lands on no slot.
   //
-  // Counting any bar surface is enough: every monitor lays its bar out from the
-  // one layout, and summoning the id routes through pickPanelSlot, which opens
-  // the focused monitor's copy whichever surface was counted.
+  // Counted on the focused output, because a bar beside a camera cutout can
+  // drop controls that another output still draws. Summoning the id routes
+  // through pickPanelSlot, which opens that same output's copy. With no
+  // focused output, or none that has a panel, every output is counted.
   function panelWidgetIdAt(region, index) {
-    var slots = panelNavigationSlots(String(region || ""), null)
+    var regionName = String(region || "")
+    var focused = focusedScreenName()
+    var slots = focused ? panelNavigationSlots(regionName, null, focused) : []
+    if (slots.length === 0) slots = panelNavigationSlots(regionName, null, "")
     var slot = slots[Math.round(Number(index)) - 1]
     return slot ? String(slot.moduleName || "") : ""
   }
@@ -1051,6 +1070,14 @@ Item {
           ? Style.bar.notchHeight
           : BarModel.notchHeight(screen.name, screen.width, screen.height, screen.devicePixelRatio))
       : 0
+    readonly property var panelMonitor: Hyprland.monitorFor(screen)
+    readonly property var panelMode: panelMonitor && panelMonitor.lastIpcObject ? ({
+      width: panelMonitor.width,
+      height: panelMonitor.height,
+      transform: panelMonitor.lastIpcObject.transform
+    }) : null
+    readonly property int cutoutLeft: BarModel.cutoutLeftEdge(root.displayCutouts, root.position, screen.name,
+      screen.width, screen.height, panelMode)
 
     implicitWidth: root.vertical ? root.barSize : 0
     implicitHeight: root.vertical ? 0 : Math.max(root.barSize, notchFloor)
@@ -1144,9 +1171,14 @@ Item {
       Item {
         anchors.fill: parent
 
-        CenterModules { anchors.fill: parent }
+        CenterModules {
+          anchors.fill: parent
+          cutoutLeft: barWindow.cutoutLeft
+          leftControlsRight: leftModules.x + leftModules.width
+        }
 
         LeftModules {
+          id: leftModules
           anchors.left: parent.left
           anchors.leftMargin: Style.space(8)
           anchors.verticalCenter: parent.verticalCenter
@@ -1326,12 +1358,38 @@ Item {
     id: centerRoot
 
     property var entries: root.layoutEntries("center")
+    property int cutoutLeft: 0
+    property real leftControlsRight: 0
     readonly property bool hasAnchor: root.entryIndex(entries, root.centerAnchor) !== -1
     readonly property var anchorEntry: root.findCenterAnchorEntry()
 
     Loader {
       anchors.fill: parent
-      sourceComponent: root.vertical ? verticalCenterModules : horizontalCenterModules
+      sourceComponent: root.vertical ? verticalCenterModules
+        : centerRoot.cutoutLeft > 0 ? notchCenterModules : horizontalCenterModules
+    }
+
+    Component {
+      id: notchCenterModules
+
+      Item {
+        anchors.fill: parent
+
+        CenterGestureArea { anchors.fill: parent }
+
+        HoverHandler {
+          onHoveredChanged: root.setCenterSectionHovered(hovered)
+        }
+
+        ModuleList {
+          entries: centerRoot.entries
+          region: "center"
+          widthLimit: Math.max(0, centerRoot.cutoutLeft - centerRoot.leftControlsRight - 2 * Style.space(4))
+          anchors.right: parent.right
+          anchors.rightMargin: parent.width - centerRoot.cutoutLeft + Style.space(4)
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
     }
 
     Component {
@@ -1512,6 +1570,7 @@ Item {
 
     property var entries: []
     property string region: ""
+    property real widthLimit: -1
 
     visible: entries.length > 0
     // A hidden list must not build its modules. The center section declares
@@ -1520,9 +1579,60 @@ Item {
     // twice — two IPC handlers registered for the same target, two clocks
     // ticking, two of every timer and fetch behind them.
     active: visible && entries.length > 0
-    sourceComponent: root.vertical ? verticalModuleList : horizontalModuleList
-    width: item ? item.implicitWidth : 0
+    sourceComponent: root.vertical ? verticalModuleList
+      : widthLimit >= 0 ? boundedHorizontalModuleList : horizontalModuleList
+    width: !root.vertical && widthLimit >= 0 ? widthLimit : item ? item.implicitWidth : 0
     height: item ? item.implicitHeight : 0
+
+    Component {
+      id: boundedHorizontalModuleList
+
+      Item {
+        id: boundedList
+        // Repeater count can change before itemAt() exposes the new delegates.
+        property int slotsRevision: 0
+        readonly property var placement: {
+          var revision = slotsRevision
+          var widths = []
+          for (var i = 0; i < boundedSlots.count; i++) {
+            var slot = boundedSlots.itemAt(i)
+            widths.push(slot ? slot.measuredWidth : 0)
+          }
+          return BarModel.notchSlotLayout(widths, 0, width)
+        }
+        implicitHeight: root.barSize
+
+        Repeater {
+          id: boundedSlots
+          model: moduleListRoot.entries
+          onItemAdded: boundedList.slotsRevision++
+          onItemRemoved: boundedList.slotsRevision++
+
+          ModuleSlot {
+            required property var modelData
+            required property int index
+            // The slot's own size already treats a self-hiding widget as zero
+            // wide. A slot dropped for overflow stays visible but transparent
+            // and disabled: hiding it would make every child report hidden,
+            // so the measure would collapse and the slot would flap back.
+            readonly property real measuredWidth: implicitWidth
+            readonly property var placement: boundedList.placement[index]
+            readonly property bool placed: !!placement && placement.visible
+            entry: modelData
+            region: moduleListRoot.region
+            x: placement ? placement.x : 0
+            width: placed ? measuredWidth : 0
+            height: activeItem ? activeItem.implicitHeight : 0
+            anchors.verticalCenter: parent.verticalCenter
+            opacity: placed ? 1 : 0
+            enabled: placed
+            onPlacedChanged: {
+              if (!placed && panelOpen && activeItem && typeof activeItem.close === "function") activeItem.close()
+            }
+          }
+        }
+      }
+    }
 
     Component {
       id: horizontalModuleList

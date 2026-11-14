@@ -376,6 +376,19 @@ size-vertical   = 28   # left/right bar width at base-size 12
 
 Set `scale-with-font = false` to keep those bar sizes as fixed pixels.
 
+The platform can supply measured camera cutout widths in
+`/usr/share/omarchy-platform/display-cutouts.json`. Each panel entry names its
+`connector`, physical `width` and `height`, and optional `cutoutWidth` in whole
+physical pixels. The width must be positive and narrower than the panel.
+For a matching top bar, the center widgets sit just left of the centered cutout,
+regardless of `centerAnchor`. Only whole controls that fit between the left
+section and the cutout remain visible and enabled.
+Other displays and bar positions keep their layout. Panels without a measured
+width also keep their layout. Width placement requires Hyprland's physical
+mode and a known top-edge orientation; unavailable monitor data keeps the layout.
+This descriptor supplies width placement only. Bar height still uses the existing
+panel table; this runtime does not read a descriptor's top-clearance value.
+
 ## Custom bar modules
 
 If a full plugin is overkill, declare a one-off module inline in

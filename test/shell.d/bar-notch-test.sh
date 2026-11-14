@@ -59,4 +59,90 @@ assert(
     !/barToken\("notch-height"/.test(styleSource),
   'notch-height is read raw, not through the font-scaled bar tokens'
 )
+
+const cutouts = bar.parseCutouts(JSON.stringify({ panels: [
+  { connector: 'eDP', width: 3024, height: 1964, cutoutWidth: 420 },
+  { connector: 'eDP', width: 2560, height: 1664 }
+] }))
+const mode = (width, height, transform = 0) => ({ width, height, transform })
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964)), 210, 'scale 2 halves the physical cutout width')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 3024, 1964, mode(3024, 1964)), 420, 'scale 1 keeps the physical width')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1890, 1228, mode(3024, 1964)), 263, 'fractional scaling reserves every cutout column')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, null), 0, 'a missing monitor mode leaves the layout unchanged')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1890, 1228, null), 0, 'fractional scaling without a mode never guesses')
+assertEqual(bar.cutoutLeftEdge(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964)), 651, 'the cutout starts at logical column 651')
+for (const position of ['bottom', 'left', 'right'])
+  assertEqual(bar.cutoutLeftEdge(cutouts, position, 'eDP-1', 1512, 982, mode(3024, 1964)), 0, `${position} bars keep their layout`)
+for (const name of ['DP-1', 'HDMI-A-1'])
+  assertEqual(bar.cutoutWidthAt(cutouts, 'top', name, 1512, 982, mode(3024, 1964)), 0, `${name} keeps its layout`)
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1280, 832, mode(2560, 1664)), 0, 'a panel without a measured width keeps its layout')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1890)), 0, 'a different mode keeps its layout')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 0, 0, null), 0, 'an empty screen has no cutout')
+for (const transform of [1, 2, 3, 5, 6, 7])
+  assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964, transform)), 0, `transform ${transform} has no top cutout`)
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964, 4)), 210, 'horizontal mirroring preserves a centered cutout')
+for (const unknown of [
+  mode(0, 0, 2),
+  { width: 3024, height: 1964 },
+  mode(3024, 1964, null),
+  mode(3024, 1964, false)
+])
+  assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, unknown), 0, 'invalid mode or unknown orientation leaves the layout unchanged')
+for (const text of ['', 'bad json', 'null', '[]', '{"panels":{}}'])
+  assertDeepEqual(bar.parseCutouts(text), [], 'invalid descriptions leave the layout unchanged')
+for (const bad of [true, false, null, '420', 1.5, 0, -1, 3024])
+  assertDeepEqual(bar.parseCutouts(JSON.stringify({ panels: [
+    { connector: 'eDP', width: 3024, height: 1964, cutoutWidth: bad }
+  ] })), [], `invalid width ${JSON.stringify(bad)} leaves the layout unchanged`)
+const narrow = bar.parseCutouts(JSON.stringify({ panels: [
+  { connector: 'eDP', width: 100, height: 100, cutoutWidth: 1 }
+] }))
+assertEqual(narrow.length, 1, 'one physical column is a valid positive cutout width')
+assertEqual(bar.cutoutLeftEdge(narrow, 'top', 'eDP-1', 100, 100, mode(100, 100)), 49, 'a one-column cutout keeps its safe left edge')
+
+assertDeepEqual(bar.notchSlotLayout([500], 300, 647), [
+  { x: 147, visible: false }
+], 'an oversized center control cannot overlap the left controls')
+assertDeepEqual(bar.notchSlotLayout([200, 400, 100], 300, 647), [
+  { x: -53, visible: false },
+  { x: 147, visible: false },
+  { x: 547, visible: true }
+], 'overflow drops whole leading controls and keeps a complete trailing control')
+assertDeepEqual(bar.notchSlotLayout([247, 100], 300, 647), [
+  { x: 300, visible: true },
+  { x: 547, visible: true }
+], 'controls that exactly fit keep their full width and order')
+assertDeepEqual(bar.notchSlotLayout([248, 100], 300, 647), [
+  { x: 299, visible: false },
+  { x: 547, visible: true }
+], 'one overflowing pixel hides the whole control instead of clipping it')
+assertDeepEqual(bar.notchSlotLayout([100], 647, 647), [
+  { x: 547, visible: false }
+], 'no available space hides every center control')
+assertDeepEqual(bar.notchSlotLayout([0, 100], 300, 647), [
+  { x: 547, visible: false },
+  { x: 547, visible: true }
+], 'an empty control consumes no space or input target')
+assertDeepEqual(bar.notchSlotLayout([347, 0], 300, 647), [
+  { x: 300, visible: true },
+  { x: 647, visible: false }
+], 'a hidden trailing control does not push a control that fits out of the space')
+assertDeepEqual(bar.notchSlotLayout([100, 0, 247], 300, 647), [
+  { x: 300, visible: true },
+  { x: 400, visible: false },
+  { x: 400, visible: true }
+], 'a hidden control between two others leaves no blank slot')
+assertDeepEqual(bar.notchSlotLayout([], 300, 647), [], 'an empty center section stays empty')
+
+// A slot dropped for overflow must stay visible: hiding it makes every child
+// report hidden, so a self-hiding module measures zero and the slot flaps back.
+// Measuring by the slot's own implicit width is what keeps a hidden module from
+// holding a blank slot, and dropping a slot must still take no input.
+const boundedStart = barSource.indexOf('id: boundedHorizontalModuleList')
+const bounded = barSource.slice(boundedStart, barSource.indexOf('id: horizontalModuleList', boundedStart))
+assert(boundedStart > 0 && bounded.length > 0, 'the bounded center list component is found')
+assert(/measuredWidth: implicitWidth\b/.test(bounded), 'a bounded slot measures its own implicit width, zero for a hidden module')
+assert(!/measuredWidth: activeItem/.test(bounded), 'a bounded slot does not measure its widget regardless of that widget being hidden')
+assert(/enabled: placed\b/.test(bounded) && /opacity: placed \? 1 : 0/.test(bounded), 'a dropped slot takes no input and draws nothing')
+assert(!/visible: !!placement/.test(bounded), 'a dropped slot is not hidden, which would collapse its own measure')
 JS
