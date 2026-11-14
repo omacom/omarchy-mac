@@ -133,4 +133,16 @@ assertDeepEqual(bar.notchSlotLayout([100, 0, 247], 300, 647), [
   { x: 400, visible: true }
 ], 'a hidden control between two others leaves no blank slot')
 assertDeepEqual(bar.notchSlotLayout([], 300, 647), [], 'an empty center section stays empty')
+
+// A slot dropped for overflow must stay visible: hiding it makes every child
+// report hidden, so a self-hiding module measures zero and the slot flaps back.
+// Measuring by the slot's own implicit width is what keeps a hidden module from
+// holding a blank slot, and dropping a slot must still take no input.
+const boundedStart = barSource.indexOf('id: boundedHorizontalModuleList')
+const bounded = barSource.slice(boundedStart, barSource.indexOf('id: horizontalModuleList', boundedStart))
+assert(boundedStart > 0 && bounded.length > 0, 'the bounded center list component is found')
+assert(/measuredWidth: implicitWidth\b/.test(bounded), 'a bounded slot measures its own implicit width, zero for a hidden module')
+assert(!/measuredWidth: activeItem/.test(bounded), 'a bounded slot does not measure its widget regardless of that widget being hidden')
+assert(/enabled: placed\b/.test(bounded) && /opacity: placed \? 1 : 0/.test(bounded), 'a dropped slot takes no input and draws nothing')
+assert(!/visible: !!placement/.test(bounded), 'a dropped slot is not hidden, which would collapse its own measure')
 JS
