@@ -48,6 +48,9 @@ Example `shell.json` (bar subtree only shown):
 
 `centerAnchor` pins one center module to the exact horizontal/vertical center and flanks others around it. Set to an empty string to disable anchoring (the center list is centered as a group).
 
+On a top bar with a measured centered cutout, the center list sits beside the cutout and ignores `centerAnchor`.
+Only whole controls that fit between the left section and the cutout remain visible and enabled.
+
 ## Module catalogue
 
 ### First-party interactive widgets

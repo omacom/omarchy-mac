@@ -1168,9 +1168,11 @@ Item {
         CenterModules {
           anchors.fill: parent
           cutoutLeft: barWindow.cutoutLeft
+          leftControlsRight: leftModules.x + leftModules.width
         }
 
         LeftModules {
+          id: leftModules
           anchors.left: parent.left
           anchors.leftMargin: Style.space(8)
           anchors.verticalCenter: parent.verticalCenter
@@ -1351,6 +1353,7 @@ Item {
 
     property var entries: root.layoutEntries("center")
     property int cutoutLeft: 0
+    property real leftControlsRight: 0
     readonly property bool hasAnchor: root.entryIndex(entries, root.centerAnchor) !== -1
     readonly property var anchorEntry: root.findCenterAnchorEntry()
 
@@ -1375,6 +1378,7 @@ Item {
         ModuleList {
           entries: centerRoot.entries
           region: "center"
+          widthLimit: Math.max(0, centerRoot.cutoutLeft - centerRoot.leftControlsRight - 2 * Style.space(4))
           anchors.right: parent.right
           anchors.rightMargin: parent.width - centerRoot.cutoutLeft + Style.space(4)
           anchors.verticalCenter: parent.verticalCenter
@@ -1560,6 +1564,7 @@ Item {
 
     property var entries: []
     property string region: ""
+    property real widthLimit: -1
 
     visible: entries.length > 0
     // A hidden list must not build its modules. The center section declares
@@ -1568,9 +1573,55 @@ Item {
     // twice — two IPC handlers registered for the same target, two clocks
     // ticking, two of every timer and fetch behind them.
     active: visible && entries.length > 0
-    sourceComponent: root.vertical ? verticalModuleList : horizontalModuleList
-    width: item ? item.implicitWidth : 0
+    sourceComponent: root.vertical ? verticalModuleList
+      : widthLimit >= 0 ? boundedHorizontalModuleList : horizontalModuleList
+    width: !root.vertical && widthLimit >= 0 ? widthLimit : item ? item.implicitWidth : 0
     height: item ? item.implicitHeight : 0
+
+    Component {
+      id: boundedHorizontalModuleList
+
+      Item {
+        id: boundedList
+        // Repeater count can change before itemAt() exposes the new delegates.
+        property int slotsRevision: 0
+        readonly property var placement: {
+          var revision = slotsRevision
+          var widths = []
+          for (var i = 0; i < boundedSlots.count; i++) {
+            var slot = boundedSlots.itemAt(i)
+            widths.push(slot ? slot.measuredWidth : 0)
+          }
+          return BarModel.notchSlotLayout(widths, 0, width)
+        }
+        implicitHeight: root.barSize
+
+        Repeater {
+          id: boundedSlots
+          model: moduleListRoot.entries
+          onItemAdded: boundedList.slotsRevision++
+          onItemRemoved: boundedList.slotsRevision++
+
+          ModuleSlot {
+            required property var modelData
+            required property int index
+            readonly property real measuredWidth: activeItem ? activeItem.implicitWidth : 0
+            readonly property var placement: boundedList.placement[index]
+            entry: modelData
+            region: moduleListRoot.region
+            x: placement ? placement.x : 0
+            width: measuredWidth
+            height: activeItem ? activeItem.implicitHeight : 0
+            anchors.verticalCenter: parent.verticalCenter
+            visible: !!placement && placement.visible
+            enabled: visible
+            onVisibleChanged: {
+              if (!visible && panelOpen && activeItem && typeof activeItem.close === "function") activeItem.close()
+            }
+          }
+        }
+      }
+    }
 
     Component {
       id: horizontalModuleList

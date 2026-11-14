@@ -286,7 +286,6 @@ function parseCutouts(text) {
   return panels.filter(validCutoutPanel)
 }
 
-
 function cutoutPanelMatches(panel, mode, screenName) {
   return String(screenName || "").indexOf(panel.connector) === 0
     && Math.abs(mode.width - panel.width) <= 4 && Math.abs(mode.height - panel.height) <= 4
@@ -307,11 +306,23 @@ function cutoutLeftEdge(cutouts, position, screenName, logicalWidth, logicalHeig
   return width > 0 ? Math.floor((logicalWidth - width) / 2) : 0
 }
 
+function notchSlotLayout(widths, left, right) {
+  var slots = new Array(widths.length)
+  var x = right
+  for (var i = widths.length - 1; i >= 0; i--) {
+    var width = widths[i]
+    x -= width
+    slots[i] = { x: x, visible: width > 0 && x >= left && x + width <= right }
+  }
+  return slots
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     parseCutouts: parseCutouts,
     cutoutWidthAt: cutoutWidthAt,
     cutoutLeftEdge: cutoutLeftEdge,
+    notchSlotLayout: notchSlotLayout,
     isDrawnSlot: isDrawnSlot,
     notchHeight: notchHeight,
     pickDrawnSlot: pickDrawnSlot,

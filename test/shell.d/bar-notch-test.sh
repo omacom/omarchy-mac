@@ -99,4 +99,29 @@ const narrow = bar.parseCutouts(JSON.stringify({ panels: [
 ] }))
 assertEqual(narrow.length, 1, 'one physical column is a valid positive cutout width')
 assertEqual(bar.cutoutLeftEdge(narrow, 'top', 'eDP-1', 100, 100, mode(100, 100)), 49, 'a one-column cutout keeps its safe left edge')
+
+assertDeepEqual(bar.notchSlotLayout([500], 300, 647), [
+  { x: 147, visible: false }
+], 'an oversized center control cannot overlap the left controls')
+assertDeepEqual(bar.notchSlotLayout([200, 400, 100], 300, 647), [
+  { x: -53, visible: false },
+  { x: 147, visible: false },
+  { x: 547, visible: true }
+], 'overflow drops whole leading controls and keeps a complete trailing control')
+assertDeepEqual(bar.notchSlotLayout([247, 100], 300, 647), [
+  { x: 300, visible: true },
+  { x: 547, visible: true }
+], 'controls that exactly fit keep their full width and order')
+assertDeepEqual(bar.notchSlotLayout([248, 100], 300, 647), [
+  { x: 299, visible: false },
+  { x: 547, visible: true }
+], 'one overflowing pixel hides the whole control instead of clipping it')
+assertDeepEqual(bar.notchSlotLayout([100], 647, 647), [
+  { x: 547, visible: false }
+], 'no available space hides every center control')
+assertDeepEqual(bar.notchSlotLayout([0, 100], 300, 647), [
+  { x: 547, visible: false },
+  { x: 547, visible: true }
+], 'an empty control consumes no space or input target')
+assertDeepEqual(bar.notchSlotLayout([], 300, 647), [], 'an empty center section stays empty')
 JS
