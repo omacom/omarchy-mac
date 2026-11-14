@@ -8,6 +8,11 @@
 
 set -euo pipefail
 
+echo "Omarchy Mac is no longer maintained and can't start new installs." >&2
+echo "Install the official Omarchy for Apple Silicon: brew install omacom/mac/omarchy" >&2
+echo "Mac manual: https://omarchy.org/manual/mac-support/" >&2
+exit 1
+
 readonly checkout="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly package_output="$checkout/build-output"
 readonly asahi_alarm_key="12CE6799A94A3F1B5DDFFE88F576553597FB8FEB"
