@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# omarchy:summary=Update the active Omarchy dev checkout
+# omarchy:summary=Report that the Omarchy Mac dev checkout is frozen
 
 set -euo pipefail
 

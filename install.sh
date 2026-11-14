@@ -8,6 +8,7 @@
 
 set -euo pipefail
 
+# The rest of this file stays because tests extract its functions.
 echo "Omarchy Mac is no longer maintained and can't start new installs." >&2
 echo "Install the official Omarchy for Apple Silicon: brew install omacom/mac/omarchy" >&2
 echo "Mac manual: https://omarchy.org/manual/mac-support/" >&2
