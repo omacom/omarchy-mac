@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-echo "Omarchy Mac is no longer maintained and can't start new installs." >&2
+echo "Omarchy Mac is now part of Omarchy for Apple Silicon, so it can't start new installs." >&2
 echo "Install the official Omarchy for Apple Silicon: brew install omacom/mac/omarchy" >&2
 echo "Mac manual: https://omarchy.org/manual/mac-support/" >&2
 exit 1

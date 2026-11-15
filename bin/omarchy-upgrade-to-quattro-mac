@@ -11,14 +11,13 @@ usage() {
   cat <<'USAGE'
 Usage: omarchy-upgrade-to-quattro-mac [--yes] [--reboot] [--ref BRANCH]
 
-Retired. Omarchy Mac is no longer maintained, so this upgrade no longer runs.
+Retired. Omarchy Mac is now part of Omarchy for Apple Silicon, so this upgrade no longer runs.
 Install Omarchy for Apple Silicon instead: https://omarchy.org/manual/mac-support/
 
 Options:
-  -y, --yes      Do not prompt before upgrading
-  --reboot       Reboot automatically after a successful upgrade
-  --ref BRANCH   Check out BRANCH instead of quattro
   -h, --help     Show this help
+
+--yes, --reboot and --ref BRANCH are still accepted, and ignored.
 USAGE
 }
 
@@ -77,7 +76,7 @@ while (($#)); do
   esac
 done
 
-echo "Omarchy Mac is no longer maintained, so 3.x installs are no longer upgraded to Quattro." >&2
+echo "Omarchy Mac is now part of Omarchy for Apple Silicon, so 3.x installs are no longer upgraded to Quattro." >&2
 echo "Install the official Omarchy for Apple Silicon: brew install omacom/mac/omarchy" >&2
 echo "Mac manual: https://omarchy.org/manual/mac-support/" >&2
 exit 1
