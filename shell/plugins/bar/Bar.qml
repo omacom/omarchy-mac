@@ -1629,12 +1629,13 @@ Item {
             enabled: placed
             // A panel can open on a dropped slot after the drop, for example
             // through the widget's own IPC handler, so closing it on the drop
-            // alone is not enough.
+            // alone is not enough. That open runs inside the panel's own
+            // binding writes, so the close is deferred until they finish.
             function closeWhenDropped() {
               if (!placed && panelOpen && activeItem && typeof activeItem.close === "function") activeItem.close()
             }
             onPlacedChanged: closeWhenDropped()
-            onPanelOpenChanged: closeWhenDropped()
+            onPanelOpenChanged: if (!placed && panelOpen) Qt.callLater(closeWhenDropped)
           }
         }
       }

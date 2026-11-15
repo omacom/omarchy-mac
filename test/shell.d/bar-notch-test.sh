@@ -200,7 +200,7 @@ assertEqual(closesPanel(false, true), true, 'an open panel on a dropped slot is 
 assertEqual(closesPanel(true, true), false, 'an open panel on a placed slot stays open')
 assertEqual(closesPanel(false, false), false, 'a dropped slot with no panel has nothing to close')
 assert(/onPlacedChanged: closeWhenDropped\(\)/.test(bounded), 'dropping a slot closes its open panel')
-assert(/onPanelOpenChanged: closeWhenDropped\(\)/.test(bounded), 'a panel that opens on a dropped slot is closed')
+assert(/onPanelOpenChanged: if \(!placed && panelOpen\) Qt\.callLater\(closeWhenDropped\)/.test(bounded), 'a panel that opens on a dropped slot is closed after its open bindings finish')
 
 // The placement wiring has no runtime test off the device, so each expression
 // the layout depends on is pinned in the source.
