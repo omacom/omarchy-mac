@@ -24,7 +24,10 @@ done
 for script in bootstrap.sh setup.sh install.sh bin/omarchy-upgrade-to-quattro-mac; do
   : >"$calls"
   work="$test_tmp/work-${script//\//-}"
-  mkdir -p "$work/home"
+  # A 3.x checkout in HOME, so a later "no checkout found" check can't stand in
+  # for the gate.
+  mkdir -p "$work/home/.local/share/omarchy/.git"
+  home_before=$(cd "$work/home" && find . | sort)
 
   set +e
   (
@@ -39,7 +42,7 @@ for script in bootstrap.sh setup.sh install.sh bin/omarchy-upgrade-to-quattro-ma
   grep -qF "$manual" "$work/stderr" || fail "$script points to the Mac manual on stderr" "$(cat "$work/stderr")"
   [[ ! -s $work/stdout ]] || fail "$script prints nothing else" "$(cat "$work/stdout")"
   [[ ! -s $calls ]] || fail "$script runs no command" "$(cat "$calls")"
-  [[ -z $(ls -A "$work/home") ]] || fail "$script writes nothing to HOME" "$(ls -A "$work/home")"
+  [[ $(cd "$work/home" && find . | sort) == "$home_before" ]] || fail "$script writes nothing to HOME" "$(cd "$work/home" && find . | sort)"
   pass "$script refuses to start an install and changes nothing"
 done
 
