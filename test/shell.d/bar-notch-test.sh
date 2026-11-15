@@ -202,6 +202,35 @@ assertEqual(closesPanel(false, false), false, 'a dropped slot with no panel has 
 assert(/onPlacedChanged: closeWhenDropped\(\)/.test(bounded), 'dropping a slot closes its open panel')
 assert(/onPanelOpenChanged: if \(!placed && panelOpen\) Qt\.callLater\(closeWhenDropped\)/.test(bounded), 'a panel that opens on a dropped slot is closed after its open bindings finish')
 
+// A positional hotkey means "the third panel in this section", so it counts the
+// panels the bar draws on the focused output, through the same walk as tab
+// order. The count ships on every machine, not only on a notched one. This runs
+// the real panelWidgetIdAt from Bar.qml with stubs for the focused output and
+// for the panels drawn on each output.
+const idAtSource = barSource.match(/function panelWidgetIdAt\(region, index\) \{[\s\S]*?\n  \}\n/)
+assert(!!idAtSource, 'the positional panel lookup is found in Bar.qml')
+const makeIdAt = new Function('focusedScreenName', 'panelNavigationSlots', idAtSource[0] + '; return panelWidgetIdAt')
+const drawn = { 'eDP-1': ['clock', 'weather'], 'DP-1': ['network'], 'HDMI-A-1': [] }
+const everyOutput = [].concat(drawn['eDP-1'], drawn['DP-1'])
+const idAt = (focused, index) => makeIdAt(
+  () => focused,
+  (region, window, screen) => (screen ? drawn[screen] || [] : everyOutput).map((moduleName) => ({ moduleName }))
+)('right', index)
+assertEqual(idAt('eDP-1', '1'), 'clock', 'the first position is the first panel drawn on the focused output')
+assertEqual(idAt('eDP-1', '2'), 'weather', 'the second position is the second panel drawn on the focused output')
+assertEqual(idAt('DP-1', '1'), 'network', 'another focused output counts its own panels, not the first output')
+assertEqual(idAt('eDP-1', 2), 'weather', 'a numeric index counts the same as a string')
+assertEqual(idAt('eDP-1', '1.6'), 'weather', 'an index is rounded to the nearest position')
+assertEqual(idAt('eDP-1', '3'), '', 'a position past the focused output panels reaches no panel on another output')
+assertEqual(idAt('DP-1', '2'), '', 'the second position on a one-panel output reaches no panel')
+assertEqual(idAt('HDMI-A-1', '3'), 'network', 'a focused output with no panels counts every output')
+assertEqual(idAt('', '3'), 'network', 'no focused output counts every output')
+assertEqual(idAt('eDP-1', '0'), '', 'position zero reaches no panel')
+assertEqual(idAt('eDP-1', '-1'), '', 'a negative position reaches no panel')
+assertEqual(idAt('eDP-1', 'abc'), '', 'a non-numeric position reaches no panel')
+assertEqual(idAt('eDP-1', ''), '', 'an empty position reaches no panel')
+assertEqual(idAt('', '4'), '', 'a position past every output panel reaches no panel')
+
 // The placement wiring has no runtime test off the device, so each expression
 // the layout depends on is pinned in the source.
 assert(/anchors\.rightMargin: parent\.width - centerRoot\.cutoutLeft \+ Style\.space\(4\)/.test(barSource), 'the center list ends a gap before the cutout')
