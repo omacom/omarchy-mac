@@ -21,6 +21,11 @@ for command in sudo su pacman pacman-key yay makepkg git curl wget useradd \
   chmod +x "$mock_bin/$command"
 done
 
+# On an x86 runner the upgrade's architecture check would otherwise stand in
+# for the gate.
+printf '#!/bin/sh\necho aarch64\n' >"$mock_bin/uname"
+chmod +x "$mock_bin/uname"
+
 for script in bootstrap.sh setup.sh install.sh bin/omarchy-upgrade-to-quattro-mac; do
   : >"$calls"
   work="$test_tmp/work-${script//\//-}"
