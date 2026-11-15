@@ -30,7 +30,8 @@ retires the old one.
   upstream x86 upgrade: it rewrites `/etc/pacman.d/mirrorlist` to point at
   Omarchy's x86_64 package mirrors, which do not serve aarch64. Running it
   breaks pacman for the whole system. The command ships in this repo because we
-  track upstream — the Mac upgrade is `omarchy-upgrade-to-quattro-mac` below.
+  track upstream. The Mac upgrade, `omarchy-upgrade-to-quattro-mac`, is retired
+  (see below).
 - **The upgrade is one-way.** There is no supported downgrade to 3.x.
 - **Back up first.** At minimum, know that your macOS side is safe and copy
   anything irreplaceable off the Linux side. The script also backs up
@@ -41,7 +42,7 @@ retires the old one.
 
 ## Run the upgrade
 
-Omarchy Mac is no longer maintained, so `omarchy-upgrade-to-quattro-mac` no longer upgrades a 3.x install. It prints where to go and exits without changing anything. Install the official Omarchy for Apple Silicon from macOS with `brew install omacom/mac/omarchy`, or see the [Mac manual](https://omarchy.org/manual/mac-support/). The rest of this page describes what the upgrade did, for machines that already ran it.
+Omarchy Mac is now part of Omarchy for Apple Silicon, so `omarchy-upgrade-to-quattro-mac` no longer upgrades a 3.x install. It prints where to go and exits without changing anything. Install the official Omarchy for Apple Silicon from macOS with `brew install omacom/mac/omarchy`, or see the [Mac manual](https://omarchy.org/manual/mac-support/). The rest of this page describes what the upgrade did, for machines that already ran it.
 
 ## What the script does
 

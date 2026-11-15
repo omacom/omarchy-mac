@@ -116,8 +116,8 @@ case "$use_dev_packages" in
 esac
 
 # This is the upstream x86 upgrade: it repoints pacman at Omarchy's x86_64
-# mirrors and packages, which do not serve aarch64. On Apple Silicon the Mac
-# upgrade (omarchy-upgrade-to-quattro-mac) wires the source checkout instead.
+# mirrors and packages, which do not serve aarch64. The Mac upgrade
+# (omarchy-upgrade-to-quattro-mac) is retired, so Apple Silicon goes to the manual.
 [[ $(uname -m) != "aarch64" ]] || fail "This is the upstream x86 upgrade. On Apple Silicon install Omarchy for Apple Silicon: https://omarchy.org/manual/mac-support/"
 
 # Land on the Quattro equivalent of wherever the machine already is, unless the
