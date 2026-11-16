@@ -116,6 +116,28 @@ grep -qF 'disabled' <<<"$out" || fail 'check reports the override file' "$out"
 rm -f "$OMARCHY_BOOT_CHAIN_OFF"
 pass 'check fails loudly on an installed deny package, a missing glob, an owned boot file, a missing hook or an override'
 
+# An empty or comments-only custom list must fail closed: pinning nothing while reporting healthy is the worst outcome.
+for contents in '# nothing pinned' ''; do
+  printf '%s\n' "$contents" >"$list"
+  for action in pin_install pin_check; do
+    out=$("$action" 2>&1) && fail "$action refuses a list with no globs" "$out"
+    grep -qF 'no globs' <<<"$out" || fail "$action says why it refuses an empty list" "$out"
+  done
+done
+rm -f "$list"
+pass 'an empty or comments-only custom list fails closed instead of pinning nothing'
+
+# install must put an active Include in [options] and say so when it cannot.
+active_includes() { awk -v want="Include = $OMARCHY_BOOT_CHAIN_CONF" '$0 == want { n++ } END { print n + 0 }' "$OMARCHY_PACMAN_CONFIG"; }
+printf '%s\n' '[options]' "#Include = $OMARCHY_BOOT_CHAIN_CONF" 'Architecture = auto' >"$OMARCHY_PACMAN_CONFIG"
+pin_install
+[[ $(active_includes) == 1 ]] || fail 'a commented-out Include does not count as installed' "$(cat "$OMARCHY_PACMAN_CONFIG")"
+printf '%s\n' '[core]' 'Server = file:///nonexistent' >"$OMARCHY_PACMAN_CONFIG"
+out=$(pin_install 2>&1) && fail 'install fails when pacman.conf has no [options] section' "$out"
+grep -qF '[options]' <<<"$out" || fail 'install names the missing [options] section' "$out"
+[[ $(active_includes) == 0 ]] || fail 'a failed install leaves no Include behind' "$(cat "$OMARCHY_PACMAN_CONFIG")"
+pass 'install ignores a commented-out Include and fails loudly without an [options] section'
+
 if bash "$ROOT/bin/omarchy-boot-chain-pin" nonsense >/dev/null 2>&1; then
   fail 'an unknown subcommand is rejected'
 fi

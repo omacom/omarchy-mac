@@ -48,6 +48,19 @@ pin_globs() {
   fi
 }
 
+# A guard with nothing to guard must not report healthy: refuse an empty set.
+pin_require_globs() {
+  if [[ -z $(pin_globs) ]]; then
+    printf '%s\n' "boot-chain-pin: $(pin_list_path) has no globs; refusing to pin nothing" >&2
+    return 1
+  fi
+}
+
+# An active (not commented-out) "Include = FILE" line, ignoring surrounding blanks.
+pin_has_include() {
+  awk -v want="Include = $2" '{ gsub(/^[ \t]+|[ \t]+$/, "") } $0 == want { found = 1 } END { exit !found }' "$1"
+}
+
 # Glob to anchored ERE: everything except * is escaped, * becomes .*
 pin_regex() {
   printf '^(%s)$' "$(pin_globs | sed -e 's/[][\\.^$()+?{}|]/\\&/g' -e 's/\*/.*/g' | paste -sd'|' -)"
@@ -91,6 +104,7 @@ pin_install() {
     printf '%s\n' 'boot-chain-pin: install needs root' >&2
     return 1
   fi
+  pin_require_globs || return 1
   conf=$(pin_conf_path)
   hook=$(pin_hook_path)
   pacman_conf=$(pin_pacman_conf)
@@ -100,16 +114,22 @@ pin_install() {
   fi
   pin_render_conf | install -Dm644 /dev/stdin "$conf"
   pin_render_hook | install -Dm644 /dev/stdin "$hook"
-  if ! grep -qF "Include = $conf" "$pacman_conf"; then
+  if ! pin_has_include "$pacman_conf" "$conf"; then
     awk -v include="Include = $conf" '
       !inserted && /^[[:space:]]*\[options\][[:space:]]*$/ { print; print include; inserted = 1; next }
       { print }
     ' "$pacman_conf" >"$pacman_conf.tmp" && mv "$pacman_conf.tmp" "$pacman_conf"
   fi
+  if ! pin_has_include "$pacman_conf" "$conf"; then
+    rm -f "$pacman_conf.tmp"
+    printf '%s\n' "boot-chain-pin: could not add the Include to $pacman_conf: it has no [options] section" >&2
+    return 1
+  fi
 }
 
 pin_check() {
   local bad=0 pattern name path regex hook off
+  pin_require_globs || return 1
   off=$(pin_off_path)
   hook=$(pin_hook_path)
   regex=$(pin_regex)
