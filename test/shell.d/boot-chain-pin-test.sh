@@ -24,7 +24,14 @@ stub_owned="$work/stub-owned.txt"
 : >"$stub_conf"
 : >"$stub_pkgs"
 : >"$stub_owned"
-pin_pacman_conf_values() { cat "$stub_conf"; }
+stub_hookdir="$work/stub-hookdir.txt"
+printf '%s/\n' "$(dirname "$OMARCHY_BOOT_CHAIN_HOOK")" >"$stub_hookdir" # pacman-conf prints HookDir with a trailing slash
+pin_pacman_conf_values() {
+  case ${1:-IgnorePkg} in
+    HookDir) cat "$stub_hookdir" ;;
+    *) cat "$stub_conf" ;;
+  esac
+}
 pin_pacman_query_names() { cat "$stub_pkgs"; }
 pin_pacman_owner() {
   if grep -qxF -- "$1" "$stub_owned"; then
@@ -210,6 +217,92 @@ pin_install
 pin_has_include "$OMARCHY_PACMAN_CONFIG" "$OMARCHY_BOOT_CHAIN_CONF" || fail 'install adds the Include under [options]' "$(cat "$OMARCHY_PACMAN_CONFIG")"
 [[ $(sed -n '2p' "$OMARCHY_PACMAN_CONFIG") == "Include = $OMARCHY_BOOT_CHAIN_CONF" ]] || fail 'the new Include lands right under [options]' "$(cat "$OMARCHY_PACMAN_CONFIG")"
 pass 'an Include in another section does not count as installed'
+
+# Second review round: HookDir, /etc/omarchy, --config, pacman.conf handling.
+reset_conf() { rm -rf "$OMARCHY_PACMAN_CONFIG" "$OMARCHY_PACMAN_CONFIG.bak"; printf '%s\n' '[options]' 'Architecture = auto' '' '[core]' 'Server = file:///nonexistent' >"$OMARCHY_PACMAN_CONFIG"; }
+reset_conf
+rm -f "$list"
+pin_install
+pin_globs >"$stub_conf"
+: >"$stub_pkgs"
+: >"$stub_owned"
+pin_check "$work/boot.bin" || fail 'baseline two: a fresh install passes check'
+
+# check must confirm that pacman actually loads the hook directory.
+printf '%s\n' '/etc/somewhere/else/' >"$stub_hookdir"
+out=$(pin_check 2>&1) && fail 'check fails when HookDir does not include the hook directory' "$out"
+grep -qF 'HookDir' <<<"$out" || fail 'check names HookDir when the hook would not load' "$out"
+printf '%s/\n' "$(dirname "$OMARCHY_BOOT_CHAIN_HOOK")" >"$stub_hookdir"
+pin_check "$work/boot.bin" || fail 'check passes again when HookDir lists the hook directory'
+pass 'check confirms the hook directory is one pacman loads'
+
+# The refuse message tells the user to touch a file under /etc/omarchy, so install must create that directory.
+rm -rf "$work/newdir"
+OMARCHY_BOOT_CHAIN_OFF="$work/newdir/boot-chain-pin.off" pin_install
+[[ -d $work/newdir ]] || fail 'install creates the directory of the override file'
+pass 'install creates the directory the override file lives in'
+
+# The libalpm queries must read the same pacman.conf that install edits.
+fakebin="$work/fakebin"
+mkdir -p "$fakebin"
+for tool in pacman pacman-conf; do
+  printf '#!/bin/bash\nprintf "%s %%s\\n" "$*" >>"%s/calls.log"\n' "$tool" "$work" >"$fakebin/$tool"
+  chmod +x "$fakebin/$tool"
+done
+: >"$work/calls.log"
+(
+  PATH="$fakebin:$PATH"
+  # shellcheck disable=SC1090
+  source "$ROOT/bin/omarchy-boot-chain-pin"
+  pin_pacman_conf_values IgnorePkg
+  pin_pacman_query_names
+  pin_pacman_owner /boot/x
+) >/dev/null
+for call in 'pacman-conf --config' 'pacman --config'; do
+  (( $(grep -cF "$call $OMARCHY_PACMAN_CONFIG" "$work/calls.log") >= 1 )) || fail "the queries pass $call to pacman" "$(cat "$work/calls.log")"
+done
+(( $(grep -c -- "--config $OMARCHY_PACMAN_CONFIG" "$work/calls.log") == 3 )) || fail 'all three queries pass --config' "$(cat "$work/calls.log")"
+pass 'the pacman queries pass --config for the configured pacman.conf'
+
+# A pacman.conf with no [options] section: install changes nothing, not even the drop-in and hook.
+printf '%s\n' '[core]' 'Server = file:///nonexistent' >"$OMARCHY_PACMAN_CONFIG"
+cp "$OMARCHY_PACMAN_CONFIG" "$work/pacman.conf.before"
+rm -f "$OMARCHY_BOOT_CHAIN_CONF" "$OMARCHY_BOOT_CHAIN_HOOK" "$OMARCHY_PACMAN_CONFIG.bak"
+out=$(pin_install 2>&1) && fail 'install fails when pacman.conf has no [options] section' "$out"
+[[ ! -e $OMARCHY_BOOT_CHAIN_CONF && ! -e $OMARCHY_BOOT_CHAIN_HOOK ]] || fail 'a failed install leaves the drop-in and hook behind'
+cmp -s "$OMARCHY_PACMAN_CONFIG" "$work/pacman.conf.before" || fail 'a failed install leaves pacman.conf untouched' "$(cat "$OMARCHY_PACMAN_CONFIG")"
+[[ ! -e $OMARCHY_PACMAN_CONFIG.bak ]] || fail 'a failed install makes no backup'
+grep -qF 'nothing was written' <<<"$out" || fail 'the failure says nothing was written' "$out"
+pass 'install without an [options] section writes nothing and says so'
+
+# pacman.conf is edited in place: a symlink stays a symlink, the mode survives and a backup is kept.
+reset_conf
+mv "$OMARCHY_PACMAN_CONFIG" "$work/real-pacman.conf"
+chmod 600 "$work/real-pacman.conf"
+ln -s "$work/real-pacman.conf" "$OMARCHY_PACMAN_CONFIG"
+pin_install
+[[ -L $OMARCHY_PACMAN_CONFIG ]] || fail 'install keeps pacman.conf a symlink'
+[[ $(stat -c %a "$work/real-pacman.conf") == 600 ]] || fail 'install keeps the pacman.conf mode' "$(stat -c %a "$work/real-pacman.conf")"
+pin_has_include "$work/real-pacman.conf" "$OMARCHY_BOOT_CHAIN_CONF" || fail 'install edits the file the symlink points at'
+[[ -f $work/real-pacman.conf.bak ]] || fail 'install backs pacman.conf up before the edit'
+pin_has_include "$work/real-pacman.conf.bak" "$OMARCHY_BOOT_CHAIN_CONF" && fail 'the backup is the file as it was before the edit'
+rm -f "$OMARCHY_PACMAN_CONFIG" "$work/real-pacman.conf" "$work/real-pacman.conf.bak"
+pass 'install keeps a symlinked pacman.conf and its mode and leaves a backup'
+
+# When the edit itself fails after the drop-in and hook are written, say what is already in place and how to remove it.
+reset_conf
+if [[ $(id -u) != 0 ]]; then
+  mkdir -p "$work/ro"
+  mv "$OMARCHY_PACMAN_CONFIG" "$work/ro/pacman.conf"
+  chmod 555 "$work/ro"
+  ln -s "$work/ro/pacman.conf" "$OMARCHY_PACMAN_CONFIG"
+  out=$(pin_install 2>&1) && fail 'install fails when pacman.conf cannot be rewritten' "$out"
+  grep -qF 'already in place' <<<"$out" || fail 'the failure says the hook is already in place' "$out"
+  grep -qF "rm " <<<"$out" || fail 'the failure says how to remove the hook' "$out"
+  chmod 755 "$work/ro"
+  rm -f "$OMARCHY_PACMAN_CONFIG"
+fi
+pass 'a failed pacman.conf edit says the hook is in place and how to remove it'
 
 if bash "$ROOT/bin/omarchy-boot-chain-pin" nonsense >/dev/null 2>&1; then
   fail 'an unknown subcommand is rejected'

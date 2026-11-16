@@ -23,6 +23,7 @@ pin_bin_path() { printf '%s\n' "${OMARCHY_BOOT_CHAIN_BIN:-/usr/bin/omarchy-boot-
 
 # Kernel, microloader, bootloader and initramfs package globs. A custom list
 # file (one glob per line, # comments) replaces the defaults entirely.
+# systemd-boot* does not cover a systemd-boot that ships inside the systemd package.
 pin_default_globs() {
   printf '%s\n' \
     'linux-aurora*' \
@@ -85,9 +86,9 @@ pin_regex() {
 }
 
 # Overridable libalpm seams, so tests run without root or a database.
-pin_pacman_conf_values() { pacman-conf "${1:-IgnorePkg}"; }
-pin_pacman_query_names() { pacman -Qq; }
-pin_pacman_owner() { LC_ALL=C pacman -Qo "$1"; }
+pin_pacman_conf_values() { pacman-conf --config "$(pin_pacman_conf)" "${1:-IgnorePkg}"; }
+pin_pacman_query_names() { pacman --config "$(pin_pacman_conf)" -Qq; }
+pin_pacman_owner() { LC_ALL=C pacman --config "$(pin_pacman_conf)" -Qo "$1"; }
 pin_may_write() { (( EUID == 0 )); }
 
 pin_refuse() {
@@ -116,6 +117,26 @@ pin_render_hook() {
   printf '\n[Action]\nDescription = boot-chain-pin: refuse changes to kernel and bootloader packages\nWhen = PreTransaction\nExec = %s refuse\nAbortOnFail\n' "$(pin_bin_path)"
 }
 
+# Insert the Include under [options] in place: a symlinked pacman.conf stays a symlink, the mode and
+# owner survive, and the file as it was is kept as FILE.bak (omarchy-refresh-pacman keeps .bak too).
+pin_add_include() { # $1=pacman.conf $2=drop-in
+  local target tmp
+  target=$(readlink -f "$1")
+  tmp=$(mktemp "$target.XXXXXX") || return 1
+  if cp -p "$target" "$tmp" \
+    && awk -v include="Include = $2" '
+      !inserted && /^[[:space:]]*\[options\][[:space:]]*$/ { print; print include; inserted = 1; next }
+      { print }
+      END { exit !inserted }
+    ' "$target" >"$tmp" \
+    && cp -fp "$target" "$target.bak" \
+    && mv "$tmp" "$target"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
 pin_install() {
   local conf hook pacman_conf
   if ! pin_may_write; then
@@ -130,23 +151,25 @@ pin_install() {
     printf '%s\n' "boot-chain-pin: $pacman_conf is missing" >&2
     return 1
   fi
+  # Check before writing anything, so a failed install leaves no hook behind without its IgnorePkg.
+  if ! pin_has_include "$pacman_conf" "$conf" && ! grep -Eq '^[[:space:]]*\[options\][[:space:]]*$' "$pacman_conf"; then
+    printf '%s\n' "boot-chain-pin: $pacman_conf has no [options] section to hold the Include; nothing was written" >&2
+    return 1
+  fi
+  install -d "$(dirname "$(pin_off_path)")"
   pin_render_conf | install -Dm644 /dev/stdin "$conf"
   pin_render_hook | install -Dm644 /dev/stdin "$hook"
   if ! pin_has_include "$pacman_conf" "$conf"; then
-    awk -v include="Include = $conf" '
-      !inserted && /^[[:space:]]*\[options\][[:space:]]*$/ { print; print include; inserted = 1; next }
-      { print }
-    ' "$pacman_conf" >"$pacman_conf.tmp" && mv "$pacman_conf.tmp" "$pacman_conf"
+    pin_add_include "$pacman_conf" "$conf" || true
   fi
   if ! pin_has_include "$pacman_conf" "$conf"; then
-    rm -f "$pacman_conf.tmp"
-    printf '%s\n' "boot-chain-pin: could not add the Include to $pacman_conf: it has no [options] section" >&2
+    printf '%s\n' "boot-chain-pin: could not add the Include to $pacman_conf. The hook ($hook) and the drop-in ($conf) are already in place; add 'Include = $conf' under [options] yourself, or remove them with: rm $hook $conf" >&2
     return 1
   fi
 }
 
 pin_check() {
-  local bad=0 pattern name path regex hook off names owner_out
+  local bad=0 pattern name path regex hook off names owner_out hookdirs
   pin_require_globs || return 1
   off=$(pin_off_path)
   hook=$(pin_hook_path)
@@ -163,6 +186,11 @@ pin_check() {
   done < <(pin_globs)
   if [[ ! -f $hook ]] || ! cmp -s "$hook" <(pin_render_hook); then
     printf '%s\n' "boot-chain-pin: hook missing or wrong at $hook" >&2
+    bad=1
+  fi
+  if ! hookdirs=$(pin_pacman_conf_values HookDir | sed 's:/*$::') \
+    || ! grep -qxF -- "$(dirname "$hook")" <<<"$hookdirs"; then
+    printf '%s\n' "boot-chain-pin: pacman does not load hooks from $(dirname "$hook") (HookDir)" >&2
     bad=1
   fi
   if [[ ! -x $(pin_bin_path) ]]; then
