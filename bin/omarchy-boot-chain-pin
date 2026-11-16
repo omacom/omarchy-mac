@@ -1,0 +1,169 @@
+#!/bin/bash
+
+# omarchy:summary=Keep a kernel and bootloader that pacman does not own out of pacman transactions.
+# omarchy:hidden=true
+
+# A Mac that boots a kernel and loader installed outside pacman (a local m1n1
+# chain under /boot, a hand-built kernel) breaks the moment an Omarchy install
+# or upgrade pulls in a packaged kernel or bootloader. This command installs
+# an IgnorePkg drop-in plus a pacman pre-transaction hook that refuses every
+# transaction touching those packages, and `check` proves afterwards that no
+# installed package claims them and nothing owns the boot files listed as
+# arguments. Deliberate change: touch the override file, run the transaction,
+# remove it.
+
+set -euo pipefail
+
+pin_conf_path() { printf '%s\n' "${OMARCHY_BOOT_CHAIN_CONF:-/etc/pacman.d/boot-chain-pin.conf}"; }
+pin_hook_path() { printf '%s\n' "${OMARCHY_BOOT_CHAIN_HOOK:-/etc/pacman.d/hooks/00-boot-chain-pin.hook}"; }
+pin_list_path() { printf '%s\n' "${OMARCHY_BOOT_CHAIN_LIST:-/etc/omarchy/boot-chain-pin.list}"; }
+pin_off_path() { printf '%s\n' "${OMARCHY_BOOT_CHAIN_OFF:-/etc/omarchy/boot-chain-pin.off}"; }
+pin_pacman_conf() { printf '%s\n' "${OMARCHY_PACMAN_CONFIG:-/etc/pacman.conf}"; }
+pin_bin_path() { printf '%s\n' "${OMARCHY_BOOT_CHAIN_BIN:-/usr/bin/omarchy-boot-chain-pin}"; }
+
+# Kernel, microloader, bootloader and initramfs package globs. A custom list
+# file (one glob per line, # comments) replaces the defaults entirely.
+pin_default_globs() {
+  printf '%s\n' \
+    'linux-aurora*' \
+    'linux-asahi*' \
+    'm1n1*' \
+    'grub*' \
+    'limine*' \
+    'uboot-asahi*' \
+    'omarchy-mac-boot' \
+    'dracut' \
+    'systemd-boot*' \
+    'asahi-scripts' \
+    'mkinitcpio'
+}
+
+pin_globs() {
+  local list
+  list=$(pin_list_path)
+  if [[ -r $list ]]; then
+    sed 's/#.*//' "$list" | awk 'NF'
+  else
+    pin_default_globs
+  fi
+}
+
+# Glob to anchored ERE: everything except * is escaped, * becomes .*
+pin_regex() {
+  printf '^(%s)$' "$(pin_globs | sed -e 's/[][\\.^$()+?{}|]/\\&/g' -e 's/\*/.*/g' | paste -sd'|' -)"
+}
+
+# Overridable libalpm seams, so tests run without root or a database.
+pin_pacman_conf_values() { pacman-conf "${1:-IgnorePkg}"; }
+pin_pacman_query_names() { pacman -Qq; }
+pin_pacman_owner() { pacman -Qo "$1"; }
+pin_may_write() { (( EUID == 0 )); }
+
+pin_refuse() {
+  local off
+  off=$(pin_off_path)
+  if [[ -e $off ]]; then
+    return 0
+  fi
+  cat >&2 <<MESSAGE
+boot-chain-pin: this transaction touches kernel or bootloader packages this machine keeps outside pacman.
+Deliberate change: touch $off, run the transaction, then remove it.
+MESSAGE
+  return 1
+}
+
+pin_render_conf() {
+  printf 'IgnorePkg = %s\n' "$(pin_globs | paste -sd' ' -)"
+}
+
+pin_render_hook() {
+  local pattern
+  printf '[Trigger]\nOperation = Install\nOperation = Upgrade\nOperation = Remove\nType = Package\n'
+  while IFS= read -r pattern; do
+    printf 'Target = %s\n' "$pattern"
+  done < <(pin_globs)
+  printf '\n[Action]\nDescription = boot-chain-pin: refuse changes to kernel and bootloader packages\nWhen = PreTransaction\nExec = %s refuse\nAbortOnFail\n' "$(pin_bin_path)"
+}
+
+pin_install() {
+  local conf hook pacman_conf
+  if ! pin_may_write; then
+    printf '%s\n' 'boot-chain-pin: install needs root' >&2
+    return 1
+  fi
+  conf=$(pin_conf_path)
+  hook=$(pin_hook_path)
+  pacman_conf=$(pin_pacman_conf)
+  if [[ ! -f $pacman_conf ]]; then
+    printf '%s\n' "boot-chain-pin: $pacman_conf is missing" >&2
+    return 1
+  fi
+  pin_render_conf | install -Dm644 /dev/stdin "$conf"
+  pin_render_hook | install -Dm644 /dev/stdin "$hook"
+  if ! grep -qF "Include = $conf" "$pacman_conf"; then
+    awk -v include="Include = $conf" '
+      !inserted && /^[[:space:]]*\[options\][[:space:]]*$/ { print; print include; inserted = 1; next }
+      { print }
+    ' "$pacman_conf" >"$pacman_conf.tmp" && mv "$pacman_conf.tmp" "$pacman_conf"
+  fi
+}
+
+pin_check() {
+  local bad=0 pattern name path regex hook off
+  off=$(pin_off_path)
+  hook=$(pin_hook_path)
+  regex=$(pin_regex)
+  if [[ -e $off ]]; then
+    printf '%s\n' 'boot-chain-pin: disabled by override file' >&2
+    return 1
+  fi
+  while IFS= read -r pattern; do
+    if ! pin_pacman_conf_values IgnorePkg | grep -qxF -- "$pattern"; then
+      printf '%s\n' "IgnorePkg lacks $pattern" >&2
+      bad=1
+    fi
+  done < <(pin_globs)
+  if [[ ! -f $hook ]] || ! grep -qF "$(pin_bin_path) refuse" "$hook"; then
+    printf '%s\n' "boot-chain-pin: hook missing or wrong at $hook" >&2
+    bad=1
+  fi
+  while IFS= read -r name; do
+    if [[ $name =~ $regex ]]; then
+      printf '%s\n' "installed package matches the deny list: $name" >&2
+      bad=1
+    fi
+  done < <(pin_pacman_query_names)
+  for path in "$@"; do
+    if pin_pacman_owner "$path" >/dev/null 2>&1; then
+      printf '%s\n' "a package owns $path" >&2
+      bad=1
+    fi
+  done
+  return "$bad"
+}
+
+pin_usage() {
+  cat <<'USAGE'
+usage: omarchy-boot-chain-pin list     print the package globs in force
+       omarchy-boot-chain-pin install  write the IgnorePkg drop-in and pacman hook (root)
+       omarchy-boot-chain-pin check [PATH...]
+                                       prove no package is installed, claims the pin
+                                       or owns PATH; PATH is usually a boot file
+       omarchy-boot-chain-pin refuse   pacman hook action: refuse unless overridden
+USAGE
+}
+
+main() {
+  local action=${1:-}
+  case $action in
+    list) pin_globs ;;
+    install) pin_install ;;
+    check) shift || true; pin_check "$@" ;;
+    refuse) pin_refuse ;;
+    *) pin_usage >&2; return 2 ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
