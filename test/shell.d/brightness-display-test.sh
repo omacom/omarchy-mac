@@ -10,11 +10,17 @@ trap 'rm -rf "$test_tmp"' EXIT
 mock_bin="$test_tmp/bin"
 call_log="$test_tmp/calls"
 runtime_dir="$test_tmp/runtime"
-mkdir -p "$mock_bin" "$runtime_dir"
+backlight_dir="$test_tmp/backlight"
+mkdir -p "$mock_bin" "$runtime_dir" "$backlight_dir"
 
 cat >"$mock_bin/omarchy-hyprland-monitor-focused-apple" <<'SH'
 #!/bin/bash
-exit 1
+[[ ${APPLE_DISPLAY:-0} == 1 ]]
+SH
+
+cat >"$mock_bin/omarchy-brightness-display-apple" <<'SH'
+#!/bin/bash
+printf 'apple %s\n' "$*" >>"$CALL_LOG"
 SH
 
 cat >"$mock_bin/omarchy-hyprland-monitor-focused" <<'SH'
@@ -54,7 +60,8 @@ SH
 chmod +x "$mock_bin"/*
 
 run_brightness() {
-  CALL_LOG="$call_log" XDG_RUNTIME_DIR="$runtime_dir" PATH="$mock_bin:$ROOT/bin:$PATH" \
+  CALL_LOG="$call_log" XDG_RUNTIME_DIR="$runtime_dir" OMARCHY_BACKLIGHT_PATH="$backlight_dir" \
+    PATH="$mock_bin:$ROOT/bin:$PATH" \
     "$ROOT/bin/omarchy-brightness-display" "$@"
 }
 
@@ -128,6 +135,46 @@ DDC_CURRENT=4 DDC_MAXIMUM=100 run_brightness --no-osd --monitor DP-1 +5%
 grep -F 'ddcutil --bus 7 --skip-ddc-checks --noverify setvcp 10 5' "$call_log" >/dev/null || \
   fail "external low brightness writes the one-percent target"
 pass "external low brightness uses a one-percent step"
+
+# A backlight the kernel names for the focused connector (dcp-<connector>-bl on
+# Apple Silicon) is that display's own control: it wins over HID and DDC/CI.
+mkdir -p "$backlight_dir/dcp-DP-1-bl"
+: >"$call_log"
+brightness=$(run_brightness --monitor DP-1)
+[[ $brightness == "40" ]] || fail "connector backlight is read" "actual: $brightness"
+grep -F 'brightnessctl -d dcp-DP-1-bl -m' "$call_log" >/dev/null || fail "connector backlight is queried"
+grep -E '^(ddcutil|apple) ' "$call_log" >/dev/null && fail "connector backlight skips DDC/CI"
+pass "connector backlight is read without DDC/CI"
+
+: >"$call_log"
+run_brightness --no-osd --monitor DP-1 5%-
+grep -F 'brightnessctl -d dcp-DP-1-bl set 35%' "$call_log" >/dev/null || fail "connector backlight takes the step"
+grep -E '^(ddcutil|apple) ' "$call_log" >/dev/null && fail "connector backlight step skips DDC/CI"
+pass "connector backlight takes the step"
+
+: >"$call_log"
+APPLE_DISPLAY=1 run_brightness --no-osd --monitor DP-1 +5%
+grep -F 'brightnessctl -d dcp-DP-1-bl set 45%' "$call_log" >/dev/null || fail "connector backlight wins over the Apple HID path"
+grep -E '^apple ' "$call_log" >/dev/null && fail "Apple HID path is not used when the connector has a backlight"
+pass "connector backlight wins over the Apple HID path"
+
+: >"$call_log"
+FOCUSED_MONITOR=DP-1 run_brightness --no-osd 10%
+grep -F 'brightnessctl -d dcp-DP-1-bl set 10%' "$call_log" >/dev/null || fail "focused connector's backlight is used"
+pass "focused connector's backlight is used"
+
+: >"$call_log"
+run_brightness --no-osd --monitor eDP-1 5%-
+grep -F 'brightnessctl -d mock_backlight set 35%' "$call_log" >/dev/null || \
+  fail "a monitor with no connector backlight keeps the panel's device"
+pass "a monitor with no connector backlight keeps the panel's device"
+
+: >"$call_log"
+DDC_CONNECTOR=DP-3 run_brightness --no-osd --monitor DP-3 25%
+grep -F 'ddcutil --bus 7 --skip-ddc-checks --noverify setvcp 10' "$call_log" >/dev/null || \
+  fail "another external monitor still uses DDC/CI"
+pass "another external monitor still uses DDC/CI"
+
 
 cat >"$mock_bin/hyprctl" <<'SH'
 #!/bin/bash
