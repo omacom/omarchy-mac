@@ -41,24 +41,42 @@ pin_default_globs() {
 pin_globs() {
   local list
   list=$(pin_list_path)
-  if [[ -r $list ]]; then
-    sed 's/#.*//' "$list" | awk 'NF'
+  if [[ -e $list ]]; then
+    if [[ ! -r $list ]]; then
+      printf '%s\n' "boot-chain-pin: $list exists but is not readable; refusing to fall back to the defaults" >&2
+      return 1
+    fi
+    sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$list" | awk 'NF'
   else
     pin_default_globs
   fi
 }
 
-# A guard with nothing to guard must not report healthy: refuse an empty set.
+# A guard with nothing to guard must not report healthy: refuse an empty set, and refuse
+# globs this tool cannot match faithfully (pacman's ? and [...] are not implemented in pin_regex).
 pin_require_globs() {
-  if [[ -z $(pin_globs) ]]; then
+  local globs glob
+  globs=$(pin_globs) || return 1
+  if [[ -z $globs ]]; then
     printf '%s\n' "boot-chain-pin: $(pin_list_path) has no globs; refusing to pin nothing" >&2
     return 1
   fi
+  while IFS= read -r glob; do
+    if [[ ! $glob =~ ^[A-Za-z0-9@._+*-]+$ ]]; then
+      printf '%s\n' "boot-chain-pin: unsupported glob '$glob' in $(pin_list_path): use letters, digits and @ . _ + * -" >&2
+      return 1
+    fi
+  done <<<"$globs"
 }
 
-# An active (not commented-out) "Include = FILE" line, ignoring surrounding blanks.
+# An active (not commented-out) "Include = FILE" line inside [options], ignoring surrounding blanks.
 pin_has_include() {
-  awk -v want="Include = $2" '{ gsub(/^[ \t]+|[ \t]+$/, "") } $0 == want { found = 1 } END { exit !found }' "$1"
+  awk -v want="Include = $2" '
+    { gsub(/^[ \t]+|[ \t]+$/, "") }
+    /^\[.*\]$/ { in_options = ($0 == "[options]"); next }
+    in_options && $0 == want { found = 1 }
+    END { exit !found }
+  ' "$1"
 }
 
 # Glob to anchored ERE: everything except * is escaped, * becomes .*
@@ -69,7 +87,7 @@ pin_regex() {
 # Overridable libalpm seams, so tests run without root or a database.
 pin_pacman_conf_values() { pacman-conf "${1:-IgnorePkg}"; }
 pin_pacman_query_names() { pacman -Qq; }
-pin_pacman_owner() { pacman -Qo "$1"; }
+pin_pacman_owner() { LC_ALL=C pacman -Qo "$1"; }
 pin_may_write() { (( EUID == 0 )); }
 
 pin_refuse() {
@@ -128,7 +146,7 @@ pin_install() {
 }
 
 pin_check() {
-  local bad=0 pattern name path regex hook off
+  local bad=0 pattern name path regex hook off names owner_out
   pin_require_globs || return 1
   off=$(pin_off_path)
   hook=$(pin_hook_path)
@@ -143,19 +161,33 @@ pin_check() {
       bad=1
     fi
   done < <(pin_globs)
-  if [[ ! -f $hook ]] || ! grep -qF "$(pin_bin_path) refuse" "$hook"; then
+  if [[ ! -f $hook ]] || ! cmp -s "$hook" <(pin_render_hook); then
     printf '%s\n' "boot-chain-pin: hook missing or wrong at $hook" >&2
     bad=1
+  fi
+  if [[ ! -x $(pin_bin_path) ]]; then
+    printf '%s\n' "boot-chain-pin: the hook command $(pin_bin_path) is missing or not executable" >&2
+    bad=1
+  fi
+  if ! names=$(pin_pacman_query_names); then
+    printf '%s\n' 'boot-chain-pin: could not read the installed package list' >&2
+    return 1
   fi
   while IFS= read -r name; do
     if [[ $name =~ $regex ]]; then
       printf '%s\n' "installed package matches the deny list: $name" >&2
       bad=1
     fi
-  done < <(pin_pacman_query_names)
+  done <<<"$names"
   for path in "$@"; do
-    if pin_pacman_owner "$path" >/dev/null 2>&1; then
+    if [[ ! -e $path ]]; then
+      printf '%s\n' "boot-chain-pin: $path does not exist" >&2
+      bad=1
+    elif owner_out=$(pin_pacman_owner "$path" 2>&1); then
       printf '%s\n' "a package owns $path" >&2
+      bad=1
+    elif [[ $owner_out != *'No package owns'* ]]; then
+      printf '%s\n' "boot-chain-pin: could not query the owner of $path: $owner_out" >&2
       bad=1
     fi
   done
