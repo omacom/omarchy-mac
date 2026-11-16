@@ -31,16 +31,27 @@ backlight_brightness() {
 
 [[ -n $monitor ]] || monitor="$(omarchy-hyprland-monitor-focused 2>/dev/null || true)"
 
+# A backlight the kernel names for the monitor's connector (the Apple Silicon
+# display driver registers dcp-<connector>-bl for a Studio Display) is that
+# display's own control, so it is preferred to HID and DDC/CI.
+connector_backlight() {
+  local device="dcp-$monitor-bl"
+
+  [[ -n $monitor && -e ${OMARCHY_BACKLIGHT_PATH:-/sys/class/backlight}/$device ]] && printf '%s\n' "$device"
+}
+
+connector_device="$(connector_backlight || true)"
+
 monitor_is_internal() {
   [[ $monitor =~ ^(eDP|LVDS|DSI)- ]]
 }
 
 use_apple_display() {
-  omarchy-hyprland-monitor-focused-apple "$monitor"
+  [[ -z $connector_device ]] && omarchy-hyprland-monitor-focused-apple "$monitor"
 }
 
 use_ddc_display() {
-  [[ -n $monitor ]] && ! monitor_is_internal
+  [[ -z $connector_device && -n $monitor ]] && ! monitor_is_internal
 }
 
 if (( $# == 0 )); then
@@ -52,7 +63,7 @@ if (( $# == 0 )); then
     exit
   fi
 
-  device="$(omarchy-hw-display)" || exit 1
+  device="${connector_device:-$(omarchy-hw-display)}" || exit 1
   backlight_brightness "$device"
   exit
 fi
@@ -87,7 +98,7 @@ elif use_ddc_display; then
   (( no_osd )) || omarchy-osd -i brightness -p "$brightness"
 else
   # Current device highlighted
-  device="$(omarchy-hw-display)" || exit 1
+  device="${connector_device:-$(omarchy-hw-display)}" || exit 1
 
   # Current brightness percentage
   current=$(backlight_brightness "$device") || exit 1
