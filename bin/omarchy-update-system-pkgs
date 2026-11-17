@@ -15,6 +15,13 @@ if [[ $(uname -m) == "aarch64" ]]; then
   fi
   omarchy_arm_prepare_package_sources
   mapfile -t targets < <(omarchy_arm_package_upgrade_args)
+  # Mesa 26.2 moved the Apple ICD out of mesa. Name the split package on this
+  # transaction so a vulkan-driver dependent cannot abort -Syu, and so machines
+  # without such a dependent do not lose Vulkan silently. Do not gate on
+  # omarchy-pkg-missing: mesa 26.1 still provides the name.
+  if omarchy-hw-apple; then
+    targets+=(vulkan-asahi)
+  fi
 fi
 
 # The conflict handler's last resort: pacman puts its questions to the person
