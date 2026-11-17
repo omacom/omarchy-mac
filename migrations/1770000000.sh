@@ -7,7 +7,7 @@ set -euo pipefail
 
 echo "Checking Widevine CDM installation for DRM streaming support..."
 
-if [[ $(uname -m) != "aarch64" ]] || [[ ! -f /proc/device-tree/compatible ]] || ! grep -qi "apple" /proc/device-tree/compatible 2>/dev/null; then
+if [[ $(uname -m) != "aarch64" ]] || [[ ! -f /proc/device-tree/compatible ]] || ! grep -qai "apple" /proc/device-tree/compatible 2>/dev/null; then
   echo "Skipping Widevine migration: not an Apple Silicon aarch64 system"
   exit 0
 fi
