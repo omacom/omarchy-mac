@@ -12,7 +12,6 @@ step="${2:-}"
 cache_dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-display-ddc"
 cache_name="${monitor//[^[:alnum:]_.-]/_}"
 cache_file="$cache_dir/$cache_name.bus"
-unavailable_cache_seconds=60
 range_cache_seconds=10
 
 cache_unavailable() {
@@ -41,20 +40,15 @@ detect_bus() {
 
 find_bus() {
   local bus=""
-  local cached_value=""
-  local now=0
 
   if [[ -r $cache_file ]]; then
-    read -r bus cached_value <"$cache_file" || true
+    read -r bus _ <"$cache_file" || true
   fi
 
   if [[ $bus == "unavailable" ]]; then
-    now=$(date +%s)
-    if [[ $cached_value =~ ^[0-9]+$ ]] && (( now - cached_value < unavailable_cache_seconds )); then
-      return 1
-    fi
-    bus=""
-    rm -f "$cache_file"
+    # XDG_RUNTIME_DIR is per-session, so this lasts until logout. Retrying
+    # every 60s re-walks buses that will never speak DDC (apple-drm).
+    return 1
   fi
 
   if [[ -z $bus ]]; then
