@@ -5,7 +5,7 @@ echo "Show 1Password install instructions on Apple Silicon systems"
 set -euo pipefail
 
 # Only mention this on Apple Silicon/aarch64 systems.
-if [[ $(uname -m) != "aarch64" ]] || [[ ! -f /proc/device-tree/compatible ]] || ! grep -qi "apple" /proc/device-tree/compatible 2>/dev/null; then
+if [[ $(uname -m) != "aarch64" ]] || [[ ! -f /proc/device-tree/compatible ]] || ! grep -qai "apple" /proc/device-tree/compatible 2>/dev/null; then
   echo "Skipping 1Password instructions: not an Apple Silicon aarch64 system"
   exit 0
 fi
