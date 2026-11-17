@@ -849,20 +849,25 @@ echo
 echo "=== the status line reports the disk ==="
 
 status_with() {
-  local encrypted="$1" want="$2"
+  local encrypted="$1" want="$2" installed="${3:-0}"
   (
     want_encrypt=$want
     banner() { :; }
-    current_step() { echo omarchy; }
     current_hostname() { echo box; }
     root_source() { echo /dev/mapper/root; }
     boot_is_separate() { return 0; }
-    omarchy_is_installed() { return 1; }
     findmnt() { echo /dev/sda1; }
     if (( encrypted )); then
       root_is_encrypted() { return 0; }
     else
       root_is_encrypted() { return 1; }
+    fi
+    if (( installed )); then
+      current_step() { echo done; }
+      omarchy_is_installed() { return 0; }
+    else
+      current_step() { echo omarchy; }
+      omarchy_is_installed() { return 1; }
     fi
     print_status
   )
@@ -876,6 +881,14 @@ check "an unencrypted root with the flag set still reports requested" \
 
 check "an unencrypted root without the flag reports not requested" \
   matches 'encryption +not requested' "$(status_with 0 0)"
+
+finished_unencrypted_status=$(status_with 0 1 1)
+
+no_stale_encrypt_intent() { ! matches 'encryption +requested' "$finished_unencrypted_status"; }
+check "a finished machine does not report a stale encryption intent" no_stale_encrypt_intent
+
+check "a finished unencrypted machine reports the disk, not intent" \
+  matches 'encryption +no \(root is not encrypted\)' "$finished_unencrypted_status"
 
 echo "=== a finished machine is not worked on before being told it is finished ==="
 
