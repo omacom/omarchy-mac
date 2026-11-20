@@ -1,5 +1,7 @@
 # Install VM runner requirements
 
+The Install VM workflow has been removed. `install.sh` now refuses new installs because Omarchy Mac is no longer maintained, so the harness below stops at that refusal. The rest of this page describes how it ran before.
+
 The **Install VM** workflow uses GitHub's disposable `ubuntu-24.04-arm` runners for every pull request, pushes to `quattro`, manual runs, and the nightly schedule. No self-hosted runner registration is needed. The workflow installs `systemd-container`, `curl`, `gnupg`, CA certificates, `tar`, and `gzip`; removes unused hosted-image toolchains; and fails early unless at least 20 GiB is free.
 
 The Arch Linux ARM guest runs under `systemd-nspawn`, sharing the host's kernel without nested KVM. A generic ARM64 kernel with Landlock support is sufficient for installer and userspace validation. The harness explicitly allows the three Landlock system calls through nspawn's default syscall filter, so current pacman can enforce its download sandbox even with an older host systemd. Host diagnostics report the kernel configuration and active security modules when readable; package sandboxing remains enabled. Apple boot, Asahi kernel behavior, and Apple GPU support still require hardware testing.

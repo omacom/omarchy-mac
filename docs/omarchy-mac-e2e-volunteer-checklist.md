@@ -1,5 +1,8 @@
 # Omarchy Mac — Volunteer E2E Installation Checklist
 
+> [!IMPORTANT]
+> Retired. Omarchy Mac is no longer maintained, and its installers no longer start new installs. Install the official Omarchy for Apple Silicon instead: see the [Mac manual](https://omarchy.org/manual/mac-support/).
+
 Use this checklist for a **fresh, on-metal installation**, beginning in macOS and ending with a verified Omarchy desktop after a second login and cold boot. A successful `install.sh` exit alone is not an E2E pass.
 
 Mark every applicable item **PASS**, **FAIL**, **BLOCKED**, or **SKIP**. Add evidence for failures and explain every skip. Stop at the first unsafe or unexplained storage/boot failure; collect evidence before retrying, repairing, or deleting the installation.
