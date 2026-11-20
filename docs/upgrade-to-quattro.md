@@ -7,20 +7,22 @@ by a single Quickshell-based shell, Hyprland configuration moves to Lua, and
 updates flow through `omarchy update` with per-user migrations.
 
 On regular x86 machines, Omarchy 4 is installed from pacman packages and lives
-at `/usr/share/omarchy`. **No Omarchy packages are published for Apple
-Silicon**, so a Mac gets there by a different route depending on how it was
+at `/usr/share/omarchy`. **Omarchy Mac published no Omarchy packages for Apple
+Silicon**, so a Mac got there by a different route depending on how it was
 installed:
 
-- **A fresh install** builds those same packages locally — `install.sh` runs
-  `build-packages.sh` and `pacman -U`s the result — so `/usr/share/omarchy` is
-  ordinary package content, exactly as on x86. The checkout at
-  `~/.local/share/omarchy` is the build source and installer, not the runtime.
+- **A fresh install** built those same packages locally. `install.sh` ran
+  `build-packages.sh` and installed the result with `pacman -U`, so
+  `/usr/share/omarchy` is ordinary package content, exactly as on x86. The
+  checkout at `~/.local/share/omarchy` was the build source and installer, not
+  the runtime. `install.sh` now refuses new installs.
 - **The upgrade**, from a 3.x machine, left it running from that checkout with
   `/usr/share/omarchy` symlinked at it, because 3.x already lived there and the
   upgrade did not rebuild the machine around packages.
 
-Either way `OMARCHY_PATH` is `/usr/share/omarchy`; the difference is whether it
-is a directory or a symlink. `ls -ld /usr/share/omarchy` says which you have.
+On a fresh install `OMARCHY_PATH` is `/usr/share/omarchy`. After the upgrade it
+is the checkout, with `/usr/share/omarchy` symlinked to it.
+`ls -ld /usr/share/omarchy` says which you have.
 
 The upgrade wired the checkout into the places the packaged install would
 occupy, installed the new desktop stack from Arch Linux ARM and the AUR, and
