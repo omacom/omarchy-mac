@@ -14,8 +14,9 @@ in one command, full-disk encryption included.
 > Install it with the [Omarchy installer](https://github.com/omacom/omarchy-mac-installer), below.
 > Its Mac packages and the [Mac manual](https://github.com/omacom/omarchy-mac-pkgs/tree/main/mac-manual)
 > live in [omarchy-mac-pkgs](https://github.com/omacom/omarchy-mac-pkgs).
-> Omarchy Mac is no longer maintained. Existing installs keep working but get no more
-> updates. New installs should use Omarchy for Apple Silicon.
+> Omarchy Mac is no longer maintained. Existing installs keep working, and `omarchy update`
+> still updates system and AUR packages, but Omarchy Mac's own scripts and config get no
+> more fixes. New installs should use Omarchy for Apple Silicon.
 
 ## Install Omarchy for Apple Silicon (recommended)
 
@@ -56,7 +57,8 @@ brew install omacom/mac/omarchy
 
 Or see the [Mac manual](https://omarchy.org/manual/mac-support/).
 
-Existing installs keep working but get no more updates. There is no in-place
+Existing installs keep working, and `omarchy update` still updates system and AUR
+packages, but Omarchy Mac's own scripts and config get no more fixes. There is no in-place
 upgrade to Omarchy for Apple Silicon: back up, remove the old install, install
 Omarchy for Apple Silicon, then restore your files, as in
 [Moving from this setup](#moving-from-this-setup).
