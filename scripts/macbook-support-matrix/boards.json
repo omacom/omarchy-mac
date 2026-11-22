@@ -1,0 +1,1082 @@
+{
+  "snapshot": {
+    "linux-aurora": {
+      "sha": "8eddf5aeb6acfb07ec3ca7bdcb62170685493b28",
+      "date": "8 Nov 2026 09:41 AEST"
+    },
+    "m1n1": {
+      "sha": "7f6df96591b72c6ac9009cfa7e991dc5eafc7def",
+      "date": "8 Nov 2026 09:41 AEST"
+    },
+    "catalog": "edge catalog 6 Nov 2026",
+    "basecamp_date": "8 Nov 2026 (Brisbane)"
+  },
+  "columns": [
+    [
+      "inst",
+      "Edge catalog"
+    ],
+    [
+      "stor",
+      "Storage"
+    ],
+    [
+      "kbd",
+      "Keyboard + trackpad"
+    ],
+    [
+      "net",
+      "Wi-Fi + BT"
+    ],
+    [
+      "spk",
+      "Speakers"
+    ],
+    [
+      "jack",
+      "Jack + mics"
+    ],
+    [
+      "disp",
+      "Internal display"
+    ],
+    [
+      "gpu",
+      "GPU accel"
+    ],
+    [
+      "usb",
+      "USB-C / TB"
+    ],
+    [
+      "ext",
+      "External display"
+    ],
+    [
+      "cam",
+      "Camera"
+    ],
+    [
+      "vdec",
+      "Video decode"
+    ],
+    [
+      "batt",
+      "Battery + sensors"
+    ],
+    [
+      "pwr",
+      "Power + sleep"
+    ],
+    [
+      "tid",
+      "Touch ID"
+    ],
+    [
+      "xtra",
+      "Model extras"
+    ]
+  ],
+  "kinds": {
+    "base": {
+      "cells": {
+        "inst": [
+          "on"
+        ],
+        "stor": [
+          "on"
+        ],
+        "kbd": [
+          "on"
+        ],
+        "net": [
+          "on"
+        ],
+        "spk": [
+          "on"
+        ],
+        "jack": [
+          "on"
+        ],
+        "disp": [
+          "on"
+        ],
+        "gpu": [
+          "on"
+        ],
+        "usb": [
+          "on",
+          "USB3 + Thunderbolt"
+        ],
+        "ext": [
+          "on"
+        ],
+        "cam": [
+          "on"
+        ],
+        "vdec": [
+          "on"
+        ],
+        "batt": [
+          "on"
+        ],
+        "pwr": [
+          "part",
+          "Code: cpufreq, cpuidle, s2idle only (no deep sleep). Lab: no measurement."
+        ],
+        "tid": [
+          "no",
+          "no SEP profile"
+        ],
+        "xtra": [
+          "na"
+        ]
+      }
+    },
+    "stub": {
+      "fill": [
+        "no",
+        "not described"
+      ],
+      "cells": {
+        "inst": [
+          "no",
+          "not offered"
+        ],
+        "pwr": [
+          "no",
+          "Code: no cpufreq, no cpuidle match."
+        ],
+        "xtra": [
+          "part",
+          "keyboard backlight PWM only"
+        ]
+      }
+    },
+    "no-tree": {
+      "fill": [
+        "no",
+        "no device tree"
+      ],
+      "cells": {
+        "inst": [
+          "no",
+          "not offered"
+        ]
+      }
+    }
+  },
+  "pci_ids_with_driver": [
+    "pci14e4,4425",
+    "pci14e4,4433",
+    "pci14e4,4434",
+    "pci14e4,5f69",
+    "pci14e4,5f71",
+    "pci14e4,5f72",
+    "pci14c3,7932",
+    "pci17a0,9755"
+  ],
+  "families": [
+    {
+      "name": "M1",
+      "soc": "T8103",
+      "boards": [
+        {
+          "id": "j293",
+          "name": "MacBook Pro 13\"",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "USB-C DP via ATC PHY; no HDMI port"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "Touch Bar"
+            ]
+          }
+        },
+        {
+          "id": "j313",
+          "name": "MacBook Air",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "USB-C DP via ATC PHY"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "M1 Pro / Max",
+      "soc": "T6000 / T6001",
+      "boards": [
+        {
+          "id": "j314s",
+          "name": "MacBook Pro 14\" M1 Pro",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "on",
+              "HDMI + USB-C"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). PMP sleep path (linux-aurora#123). Lab: 2.25 W asleep (2.72 W before PMP); macOS 0.25 W. RTC wake alarm in linux-aurora#351."
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        },
+        {
+          "id": "j314c",
+          "name": "MacBook Pro 14\" M1 Max",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "on",
+              "HDMI + USB-C"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        },
+        {
+          "id": "j316s",
+          "name": "MacBook Pro 16\" M1 Pro",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "on",
+              "HDMI + USB-C"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        },
+        {
+          "id": "j316c",
+          "name": "MacBook Pro 16\" M1 Max",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "on",
+              "HDMI + USB-C"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "M2",
+      "soc": "T8112",
+      "boards": [
+        {
+          "id": "j413",
+          "name": "MacBook Air 13\"",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "DP PHY node off in DT"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace; untested"
+            ]
+          }
+        },
+        {
+          "id": "j415",
+          "name": "MacBook Air 15\"",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "DP PHY node off in DT"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace. Lab: enrol and verify pass"
+            ]
+          }
+        },
+        {
+          "id": "j493",
+          "name": "MacBook Pro 13\"",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "DP PHY node off in DT"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "Touch Bar"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "M2 Pro / Max",
+      "soc": "T6020 / T6021",
+      "note": "Lab: an M2 Pro lab Mac (board not recorded) sleeps at about 2 W, 3-4 % battery per hour (9 Oct 2026).",
+      "boards": [
+        {
+          "id": "j414s",
+          "name": "MacBook Pro 14\" M2 Pro",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "HDMI described; DP PHY off in DT"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). Lab: see family note."
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        },
+        {
+          "id": "j414c",
+          "name": "MacBook Pro 14\" M2 Max",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "HDMI described; DP PHY off in DT"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        },
+        {
+          "id": "j416s",
+          "name": "MacBook Pro 16\" M2 Pro",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "HDMI described; DP PHY off in DT"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). Lab: see family note."
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        },
+        {
+          "id": "j416c",
+          "name": "MacBook Pro 16\" M2 Max",
+          "kind": "base",
+          "cells": {
+            "ext": [
+              "part",
+              "HDMI described; DP PHY off in DT"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "M3",
+      "soc": "T8122",
+      "boards": [
+        {
+          "id": "j504",
+          "name": "MacBook Pro 14\" M3",
+          "kind": "base",
+          "cells": {
+            "disp": [
+              "on",
+              "since linux-aurora#388"
+            ],
+            "gpu": [
+              "on",
+              "T8122 admission list"
+            ],
+            "ext": [
+              "no",
+              "no USB-C dcpext routes in DT (J613 only). Lab: HDMI fails DP link training"
+            ],
+            "tid": [
+              "no",
+              "no SEP profile; sensor wiring unchecked"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          },
+          "boot_enables": [
+            "disp",
+            "gpu"
+          ]
+        },
+        {
+          "id": "j613",
+          "name": "MacBook Air 13\" M3",
+          "kind": "base",
+          "cells": {
+            "gpu": [
+              "on",
+              "T8122 admission list"
+            ],
+            "ext": [
+              "opt",
+              "chosen.asahi,t8122-dcpext=1"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). Open sleep fixes: trackpad linux-aurora#343, light sensor linux-aurora#152. Lab: no measurement."
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers (linux-aurora#88); needs userspace"
+            ]
+          },
+          "boot_enables": [
+            "disp",
+            "gpu"
+          ]
+        },
+        {
+          "id": "j615",
+          "name": "MacBook Air 15\" M3",
+          "kind": "base",
+          "cells": {
+            "gpu": [
+              "on",
+              "T8122 admission list"
+            ],
+            "ext": [
+              "pr",
+              "no USB-C dcpext routes in DT (J613 only); linux-aurora#356"
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers (linux-aurora#88); needs userspace"
+            ]
+          },
+          "boot_enables": [
+            "disp",
+            "gpu"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "M3 Pro",
+      "soc": "T6030",
+      "boards": [
+        {
+          "id": "j514s",
+          "name": "MacBook Pro 14\" M3 Pro",
+          "kind": "base",
+          "cells": {
+            "gpu": [
+              "part",
+              "12C CPU / 18C GPU only: the 14C GPU bin's firmware is not pinned, so the GPU is refused; linux-aurora#366"
+            ],
+            "ext": [
+              "on",
+              "DT dispext handoff"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). Sleep display release and RTC wake alarm (linux-aurora#274). Lab: 1.35 W asleep (2.6 W before #274)."
+            ],
+            "tid": [
+              "pr",
+              "SEP in linux-aurora#282"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          },
+          "boot_enables": [
+            "disp",
+            "gpu",
+            "ext"
+          ]
+        },
+        {
+          "id": "j516s",
+          "name": "MacBook Pro 16\" M3 Pro",
+          "kind": "base",
+          "cells": {
+            "gpu": [
+              "part",
+              "12C CPU / 18C GPU only: the 14C GPU bin's firmware is not pinned, so the GPU is refused; linux-aurora#390"
+            ],
+            "ext": [
+              "on",
+              "DT dispext handoff"
+            ],
+            "tid": [
+              "no",
+              "not described"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          },
+          "boot_enables": [
+            "disp",
+            "gpu",
+            "ext"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "M3 Max",
+      "soc": "T6031 / T6034",
+      "boards": [
+        {
+          "id": "j516c",
+          "name": "MacBook Pro 16\" M3 Max",
+          "config": "16C CPU / 40C GPU · T6031",
+          "kind": "base",
+          "cells": {
+            "gpu": [
+              "on",
+              "reference board"
+            ],
+            "ext": [
+              "no",
+              "no dcpext nodes; linux-aurora#292"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). Sleep powers off the GPU domain under running firmware: fix in linux-aurora#288; RTC alarm in linux-aurora#285. Lab: 3 of 3 30 s sleeps resumed with those patches."
+            ],
+            "tid": [
+              "no",
+              "not described"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          },
+          "boot_enables": [
+            "disp",
+            "gpu"
+          ]
+        },
+        {
+          "id": "j514c",
+          "name": "MacBook Pro 14\" M3 Max",
+          "config": "16C CPU / 40C GPU · T6031",
+          "kind": "base",
+          "cells": {
+            "disp": [
+              "on",
+              "default since m1n1#31"
+            ],
+            "gpu": [
+              "on",
+              "admitted by linux-aurora#363, default since m1n1#31; J516C power values unqualified"
+            ],
+            "ext": [
+              "no",
+              "no dcpext nodes"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). Same T6031 GPU-domain sleep issue as J516C (linux-aurora#288). Lab: no measurement."
+            ],
+            "tid": [
+              "no",
+              "not described"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          },
+          "boot_enables": [
+            "disp",
+            "gpu"
+          ]
+        },
+        {
+          "id": "j516m",
+          "name": "MacBook Pro 16\" M3 Max",
+          "config": "14C CPU / 30C GPU · T6034",
+          "kind": "base",
+          "cells": {
+            "disp": [
+              "no",
+              "no DCP board entry; boot framebuffer"
+            ],
+            "gpu": [
+              "no",
+              "T6034 support admits J514M only; no PR"
+            ],
+            "ext": [
+              "no",
+              "no dcpext nodes"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). cpuidle matches T6034; no GPU driver to suspend. Lab: no measurement."
+            ],
+            "tid": [
+              "no",
+              "not described"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        },
+        {
+          "id": "j514m",
+          "name": "MacBook Pro 14\" M3 Max",
+          "config": "14C CPU / 30C GPU · T6034",
+          "kind": "base",
+          "cells": {
+            "disp": [
+              "pr",
+              "kernel merged (linux-aurora#408); m1n1 default in m1n1#32, approved, not merged"
+            ],
+            "gpu": [
+              "pr",
+              "kernel linux-aurora#408 and Mesa mesa#33 merged; m1n1 default in m1n1#32; J516C power values unqualified. Lab: GL and Vulkan clean, 0 DART faults, Hyprland desktop"
+            ],
+            "ext": [
+              "no",
+              "no dcpext nodes"
+            ],
+            "pwr": [
+              "part",
+              "Code: cpufreq, cpuidle, s2idle only (no deep sleep). GPU driver has no suspend callbacks. Lab: no measurement."
+            ],
+            "tid": [
+              "no",
+              "not described"
+            ],
+            "xtra": [
+              "on",
+              "SD card"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "MacBook Neo",
+      "soc": "T8140",
+      "boards": [
+        {
+          "id": "j700",
+          "name": "MacBook Neo",
+          "kind": "base",
+          "cells": {
+            "net": [
+              "on",
+              "MT7932 Wi-Fi + BT"
+            ],
+            "spk": [
+              "on",
+              "m1n1 adds speaker-safety node"
+            ],
+            "disp": [
+              "on",
+              "m1n1 handoff; framebuffer if checks fail"
+            ],
+            "gpu": [
+              "on",
+              "agx-t8140"
+            ],
+            "usb": [
+              "on",
+              "USB-C; no Thunderbolt"
+            ],
+            "ext": [
+              "part",
+              "dcp_h17p_external_supported gate"
+            ],
+            "pwr": [
+              "no",
+              "Code: cpufreq, cpuidle (WFI only on T8140), s2idle offered. Lab: real s2idle does not resume yet; DVFS after resume unverified (linux-aurora#227)."
+            ],
+            "tid": [
+              "part",
+              "SEP + sensor drivers; needs userspace"
+            ],
+            "xtra": [
+              "na",
+              "no keyboard backlight"
+            ]
+          },
+          "boot_enables": [
+            "disp"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "M4",
+      "soc": "T8132",
+      "note": "Device trees describe CPUs and keyboard backlight only. m1n1 has CPU start code only.",
+      "boards": [
+        {
+          "id": "j604",
+          "name": "MacBook Pro 14\" M4",
+          "kind": "stub"
+        },
+        {
+          "id": "j713",
+          "name": "MacBook Air 13\" M4",
+          "kind": "stub"
+        },
+        {
+          "id": "j715",
+          "name": "MacBook Air 15\" M4",
+          "kind": "stub"
+        }
+      ]
+    },
+    {
+      "name": "M4 Pro / Max",
+      "soc": "T6040 / T6041",
+      "note": "No board files. Kernel has a G17 GPU config for agx-t6040; m1n1 has CPU start code only.",
+      "boards": [
+        {
+          "id": "j614s",
+          "name": "MacBook Pro 14\" M4 Pro",
+          "config": "12C/16G or 14C/20G",
+          "kind": "no-tree"
+        },
+        {
+          "id": "j614c",
+          "name": "MacBook Pro 14\" M4 Max",
+          "config": "14C/32G or 16C/40G",
+          "kind": "no-tree"
+        },
+        {
+          "id": "j616s",
+          "name": "MacBook Pro 16\" M4 Pro",
+          "config": "14C/20G",
+          "kind": "no-tree"
+        },
+        {
+          "id": "j616c",
+          "name": "MacBook Pro 16\" M4 Max",
+          "config": "14C/32G or 16C/40G",
+          "kind": "no-tree"
+        }
+      ]
+    },
+    {
+      "name": "M5",
+      "soc": "T8142",
+      "note": "Kernel has CPU IDs and cpufreq for T8142; m1n1 has chip setup, cpufreq and ATC PHY code. Only J813 has a board file.",
+      "boards": [
+        {
+          "id": "j704",
+          "name": "MacBook Pro 14\" M5",
+          "config": "Oct 2025",
+          "kind": "no-tree"
+        },
+        {
+          "id": "j813",
+          "name": "MacBook Air 13\" M5",
+          "config": "Mar 2026",
+          "kind": "stub",
+          "cells": {
+            "kbd": [
+              "on",
+              "MTP"
+            ],
+            "usb": [
+              "on",
+              "USB; no Thunderbolt"
+            ],
+            "batt": [
+              "on",
+              "SMC"
+            ],
+            "disp": [
+              "no",
+              "DCP node off"
+            ],
+            "pwr": [
+              "no",
+              "Code: cpufreq only; no cpuidle match. Lab: untestable, no storage."
+            ]
+          }
+        },
+        {
+          "id": "j815",
+          "name": "MacBook Air 15\" M5",
+          "config": "Mar 2026",
+          "kind": "no-tree"
+        }
+      ]
+    },
+    {
+      "name": "M5 Pro / Max",
+      "soc": "T6050 / T6051",
+      "note": "Only J714C has work, all in open PRs: linux-aurora#404 and m1n1#30, #33, #34, #35, #37.",
+      "boards": [
+        {
+          "id": "j714c",
+          "name": "MacBook Pro 14\" M5 Max",
+          "config": "Mar 2026",
+          "kind": "base",
+          "cells": {
+            "inst": [
+              "no",
+              "not offered"
+            ],
+            "stor": [
+              "pr",
+              "NVMe in linux-aurora#404"
+            ],
+            "kbd": [
+              "pr",
+              "MTP in #404"
+            ],
+            "net": [
+              "pr",
+              "N1 opt-in, m1n1#34"
+            ],
+            "spk": [
+              "no",
+              "not in #404"
+            ],
+            "jack": [
+              "no",
+              "not in #404"
+            ],
+            "disp": [
+              "pr",
+              "framebuffer in #404; native opt-in m1n1#35"
+            ],
+            "gpu": [
+              "pr",
+              "m1n1 hand-off m1n1#37; no kernel driver in #404"
+            ],
+            "usb": [
+              "no",
+              "not in #404"
+            ],
+            "ext": [
+              "no"
+            ],
+            "cam": [
+              "no"
+            ],
+            "vdec": [
+              "no"
+            ],
+            "batt": [
+              "pr",
+              "SMC in #404"
+            ],
+            "pwr": [
+              "pr",
+              "Code: cpufreq in #404; no cpuidle match. Lab: s2idle offered and lid resume by hand on the bring-up tree (#404)."
+            ],
+            "tid": [
+              "no"
+            ],
+            "xtra": [
+              "pr",
+              "keyboard backlight in #404"
+            ]
+          },
+          "tree_in_pr": "linux-aurora#404"
+        },
+        {
+          "id": "j714s",
+          "name": "MacBook Pro 14\" M5 Pro",
+          "config": "Mar 2026",
+          "kind": "no-tree"
+        },
+        {
+          "id": "j716s",
+          "name": "MacBook Pro 16\" M5 Pro",
+          "config": "Mar 2026",
+          "kind": "no-tree"
+        },
+        {
+          "id": "j716c",
+          "name": "MacBook Pro 16\" M5 Max",
+          "config": "Mar 2026",
+          "kind": "no-tree"
+        },
+        {
+          "id": "k114s",
+          "name": "MacBook Pro 14\" PROLED XDR, M5 Pro",
+          "config": "6 Nov 2026",
+          "kind": "no-tree"
+        },
+        {
+          "id": "k114c",
+          "name": "MacBook Pro 14\" PROLED XDR, M5 Max",
+          "config": "6 Nov 2026",
+          "kind": "no-tree"
+        },
+        {
+          "id": "k116s",
+          "name": "MacBook Pro 16\" PROLED XDR, M5 Pro",
+          "config": "6 Nov 2026",
+          "kind": "no-tree"
+        },
+        {
+          "id": "k116c",
+          "name": "MacBook Pro 16\" PROLED XDR, M5 Max",
+          "config": "6 Nov 2026",
+          "kind": "no-tree"
+        }
+      ]
+    },
+    {
+      "name": "M6",
+      "soc": "T8152",
+      "note": "Chip work targets the Mac mini J873G (kernel DT, cpufreq; m1n1 display, DCP, ATC PHY; linux-aurora#191 to #198, #359). No MacBook board file.",
+      "boards": [
+        {
+          "id": "j804",
+          "name": "MacBook Pro 14\" M6",
+          "config": "6 Nov 2026",
+          "kind": "no-tree"
+        }
+      ]
+    }
+  ],
+  "basecamp": {
+    "intro": [
+      "What the Omarchy Mac kernel (linux-aurora) and boot loader (m1n1) drive on every Apple Silicon MacBook: 42 boards from M1 to M6, including MacBook Neo. The board list comes from Apple's model identification pages and AppleDB, so models with no code yet are included.",
+      "Every status comes from code: the board's compiled device tree, a matching kernel driver, and any per-board gate in the driver or m1n1. <strong>On</strong> means the code is present and enabled by default. It does not mean the feature has passed hardware testing; results live in <a href=\"https://app.basecamp.com/5994298/buckets/48646031/documents/10320206083\">Omarchy M+ — Hardware testing and validation</a>."
+    ],
+    "summary": [
+      "<strong>M1 to M2 Max (13 boards):</strong> every device has a driver; display and GPU are on by default. The gap is external display on M2 (USB-C DisplayPort node disabled).",
+      "<strong>M3 (7 of 9 boards):</strong> native display and GPU on by default on J504, J613, J615, J514S, J516S, J516C and J514C. J514C became default with m1n1#31; its GPU power values are copied from the 16\" and unqualified. On M3 Pro only the 12-core CPU / 18-core GPU bin gets the GPU; the 14-core GPU bin loads a firmware the kernel does not pin yet (linux-aurora#366, #390).",
+      "<strong>Power + sleep:</strong> sleep is s2idle only on every board; there is no deep sleep. cpufreq and cpuidle are present on M1 to M3 and Neo, and missing on M4 to M6. Measured sleep drain: M1 Pro J314S 2.25 W, M3 Pro J514S 1.35 W, about 2 W on an M2 Pro, against 0.25 W for macOS on the same M1 Pro. Neo does not resume from s2idle yet.",
+      "<strong>Binned M3 Max (T6034):</strong> J514M display and GPU are merged in the kernel (linux-aurora#408) and Mesa (mesa#33), and go on by default when m1n1#32 merges (approved). J516M has nothing yet and boots on the basic framebuffer.",
+      "<strong>MacBook Neo:</strong> display, GPU, Wi-Fi, Bluetooth and audio on by default. External display and Touch ID partial.",
+      "<strong>Every M4, M5 and M6 MacBook (19 boards) is not installable.</strong> 15 have no device tree. J604, J713, J715 and J813 have one with no storage controller. Only the 14\" M5 Max J714C has open bring-up PRs (linux-aurora#404)."
+    ],
+    "labels": [
+      [
+        "on",
+        "described in the device tree, driver binds, on by default."
+      ],
+      [
+        "opt",
+        "code present, but needs a boot.bin line or a pending change."
+      ],
+      [
+        "part",
+        "code present with a gap noted."
+      ],
+      [
+        "pr",
+        "only in an open, unmerged pull request."
+      ],
+      [
+        "no",
+        "no driver, a gate refuses the board, or the hardware is not described."
+      ],
+      [
+        "na",
+        "the model does not have that hardware."
+      ]
+    ],
+    "common_note": "The <em>Common hardware</em> column covers storage, keyboard and trackpad, Wi-Fi and Bluetooth, speakers, headphone jack and microphones, USB-C and Thunderbolt, camera, video decode, battery and sensors. It lists only the items that are not <strong>On</strong>.",
+    "evidence": [
+      "Each board's <code>.dts</code> was preprocessed and compiled, and every node's effective status read (a node is off if it or a parent is disabled). Each enabled node's <code>compatible</code> strings or PCI ID were matched against <code>drivers/</code> and <code>sound/</code>. All 27 existing MacBook device trees bind a driver for every enabled device, so every gap comes from a per-board gate or an undescribed device.",
+      "GPU: the driver's device matches (<code>drm/asahi/driver.rs:164-218</code>) cover t8103, t8112, t600x, t602x, t8122, t6030, t6031, t6040 and t8140; the G15 driver (<code>g15/mod.rs:143-157</code>) covers t6030, t6031 and t6034. M3 Air and J504 are admitted by <code>asahi/m3/t8122_admission.rs:9</code>, M3 Pro by <code>asahi/g15/glue.c:229</code> with one pinned firmware TEXT per board (<code>g15/hw.rs:156-171</code>; the 14-core GPU bin's <code>cd05af6a…</code> image is added by linux-aurora#366 and #390), J516C by <code>g15/hw/t6031.rs:183</code> and J514C by <code>g15/boot.rs:475</code> (linux-aurora#363) and J514M by <code>g15/boot.rs:479</code> (linux-aurora#408); <code>boot.rs:497</code> refuses every other T6034 board. m1n1 turns graphics on by default for J613, J615, J504, J514S, J516S, J516C and J514C (<code>kboot.c:407-419</code>, J514C added by m1n1#31).",
+      "Display: M1/M2 use the standard DCP driver. M3 boards need an entry in <code>drm/apple/iomfb_v14_7.c:231-239</code>: T6030 (any M3 Pro), J613, J615, J504 (linux-aurora#388), J516C, J514C and J514M. External displays are native on M3 Pro through the device tree's dispext handoff (<code>dcp.c:1385</code>), need <code>chosen.asahi,t8122-dcpext=1</code> on J613 (m1n1 <code>kboot.c:2785</code>), are not wired on J615 and J504 because only <code>t8122-j613.dts</code> describes the USB-C routes to dcpext (J615 routes in linux-aurora#356), and have no nodes on M3 Max (linux-aurora#292).",
+      "Speakers: every MacBook has speakers enabled in <code>sound/soc/apple/macaudio.c:1862</code>, directly or through a compatible fallback. They still need the speakersafetyd daemon in userspace.",
+      "Touch ID: the SEP driver (<code>drivers/soc/apple/sep.rs</code>) provides enrol and verify through <code>/dev/sep-bio</code>. SEP nodes ship disabled by design and the driver enables them at runtime (<code>sep.rs:10</code>). A board is covered when <code>soc/apple/profile.rs:550-590</code> has a profile (T8103, T6000/T6001, T6020/T6021, T8112, T8140, and T8122 for J613/J615 only) and its fingerprint sensor node is enabled: every M1, M1 Pro/Max, M2, M2 Pro/Max and M3 Air MacBook, and Neo. M3 Pro SEP is in linux-aurora#282. Touch ID still needs userspace integration.",
+      "M4 Pro and later: board codes and chip IDs come from Apple's <a href=\"https://support.apple.com/en-us/108052\">MacBook Pro</a> and <a href=\"https://support.apple.com/en-us/102869\">MacBook Air</a> pages and <a href=\"https://github.com/littlebyteorg/appledb/tree/main/deviceFiles\">AppleDB</a>. m1n1 has only CPU start code for T604x and T605x. M6 work so far targets the Mac mini J873G (linux-aurora#191 to #198, #359). AppleDB gives M5 Pro and M5 Max the same chip ID (0x6050) while m1n1 also defines T6051, so whether M5 Max splits across two chips like M3 Max is not confirmed.",
+      "Power + sleep: each cell gives code evidence first and lab results second, labelled Code and Lab. Partial means the code paths exist but sleep is s2idle only and drains far more than macOS. cpufreq is an enabled <code>*-cluster-cpufreq</code> node with a driver match. cpuidle starts on t8103, t8112, t8122, t600x, t602x, t6030, t6031, t6032, t6034 and t8140 (<code>drivers/cpuidle/cpuidle-apple.c:173-186</code>; WFI only on T8140), and on no M4, M5 or M6 chip. Apple Silicon has no PSCI system suspend, so <code>mem_sleep</code> offers only s2idle. The display driver has system-sleep handlers for every generation (<code>drm/apple/dcp.c:5086</code>). The GPU driver has none, because its firmware stays resident; on T6031, genpd powers the GPU domain off under it, which linux-aurora#288 fixes (open).",
+      "Power lab sources: M1 Pro J314S figures are 5 V input measurements from 14 Oct 2026; a live Thunderbolt link adds about 1.3 W in sleep there. The M3 Pro J514S figure is the SMC coulomb counter on battery, from linux-aurora#274. The M2 Pro figure is from the 9 Oct 2026 battery investigation (board not recorded). The Neo resume status comes from the linux-aurora#227 qualification notes.",
+      "Not covered by code evidence: backlight and fn keys, sustained power and thermals. The 28 Oct test reports still fail display controller, backlight, ambient light, fn key and external display checks on every M3 board that reported."
+    ],
+    "titles": {
+      "gpu": "GPU acceleration"
+    }
+  }
+}

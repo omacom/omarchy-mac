@@ -1,0 +1,3351 @@
+{
+ "boards": {
+  "j293": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8103-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8103-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f69"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8103-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8103-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8103-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8103-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8103"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l83"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,spi-hid-transport"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8103-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j293-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8103-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t8103-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [
+      "apple,j293-touchbar"
+     ],
+     "state": "driver"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8103-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8103-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4425"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8103-j293.dts"
+  },
+  "j313": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8103-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8103-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f69"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8103-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8103-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8103-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8103-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8103"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l83"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,spi-hid-transport"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8103-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j313-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8103-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t8103-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8103-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8103-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4425"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8103-j313.dts"
+  },
+  "j314c": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6000-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6000-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6000-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6000-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6000-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6000-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6001"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,spi-hid-transport"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6000-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j314-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6000-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6000-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6000-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6000-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6001-j314c.dts"
+  },
+  "j314s": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6000-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6000-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6000-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6000-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6000-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6000-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6000"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,spi-hid-transport"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6000-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j314-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6000-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6000-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6000-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6000-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6000-j314s.dts"
+  },
+  "j316c": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6000-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6000-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6000-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6000-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6000-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6000-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6001"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,spi-hid-transport"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6000-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j316-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6000-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6000-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6000-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6000-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6001-j316c.dts"
+  },
+  "j316s": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6000-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6000-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6000-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6000-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6000-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6000-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6000"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,spi-hid-transport"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6000-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j316-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6000-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6000-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6000-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6000-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6000-j316s.dts"
+  },
+  "j413": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8112-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8112-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8112-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8112-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8112-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8112-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8112"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8112-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j413-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8112-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t8112-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8112-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8112-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8112-j413.dts"
+  },
+  "j414c": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6020-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6020-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f72"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6020-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6020-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6020-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6020-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6021"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6020-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j414-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6020-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6020-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6020-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6020-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4434"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6021-j414c.dts"
+  },
+  "j414s": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6020-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6020-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f72"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6020-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6020-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6020-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6020-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6020"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6020-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j414-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6020-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6020-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6020-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6020-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4434"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6020-j414s.dts"
+  },
+  "j415": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8112-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8112-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8112-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8112-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8112-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8112-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8112"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8112-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j415-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8112-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t8112-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8112-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8112-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8112-j415.dts"
+  },
+  "j416c": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6020-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6020-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f72"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6020-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6020-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6020-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6020-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6021"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6020-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j416-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6020-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6020-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6020-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6020-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4434"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6021-j416c.dts"
+  },
+  "j416s": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6020-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6020-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f72"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6020-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6020-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6020-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6020-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6020"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6020-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j416-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6020-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6020-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6020-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6020-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4434"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6020-j416s.dts"
+  },
+  "j493": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8112-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8112-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f69"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8112-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8112-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8112-dcp"
+     ],
+     "state": "driver"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8112-dcpext"
+     ],
+     "state": "driver"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8112"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8112-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j493-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8112-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t8112-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [
+      "apple,j493-touchbar"
+     ],
+     "state": "driver"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8112-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8112-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4425"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8112-j493.dts"
+  },
+  "j504": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8122-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8122-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f72"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8122-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8122-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8122-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8122-dcpext"
+     ],
+     "state": "dt-off"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8122"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8122-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j314-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8122-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t8122-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "dt-off"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8122-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8122-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4434"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8122-j504.dts"
+  },
+  "j514c": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6031-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6031-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6031-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6031-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6031-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6031"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6031-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j514-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6031-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6031-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6031-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6031-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6031-j514c.dts"
+  },
+  "j514m": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6031-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6031-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6031-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6031-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6034-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6034"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6031-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j514-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6031-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6031-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6031-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6031-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6034-j514m.dts"
+  },
+  "j514s": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6030-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6030-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6030-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6030-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6030-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6030-dcpext"
+     ],
+     "state": "dt-off"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6030"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6030-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j514-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6030-nvme-ans3"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6030-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6030-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6030-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6030-j514s.dts"
+  },
+  "j516c": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6031-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6031-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6031-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6031-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6031-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6031"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6031-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j516-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6031-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6031-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6031-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6031-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6031-j516c.dts"
+  },
+  "j516m": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6031-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6031-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6031-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6031-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [],
+     "state": "absent"
+    },
+    "extdisp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6034"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6031-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j516-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6031-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6031-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6031-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6031-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6034-j516m.dts"
+  },
+  "j516s": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t6030-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t6030-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f71"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t6030-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t6030-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t6030-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t6030-dcpext"
+     ],
+     "state": "dt-off"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t6030"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t6030-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [
+      "pci17a0,9755"
+     ],
+     "state": "driver"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j516-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t6030-nvme-ans3"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t6030-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [
+      "apple,t6030-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t6030-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4433"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t6030-j516s.dts"
+  },
+  "j604": {
+   "features": {
+    "als": {
+     "compat": [],
+     "state": "absent"
+    },
+    "battery": {
+     "compat": [],
+     "state": "absent"
+    },
+    "bt": {
+     "compat": [],
+     "state": "absent"
+    },
+    "camera": {
+     "compat": [],
+     "state": "absent"
+    },
+    "cpufreq": {
+     "compat": [],
+     "state": "absent"
+    },
+    "display": {
+     "compat": [],
+     "state": "absent"
+    },
+    "extdisp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "gpu": {
+     "compat": [],
+     "state": "absent"
+    },
+    "jack": {
+     "compat": [],
+     "state": "absent"
+    },
+    "kbd_tp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [],
+     "state": "absent"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [],
+     "state": "absent"
+    },
+    "storage": {
+     "compat": [],
+     "state": "absent"
+    },
+    "tb": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [],
+     "state": "absent"
+    },
+    "vdec": {
+     "compat": [],
+     "state": "absent"
+    },
+    "wifi": {
+     "compat": [],
+     "state": "absent"
+    }
+   },
+   "tree": "t8132-j604.dts"
+  },
+  "j613": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8122-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8122-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f72"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8122-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8122-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8122-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8122-dcpext"
+     ],
+     "state": "dt-off"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8122"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8122-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j613-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8122-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t8122-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8122-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8122-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4434"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8122-j613.dts"
+  },
+  "j614c": {
+   "tree": null
+  },
+  "j614s": {
+   "tree": null
+  },
+  "j615": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8122-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8122-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [
+      "pci14e4,5f72"
+     ],
+     "state": "driver"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8122-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8122-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8122-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8122-dcpext"
+     ],
+     "state": "dt-off"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8122"
+     ],
+     "state": "dt-off"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l84"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8122-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j615-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8122-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [
+      "apple,t8122-usb4-nhi"
+     ],
+     "state": "driver"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8122-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8122-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14e4,4434"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8122-j615.dts"
+  },
+  "j616c": {
+   "tree": null
+  },
+  "j616s": {
+   "tree": null
+  },
+  "j700": {
+   "features": {
+    "als": {
+     "compat": [
+      "apple,t8140-aop-als"
+     ],
+     "state": "driver"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8140-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [],
+     "state": "absent"
+    },
+    "camera": {
+     "compat": [
+      "apple,t8140-isp"
+     ],
+     "state": "driver"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8140-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8140-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [
+      "apple,t8140-dcpext"
+     ],
+     "state": "dt-off"
+    },
+    "gpu": {
+     "compat": [
+      "apple,agx-t8140"
+     ],
+     "state": "driver"
+    },
+    "jack": {
+     "compat": [
+      "cirrus,cs42l83"
+     ],
+     "state": "driver"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [],
+     "state": "absent"
+    },
+    "mics": {
+     "compat": [
+      "apple,t8140-aop-audio"
+     ],
+     "state": "driver"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [
+      "apple,j700-macaudio"
+     ],
+     "state": "driver"
+    },
+    "storage": {
+     "compat": [
+      "apple,t8140-nvme-ans2"
+     ],
+     "state": "driver"
+    },
+    "tb": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [
+      "apple,mesa-fingerprint"
+     ],
+     "state": "driver"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8140-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [
+      "apple,t8140-avd"
+     ],
+     "state": "driver"
+    },
+    "wifi": {
+     "compat": [
+      "pci14c3,7932"
+     ],
+     "state": "driver"
+    }
+   },
+   "tree": "t8140-j700.dts"
+  },
+  "j704": {
+   "tree": null
+  },
+  "j713": {
+   "features": {
+    "als": {
+     "compat": [],
+     "state": "absent"
+    },
+    "battery": {
+     "compat": [],
+     "state": "absent"
+    },
+    "bt": {
+     "compat": [],
+     "state": "absent"
+    },
+    "camera": {
+     "compat": [],
+     "state": "absent"
+    },
+    "cpufreq": {
+     "compat": [],
+     "state": "absent"
+    },
+    "display": {
+     "compat": [],
+     "state": "absent"
+    },
+    "extdisp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "gpu": {
+     "compat": [],
+     "state": "absent"
+    },
+    "jack": {
+     "compat": [],
+     "state": "absent"
+    },
+    "kbd_tp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [],
+     "state": "absent"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [],
+     "state": "absent"
+    },
+    "storage": {
+     "compat": [],
+     "state": "absent"
+    },
+    "tb": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [],
+     "state": "absent"
+    },
+    "vdec": {
+     "compat": [],
+     "state": "absent"
+    },
+    "wifi": {
+     "compat": [],
+     "state": "absent"
+    }
+   },
+   "tree": "t8132-j713.dts"
+  },
+  "j714c": {
+   "tree": null
+  },
+  "j714s": {
+   "tree": null
+  },
+  "j715": {
+   "features": {
+    "als": {
+     "compat": [],
+     "state": "absent"
+    },
+    "battery": {
+     "compat": [],
+     "state": "absent"
+    },
+    "bt": {
+     "compat": [],
+     "state": "absent"
+    },
+    "camera": {
+     "compat": [],
+     "state": "absent"
+    },
+    "cpufreq": {
+     "compat": [],
+     "state": "absent"
+    },
+    "display": {
+     "compat": [],
+     "state": "absent"
+    },
+    "extdisp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "gpu": {
+     "compat": [],
+     "state": "absent"
+    },
+    "jack": {
+     "compat": [],
+     "state": "absent"
+    },
+    "kbd_tp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [],
+     "state": "absent"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [],
+     "state": "absent"
+    },
+    "storage": {
+     "compat": [],
+     "state": "absent"
+    },
+    "tb": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [],
+     "state": "absent"
+    },
+    "vdec": {
+     "compat": [],
+     "state": "absent"
+    },
+    "wifi": {
+     "compat": [],
+     "state": "absent"
+    }
+   },
+   "tree": "t8132-j715.dts"
+  },
+  "j716c": {
+   "tree": null
+  },
+  "j716s": {
+   "tree": null
+  },
+  "j804": {
+   "tree": null
+  },
+  "j813": {
+   "features": {
+    "als": {
+     "compat": [],
+     "state": "absent"
+    },
+    "battery": {
+     "compat": [
+      "apple,t8142-smc"
+     ],
+     "state": "driver"
+    },
+    "bt": {
+     "compat": [],
+     "state": "absent"
+    },
+    "camera": {
+     "compat": [],
+     "state": "absent"
+    },
+    "cpufreq": {
+     "compat": [
+      "apple,t8142-cluster-cpufreq"
+     ],
+     "state": "driver"
+    },
+    "display": {
+     "compat": [
+      "apple,t8142-dcp"
+     ],
+     "state": "dt-off"
+    },
+    "extdisp": {
+     "compat": [],
+     "state": "absent"
+    },
+    "gpu": {
+     "compat": [],
+     "state": "absent"
+    },
+    "jack": {
+     "compat": [],
+     "state": "absent"
+    },
+    "kbd_tp": {
+     "compat": [
+      "apple,dockchannel-hid"
+     ],
+     "state": "driver"
+    },
+    "kbdlight": {
+     "compat": [
+      "pwm-leds"
+     ],
+     "state": "driver"
+    },
+    "mics": {
+     "compat": [],
+     "state": "absent"
+    },
+    "sd": {
+     "compat": [],
+     "state": "absent"
+    },
+    "speakers": {
+     "compat": [],
+     "state": "absent"
+    },
+    "storage": {
+     "compat": [],
+     "state": "absent"
+    },
+    "tb": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchbar": {
+     "compat": [],
+     "state": "absent"
+    },
+    "touchid": {
+     "compat": [],
+     "state": "absent"
+    },
+    "usb": {
+     "compat": [
+      "apple,t8142-dwc3"
+     ],
+     "state": "driver"
+    },
+    "vdec": {
+     "compat": [],
+     "state": "absent"
+    },
+    "wifi": {
+     "compat": [],
+     "state": "absent"
+    }
+   },
+   "tree": "t8142-j813.dts"
+  },
+  "j815": {
+   "tree": null
+  },
+  "k114c": {
+   "tree": null
+  },
+  "k114s": {
+   "tree": null
+  },
+  "k116c": {
+   "tree": null
+  },
+  "k116s": {
+   "tree": null
+  }
+ },
+ "kernel": "8eddf5aeb6acfb07ec3ca7bdcb62170685493b28"
+}
