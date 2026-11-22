@@ -1,28 +1,32 @@
 # Upgrading Omarchy Mac 3.x to Quattro (Omarchy 4)
 
+> Omarchy Mac is now part of Omarchy for Apple Silicon, so `omarchy-upgrade-to-quattro-mac` no longer upgrades a 3.x install. It prints where to go and exits without changing anything. Install the official Omarchy for Apple Silicon from macOS with `brew install omacom/mac/omarchy`, or see the [Mac support page](https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac). The rest of this page describes what the upgrade did, for machines that already ran it.
+
 Quattro is the Omarchy 4 generation: the Waybar/Walker/Mako desktop is replaced
 by a single Quickshell-based shell, Hyprland configuration moves to Lua, and
 updates flow through `omarchy update` with per-user migrations.
 
 On regular x86 machines, Omarchy 4 is installed from pacman packages and lives
-at `/usr/share/omarchy`. **No Omarchy packages are published for Apple
-Silicon**, so a Mac gets there by a different route depending on how it was
+at `/usr/share/omarchy`. **Omarchy Mac published no Omarchy packages for Apple
+Silicon**, so a Mac got there by a different route depending on how it was
 installed:
 
-- **A fresh install** builds those same packages locally — `install.sh` runs
-  `build-packages.sh` and `pacman -U`s the result — so `/usr/share/omarchy` is
-  ordinary package content, exactly as on x86. The checkout at
-  `~/.local/share/omarchy` is the build source and installer, not the runtime.
-- **This upgrade**, from a 3.x machine, keeps running from that checkout and
-  symlinks `/usr/share/omarchy` at it, because 3.x already lived there and the
-  upgrade does not rebuild the machine around packages.
+- **A fresh install** built those same packages locally. `install.sh` ran
+  `build-packages.sh` and installed the result with `pacman -U`, so
+  `/usr/share/omarchy` is ordinary package content, exactly as on x86. The
+  checkout at `~/.local/share/omarchy` was the build source and installer, not
+  the runtime. `install.sh` now refuses new installs.
+- **The upgrade**, from a 3.x machine, left it running from that checkout with
+  `/usr/share/omarchy` symlinked at it, because 3.x already lived there and the
+  upgrade did not rebuild the machine around packages.
 
-Either way `OMARCHY_PATH` is `/usr/share/omarchy`; the difference is whether it
-is a directory or a symlink. `ls -ld /usr/share/omarchy` says which you have.
+On a fresh install `OMARCHY_PATH` is `/usr/share/omarchy`. After the upgrade it
+is the checkout, with `/usr/share/omarchy` symlinked to it.
+`ls -ld /usr/share/omarchy` says which you have.
 
-The upgrade wires the checkout into the places the packaged install would
-occupy, installs the new desktop stack from Arch Linux ARM and the AUR, and
-retires the old one.
+The upgrade wired the checkout into the places the packaged install would
+occupy, installed the new desktop stack from Arch Linux ARM and the AUR, and
+removed the old one.
 
 ## Read this first
 
@@ -30,26 +34,13 @@ retires the old one.
   upstream x86 upgrade: it rewrites `/etc/pacman.d/mirrorlist` to point at
   Omarchy's x86_64 package mirrors, which do not serve aarch64. Running it
   breaks pacman for the whole system. The command ships in this repo because we
-  track upstream — the Mac upgrade is `omarchy-upgrade-to-quattro-mac` below.
-- **The upgrade is one-way.** There is no supported downgrade to 3.x.
-- **Back up first.** At minimum, know that your macOS side is safe and copy
-  anything irreplaceable off the Linux side. The script also backs up
-  `~/.config` and your Hyprland config before touching them.
-- Your Hyprland configuration is replaced. 3.x used `hyprland.conf`; Quattro is
-  configured in Lua. Your old files are moved aside, not deleted, but expect to
-  redo personal keybindings and monitor tweaks in the new format.
+  track upstream. The Mac upgrade, `omarchy-upgrade-to-quattro-mac`, is retired
+  (see below).
+- **The upgrade was one-way.** There is no supported downgrade to 3.x.
+- The upgrade replaced your Hyprland configuration. 3.x used `hyprland.conf`;
+  Quattro is configured in Lua. Your old files were moved aside, not deleted.
 
-## Run the upgrade
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/omarchy-mac/omarchy-mac/quattro/bin/omarchy-upgrade-to-quattro-mac | bash
-```
-
-The script confirms before it changes anything, asks for your sudo password
-once, and prompts to reboot at the end. Expect the package step to take a
-while — Quickshell and a few other AUR packages are compiled on the machine.
-
-## What the script does
+## What the script did
 
 1. Backs up `~/.config` to `~/.config.omarchy3.<timestamp>.bak`.
 2. Switches `~/.local/share/omarchy` to the `quattro` branch (it refuses to run
@@ -70,8 +61,8 @@ while — Quickshell and a few other AUR packages are compiled on the machine.
 8. Removes the retired Waybar/Walker/Mako/SwayOSD desktop stack and switches
    networking from iwd to NetworkManager.
 
-Re-running the script after a failure is safe — every step either skips work
-that is already done or redoes it harmlessly.
+The script now refuses to run, so it can no longer repair a machine. The
+troubleshooting steps below fix the pieces by hand.
 
 ## After the upgrade
 
@@ -81,19 +72,20 @@ that is already done or redoes it harmlessly.
 - [ ] Wi-Fi is now managed by NetworkManager; reconnect with
       `nmcli device wifi connect <ssid> --ask` if it did not carry over.
 - [ ] Pick your theme again with `omarchy theme set <name>`.
-- [ ] `omarchy update` now updates the checkout, runs migrations, and restarts
-      the shell — that is the normal update path from here on.
+- [ ] `omarchy update` updates system and AUR packages and runs migrations. The
+      checkout is frozen, so it no longer pulls new commits.
 
 ## Troubleshooting
 
 - **New terminals print "No such file or directory" mentioning
   `/usr/share/omarchy`** — the symlink or `/etc/omarchy.conf` is missing;
-  re-run the script.
+  recreate them:
+  `sudo ln -sfn ~/.local/share/omarchy /usr/share/omarchy` and
+  `echo "export OMARCHY_PATH=\"$HOME/.local/share/omarchy\"" | sudo tee /etc/omarchy.conf`
 - **The lock screen does nothing** — run `sudo omarchy-setup-lock` and check
   `omarchy-shell lock status` again.
 - **A systemd unit fails with status 203/EXEC** — a `/usr/bin/omarchy-*`
-  symlink is missing (usually after a new command is added); re-run the script
-  or recreate the symlinks:
+  symlink is missing; recreate the symlinks:
   `for c in ~/.local/share/omarchy/bin/omarchy-*; do sudo ln -sf "$c" /usr/bin/; done`
 - **No Wi-Fi after reboot** — NetworkManager is now in charge: reconnect with
   `nmcli device wifi connect <ssid> --ask`.

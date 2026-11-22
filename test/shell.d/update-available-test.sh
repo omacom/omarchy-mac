@@ -176,38 +176,8 @@ if capture_checker "$stdout" "$stderr" \
 else
   status=$?
 fi
-[[ $status -eq 0 ]] || fail "update checker exits successfully when dev commits are available"
-grep -Fx 'omarchy-dev-checkout 2 new commits on origin/quattro' "$stdout" >/dev/null ||
-  fail "update checker reports available dev commits" "$(cat "$stdout")"
-grep -Fx -- "-C $test_tmp/checkout fetch --quiet" "$git_log" >/dev/null ||
-  fail "update checker fetches the dev checkout upstream" "$(cat "$git_log")"
-pass "update checker detects new commits in the dev checkout"
-
-if capture_checker "$stdout" "$stderr" \
-  TEST_CHECKUPDATES=none \
-  TEST_INSTALLED_PACKAGE=none \
-  TEST_OMARCHY_PATH="$test_tmp/checkout" \
-  TEST_GIT_BEHIND=0; then
-  status=0
-else
-  status=$?
-fi
-[[ $status -eq 1 ]] || fail "update checker exits non-zero when the dev checkout is current"
-grep -q '^Omarchy is up to date$' "$stdout" || fail "update checker reports a current dev checkout"
-pass "update checker ignores a current dev checkout"
-
-if capture_checker "$stdout" "$stderr" \
-  TEST_CHECKUPDATES=none \
-  TEST_INSTALLED_PACKAGE=none \
-  TEST_OMARCHY_PATH="$test_tmp/checkout" \
-  TEST_GIT_BEHIND=1 \
-  TEST_GIT_FETCH=fail; then
-  status=0
-else
-  status=$?
-fi
-[[ $status -eq 0 ]] || fail "update checker uses cached upstream state when fetch fails"
-grep -Fx 'omarchy-dev-checkout 1 new commit on origin/quattro' "$stdout" >/dev/null ||
-  fail "update checker reports cached dev commits after a fetch failure" "$(cat "$stdout")"
-[[ ! -s $stderr ]] || fail "update checker keeps dev fetch failures quiet" "$(cat "$stderr")"
-pass "update checker uses cached dev state when fetching is unavailable"
+[[ $status -eq 1 ]] || fail "update checker exits non-zero for a checkout behind upstream" "$(cat "$stdout")"
+grep -q '^Omarchy is up to date$' "$stdout" ||
+  fail "update checker reports a frozen checkout as up to date" "$(cat "$stdout")"
+[[ ! -s $git_log ]] || fail "update checker does not fetch or inspect the checkout" "$(cat "$git_log")"
+pass "update checker ignores upstream commits a frozen dev checkout can no longer pull"
