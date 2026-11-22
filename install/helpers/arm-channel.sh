@@ -28,7 +28,7 @@ omarchy_arm_channel_render() {
       return 1
     fi
     cat "$config" >"$output"
-    printf '\n[omarchy-aarch64]\nSigLevel = Optional TrustAll\nServer = https://github.com/omarchy-mac/omarchy-pkgs-aarch64/releases/download/%s\n' "$channel" >>"$output"
+    printf '\n[omarchy-aarch64]\nSigLevel = PackageRequired DatabaseRequired TrustedOnly\nServer = https://github.com/omarchy-mac/omarchy-pkgs-aarch64/releases/download/%s\n' "$channel" >>"$output"
     return
   fi
   if ! omarchy_arm_channel_current "$config" >/dev/null; then
@@ -40,6 +40,14 @@ omarchy_arm_channel_render() {
     selected && /^[[:space:]]*Server[[:space:]]*=/ { sub(/\/download\/(stable|rc|edge)/, "/download/" channel) }
     { print }
   ' "$config" >"$output"
+  if [[ $allow_new == fresh ]]; then
+    local strict_output="${output}.strict.$$"
+    if ! omarchy_arm_signature_policy_render "$output" 'PackageRequired DatabaseRequired TrustedOnly' "$strict_output"; then
+      rm -f -- "$strict_output" "$output"
+      return 1
+    fi
+    mv -- "$strict_output" "$output"
+  fi
 }
 
 omarchy_arm_signature_policy_render() {
