@@ -59,4 +59,184 @@ assert(
     !/barToken\("notch-height"/.test(styleSource),
   'notch-height is read raw, not through the font-scaled bar tokens'
 )
+
+const cutouts = bar.parseCutouts(JSON.stringify({ panels: [
+  { connector: 'eDP', width: 3024, height: 1964, cutoutWidth: 420 },
+  { connector: 'eDP', width: 2560, height: 1664 }
+] }))
+const mode = (width, height, transform = 0) => ({ width, height, transform })
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964)), 210, 'scale 2 halves the physical cutout width')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 3024, 1964, mode(3024, 1964)), 420, 'scale 1 keeps the physical width')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1890, 1228, mode(3024, 1964)), 263, 'fractional scaling reserves every cutout column')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, null), 0, 'a missing monitor mode leaves the layout unchanged')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1890, 1228, null), 0, 'fractional scaling without a mode never guesses')
+assertEqual(bar.cutoutLeftEdge(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964)), 651, 'the cutout starts at logical column 651')
+for (const position of ['bottom', 'left', 'right'])
+  assertEqual(bar.cutoutLeftEdge(cutouts, position, 'eDP-1', 1512, 982, mode(3024, 1964)), 0, `${position} bars keep their layout`)
+for (const name of ['DP-1', 'HDMI-A-1'])
+  assertEqual(bar.cutoutWidthAt(cutouts, 'top', name, 1512, 982, mode(3024, 1964)), 0, `${name} keeps its layout`)
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1280, 832, mode(2560, 1664)), 0, 'a panel without a measured width keeps its layout')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1890)), 0, 'a different mode keeps its layout')
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 0, 0, null), 0, 'an empty screen has no cutout')
+for (const transform of [1, 2, 3, 5, 6, 7])
+  assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964, transform)), 0, `transform ${transform} has no top cutout`)
+assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964, 4)), 210, 'horizontal mirroring preserves a centered cutout')
+for (const unknown of [
+  mode(0, 0, 2),
+  { width: 3024, height: 1964 },
+  mode(3024, 1964, null),
+  mode(3024, 1964, false)
+])
+  assertEqual(bar.cutoutWidthAt(cutouts, 'top', 'eDP-1', 1512, 982, unknown), 0, 'invalid mode or unknown orientation leaves the layout unchanged')
+for (const text of ['', 'bad json', 'null', '[]', '{"panels":{}}'])
+  assertDeepEqual(bar.parseCutouts(text), [], 'invalid descriptions leave the layout unchanged')
+for (const bad of [true, false, null, '420', 1.5, 0, -1, 3024])
+  assertDeepEqual(bar.parseCutouts(JSON.stringify({ panels: [
+    { connector: 'eDP', width: 3024, height: 1964, cutoutWidth: bad }
+  ] })), [], `invalid width ${JSON.stringify(bad)} leaves the layout unchanged`)
+const narrow = bar.parseCutouts(JSON.stringify({ panels: [
+  { connector: 'eDP', width: 100, height: 100, cutoutWidth: 1 }
+] }))
+assertEqual(narrow.length, 1, 'one physical column is a valid positive cutout width')
+assertEqual(bar.cutoutLeftEdge(narrow, 'top', 'eDP-1', 100, 100, mode(100, 100)), 49, 'a one-column cutout keeps its safe left edge')
+
+assertDeepEqual(bar.notchSlotLayout([500], 300, 647), [
+  { x: 147, visible: false }
+], 'an oversized center control cannot overlap the left controls')
+assertDeepEqual(bar.notchSlotLayout([200, 400, 100], 300, 647), [
+  { x: -53, visible: false },
+  { x: 147, visible: false },
+  { x: 547, visible: true }
+], 'overflow drops whole leading controls and keeps a complete trailing control')
+assertDeepEqual(bar.notchSlotLayout([247, 100], 300, 647), [
+  { x: 300, visible: true },
+  { x: 547, visible: true }
+], 'controls that exactly fit keep their full width and order')
+assertDeepEqual(bar.notchSlotLayout([248, 100], 300, 647), [
+  { x: 299, visible: false },
+  { x: 547, visible: true }
+], 'one overflowing pixel hides the whole control instead of clipping it')
+assertDeepEqual(bar.notchSlotLayout([100], 647, 647), [
+  { x: 547, visible: false }
+], 'no available space hides every center control')
+assertDeepEqual(bar.notchSlotLayout([0, 100], 300, 647), [
+  { x: 547, visible: false },
+  { x: 547, visible: true }
+], 'an empty control consumes no space or input target')
+assertDeepEqual(bar.notchSlotLayout([347, 0], 300, 647), [
+  { x: 300, visible: true },
+  { x: 647, visible: false }
+], 'a hidden trailing control does not push a control that fits out of the space')
+assertDeepEqual(bar.notchSlotLayout([100, 0, 247], 300, 647), [
+  { x: 300, visible: true },
+  { x: 400, visible: false },
+  { x: 400, visible: true }
+], 'a hidden control between two others leaves no blank slot')
+assertDeepEqual(bar.notchSlotLayout([], 300, 647), [], 'an empty center section stays empty')
+
+// Slots are packed against the cutout side, so a control that overflows also
+// drops every control before it, even one that would fit on its own.
+assertDeepEqual(bar.notchSlotLayout([50, 400, 100], 300, 647), [
+  { x: 97, visible: false },
+  { x: 147, visible: false },
+  { x: 547, visible: true }
+], 'a control that overflows drops every control before it')
+
+// A slot dropped for overflow must stay visible: hiding it makes every child
+// report hidden, so a self-hiding module measures zero and the slot flaps back.
+// Measuring by the slot's own implicit width is what keeps a hidden module from
+// holding a blank slot, and dropping a slot must still take no input.
+const boundedStart = barSource.indexOf('id: boundedHorizontalModuleList')
+const bounded = barSource.slice(boundedStart, barSource.indexOf('id: horizontalModuleList', boundedStart))
+assert(boundedStart > 0 && bounded.length > 0, 'the bounded center list component is found')
+assert(/measuredWidth: implicitWidth\b/.test(bounded), 'a bounded slot measures its own implicit width, zero for a hidden module')
+assert(!/measuredWidth: activeItem/.test(bounded), 'a bounded slot does not measure its widget regardless of that widget being hidden')
+assert(/enabled: placed\b/.test(bounded) && /opacity: placed \? 1 : 0/.test(bounded), 'a dropped slot takes no input and draws nothing')
+assert(!/visible: !!placement/.test(bounded), 'a dropped slot is not hidden, which would collapse its own measure')
+
+// Clicks on the bar are forwarded to a widget's own buttons by a search over
+// every registered target. The slot of a dropped control is zero wide and
+// transparent, but its buttons keep their own widths, so one can lie under a
+// visible control. Qt reports a child of a disabled parent as disabled, so the
+// search has to skip disabled targets. This runs the real function from Bar.qml.
+const clickableSource = barSource.match(/function moduleTargetClickable\(target\) \{[\s\S]*?\n  \}\n/)
+assert(!!clickableSource, 'the click target filter is found in Bar.qml')
+const clickable = new Function(clickableSource[0] + '; return moduleTargetClickable')()
+const pressable = (overrides) => Object.assign({ visible: true, opacity: 1, enabled: true, triggerPress() {} }, overrides)
+assertEqual(!!clickable(pressable({})), true, 'an enabled, drawn button takes clicks')
+assertEqual(!!clickable(pressable({ enabled: false })), false, 'a disabled button, such as one in a dropped slot, takes no clicks')
+assertEqual(!!clickable(pressable({ opacity: 0 })), false, 'a transparent button takes no clicks')
+assertEqual(!!clickable(pressable({ visible: false })), false, 'a hidden button takes no clicks')
+
+// The keyboard panel forwards clicks with its own search over the same
+// targets, so it has to skip a disabled target for the same reason. This runs
+// the real function from KeyboardPanel.qml.
+const panelSource = fs.readFileSync(root + '/shell/Ui/KeyboardPanel.qml', 'utf8')
+const pressSource = panelSource.match(/function pressTargetAt\(px, py\) \{[\s\S]*?\n    \}\n/)
+assert(!!pressSource, 'the keyboard panel click search is found')
+const makePress = new Function('root', 'barPoint', pressSource[0] + '; return pressTargetAt')
+const pressAt = (targets) => makePress({
+  anchorWindow: { contentItem: {}, itemPosition: () => ({ x: 0, y: 0 }) },
+  bar: { clickTargets: targets }
+}, (x, y) => ({ x, y }))(5, 5)
+const button = (overrides) => Object.assign({ visible: true, opacity: 1, enabled: true, width: 20, height: 20, triggerPress() {}, mapToItem() {} }, overrides)
+const under = button({})
+const dropped = button({ enabled: false })
+assertEqual(pressAt([under]), under, 'the keyboard panel presses an enabled button')
+assertEqual(pressAt([under, dropped]), under, 'a button in a dropped slot does not take the click from the control under it')
+assertEqual(pressAt([dropped]), null, 'the keyboard panel presses no disabled button')
+
+// A dropped slot must also close a panel that opens afterwards, such as one a
+// widget opens through its own IPC handler, not only the panel open when it drops.
+const closeSource = bounded.match(/function closeWhenDropped\(\) \{[\s\S]*?\n            \}\n/)
+assert(!!closeSource, 'the bounded slot closes a panel on a dropped slot')
+const makeClose = new Function('placed', 'panelOpen', 'activeItem', closeSource[0] + '; return closeWhenDropped')
+const closesPanel = (placed, panelOpen) => {
+  let closed = false
+  makeClose(placed, panelOpen, { close() { closed = true } })()
+  return closed
+}
+assertEqual(closesPanel(false, true), true, 'an open panel on a dropped slot is closed')
+assertEqual(closesPanel(true, true), false, 'an open panel on a placed slot stays open')
+assertEqual(closesPanel(false, false), false, 'a dropped slot with no panel has nothing to close')
+assert(/onPlacedChanged: closeWhenDropped\(\)/.test(bounded), 'dropping a slot closes its open panel')
+assert(/onPanelOpenChanged: if \(!placed && panelOpen\) Qt\.callLater\(closeWhenDropped\)/.test(bounded), 'a panel that opens on a dropped slot is closed after its open bindings finish')
+
+// A positional hotkey means "the third panel in this section", so it counts the
+// panels the bar draws on the focused output, through the same walk as tab
+// order. The count ships on every machine, not only on a notched one. This runs
+// the real panelWidgetIdAt from Bar.qml with stubs for the focused output and
+// for the panels drawn on each output.
+const idAtSource = barSource.match(/function panelWidgetIdAt\(region, index\) \{[\s\S]*?\n  \}\n/)
+assert(!!idAtSource, 'the positional panel lookup is found in Bar.qml')
+const makeIdAt = new Function('focusedScreenName', 'panelNavigationSlots', idAtSource[0] + '; return panelWidgetIdAt')
+const drawn = { 'eDP-1': ['clock', 'weather'], 'DP-1': ['network'], 'HDMI-A-1': [] }
+const everyOutput = [].concat(drawn['eDP-1'], drawn['DP-1'])
+const idAt = (focused, index) => makeIdAt(
+  () => focused,
+  (region, window, screen) => (screen ? drawn[screen] || [] : everyOutput).map((moduleName) => ({ moduleName }))
+)('right', index)
+assertEqual(idAt('eDP-1', '1'), 'clock', 'the first position is the first panel drawn on the focused output')
+assertEqual(idAt('eDP-1', '2'), 'weather', 'the second position is the second panel drawn on the focused output')
+assertEqual(idAt('DP-1', '1'), 'network', 'another focused output counts its own panels, not the first output')
+assertEqual(idAt('eDP-1', 2), 'weather', 'a numeric index counts the same as a string')
+assertEqual(idAt('eDP-1', '1.6'), 'weather', 'an index is rounded to the nearest position')
+assertEqual(idAt('eDP-1', '3'), '', 'a position past the focused output panels reaches no panel on another output')
+assertEqual(idAt('DP-1', '2'), '', 'the second position on a one-panel output reaches no panel')
+assertEqual(idAt('HDMI-A-1', '3'), 'network', 'a focused output with no panels counts every output')
+assertEqual(idAt('', '3'), 'network', 'no focused output counts every output')
+assertEqual(idAt('eDP-1', '0'), '', 'position zero reaches no panel')
+assertEqual(idAt('eDP-1', '-1'), '', 'a negative position reaches no panel')
+assertEqual(idAt('eDP-1', 'abc'), '', 'a non-numeric position reaches no panel')
+assertEqual(idAt('eDP-1', ''), '', 'an empty position reaches no panel')
+assertEqual(idAt('', '4'), '', 'a position past every output panel reaches no panel')
+
+// The placement wiring has no runtime test off the device, so each expression
+// the layout depends on is pinned in the source.
+assert(/anchors\.rightMargin: parent\.width - centerRoot\.cutoutLeft \+ Style\.space\(4\)/.test(barSource), 'the center list ends a gap before the cutout')
+assert(/widthLimit: Math\.max\(0, centerRoot\.cutoutLeft - centerRoot\.leftControlsRight - 2 \* Style\.space\(4\)\)/.test(barSource), 'the center list spans the space between the left controls and the cutout')
+assert(/sourceComponent: root\.vertical \? verticalCenterModules\s*: centerRoot\.cutoutLeft > 0 \? notchCenterModules : horizontalCenterModules/.test(barSource), 'only a horizontal bar with a cutout uses the notch layout')
+assert(/cutoutLeft: barWindow\.cutoutLeft/.test(barSource), 'the center section reads the window cutout edge')
+assert(/leftControlsRight: leftModules\.x \+ leftModules\.width/.test(barSource), 'the center section starts after the left controls')
+assert(/panelMonitor && panelMonitor\.lastIpcObject \?/.test(barSource), 'the panel mode is read only once Hyprland reports it')
 JS

@@ -163,10 +163,16 @@ function pickDrawnSlot(slots) {
 // monitor's copy wins, so a summon lands where the user is working instead of
 // on whichever output registered its slot first. Neither narrowing applies on
 // a single monitor, or when the focused output has no bar of its own.
+//
+// A slot dropped beside a camera cutout stays mounted, transparent and
+// disabled. It is never a target, so another output's drawn copy wins, and
+// with no drawn copy anywhere there is no panel to summon.
 function pickPanelSlot(candidates, focusedScreen) {
-  var rows = Array.isArray(candidates) ? candidates : []
-  var pool = rows.filter(function(row) { return row && row.opened === true })
-  if (pool.length === 0) pool = rows.filter(function(row) { return !!row })
+  var rows = (Array.isArray(candidates) ? candidates : []).filter(function(row) {
+    return !!row && !(row.slot && row.slot.enabled === false)
+  })
+  var pool = rows.filter(function(row) { return row.opened === true })
+  if (pool.length === 0) pool = rows
 
   var focused = String(focusedScreen || "")
   if (focused) {
@@ -264,8 +270,69 @@ function notchHeight(screenName, logicalWidth, logicalHeight, devicePixelRatio) 
   return Math.ceil(strip)
 }
 
+function positiveInteger(value) {
+  return Number.isInteger(value) && value > 0
+}
+
+function validCutoutPanel(panel) {
+  return panel && typeof panel.connector === "string" && panel.connector !== ""
+    && positiveInteger(panel.width) && positiveInteger(panel.height)
+    && positiveInteger(panel.cutoutWidth) && panel.cutoutWidth < panel.width
+}
+
+// Widths come only from platform measurements; unknown panels keep their layout.
+function parseCutouts(text) {
+  var parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch (error) {
+    return []
+  }
+  var panels = parsed && Array.isArray(parsed.panels) ? parsed.panels : []
+  return panels.filter(validCutoutPanel)
+}
+
+function cutoutPanelMatches(panel, mode, screenName) {
+  return String(screenName || "").indexOf(panel.connector) === 0
+    && Math.abs(mode.width - panel.width) <= 4 && Math.abs(mode.height - panel.height) <= 4
+}
+
+function cutoutWidthAt(cutouts, position, screenName, logicalWidth, logicalHeight, mode) {
+  if (position !== "top" || !(logicalWidth > 0) || !(logicalHeight > 0)) return 0
+  if (!mode || !(mode.width > 0) || !(mode.height > 0) || [0, 4].indexOf(mode.transform) === -1) return 0
+  if ((mode.width > mode.height) !== (logicalWidth > logicalHeight)) return 0
+  var panel = cutouts.find(function(panel) {
+    return cutoutPanelMatches(panel, mode, screenName)
+  })
+  return panel ? Math.ceil(panel.cutoutWidth * logicalWidth / mode.width) : 0
+}
+
+function cutoutLeftEdge(cutouts, position, screenName, logicalWidth, logicalHeight, mode) {
+  var width = cutoutWidthAt(cutouts, position, screenName, logicalWidth, logicalHeight, mode)
+  return width > 0 ? Math.floor((logicalWidth - width) / 2) : 0
+}
+
+// Places whole controls between `left` and `right`, packed against `right`.
+// A control that does not fit is not visible, and neither is any control
+// before it, even one that would fit on its own. A zero-width control takes
+// no space and is never visible.
+function notchSlotLayout(widths, left, right) {
+  var slots = new Array(widths.length)
+  var x = right
+  for (var i = widths.length - 1; i >= 0; i--) {
+    var width = widths[i]
+    x -= width
+    slots[i] = { x: x, visible: width > 0 && x >= left && x + width <= right }
+  }
+  return slots
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
+    parseCutouts: parseCutouts,
+    cutoutWidthAt: cutoutWidthAt,
+    cutoutLeftEdge: cutoutLeftEdge,
+    notchSlotLayout: notchSlotLayout,
     isDrawnSlot: isDrawnSlot,
     notchHeight: notchHeight,
     pickDrawnSlot: pickDrawnSlot,

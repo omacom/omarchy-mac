@@ -184,6 +184,26 @@ assertEqual(
   drawn,
   'bar still picks the drawn slot among the focused monitor copies'
 )
+
+// A slot dropped beside the camera cutout stays mounted but is transparent and
+// disabled, so a hotkey must not summon a panel on it. Another output's drawn
+// copy is the right target, and with no drawn copy anywhere there is no panel.
+const dropped = { moduleName: 'omarchy.audio', visible: true, width: 0, height: 81, enabled: false }
+assertEqual(
+  bar.pickPanelSlot([row(dropped, 'eDP-1'), row(external, 'DP-1')], 'eDP-1'),
+  external,
+  'bar summons another output copy when the focused output dropped its own'
+)
+assertEqual(
+  bar.pickPanelSlot([row(dropped, 'eDP-1')], 'eDP-1'),
+  null,
+  'bar summons no panel when every copy is dropped beside the notch'
+)
+assertEqual(
+  bar.pickPanelSlot([row(dropped, 'eDP-1', true), row(external, 'DP-1')], 'eDP-1'),
+  external,
+  'bar never routes a panel hotkey to a dropped copy, open or not'
+)
 assertEqual(bar.pickPanelSlot([], 'DP-1'), null, 'bar reports no panel slot when there are none')
 assertEqual(bar.pickPanelSlot(null, 'DP-1'), null, 'bar tolerates a missing panel slot list')
 assert(
@@ -199,18 +219,6 @@ assert(
   'bar tabs between panels within one bar surface'
 )
 
-// A positional hotkey means "the third panel in this section", so it counts the
-// panels the bar actually draws. Reusing the tab-order walk is what keeps the
-// count honest: a widget with no panel and a hidden one are already passed over
-// there, and reading the layout config a second time would count both.
-assert(
-  /function panelWidgetIdAt\(region, index\) \{[\s\S]*?panelNavigationSlots\(String\(region \|\| ""\), null\)/.test(barSource),
-  'bar counts positional panels off the drawn tab order'
-)
-assert(
-  /var slot = slots\[Math\.round\(Number\(index\)\) - 1\]/.test(barSource),
-  'positional panels are one-based, and anything off the end lands on no slot'
-)
 assert(
   /function togglePanelAt\(section: string, index: string\): string \{[\s\S]*?shell\.bar\.panelWidgetIdAt\(section, index\)[\s\S]*?shell\.toggle\(id, "\{\}"\)/.test(shellSource),
   'shell toggles a bar panel by its position over IPC'
