@@ -55,7 +55,7 @@ installs. Install Omarchy for Apple Silicon from macOS instead:
 brew install omacom/mac/omarchy
 ```
 
-Or see the [Mac manual](https://omarchy.org/manual/mac-support/).
+Or see the [Mac support page](https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac).
 
 Existing installs keep working, and `omarchy update` still updates system and AUR
 packages, but Omarchy Mac's own scripts and config get no more fixes. There is no in-place
@@ -137,7 +137,7 @@ Consider supporting the project: [![Buy Me A Coffee](https://img.shields.io/badg
 
 - The Omarchy manual — [manual/](manual/)
 - Btrfs snapshots and disk encryption — [docs/btrfs.md](docs/btrfs.md)
-- Upgrading from 3.x to Quattro (no longer runs; install [Omarchy for Apple Silicon](https://omarchy.org/manual/mac-support/) instead) — [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md)
+- Upgrading from 3.x to Quattro (no longer runs; install [Omarchy for Apple Silicon](https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac) instead) — [docs/upgrade-to-quattro.md](docs/upgrade-to-quattro.md)
 
 ---
 

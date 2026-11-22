@@ -7,4 +7,4 @@ set -euo pipefail
 [[ $OMARCHY_PATH != "/usr/share/omarchy" ]] || exit 0
 
 echo -e "\e[33m\nOmarchy Mac is now part of Omarchy for Apple Silicon, so this checkout is not updated."
-echo -e "Reinstall with the official Omarchy for Apple Silicon: https://omarchy.org/manual/mac-support/\e[0m"
+echo -e "Reinstall with the official Omarchy for Apple Silicon: https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac\e[0m"

@@ -941,8 +941,8 @@ refuses_cleanly() {
   output=$(closed_run "$@")
   status=$?
   check "$label: exits non-zero" [ "$status" != 0 ]
-  check "$label: points to the Mac manual" \
-    matches 'omarchy\.org/manual/mac-support' "$output"
+  check "$label: points to the Mac support page" \
+    matches 'github\.com/omacom/omarchy/blob/quattro/manual/44-mac-support\.md' "$output"
   check "$label: runs no setup step" \
     not matches 'QUIETED|ASKED|NETWORK|CLONED|CREATED|FONT|APPLIED|SAVED|INSTALLED|RAN STEP' "$output"
   check "$label: writes no state and calls no command" \

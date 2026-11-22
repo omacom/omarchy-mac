@@ -1,6 +1,6 @@
 # Upgrading Omarchy Mac 3.x to Quattro (Omarchy 4)
 
-> Omarchy Mac is now part of Omarchy for Apple Silicon, so `omarchy-upgrade-to-quattro-mac` no longer upgrades a 3.x install. It prints where to go and exits without changing anything. Install the official Omarchy for Apple Silicon from macOS with `brew install omacom/mac/omarchy`, or see the [Mac manual](https://omarchy.org/manual/mac-support/). The rest of this page describes what the upgrade did, for machines that already ran it.
+> Omarchy Mac is now part of Omarchy for Apple Silicon, so `omarchy-upgrade-to-quattro-mac` no longer upgrades a 3.x install. It prints where to go and exits without changing anything. Install the official Omarchy for Apple Silicon from macOS with `brew install omacom/mac/omarchy`, or see the [Mac support page](https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac). The rest of this page describes what the upgrade did, for machines that already ran it.
 
 Quattro is the Omarchy 4 generation: the Waybar/Walker/Mako desktop is replaced
 by a single Quickshell-based shell, Hyprland configuration moves to Lua, and

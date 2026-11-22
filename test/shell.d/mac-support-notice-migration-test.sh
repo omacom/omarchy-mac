@@ -5,7 +5,7 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 migration="$ROOT/migrations/1794628107.sh"
-manual=https://omarchy.org/manual/mac-support/
+manual=https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
@@ -47,11 +47,11 @@ mapfile -t argv <"$notify_log"
 [[ -n ${argv[4]} ]] || fail "the notice has a summary" "$(cat "$notify_log")"
 n=${#argv[@]}
 [[ ${argv[*]:n-3} == "--exec omarchy-launch-browser $manual" ]] ||
-  fail "clicking the notice opens the Mac manual" "$(cat "$notify_log")"
+  fail "clicking the notice opens the Mac support page" "$(cat "$notify_log")"
 (( $(grep -cx -- '-u' "$notify_log") == 1 )) || fail "the migration notifies once" "$(cat "$notify_log")"
 [[ ! -s $browser_log ]] || fail "the migration does not open a browser by itself" "$(cat "$browser_log")"
-grep -qF "$manual" "$test_tmp/out" || fail "the migration prints the Mac manual" "$(cat "$test_tmp/out")"
-pass "the migration sends a lasting notice that opens the Mac manual"
+grep -qF "$manual" "$test_tmp/out" || fail "the migration prints the Mac support page" "$(cat "$test_tmp/out")"
+pass "the migration sends a lasting notice that opens the Mac support page"
 
 run_migration 1 || fail "a failed notification does not fail the update" "$(cat "$test_tmp/out")"
 [[ -s $notify_log ]] || fail "the failing notifier was still called"

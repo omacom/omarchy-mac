@@ -4,7 +4,7 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
-manual=https://omarchy.org/manual/mac-support/
+manual=https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
@@ -44,7 +44,7 @@ for script in bootstrap.sh setup.sh install.sh bin/omarchy-upgrade-to-quattro-ma
   set -e
 
   [[ $status -eq 1 ]] || fail "$script exits 1" "status $status: $(cat "$work/stderr")"
-  grep -qF "$manual" "$work/stderr" || fail "$script points to the Mac manual on stderr" "$(cat "$work/stderr")"
+  grep -qF "$manual" "$work/stderr" || fail "$script points to the Mac support page on stderr" "$(cat "$work/stderr")"
   [[ ! -s $work/stdout ]] || fail "$script prints nothing else" "$(cat "$work/stdout")"
   [[ ! -s $calls ]] || fail "$script runs no command" "$(cat "$calls")"
   [[ $(cd "$work/home" && find . | sort) == "$home_before" ]] || fail "$script writes nothing to HOME" "$(cd "$work/home" && find . | sort)"

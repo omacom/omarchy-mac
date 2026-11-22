@@ -34,7 +34,7 @@ pass "package-backed updates skip the dev checkout step"
 : >"$git_log"
 run_dev_update "$checkout" >"$test_tmp/dev.out"
 [[ ! -s $git_log ]] || fail "frozen dev checkout is not pulled" "$(cat "$git_log")"
-grep -F "https://omarchy.org/manual/mac-support/" "$test_tmp/dev.out" >/dev/null ||
+grep -F "https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac" "$test_tmp/dev.out" >/dev/null ||
   fail "dev checkout update points to the official version" "$(cat "$test_tmp/dev.out")"
 pass "dev checkout update points to the official version without pulling"
 

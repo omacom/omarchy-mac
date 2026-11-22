@@ -104,9 +104,9 @@ pass "the tree validator only lets Quattro trees through"
 if grep -qE 'https://[^ ]*omarchy-upgrade-to-quattro-mac' "$ROOT/docs/upgrade-to-quattro.md"; then
   fail "the guide no longer publishes the retired upgrade one-liner"
 fi
-grep -qF 'https://omarchy.org/manual/mac-support/' "$ROOT/docs/upgrade-to-quattro.md" ||
-  fail "the guide points 3.x users to the Mac manual"
-pass "the guide points 3.x users to the Mac manual instead of the upgrade"
+grep -qF 'https://github.com/omacom/omarchy/blob/quattro/manual/44-mac-support.md#coming-from-omarchy-mac' "$ROOT/docs/upgrade-to-quattro.md" ||
+  fail "the guide points 3.x users to the Mac support page"
+pass "the guide points 3.x users to the Mac support page instead of the upgrade"
 
 # A pre-existing ARM repo stanza does not prove its sync database is current;
 # stale metadata turns the later package phase into confusing 404s. Refreshing
