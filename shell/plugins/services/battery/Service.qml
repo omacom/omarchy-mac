@@ -39,6 +39,8 @@ Item {
       "omarchy-battery-low",
       String(level)
     ]
+    // The guard owns the critical toast, but battery-low hooks still run once.
+    if (level <= 5) warningProcess.command = warningProcess.command.concat(["--quiet"])
     warningProcess.running = true
   }
 
