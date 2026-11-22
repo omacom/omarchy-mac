@@ -2,7 +2,7 @@
 // ListModel references. The popup container drives lifetime; the history
 // panel drives static rendering. Both use the same component.
 
-import QtQuick
+import QtQuick 6.11
 import QtQuick.Layouts
 import Quickshell
 import qs.Commons

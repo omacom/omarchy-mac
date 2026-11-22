@@ -2,7 +2,7 @@ import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
-import QtQuick
+import QtQuick 6.11
 import QtQuick.Layouts
 import qs.Commons
 import qs.Ui

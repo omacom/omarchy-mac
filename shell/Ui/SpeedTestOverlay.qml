@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.11
 import QtQuick.Layouts
 import QtQuick.Shapes
 import Quickshell

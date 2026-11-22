@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.11
 import qs.Commons
 
 // Rectangle-compatible surface with Omarchy border specs. Uses native

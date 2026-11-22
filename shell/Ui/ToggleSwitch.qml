@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.11
 import qs.Commons
 
 // Bare on/off switch: a track with a sliding knob and no label. This is the
