@@ -76,6 +76,24 @@ boot_fits_esp() {
   (( need_kb + HEADROOM_MIB * 1024 < avail_kb ))
 }
 
+# Unmount the ESP before /boot is copied onto it. Something else can hold it
+# for a moment (issue #776: "target is busy"), so retry a few times. If it
+# never frees up, stop with the holders named, before anything has been moved.
+unmount_esp() {
+  local target="$1" error holders
+  for _ in 1 2 3 4 5; do
+    if error=$(umount "$target" 2>&1); then
+      return 0
+    fi
+    sleep 2
+  done
+  holders=$(fuser -vm "$target" 2>&1 || true)
+  fail "cannot unmount $target: ${error}${holders:+
+Held by:
+$holders}
+The move has not started and nothing has been moved. Stop what holds $target and run this again, or reboot first."
+}
+
 recovery_note() {
   warn "Something failed partway through. To put the machine back as it was:"
   warn "  umount /boot 2>/dev/null; rmdir /boot 2>/dev/null"
@@ -161,7 +179,7 @@ main() {
   trap recovery_note ERR
 
   log "Copying /boot onto the ESP"
-  umount /boot/efi
+  unmount_esp /boot/efi
   rmdir /boot/efi 2>/dev/null || true
   mkdir -p "$STAGE"
   mount "$esp" "$STAGE"
