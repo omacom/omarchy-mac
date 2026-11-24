@@ -35,8 +35,8 @@ Item {
   readonly property bool showPasswordCursor: inputEnabled && !authenticatingPassword && failureMessage.length === 0
   readonly property bool errorState: failureMessage.length > 0
   readonly property var inputBorderSpec: errorState
-    ? Border.surfaceSpec("lock", "border-error", Color.lock.borderError, root.outlineThickness, "border-alpha")
-    : Border.surfaceSpec("lock", "border-active", Color.lock.borderActive, root.outlineThickness, "border-alpha")
+    ? Border.surfaceSpec("lock", "border-error", ShellColor.lock.borderError, root.outlineThickness, "border-alpha")
+    : Border.surfaceSpec("lock", "border-active", ShellColor.lock.borderActive, root.outlineThickness, "border-alpha")
 
   signal submitPassword(string password)
   signal passwordTextEdited(string password)
@@ -88,7 +88,7 @@ Item {
 
   Rectangle {
     anchors.fill: parent
-    color: Color.background
+    color: ShellColor.background
 
     Image {
       id: wallpaper
@@ -124,7 +124,7 @@ Item {
       width: root.fieldWidth
       height: root.fieldHeight
       anchors.centerIn: parent
-      color: Color.lock.background
+      color: ShellColor.lock.background
       borderSpec: root.inputBorderSpec
       radius: Style.cornerRadius
       clip: true
@@ -147,16 +147,16 @@ Item {
         echoMode: TextInput.Password
         passwordCharacter: "\u25CF"
         passwordMaskDelay: 0
-        color: Color.lock.text
-        selectionColor: Color.lock.selection
-        selectedTextColor: Color.lock.text
+        color: ShellColor.lock.text
+        selectionColor: ShellColor.lock.selection
+        selectedTextColor: ShellColor.lock.text
         font.family: Style.font.family
         font.pixelSize: text.length > 0 ? Math.max(1, Math.floor(root.passwordDotFontSize * root.passwordDotScale)) : root.fieldFontSize
         font.letterSpacing: text.length > 0 ? root.passwordDotLetterSpacing * root.passwordDotScale : 0
         cursorVisible: activeFocus && root.showPasswordCursor && text.length > 0
         cursorDelegate: Rectangle {
           width: 2
-          color: Color.lock.text
+          color: ShellColor.lock.text
           visible: passwordInput.cursorVisible
         }
 
@@ -188,7 +188,7 @@ Item {
         anchors.fill: passwordInput
         text: root.authenticatingPassword ? "Checking…" : (root.failureMessage.length > 0 ? root.failureMessage : root.placeholderText)
         visible: passwordInput.text.length === 0
-        color: root.authenticatingPassword ? Color.lock.text : (root.failureMessage.length > 0 ? Color.lock.textError : Color.lock.placeholder)
+        color: root.authenticatingPassword ? ShellColor.lock.text : (root.failureMessage.length > 0 ? ShellColor.lock.textError : ShellColor.lock.placeholder)
         font.family: Style.font.family
         font.pixelSize: root.fieldFontSize
         font.italic: !root.authenticatingPassword && root.failureMessage.length > 0
@@ -208,7 +208,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         visible: root.fingerprintConfigured
         text: "󰈷"
-        color: Color.lock.placeholder
+        color: ShellColor.lock.placeholder
         font.family: Style.font.family
         font.pixelSize: Math.round(root.fieldFontSize * 1.1)
         horizontalAlignment: Text.AlignHCenter

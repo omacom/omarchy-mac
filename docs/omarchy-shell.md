@@ -194,17 +194,20 @@ or override a single section with `shell.<section>.toml`, merged in by
 `omarchy-theme-set-templates` (see [`theming.md`](theming.md)).
 
 `colors.toml` uses `foreground` and `background` for the foundational
-text/background palette, exposed to QML as `Color.foreground` and
-`Color.background`.
+text/background palette, exposed to QML as `ShellColor.foreground` and
+`ShellColor.background`.
 
 The shell exposes these tokens to QML via three singletons in
 `qs.Commons`:
 
-- `Color` — palette (`foreground`, `background`, `accent`, `urgent`)
-  and per-surface roles (`Color.bar.*`, `Color.popups.*`,
-  `Color.tooltip.*`, `Color.notifications.*`, `Color.menu.*`,
-  `Color.polkit.*`, `Color.lock.*`, `Color.imagePicker.*`). Clipboard
-  and emojis share `Color.menu.*`; the `[launcher]` section is consumed
+- `ShellColor` — palette (`foreground`, `background`, `accent`, `urgent`)
+  and per-surface roles (`ShellColor.bar.*`, `ShellColor.popups.*`,
+  `ShellColor.tooltip.*`, `ShellColor.notifications.*`, `ShellColor.menu.*`,
+  `ShellColor.polkit.*`, `ShellColor.lock.*`, `ShellColor.imagePicker.*`).
+  The singleton file is still `Color.qml`. Its QML name is `ShellColor`
+  because Qt 6.12 adds a `QtQuick` type named `Color` that shadows an
+  unqualified `Color` in every file that imports `QtQuick`. Clipboard
+  and emojis share `ShellColor.menu.*`; the `[launcher]` section is consumed
   by the launcher outside shell QML.
 - `Style` — structural tokens (`cornerRadius`), shared interactive
   state tokens/helpers, spacing (`Style.spacing.*` / `Style.space(px)`),
@@ -212,7 +215,7 @@ The shell exposes these tokens to QML via three singletons in
   (`Style.bar.sizeHorizontal` / `Style.bar.sizeVertical`).
 - `Border` — border-spec helpers for QML surfaces. Use with
   `BorderSurface` from `qs.Ui` when a border should honor shell theme
-  gradients or per-side widths. `Color.<section>.border` is only the
+  gradients or per-side widths. `ShellColor.<section>.border` is only the
   flat-color fallback for code that cannot render a real border.
 
 ### Interactive states

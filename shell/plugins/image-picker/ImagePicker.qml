@@ -33,11 +33,11 @@ Item {
   // Bound to the central [image-picker] section in shell.toml via Color.qml.
   // `dimColor` tints unselected slices and text outlines on top of the scrim;
   // it intentionally tracks the foundational background, not a surface role.
-  property color dimColor: Color.background
-  property color foreground: Color.imagePicker.text
-  property color scrim: Color.imagePicker.scrim
-  property color selectedBorder: Color.imagePicker.selectedBorder
-  property color unselectedBorder: Color.imagePicker.unselectedBorder
+  property color dimColor: ShellColor.background
+  property color foreground: ShellColor.imagePicker.text
+  property color scrim: ShellColor.imagePicker.scrim
+  property color selectedBorder: ShellColor.imagePicker.selectedBorder
+  property color unselectedBorder: ShellColor.imagePicker.unselectedBorder
   property int expandedWidth: 768
   property int expandedHeight: 475
   property int sliceWidth: 108
