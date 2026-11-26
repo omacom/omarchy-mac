@@ -1,0 +1,113 @@
+#!/bin/bash
+
+# omarchy:summary=Put virtual consoles into UTF-8 mode with the configured font
+# omarchy:group=system
+# omarchy:hidden=true
+# omarchy:requires-sudo=true
+
+# systemd-vconsole-setup skips every VT when tty1 is not a text console yet.
+# On Apple Silicon that is the framebuffer handoff, so the console stays in
+# ASCII mode even when LANG is UTF-8. This is what getty runs after it
+# deallocates the VT, and what the boot unit runs for consoles already open.
+#
+# VT_GETSTATE is 0x5603 and KDGETMODE is 0x4B3B from the kernel uapi. The
+# _IOR-encoded form of VT_GETSTATE is not the number Linux actually defines.
+
+set -euo pipefail
+
+font_name() {
+  local conf=${OMARCHY_VCONSOLE_CONF:-/etc/vconsole.conf} configured=""
+  if [[ -r $conf ]]; then
+    configured=$(sed -n 's/^FONT=//p' "$conf" | head -1 | tr -d '"' | tr -d "'")
+  fi
+  if [[ -n $configured ]]; then
+    printf '%s\n' "$configured"
+  else
+    printf '%s\n' ter-132b
+  fi
+}
+
+graphics() {
+  python3 - "$1" <<'PY'
+import os, sys, fcntl, ctypes
+mode = ctypes.c_long()
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_NOCTTY)
+try:
+    fcntl.ioctl(fd, 0x4B3B, mode)
+    raise SystemExit(0 if mode.value == 1 else 1)
+except OSError:
+    raise SystemExit(1)
+finally:
+    os.close(fd)
+PY
+}
+
+apply_dev() {
+  local dev=$1
+  case $dev in
+    /dev/tty[0-9] | /dev/tty[0-9][0-9]) ;;
+    *)
+      echo "omarchy-mac-console-utf8: not a virtual console: $dev" >&2
+      return 1
+      ;;
+  esac
+  if graphics "$dev"; then
+    echo "omarchy-mac-console-utf8: $dev is graphical, skipped"
+    return 0
+  fi
+  setfont -C "$dev" "$(font_name)"
+  printf '\033%%G' >"$dev"
+  kbd_mode -C "$dev" -u
+  stty -F "$dev" iutf8
+  echo "omarchy-mac-console-utf8: $dev font=$(font_name) utf8"
+}
+
+allocated_text() {
+  python3 - <<'PY'
+import os, fcntl, ctypes
+class VtStat(ctypes.Structure):
+    _fields_ = [("v_active", ctypes.c_ushort), ("v_signal", ctypes.c_ushort), ("v_state", ctypes.c_ushort)]
+fd = os.open("/dev/tty0", os.O_RDWR | os.O_NOCTTY)
+st = VtStat()
+try:
+    fcntl.ioctl(fd, 0x5603, st)
+finally:
+    os.close(fd)
+for i in range(1, 16):
+    if st.v_state & (1 << i):
+        print(f"/dev/tty{i}")
+PY
+}
+
+enable_default_utf8() {
+  local sysfs=/sys/module/vt/parameters/default_utf8
+  if [[ -w $sysfs ]]; then
+    printf '1\n' >"$sysfs"
+  fi
+}
+
+run_agetty() {
+  local vt=$1 term=${2:-linux}
+  apply_dev "/dev/$vt" || true
+  exec /usr/bin/agetty --noreset --noclear - "$term"
+}
+
+case ${1:-} in
+  --agetty)
+    shift
+    run_agetty "$@"
+    ;;
+  /dev/tty*)
+    apply_dev "$1"
+    ;;
+  "")
+    enable_default_utf8
+    while read -r dev; do
+      apply_dev "$dev" || true
+    done < <(allocated_text)
+    ;;
+  *)
+    echo "usage: omarchy-mac-console-utf8 [--agetty TTY [TERM] | /dev/ttyN]" >&2
+    exit 1
+    ;;
+esac
