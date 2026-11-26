@@ -1,0 +1,113 @@
+#!/bin/bash
+
+# omarchy:summary=Explain why an external display over USB-C is or is not working
+# omarchy:name=dp-altmode
+# omarchy:group=debug
+
+# Plugging a monitor into an Apple Silicon Mac over USB-C and getting nothing is
+# one of the most common confusions on this hardware, and every layer fails
+# quietly. This walks the chain in order and stops at the first thing that is not
+# in place, so the answer is one line instead of an afternoon.
+#
+# DisplayPort over USB-C only. Machines with a dedicated HDMI port drive it
+# through a separate path this says nothing about.
+#
+# No root, reads only. See docs/apple-silicon-dp-altmode.md for the background.
+
+# Resolve the detector explicitly. Called by bare name it is not found when this
+# runs from a checkout rather than an installed PATH, and a missing command would
+# then read exactly like a real negative — the worst failure mode a diagnostic
+# has. Prefer the copy next to this script, so a checkout tests itself.
+SELF_BIN=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+for candidate in \
+  "$SELF_BIN/omarchy-hw-dp-altmode" \
+  "${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-hw-dp-altmode"; do
+  [[ -x $candidate ]] && hw_dp_altmode=$candidate && break
+done
+[[ -n ${hw_dp_altmode:-} ]] || hw_dp_altmode=$(command -v omarchy-hw-dp-altmode || true)
+if [[ -z ${hw_dp_altmode:-} ]]; then
+  echo "omarchy-hw-dp-altmode not found; cannot report on the DisplayPort route." >&2
+  exit 1
+fi
+
+device_tree="${OMARCHY_DEVICE_TREE:-/proc/device-tree}"
+typec_path="${OMARCHY_TYPEC_PATH:-/sys/class/typec}"
+drm_path="${OMARCHY_DRM_PATH:-/sys/class/drm}"
+
+dt_read() { tr -d '\0' <"$1" 2>/dev/null; }
+
+echo "External DisplayPort over USB-C"
+echo "(HDMI, where present, is a separate path and is not covered here.)"
+echo
+
+# 1. Is this even Apple Silicon? Everything below is specific to it.
+if [[ ! -r $device_tree/compatible ]] || ! grep -qai apple "$device_tree/compatible"; then
+  echo "  This is not an Apple Silicon machine; this check does not apply."
+  exit 0
+fi
+echo "  Machine: $(dt_read "$device_tree/model")"
+
+# 2. The second display controller. Without it there is no external output at
+#    all, and this is the state a stock Asahi install is in today.
+if "$hw_dp_altmode"; then
+  echo "  DisplayPort-capable display controller: enabled"
+else
+  echo "  DisplayPort-capable display controller: NOT enabled"
+  echo
+  echo "  This is the expected state on a stock Asahi kernel, and it is why"
+  echo "  nothing appears when you plug a monitor into USB-C. No connector"
+  echo "  points at an enabled display controller, so the plug event has"
+  echo "  nowhere to go. Nothing is broken on your machine and there is no"
+  echo "  setting to change."
+  echo
+  echo "  Asahi implements this on their downstream 'fairydust' branch, which"
+  echo "  is experimental and blesses one specific port per machine."
+  echo
+  echo "  See docs/apple-silicon-dp-altmode.md."
+  exit 0
+fi
+
+# 3. Which port is wired for DP. The sysfs portN index is assigned in i2c probe
+#    order and is not stable across boots, so it is resolved by i2c address.
+echo
+echo "  USB-C ports:"
+dp_addr=""
+for connector in "$device_tree"/soc/i2c@*/usb-pd@*/connector; do
+  [[ -d $connector ]] || continue
+  node=${connector%/connector}
+  addr=${node##*usb-pd@}
+  label=$(dt_read "$connector/label")
+  if [[ -r $connector/displayport ]]; then
+    dp_addr="0-00$addr"
+    printf '    %-8s %-20s DisplayPort: yes\n' "usb-pd@$addr" "${label:-?}"
+  else
+    printf '    %-8s %-20s DisplayPort: no\n' "usb-pd@$addr" "${label:-?}"
+  fi
+done
+
+# 4. Where the cable actually is. Resolved by i2c address, never by port number.
+echo
+cable_port=""
+cable_addr=""
+for port in "$typec_path"/port[0-9]; do
+  [[ -e ${port}-partner ]] || continue
+  cable_port=$(basename "$port")
+  cable_addr=$(readlink -f "$port" | grep -oE '0-00[0-9a-f]+')
+done
+
+if [[ -z $cable_port ]]; then
+  echo "  Cable: nothing plugged into any USB-C port."
+elif [[ $cable_addr == "$dp_addr" ]]; then
+  echo "  Cable: in the DisplayPort-capable port ($cable_addr) -- correct."
+else
+  echo "  Cable: in $cable_addr, which has no DisplayPort wired up."
+  echo "         Move it to the port marked 'DisplayPort: yes' above."
+fi
+
+# 5. What DRM ended up with.
+echo
+echo "  Display connectors:"
+for connector in "$drm_path"/card*-*; do
+  [[ -r $connector/status ]] || continue
+  printf '    %-22s %s\n' "$(basename "$connector")" "$(cat "$connector/status")"
+done

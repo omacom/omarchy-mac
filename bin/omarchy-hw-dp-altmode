@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# omarchy:summary=Returns true when external DisplayPort output over USB-C is wired up
+# omarchy:name=dp-altmode
+# omarchy:hidden=true
+
+# Apple Silicon Macs drive the internal panel from one display controller and any
+# external DisplayPort output from a second one. Asahi ships the external one
+# disabled on t8103: no stock t8103 device tree enables it, so external DP over
+# USB-C does not come up at all. See docs/apple-silicon-dp-altmode.md.
+#
+# The check is on the live device tree rather than on the model, because whether
+# the route is available depends on the DTB in use, not on the machine. Both
+# halves have to hold: a USB-C connector must carry the "displayport" phandle,
+# and the node it points at must be an external controller that is enabled.
+
+device_tree="${OMARCHY_DEVICE_TREE:-/proc/device-tree}"
+
+[[ -d $device_tree ]] || exit 1
+
+# Device tree phandles are 4 big-endian bytes; the node they name carries the
+# same value in its own "phandle" property.
+phandle_of() { od -An -tx1 -v "$1" 2>/dev/null | tr -d ' \n'; }
+
+for connector in "$device_tree"/soc/i2c@*/usb-pd@*/connector; do
+  [[ -r $connector/displayport ]] || continue
+
+  target=$(phandle_of "$connector/displayport")
+  [[ -n $target ]] || continue
+
+  # Every display controller is named "dcp@" on real hardware, the external ones
+  # included -- t8103 calls this one dcp@271c00000 and t6020 does the same. What
+  # separates external from internal is the compatible string, not the node name,
+  # so a "dcpext@" glob matches nothing on any machine and must not be relied on.
+  for node in "$device_tree"/soc/dcp*@*; do
+    [[ -r $node/phandle ]] || continue
+    [[ $(phandle_of "$node/phandle") == "$target" ]] || continue
+    tr '\0' '\n' <"$node/compatible" 2>/dev/null | grep -q 'dcpext$' || continue
+    [[ $(tr -d '\0' <"$node/status" 2>/dev/null) == "okay" ]] && exit 0
+  done
+done
+
+exit 1
