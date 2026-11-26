@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# omarchy:summary=Detect whether the computer is an Apple Silicon Mac with a Touch Bar.
+
+omarchy-hw-apple || exit 1
+
+compatible="${OMARCHY_APPLE_COMPATIBLE:-/proc/device-tree/compatible}"
+
+# The 13-inch M1 (j293) and M2 (j493) MacBook Pros are the only Apple Silicon
+# Macs with a Touch Bar. The compatible entries are NUL separated.
+grep -Eqxz 'apple,j[24]93' "$compatible"
