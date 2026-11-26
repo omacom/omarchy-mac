@@ -107,3 +107,47 @@ POWERED=yes run_migration
 grep -qx 'AutoEnable = false' "$main_conf" ||
   fail "migration keeps a hand-edited AutoEnable" "$(cat "$main_conf")"
 pass "migration keeps a hand-edited AutoEnable"
+
+# FastConnectable keeps the adapter answerable to incoming pages through the
+# boot and resume windows when paired peripherals are already trying to come
+# back. The machine-wide flip is the same one the install makes.
+fastconnectable_migration="$ROOT/migrations/1792588674.sh"
+
+run_fastconnectable_migration() {
+  : >"$CALLS"
+
+  OMARCHY_BLUETOOTH_FASTCONNECTABLE_MARKER="$marker" \
+    OMARCHY_BLUETOOTH_MAIN_CONF="$main_conf" \
+    PATH="$test_dir/bin:$PATH" \
+    bash -euo pipefail "$fastconnectable_migration" >/dev/null
+}
+
+reset_machine
+printf '[General]\n#FastConnectable = false\n' >"$main_conf"
+run_fastconnectable_migration
+
+grep -qx 'FastConnectable = true' "$main_conf" ||
+  fail "migration enables FastConnectable" "$(cat "$main_conf")"
+pass "migration enables FastConnectable"
+
+[[ -e $marker ]] || fail "migration records the machine as done"
+pass "migration records the machine as done"
+
+# A second account re-runs the file: completion is recorded per user, but the
+# machine-wide line must not be stacked.
+reset_machine
+printf '[General]\nFastConnectable = true\n' >"$main_conf"
+run_fastconnectable_migration
+
+[[ $(grep -c '^FastConnectable = true$' "$main_conf") == 1 ]] ||
+  fail "migration does not stack FastConnectable lines" "$(cat "$main_conf")"
+pass "migration does not stack FastConnectable lines"
+
+# Only the exact stock line is flipped, so a hand-set value stands.
+reset_machine
+printf '[General]\nFastConnectable = false\n' >"$main_conf"
+run_fastconnectable_migration
+
+grep -qx 'FastConnectable = false' "$main_conf" ||
+  fail "migration keeps a hand-set FastConnectable" "$(cat "$main_conf")"
+pass "migration keeps a hand-set FastConnectable"
