@@ -140,6 +140,8 @@ the branded one — `omarchy_hooks.conf` orders the `plymouth` hook ahead of
 `splash` on the GRUB command line for the machines that boot without limine,
 which every Mac does.
 
+Both prompts are written to `/dev/console`, and on Apple Silicon that is not the display unless the kernel command line says so. With no `console=` parameter the kernel registers the console the firmware names in `/chosen/stdout-path` — the serial port, `ttySAC0`, on every Mac tested — and then the VT, and the one registered last owns `/dev/console`. The prompt then goes to a UART nobody is watching while the screen shows one blinking cursor; the machine is not hung, it is waiting. The staging step therefore writes `console=tty0` into `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub` and regenerates `grub.cfg` before the reboot, unless a `console=` is already set, which is taken as deliberate (a serial install). The finish service's `grub-mkconfig` and every later one carry it forward, so the unlock prompt on every boot after that lands on the display too. The defaults file and `grub.cfg` change together: if `grub-mkconfig` fails, the defaults are put back as they were and the staging stops, so a retry starts over rather than finding `console=tty0` already present and skipping the regeneration.
+
 ## Rolling back to the pre-Omarchy state
 
 `@fresh` is the fresh Asahi Alarm system from just after the migration. Run `omarchy-snapshot restore` and select `@fresh` to restore that root while retaining `@home` and `@log`. The Mac recovery helper transfers the existing nested Snapper backend into the restored root, preserving its history and subvolume identity. Raw snapshot-and-rename commands omit nested subvolumes and leave future snapshots broken.
