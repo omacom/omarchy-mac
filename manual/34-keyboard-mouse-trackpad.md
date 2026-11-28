@@ -67,10 +67,13 @@ of these in `~/.config/hypr/input.lua` using the options shown above.
 
 ### Trackpad gestures
 
-You can also turn on [touchpad gestures](https://wiki.hypr.land/Configuring/Advanced-and-Cool/Gestures/), like swiping with three fingers to change workspaces:
+Swiping horizontally with three fingers to change workspaces — the way you swipe between full-screen apps on macOS — is a toggle. Flip it on under _Trigger > Hardware > Touchpad Gestures_ (`Super + Ctrl + H`), or with `omarchy toggle touchpad gestures`. It's off by default and survives Hyprland reloads, like the other [toggles](13-toggles-idle-screensaver.md).
+
+For other [touchpad gestures](https://wiki.hypr.land/Configuring/Advanced-and-Cool/Gestures/), such as swiping to move focus, add them to `~/.config/hypr/input.lua`:
 
 ```lua
-hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+hl.gesture({ fingers = 3, direction = "left", action = function() hl.dispatch(hl.dsp.focus({ direction = "l" })) end })
+hl.gesture({ fingers = 3, direction = "right", action = function() hl.dispatch(hl.dsp.focus({ direction = "r" })) end })
 ```
 
 On Dell XPS laptops with a haptic touchpad, you can also set the click strength to low, mid, or high under _Trigger > Hardware > Touchpad Haptics_.

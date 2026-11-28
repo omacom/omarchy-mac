@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# omarchy:summary=Enable, disable, or toggle three-finger swipes between workspaces
+# omarchy:args=[on|off|toggle]
+
+omarchy-hyprland-toggle touchpad-gestures "${1:-toggle}" >/dev/null || exit 1
+
+if omarchy-hyprland-toggle-enabled touchpad-gestures; then
+  omarchy-notification-send -g 󰟸 "Touchpad gestures enabled"
+else
+  omarchy-notification-send -g 󰟸 "Touchpad gestures disabled"
+fi
