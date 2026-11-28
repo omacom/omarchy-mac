@@ -226,6 +226,16 @@ hl = setmetatable({
   get_config = function()
     return nil
   end,
+  -- Queries the stock config compares or indexes. The noop proxy that answers
+  -- everything else is a table, so qconsole.lua comparing monitor.scale with
+  -- a number aborts the whole dofile before hyprland.lua reaches the user's
+  -- bindings. nil takes every config's "no monitor / no window" branch.
+  get_active_monitor = function()
+    return nil
+  end,
+  get_active_window = function()
+    return nil
+  end,
 }, {
   __index = function()
     return noop
