@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# omarchy:summary=Wait for Apple display takeover before starting a compositor
+# omarchy:hidden=true
+
+set -euo pipefail
+
+apple_drm=/dev/dri/by-path/platform-soc:display-subsystem-card
+for _ in $(seq 1 150); do
+  if [[ -e $apple_drm ]] && ! ls /sys/bus/platform/drivers/simple-framebuffer/*.framebuffer >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 0.1
+done
+
+# A broken display driver must not strand the machine without a login path.
+exit 0
