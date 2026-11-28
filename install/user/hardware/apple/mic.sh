@@ -22,7 +22,10 @@ if [[ ! -e $mic_wants/omarchy-asahi-mic.service && ! -L $mic_wants/omarchy-asahi
 fi
 mic_status=0
 omarchy-audio-asahi-mic-map || mic_status=$?
-if [[ -S ${XDG_RUNTIME_DIR:-/run/user/$UID}/bus ]]; then
+# systemctl --user only honours XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS.
+# A logged-in --resume has /run/user/$UID/bus (so the old fallback passed)
+# but sudo -i clears XDG_RUNTIME_DIR, and the user-bus call then aborts install.
+if [[ -n ${XDG_RUNTIME_DIR:-} && -S $XDG_RUNTIME_DIR/bus ]]; then
   systemctl --user daemon-reload
   systemctl --user start omarchy-asahi-mic.service
 fi
