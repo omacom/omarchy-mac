@@ -12,6 +12,11 @@ repair_missing_snapper_root() {
   # marker retries those released installs after the package dependency update.
   # Missing required dependencies must leave the repair pending on btrfs.
   if ! command -v snapper >/dev/null 2>&1; then
+    if command -v omarchy-pkg-add >/dev/null 2>&1; then
+      omarchy-pkg-add snapper || true
+    fi
+  fi
+  if ! command -v snapper >/dev/null 2>&1; then
     echo "Error: Snapper is required on btrfs. Complete the package update, then rerun omarchy-migrate." >&2
     return 127
   fi
